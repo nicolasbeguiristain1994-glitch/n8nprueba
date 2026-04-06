@@ -1,0 +1,9 @@
+Hola {{nombre}} 👋
+
+¡Bienvenido a {{casino_nombre}}! Tu cuenta ha sido creada exitosamente.
+
+Para empezar a jugar, realizá tu primer depósito y recibí tu bono de bienvenida de hasta {{bono_monto}}.
+
+👉 Ingresá aquí: {{link_casino}}
+
+Cualquier consulta, escribinos acá mismo. ¡Mucha suerte! 🎰

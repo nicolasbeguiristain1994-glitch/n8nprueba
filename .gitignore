@@ -1,0 +1,98 @@
+# ============================================
+# SECRETOS Y CREDENCIALES — NUNCA COMMITEAR
+# ============================================
+.env
+.env.local
+.env.production
+.env.staging
+*.env
+
+# Archivos de credenciales reales
+credentials.json
+secrets.json
+**/credentials/real/
+**/secrets/
+
+# Tokens y keys explícitos (por si acaso)
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ============================================
+# n8n
+# ============================================
+# Exports con credenciales embebidas
+n8n/workflow-specs/*-with-creds.json
+
+# Base de datos local de n8n
+n8n/.n8n/
+*.sqlite
+*.sqlite3
+
+# ============================================
+# NODE / JS
+# ============================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn
+
+# Build outputs
+dist/
+build/
+.next/
+
+# ============================================
+# PYTHON
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+.venv/
+venv/
+env/
+.Python
+
+# ============================================
+# SISTEMA OPERATIVO
+# ============================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ============================================
+# EDITORES
+# ============================================
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+.cursor/
+
+# ============================================
+# LOGS Y TEMPORALES
+# ============================================
+logs/
+*.log
+tmp/
+temp/
+.tmp/
+
+# ============================================
+# DATOS SENSIBLES
+# ============================================
+# Exports con datos reales de jugadores
+db/exports/
+scripts/imports/data/
+*.csv.real
+*-production.*
