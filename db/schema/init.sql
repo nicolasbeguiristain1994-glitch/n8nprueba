@@ -349,9 +349,9 @@ CREATE TABLE IF NOT EXISTS sequences (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     
     -- Identificación
-    name VARCHAR(255) NOT NULL,
+    name VARCHAR(255) NOT NULL UNIQUE,
     description TEXT,
-    
+
     -- Configuración
     active BOOLEAN DEFAULT true,
     type VARCHAR(50),  -- 'email_drip' | 'retention_ladder' | 'onboarding_flow' | etc

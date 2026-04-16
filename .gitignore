@@ -94,5 +94,7 @@ temp/
 # Exports con datos reales de jugadores
 db/exports/
 scripts/imports/data/
+# Exports del migration script (contienen JSON de workflows con IDs de instancia)
+exports/
 *.csv.real
 *-production.*
