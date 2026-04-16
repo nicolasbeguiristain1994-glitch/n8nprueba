@@ -345,7 +345,7 @@ export default function Contacts() {
           <Input className="pl-9" placeholder="Buscar por nombre o teléfono…" value={search}
             onChange={e => { setSearch(e.target.value); setPage(1) }} />
         </div>
-        <Select value={filterPanel} onValueChange={v => { setFilterPanel(v); setPage(1) }}>
+        <Select value={filterPanel} onValueChange={v => { setFilterPanel(v ?? ''); setPage(1) }}>
           <SelectTrigger className="w-40">
             <SelectValue placeholder="Panel" />
           </SelectTrigger>
@@ -354,7 +354,7 @@ export default function Contacts() {
             {PANEL_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Select value={filterLinea} onValueChange={v => { setFilterLinea(v); setPage(1) }}>
+        <Select value={filterLinea} onValueChange={v => { setFilterLinea(v ?? ''); setPage(1) }}>
           <SelectTrigger className="w-32">
             <SelectValue placeholder="Línea" />
           </SelectTrigger>
@@ -365,7 +365,7 @@ export default function Contacts() {
             ))}
           </SelectContent>
         </Select>
-        <Select value={filterGaming} onValueChange={v => { setFilterGaming(v); setPage(1) }}>
+        <Select value={filterGaming} onValueChange={v => { setFilterGaming(v ?? ''); setPage(1) }}>
           <SelectTrigger className="w-40">
             <SelectValue placeholder="Juego" />
           </SelectTrigger>
@@ -376,7 +376,7 @@ export default function Contacts() {
             <SelectItem value="ambas">🎯 Ambas</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={segment} onValueChange={v => { setSegment(v); setPage(1) }}>
+        <Select value={segment} onValueChange={v => { setSegment(v ?? ''); setPage(1) }}>
           <SelectTrigger className="w-40">
             <SelectValue placeholder="Nivel" />
           </SelectTrigger>
@@ -624,7 +624,7 @@ export default function Contacts() {
                 <div className="grid grid-cols-1 gap-2">
                   <div>
                     <label className="text-xs font-medium text-gray-600 mb-1 block">Panel</label>
-                    <Select value={criteriaPanel || 'all'} onValueChange={v => setCriteriaPanel(v === 'all' ? '' : v)}>
+                    <Select value={criteriaPanel || 'all'} onValueChange={v => setCriteriaPanel(v === 'all' ? '' : (v ?? ''))}>
                       <SelectTrigger><SelectValue placeholder="Cualquier panel" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">Cualquier panel</SelectItem>
@@ -634,7 +634,7 @@ export default function Contacts() {
                   </div>
                   <div>
                     <label className="text-xs font-medium text-gray-600 mb-1 block">Juego</label>
-                    <Select value={criteriaGaming || 'all'} onValueChange={v => setCriteriaGaming(v === 'all' ? '' : v)}>
+                    <Select value={criteriaGaming || 'all'} onValueChange={v => setCriteriaGaming(v === 'all' ? '' : (v ?? ''))}>
                       <SelectTrigger><SelectValue placeholder="Cualquier juego" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">Cualquier juego</SelectItem>
@@ -646,7 +646,7 @@ export default function Contacts() {
                   </div>
                   <div>
                     <label className="text-xs font-medium text-gray-600 mb-1 block">Nivel</label>
-                    <Select value={criteriaSegment || 'all'} onValueChange={v => setCriteriaSegment(v === 'all' ? '' : v)}>
+                    <Select value={criteriaSegment || 'all'} onValueChange={v => setCriteriaSegment(v === 'all' ? '' : (v ?? ''))}>
                       <SelectTrigger><SelectValue placeholder="Cualquier nivel" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">Cualquier nivel</SelectItem>
@@ -694,7 +694,7 @@ export default function Contacts() {
             <div className="grid grid-cols-4 gap-2">
               <div>
                 <label className="text-xs font-medium text-gray-600 mb-1 block">Panel</label>
-                <Select value={newPanel} onValueChange={setNewPanel}>
+                <Select value={newPanel} onValueChange={v => setNewPanel(v ?? '')}>
                   <SelectTrigger><SelectValue placeholder="Panel" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">Sin panel</SelectItem>
@@ -704,7 +704,7 @@ export default function Contacts() {
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-600 mb-1 block">Línea</label>
-                <Select value={newLinea} onValueChange={setNewLinea}>
+                <Select value={newLinea} onValueChange={v => setNewLinea(v ?? '')}>
                   <SelectTrigger><SelectValue placeholder="Línea" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">Sin línea</SelectItem>
@@ -716,7 +716,7 @@ export default function Contacts() {
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-600 mb-1 block">Juego</label>
-                <Select value={newGaming} onValueChange={setNewGaming}>
+                <Select value={newGaming} onValueChange={v => setNewGaming(v ?? '')}>
                   <SelectTrigger><SelectValue placeholder="Juego" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">Sin asignar</SelectItem>
@@ -728,7 +728,7 @@ export default function Contacts() {
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-600 mb-1 block">Nivel</label>
-                <Select value={newSegment} onValueChange={setNewSegment}>
+                <Select value={newSegment} onValueChange={v => setNewSegment(v ?? '')}>
                   <SelectTrigger><SelectValue placeholder="Nivel" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">Sin nivel</SelectItem>
