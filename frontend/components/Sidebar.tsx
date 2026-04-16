@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Users, Megaphone, MessageSquare, Activity, Flame } from 'lucide-react'
+import { usePathname, useRouter } from 'next/navigation'
+import { LayoutDashboard, Users, Megaphone, MessageSquare, Activity, Flame, LogOut } from 'lucide-react'
 
 const nav = [
   { href: '/',               label: 'Dashboard',      icon: LayoutDashboard },
@@ -13,7 +13,13 @@ const nav = [
 ]
 
 export default function Sidebar() {
-  const path = usePathname()
+  const path   = usePathname()
+  const router = useRouter()
+
+  const logout = async () => {
+    await fetch('/api/auth/logout', { method: 'POST' })
+    router.push('/login')
+  }
   return (
     <aside className="w-56 bg-white border-r border-gray-200 flex flex-col shrink-0">
       <div className="px-5 py-5 border-b border-gray-200">
@@ -43,8 +49,14 @@ export default function Sidebar() {
           )
         })}
       </nav>
-      <div className="px-5 py-4 border-t border-gray-200">
-        <p className="text-xs text-gray-400">v1.0 — producción</p>
+      <div className="px-3 py-4 border-t border-gray-200 space-y-2">
+        <p className="text-xs text-gray-400 px-2">v1.0 — producción</p>
+        <button
+          onClick={logout}
+          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors w-full"
+        >
+          <LogOut size={16} /> Cerrar sesión
+        </button>
       </div>
     </aside>
   )
