@@ -15,17 +15,40 @@ export async function POST(req: NextRequest) {
   const event = body.event as string
   const data  = body.data as Record<string, unknown>
 
-  // ── Mensaje entrante ──────────────────────────────────────────────
+  // ── Mensaje entrante / confirmación de envío ──────────────────────
   if (event === 'messages.upsert') {
     const key     = data.key as Record<string, unknown>
     const fromMe  = key?.fromMe as boolean
     const jid     = (key?.remoteJid as string) || ''
     const msgId   = (key?.id as string) || ''
 
-    // Ignorar mensajes propios y mensajes de grupos
-    if (fromMe || jid.endsWith('@g.us')) return NextResponse.json({ ok: true })
+    // Ignorar grupos
+    if (jid.endsWith('@g.us')) return NextResponse.json({ ok: true })
 
     const phone = jid.replace('@s.whatsapp.net', '')
+
+    // Mensaje propio (outbound): Evolution confirmó envío — guardar el ID para tracking
+    if (fromMe) {
+      if (msgId) {
+        // Buscar el mensaje outbound más reciente a este teléfono sin evolution_message_id
+        // (enviado en los últimos 10 minutos para evitar colisiones)
+        await query(
+          `UPDATE whatsapp_messages
+           SET evolution_message_id = $1, updated_at = NOW()
+           WHERE id = (
+             SELECT id FROM whatsapp_messages
+             WHERE phone_number = $2
+               AND direction    = 'outbound'
+               AND evolution_message_id IS NULL
+               AND created_at  > NOW() - INTERVAL '10 minutes'
+             ORDER BY created_at DESC
+             LIMIT 1
+           )`,
+          [msgId, phone]
+        )
+      }
+      return NextResponse.json({ ok: true })
+    }
 
     // Extraer texto del mensaje (distintos tipos)
     const msg = data.message as Record<string, unknown> | null
@@ -64,9 +87,12 @@ export async function POST(req: NextRequest) {
       const u      = upd as Record<string, unknown>
       const key    = u.key as Record<string, unknown>
       const msgId  = key?.id as string
+      const jid    = (key?.remoteJid as string) || ''
       const raw    = (u.update as Record<string, unknown>)?.status
 
       if (!msgId || raw === undefined) continue
+
+      const phone = jid.replace('@s.whatsapp.net', '')
 
       // Evolution puede enviar número (0-5) o string
       let status = 'sent'
@@ -83,16 +109,42 @@ export async function POST(req: NextRequest) {
         else if (s === 'FAILED' || s === 'ERROR') status = 'failed'
       }
 
-      await query(
+      // Intentar actualizar por evolution_message_id exacto primero
+      const res1 = await query<{ id: string }>(
         `UPDATE whatsapp_messages
          SET status       = $1,
+             evolution_message_id = COALESCE(evolution_message_id, $2),
              delivered_at = CASE WHEN $1 = 'delivered' THEN NOW() ELSE delivered_at END,
              read_at      = CASE WHEN $1 = 'read'      THEN NOW() ELSE read_at END,
              failed_at    = CASE WHEN $1 = 'failed'    THEN NOW() ELSE failed_at END,
              updated_at   = NOW()
-         WHERE evolution_message_id = $2`,
+         WHERE evolution_message_id = $2
+         RETURNING id`,
         [status, msgId]
       )
+
+      // Fallback: si no hubo match por ID, buscar por teléfono (para mensajes sin ID registrado)
+      if (res1.length === 0 && phone) {
+        await query(
+          `UPDATE whatsapp_messages
+           SET status       = $1,
+               evolution_message_id = $2,
+               delivered_at = CASE WHEN $1 = 'delivered' THEN NOW() ELSE delivered_at END,
+               read_at      = CASE WHEN $1 = 'read'      THEN NOW() ELSE read_at END,
+               failed_at    = CASE WHEN $1 = 'failed'    THEN NOW() ELSE failed_at END,
+               updated_at   = NOW()
+           WHERE id = (
+             SELECT id FROM whatsapp_messages
+             WHERE phone_number = $3
+               AND direction    = 'outbound'
+               AND status NOT IN ('read', 'failed')
+               AND sent_at > NOW() - INTERVAL '24 hours'
+             ORDER BY sent_at DESC
+             LIMIT 1
+           )`,
+          [status, msgId, phone]
+        )
+      }
     }
 
     return NextResponse.json({ ok: true })
