@@ -7,6 +7,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   try {
     // Trae todos los contactos de la lista de la campaña
     // y hace LEFT JOIN con los mensajes enviados en esa campaña
+    // LATERAL subquery keeps exactly one (latest) message per contact,
+    // preventing duplicate rows when a contact has multiple whatsapp_messages
+    // rows for the same campaign (e.g. retry after crash).
     const rows = await query(`
       SELECT
         c.id,
@@ -22,9 +25,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       FROM campaigns camp
       JOIN contact_list_members clm ON clm.list_id = camp.list_id
       JOIN contacts c ON c.id = clm.contact_id
-      LEFT JOIN whatsapp_messages m
-        ON m.contact_id = c.id
-       AND m.campaign_id = camp.id
+      LEFT JOIN LATERAL (
+        SELECT status, sent_at, delivered_at, read_at, failed_at, error_detail
+        FROM whatsapp_messages
+        WHERE contact_id = c.id
+          AND campaign_id = camp.id
+        ORDER BY created_at DESC
+        LIMIT 1
+      ) m ON true
       WHERE camp.id = $1
       ORDER BY
         CASE m.status

@@ -4,42 +4,15 @@ import { query } from '@/lib/db'
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
 
-  // ── Fix 5: server-only N8N_URL ──────────────────────────────────────────
+  // ── N8N_URL must exist before any DB mutation ────────────────────────────
   const N8N_URL = process.env.N8N_URL
   if (!N8N_URL) return NextResponse.json({ error: 'N8N_URL not configured' }, { status: 500 })
 
-  // ── Fix 4: atomically guard against duplicate starts ────────────────────
-  // Only transition from draft/scheduled/paused → running
-  let campaignRow: { id: string } | undefined
-  try {
-    const rows = await query<{ id: string }>(
-      `UPDATE campaigns
-       SET status = 'running', started_at = COALESCE(started_at, NOW())
-       WHERE id = $1 AND status IN ('draft', 'scheduled', 'paused')
-       RETURNING id`,
-      [id]
-    )
-    campaignRow = rows[0]
-  } catch (e) {
-    console.error('[campaign send] status update error:', e instanceof Error ? e.message : e)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-
-  if (!campaignRow) {
-    // Campaign is already running, completed, or cancelled — or doesn't exist
-    const existing = await query<{ id: string; status: string }>(
-      'SELECT id, status FROM campaigns WHERE id = $1',
-      [id]
-    )
-    if (!existing[0]) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
-    return NextResponse.json({ error: `Campaign is already ${existing[0].status}` }, { status: 409 })
-  }
-
-  // ── Fetch campaign details ───────────────────────────────────────────────
+  // ── Fetch campaign details (read-only, no status change yet) ─────────────
   type CampaignRow = {
     id: string; name: string; message: string; messages: string[] | null; media_url: string
     list_id: string; antiblock_delay_min: number; antiblock_delay_max: number
-    personalize_name: boolean
+    personalize_name: boolean; status: string
   }
   let campaign: CampaignRow | undefined
 
@@ -53,7 +26,12 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   if (!campaign) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
 
-  // ── Fetch eligible contacts ──────────────────────────────────────────────
+  // If already running/completed/cancelled, reject before touching any state
+  if (!['draft', 'scheduled', 'paused'].includes(campaign.status)) {
+    return NextResponse.json({ error: `Campaign is already ${campaign.status}` }, { status: 409 })
+  }
+
+  // ── Fetch eligible contacts (read-only, no status change yet) ───────────
   let contacts: Array<{ phone_number: string; first_name: string; id: string }> = []
   try {
     contacts = await query<{ phone_number: string; first_name: string; id: string }>(
@@ -71,7 +49,30 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 
+  // Validate before mutating — campaign stays in current status on failure
   if (!contacts.length) return NextResponse.json({ error: 'No contacts in list' }, { status: 400 })
+
+  // ── Atomic status transition — NOW safe to mutate ────────────────────────
+  // Only transitions draft/scheduled/paused → running. Guards concurrent double-clicks.
+  let campaignRow: { id: string } | undefined
+  try {
+    const rows = await query<{ id: string }>(
+      `UPDATE campaigns
+       SET status = 'running', started_at = COALESCE(started_at, NOW())
+       WHERE id = $1 AND status IN ('draft', 'scheduled', 'paused')
+       RETURNING id`,
+      [id]
+    )
+    campaignRow = rows[0]
+  } catch (e) {
+    console.error('[campaign send] status update error:', e instanceof Error ? e.message : e)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+
+  if (!campaignRow) {
+    // Lost the race — another request transitioned status between our read and this UPDATE
+    return NextResponse.json({ error: `Campaign is already ${campaign.status}` }, { status: 409 })
+  }
 
   // ── Populate campaign_recipients (idempotent — ON CONFLICT DO NOTHING) ───
   try {
@@ -92,13 +93,18 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     // Non-fatal: log and continue — send still works without recipient tracking
   }
 
-  // Update total_targets from actual count
-  await query(
-    `UPDATE campaigns SET total_targets = $1 WHERE id = $2`,
-    [contacts.length, id]
-  )
+  // Update total_targets from actual contact count
+  try {
+    await query(
+      `UPDATE campaigns SET total_targets = $1 WHERE id = $2`,
+      [contacts.length, id]
+    )
+  } catch (e) {
+    console.error('[campaign send] update total_targets error:', e instanceof Error ? e.message : e)
+    // Non-fatal: cosmetic counter
+  }
 
-  // ── Envío en background — responde inmediatamente ────────────────────────
+  // ── Send in background — respond immediately ─────────────────────────────
   ;(async () => {
     // On resume: seed counters from persisted state so totals stay accurate
     let sent = 0, failed = 0
@@ -116,19 +122,18 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     } catch { /* campaign_recipients unavailable — start at 0 */ }
 
     for (const contact of contacts) {
-      // Verificar si fue pausada o cancelada antes de cada mensaje
+      // Check for pause/cancel before each message
       const [current] = await query<{ status: string }>('SELECT status FROM campaigns WHERE id = $1', [id])
       if (current?.status === 'paused' || current?.status === 'cancelled') break
 
-      // Skip if already sent to this contact in a previous run
+      // Skip if already sent in a previous run — do NOT increment sent (already counted in seed)
       try {
         const [existing] = await query<{ status: string }>(
           `SELECT status FROM campaign_recipients WHERE campaign_id = $1 AND contact_id = $2`,
           [id, contact.id]
         )
         if (existing?.status === 'sent') {
-          sent++
-          continue
+          continue  // already counted in seeded `sent` value — do not double-count
         }
       } catch { /* non-fatal: recipient tracking is best-effort */ }
 
@@ -160,7 +165,6 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
           }),
         })
 
-        // Éxito si HTTP 2xx
         if (res.ok) {
           sent++
           let evolutionMsgId: string | null = null
@@ -169,7 +173,6 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
             evolutionMsgId = responseData?.key?.id || responseData?.id || null
           } catch { /* n8n respondió con body vacío */ }
 
-          // Insert outbound message record
           await query(
             `INSERT INTO whatsapp_messages
                (contact_id, campaign_id, phone_number, message_body, direction, status,
@@ -178,7 +181,6 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
             [contact.id, id, contact.phone_number, personalizedMsg, evolutionMsgId]
           )
 
-          // Update recipient row
           try {
             await query(
               `UPDATE campaign_recipients
@@ -234,13 +236,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
         } catch { /* non-fatal: recipient tracking is best-effort */ }
       }
 
-      // Actualizar progreso en la DB cada mensaje
+      // Update progress counters in DB after each message
       await query(
         `UPDATE campaigns SET total_sent = $1, total_failed = $2 WHERE id = $3`,
         [sent, failed, id]
       )
 
-      // Delay antibloqueo entre mensajes (excepto en el último)
+      // Antiblock delay between messages (skip on last)
       const isLast = contact === contacts[contacts.length - 1]
       if (!isLast) {
         const delaySec = Math.floor(
@@ -250,7 +252,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
       }
     }
 
-    // Solo marcar completed si no fue pausada/cancelada
+    // Only mark completed if not paused/cancelled
     const [finalState] = await query<{ status: string }>('SELECT status FROM campaigns WHERE id = $1', [id])
     if (finalState?.status === 'running') {
       await query(`UPDATE campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1`, [id])

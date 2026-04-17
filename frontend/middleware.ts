@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-const PUBLIC_PATHS = ['/login', '/api/auth/login']
+// Exact-match list — avoids prefix leaks like /api/webhook/evolution-evil
+const EXACT_PUBLIC_PATHS = [
+  '/login',
+  '/api/auth/login',
+  '/api/webhook/evolution', // self-authenticates via x-webhook-secret header
+]
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl
 
   // Dejar pasar rutas públicas y assets
   if (
-    PUBLIC_PATHS.some(p => pathname.startsWith(p)) ||
+    EXACT_PUBLIC_PATHS.includes(pathname) ||
     pathname.startsWith('/_next') ||
     pathname.startsWith('/favicon')
   ) {
