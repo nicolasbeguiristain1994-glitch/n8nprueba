@@ -1,0 +1,330 @@
+{
+  "name": "WF-010-Line-Warmup",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 9-22 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-800, 0],
+      "id": "wf010-node-01",
+      "name": "Cron – Every 15 min (9AM-10PM)"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/warmup_numbers?warmup_status=eq.active&select=*",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}" }
+          ]
+        },
+        "options": { "timeout": 10000 }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [-580, 0],
+      "id": "wf010-node-02",
+      "name": "HTTP – Get Active Warmup Numbers"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Filtrar por horario y calcular límite según fase del día\nconst numbers = $input.all().map(i => i.json);\n\n// Zona horaria Argentina\nconst now = new Date();\nconst argStr = now.toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' });\nconst argDate = new Date(argStr);\nconst hour = argDate.getHours();\n\n// Solo entre 9AM y 22PM\nif (hour < 9 || hour >= 22) {\n  return [{ json: { skip: true, reason: `Fuera de horario: ${hour}hs` } }];\n}\n\nconst results = [];\n\nfor (const num of numbers) {\n  if (!num.phone_number || !num.instance_name) continue;\n\n  const day = num.current_day || 1;\n\n  // Calcular límite diario y delay según fase\n  let dailyLimit, delayMinSec, delayMaxSec;\n  if (day <= 3) {\n    dailyLimit  = 10;\n    delayMinSec = 180; // 3 min\n    delayMaxSec = 480; // 8 min\n  } else if (day <= 7) {\n    dailyLimit  = 20;\n    delayMinSec = 120; // 2 min\n    delayMaxSec = 360; // 6 min\n  } else if (day <= 14) {\n    dailyLimit  = 50;\n    delayMinSec = 60;  // 1 min\n    delayMaxSec = 240; // 4 min\n  } else {\n    dailyLimit  = 100;\n    delayMinSec = 30;  // 30 seg\n    delayMaxSec = 180; // 3 min\n  }\n\n  const sentToday = num.messages_sent_today || 0;\n  const remaining = dailyLimit - sentToday;\n\n  if (remaining <= 0) continue; // ya llegó al límite de hoy\n\n  // Calcular delay aleatorio con jitter\n  const delaySec = Math.floor(Math.random() * (delayMaxSec - delayMinSec + 1)) + delayMinSec;\n  const jitter = Math.floor(Math.random() * 30) - 15; // ±15 seg\n\n  results.push({\n    json: {\n      ...num,\n      daily_limit: dailyLimit,\n      delay_sec: Math.max(10, delaySec + jitter),\n      remaining_today: remaining,\n      warmup_phase: day <= 3 ? 'fase1' : day <= 7 ? 'fase2' : day <= 14 ? 'fase3' : 'fase4',\n      current_hour: hour\n    }\n  });\n}\n\nreturn results.length > 0 ? results : [{ json: { skip: true, reason: 'Sin números disponibles' } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-360, 0],
+      "id": "wf010-node-03",
+      "name": "Code – Filter & Calculate Phase"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "no-skip",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "notEquals", "rightType": "boolean" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-140, 0],
+      "id": "wf010-node-04",
+      "name": "IF – Numbers Available"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/warmup_contacts?is_active=eq.true&select=*&order=last_used_at.asc.nullsfirst&limit=20",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}" }
+          ]
+        },
+        "options": { "timeout": 10000 }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [80, 0],
+      "id": "wf010-node-05",
+      "name": "HTTP – Get Warmup Contacts"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Elegir contacto random y mensaje según fase\nconst warmupNum = $('Code – Filter & Calculate Phase').item.json;\nconst contacts  = $input.all().map(i => i.json);\n\nif (!contacts.length) {\n  return [{ json: { skip: true, reason: 'Sin contactos de calentamiento' } }];\n}\n\n// Elegir contacto random (el menos usado)\nconst contact = contacts[Math.floor(Math.random() * Math.min(5, contacts.length))];\n\n// Banco de mensajes por fase\nconst messages = {\n  fase1: [\n    'Hola! cómo andás?', 'Buenas! todo bien?', 'Ey! qué tal?',\n    'Hola, cómo estás?', 'Buenas! qué hacés?', 'Hola! cómo va todo?',\n    'Ey, qué onda?', 'Hola, todo bien por allá?', 'Buenas! cómo te va?',\n    'Hola! cómo va el día?'\n  ],\n  fase2: [\n    'Hola! cómo andás? 😊', 'Buenas! todo bien? 👋', 'Ey qué tal! 🙌',\n    'Hola, cómo estás? 😄', 'Buenas! qué hacés? ☀️', 'Hola! cómo va todo? 👍',\n    'Qué onda! todo bien? 🎉', 'Hola por acá! cómo te va? 😁',\n    'Buenas! se viene el finde 🙌', 'Ey! apareció el sol por allá? ☀️',\n    'Hola! tomando unos mates ☕ y vos?', 'Qué tal el día hoy? 😊',\n    'Buenas! qué está pasando por allá? 👀', 'Hola! cómo está la familia? 🏠',\n    'Ey! hace rato no hablamos, cómo andás? 😊'\n  ],\n  fase3: [\n    'Hola! cómo andás? 😊 Hoy está haciendo un calor terrible por acá',\n    'Buenas! todo bien? 👋 Recién salí del trabajo, qué tal el día?',\n    'Ey qué tal! 🙌 Che, tenés alguna serie para recomendar?',\n    'Hola! 😄 Estoy tomando unos mates, nada mejor para la tarde',\n    'Buenas! ☀️ Qué semana larga, ya tengo ganas del finde',\n    'Hola! 👍 Pasé por el centro hoy y estaba lleno de gente, un caos',\n    'Qué onda! 🎉 Viste el partido de anoche? qué partidazo',\n    'Hola! 😁 El fin de semana estuve en el campo, una paz total',\n    'Buenas! 🙌 Me anoté al gimnasio otra vez, a ver si me mantengo jaja',\n    'Ey! ☀️ Hoy hice compras y no podía creer los precios, todo carísimo'\n  ],\n  fase4: [\n    'Hola! cómo andás? 😊 Hoy está haciendo un calor terrible por acá, qué tal el clima donde estás?',\n    'Buenas! 👋 Recién salí del trabajo y vine caminando, qué semana larga',\n    'Ey! 🙌 Che, ¿viste el partido de anoche? qué partidazo, no esperaba ese resultado',\n    'Hola! 😄 Estoy tomando unos mates con galletitas, lo más. Vos qué hacés?',\n    'Buenas tardes! ☀️ Se viene el finde, algún plan? Nosotros vamos al campo',\n    'Hola! 👍 Pasé por el centro y estaba todo cortado, tardé el doble. Cómo te fue a vos?',\n    'Qué onda! 🎉 Me enteré que abrieron una pizzería nueva acá cerca, hay que ir',\n    'Hola! 😁 El fin de semana hice asado, quedó buenísimo. Vos qué hiciste?'\n  ]\n};\n\nconst phase = warmupNum.warmup_phase || 'fase1';\nconst phaseMessages = messages[phase] || messages.fase1;\nconst text = phaseMessages[Math.floor(Math.random() * phaseMessages.length)];\n\nreturn [{\n  json: {\n    ...warmupNum,\n    recipient_phone: contact.phone_number,\n    contact_id: contact.id,\n    message_text: text,\n    message_type: phase === 'fase1' ? 'text' : 'emoji',\n    sent_at: new Date().toISOString()\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [300, 0],
+      "id": "wf010-node-06",
+      "name": "Code – Pick Message & Contact"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://evolution-api-production-ec6b.up.railway.app/message/sendText/{{ $json.instance_name }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.EVOLUTION_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{ $json.recipient_phone }}\",\n  \"text\": \"{{ $json.message_text }}\"\n}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": { "fullResponse": true }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [520, 0],
+      "id": "wf010-node-07",
+      "name": "HTTP – Evolution Send Message",
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false, "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "send-ok",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 299,
+              "operator": { "type": "number", "operation": "lte" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [740, 0],
+      "id": "wf010-node-08",
+      "name": "IF – Send OK"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/warmup_activity_log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"warmup_number_id\": \"{{ $('Code – Pick Message & Contact').item.json.id }}\",\n  \"phone_number\":     \"{{ $('Code – Pick Message & Contact').item.json.phone_number }}\",\n  \"recipient\":        \"{{ $('Code – Pick Message & Contact').item.json.recipient_phone }}\",\n  \"message_type\":     \"{{ $('Code – Pick Message & Contact').item.json.message_type }}\",\n  \"message_preview\":  \"{{ $('Code – Pick Message & Contact').item.json.message_text.substring(0,180) }}\",\n  \"status\":           \"sent\",\n  \"warmup_day\":       {{ $('Code – Pick Message & Contact').item.json.current_day }}\n}",
+        "options": { "timeout": 10000 }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [960, -120],
+      "id": "wf010-node-09",
+      "name": "HTTP – Log Activity (success)"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/warmup_numbers?id=eq.{{ $('Code – Pick Message & Contact').item.json.id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messages_sent_today\": {{ ($('Code – Pick Message & Contact').item.json.messages_sent_today || 0) + 1 }},\n  \"last_message_at\": \"{{ $('Code – Pick Message & Contact').item.json.sent_at }}\",\n  \"updated_at\": \"{{ $('Code – Pick Message & Contact').item.json.sent_at }}\"\n}",
+        "options": { "timeout": 10000 }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1180, -120],
+      "id": "wf010-node-10",
+      "name": "HTTP – Increment Counter"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/warmup_contacts?id=eq.{{ $('Code – Pick Message & Contact').item.json.contact_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message_count\": {{ ($('Code – Pick Message & Contact').item.json.messages_sent_today || 0) + 1 }},\n  \"last_used_at\": \"{{ $('Code – Pick Message & Contact').item.json.sent_at }}\"\n}",
+        "options": { "timeout": 10000 }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1400, -120],
+      "id": "wf010-node-11",
+      "name": "HTTP – Update Contact Usage"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Detectar si el error es ban/403 o error genérico\nconst response = $input.first().json;\nconst responseBody = JSON.stringify(response).toLowerCase();\nconst statusCode = response.statusCode || 0;\n\nconst isBanned = statusCode === 403\n  || responseBody.includes('banned')\n  || responseBody.includes('blocked')\n  || responseBody.includes('unauthorized');\n\nconst warmupData = $('Code – Pick Message & Contact').item.json;\n\nreturn [{\n  json: {\n    ...warmupData,\n    error_status: statusCode,\n    error_body: JSON.stringify(response).substring(0, 200),\n    new_warmup_status: isBanned ? 'banned' : 'active',\n    is_banned: isBanned\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 120],
+      "id": "wf010-node-12",
+      "name": "Code – Detect Ban"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/warmup_activity_log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"warmup_number_id\": \"{{ $json.id }}\",\n  \"phone_number\":     \"{{ $json.phone_number }}\",\n  \"recipient\":        \"{{ $json.recipient_phone }}\",\n  \"message_type\":     \"{{ $json.message_type }}\",\n  \"message_preview\":  \"{{ $json.message_text.substring(0,180) }}\",\n  \"status\":           \"{{ $json.is_banned ? 'banned' : 'failed' }}\",\n  \"warmup_day\":       {{ $json.current_day }}\n}",
+        "options": { "timeout": 10000 }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1180, 120],
+      "id": "wf010-node-13",
+      "name": "HTTP – Log Activity (failed)"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/warmup_numbers?id=eq.{{ $json.id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_SERVICE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_SERVICE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"warmup_status\": \"{{ $json.new_warmup_status }}\",\n  \"updated_at\": \"{{ new Date().toISOString() }}\"\n}",
+        "options": { "timeout": 10000 }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1400, 120],
+      "id": "wf010-node-14",
+      "name": "HTTP – Mark Banned or Error"
+    }
+  ],
+  "connections": {
+    "Cron – Every 15 min (9AM-10PM)": {
+      "main": [[{ "node": "HTTP – Get Active Warmup Numbers", "type": "main", "index": 0 }]]
+    },
+    "HTTP – Get Active Warmup Numbers": {
+      "main": [[{ "node": "Code – Filter & Calculate Phase", "type": "main", "index": 0 }]]
+    },
+    "Code – Filter & Calculate Phase": {
+      "main": [[{ "node": "IF – Numbers Available", "type": "main", "index": 0 }]]
+    },
+    "IF – Numbers Available": {
+      "main": [
+        [{ "node": "HTTP – Get Warmup Contacts", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "HTTP – Get Warmup Contacts": {
+      "main": [[{ "node": "Code – Pick Message & Contact", "type": "main", "index": 0 }]]
+    },
+    "Code – Pick Message & Contact": {
+      "main": [[{ "node": "HTTP – Evolution Send Message", "type": "main", "index": 0 }]]
+    },
+    "HTTP – Evolution Send Message": {
+      "main": [[{ "node": "IF – Send OK", "type": "main", "index": 0 }]]
+    },
+    "IF – Send OK": {
+      "main": [
+        [{ "node": "HTTP – Log Activity (success)", "type": "main", "index": 0 }],
+        [{ "node": "Code – Detect Ban", "type": "main", "index": 0 }]
+      ]
+    },
+    "HTTP – Log Activity (success)": {
+      "main": [[{ "node": "HTTP – Increment Counter", "type": "main", "index": 0 }]]
+    },
+    "HTTP – Increment Counter": {
+      "main": [[{ "node": "HTTP – Update Contact Usage", "type": "main", "index": 0 }]]
+    },
+    "Code – Detect Ban": {
+      "main": [[{ "node": "HTTP – Log Activity (failed)", "type": "main", "index": 0 }]]
+    },
+    "HTTP – Log Activity (failed)": {
+      "main": [[{ "node": "HTTP – Mark Banned or Error", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true },
+  "staticData": null,
+  "pinData": {},
+  "tags": [{ "name": "warmup" }]
+}

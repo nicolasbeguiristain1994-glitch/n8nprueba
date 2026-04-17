@@ -84,6 +84,9 @@ const MIGRATIONS = [
   { file: 'db/migrations/004_human_handoff.sql', label: '004 — Human handoff + conversation_state' },
   { file: 'db/migrations/005_campaign_personalize_name.sql', label: '005 — Campaign personalize_name flag' },
   { file: 'db/migrations/006_contacts_linea.sql', label: '006 — Contacts linea (1-12)' },
+  { file: 'db/migrations/007_evolution_id_unique.sql', label: '007 — Evolution message ID unique index' },
+  { file: 'db/migrations/008_campaign_recipients.sql', label: '008 — Campaign recipients table' },
+  { file: 'db/migrations/009_performance_indexes.sql', label: '009 — Performance indexes' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

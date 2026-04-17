@@ -1,0 +1,271 @@
+{
+  "name": "WF-010b Daily Warmup Reset",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 * * *"
+            }
+          ]
+        }
+      },
+      "id": "node-cron-midnight",
+      "name": "Cron – Medianoche",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/warmup_numbers",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_KEY }}" }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "warmup_status", "value": "eq.active" },
+            { "name": "select", "value": "id,phone_number,current_day,target_days,messages_sent_today" }
+          ]
+        }
+      },
+      "id": "node-get-active-numbers",
+      "name": "GET – Números Activos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const numbers = $input.all().map(i => i.json);\n\nconst toComplete = numbers.filter(n => n.current_day >= n.target_days);\nconst toIncrement = numbers.filter(n => n.current_day < n.target_days);\n\nreturn [{\n  json: {\n    toComplete,\n    toIncrement,\n    totalActive: numbers.length,\n    completingToday: toComplete.length,\n    continuingToday: toIncrement.length\n  }\n}];"
+      },
+      "id": "node-classify-numbers",
+      "name": "Code – Clasificar Números",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-has-increment",
+              "leftValue": "={{ $json.continuingToday }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-if-has-increment",
+      "name": "IF – Hay que Incrementar",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { toIncrement } = $('Code – Clasificar Números').first().json;\n\nreturn toIncrement.map(n => ({\n  json: {\n    id: n.id,\n    phone_number: n.phone_number,\n    current_day: n.current_day + 1\n  }\n}));"
+      },
+      "id": "node-prepare-increments",
+      "name": "Code – Preparar Incrementos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 140]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/warmup_numbers",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "id", "value": "=eq.{{ $json.id }}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "messages_sent_today", "value": "0" },
+            { "name": "current_day", "value": "={{ $json.current_day }}" },
+            { "name": "updated_at", "value": "={{ new Date().toISOString() }}" }
+          ]
+        }
+      },
+      "id": "node-reset-increment",
+      "name": "PATCH – Reset + Incrementar Día",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 140]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-has-complete",
+              "leftValue": "={{ $('Code – Clasificar Números').first().json.completingToday }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node-if-has-complete",
+      "name": "IF – Hay que Completar",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { toComplete } = $('Code – Clasificar Números').first().json;\n\nreturn toComplete.map(n => ({\n  json: {\n    id: n.id,\n    phone_number: n.phone_number\n  }\n}));"
+      },
+      "id": "node-prepare-completions",
+      "name": "Code – Preparar Completados",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 340]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/warmup_numbers",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.SUPABASE_KEY }}" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.SUPABASE_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" },
+            { "name": "Prefer", "value": "return=minimal" }
+          ]
+        },
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "id", "value": "=eq.{{ $json.id }}" }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "warmup_status", "value": "completed" },
+            { "name": "messages_sent_today", "value": "0" },
+            { "name": "updated_at", "value": "={{ new Date().toISOString() }}" }
+          ]
+        }
+      },
+      "id": "node-mark-completed",
+      "name": "PATCH – Marcar Completado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 340]
+    },
+    {
+      "parameters": {
+        "jsCode": "const classified = $('Code – Clasificar Números').first().json;\n\nreturn [{\n  json: {\n    date: new Date().toISOString(),\n    summary: `Reset diario completado: ${classified.continuingToday} incrementados, ${classified.completingToday} completados, ${classified.totalActive} total activos`\n  }\n}];"
+      },
+      "id": "node-log-summary",
+      "name": "Code – Log Resumen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 240]
+    }
+  ],
+  "connections": {
+    "Cron – Medianoche": {
+      "main": [
+        [{ "node": "GET – Números Activos", "type": "main", "index": 0 }]
+      ]
+    },
+    "GET – Números Activos": {
+      "main": [
+        [{ "node": "Code – Clasificar Números", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code – Clasificar Números": {
+      "main": [
+        [
+          { "node": "IF – Hay que Incrementar", "type": "main", "index": 0 },
+          { "node": "IF – Hay que Completar", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "IF – Hay que Incrementar": {
+      "main": [
+        [{ "node": "Code – Preparar Incrementos", "type": "main", "index": 0 }],
+        [{ "node": "Code – Log Resumen", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code – Preparar Incrementos": {
+      "main": [
+        [{ "node": "PATCH – Reset + Incrementar Día", "type": "main", "index": 0 }]
+      ]
+    },
+    "PATCH – Reset + Incrementar Día": {
+      "main": [
+        [{ "node": "Code – Log Resumen", "type": "main", "index": 0 }]
+      ]
+    },
+    "IF – Hay que Completar": {
+      "main": [
+        [{ "node": "Code – Preparar Completados", "type": "main", "index": 0 }],
+        [{ "node": "Code – Log Resumen", "type": "main", "index": 0 }]
+      ]
+    },
+    "Code – Preparar Completados": {
+      "main": [
+        [{ "node": "PATCH – Marcar Completado", "type": "main", "index": 0 }]
+      ]
+    },
+    "PATCH – Marcar Completado": {
+      "main": [
+        [{ "node": "Code – Log Resumen", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "pinData": {}
+}
