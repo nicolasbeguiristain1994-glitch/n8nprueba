@@ -601,7 +601,17 @@ export default function Contacts() {
       </Dialog>
 
       {/* Modal crear lista */}
-      <Dialog open={showList} onOpenChange={setShowList}>
+      <Dialog open={showList} onOpenChange={v => {
+        setShowList(v)
+        if (!v) {
+          setNewListName('')
+          setListMode('selection')
+          setCriteriaPanel('')
+          setCriteriaGaming('')
+          setCriteriaSegment('')
+          setSavingList(false)
+        }
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><CheckSquare size={16}/> Crear lista de distribución</DialogTitle>
