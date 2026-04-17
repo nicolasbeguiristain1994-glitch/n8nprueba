@@ -75,7 +75,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ id: row.id })
   } catch (e: unknown) {
     console.error('[/api/contacts POST]', e instanceof Error ? e.message : e)
-    const msg = e instanceof Error ? e.message : 'Error al crear contacto'
-    return NextResponse.json({ error: msg }, { status: 500 })
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
