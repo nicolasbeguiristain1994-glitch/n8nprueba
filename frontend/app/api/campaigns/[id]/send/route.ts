@@ -36,18 +36,16 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   }
 
   // ── Fetch campaign details ───────────────────────────────────────────────
-  let campaign: {
+  type CampaignRow = {
     id: string; name: string; message: string; messages: string[] | null; media_url: string
     list_id: string; antiblock_delay_min: number; antiblock_delay_max: number
     personalize_name: boolean
-  } | undefined
+  }
+  let campaign: CampaignRow | undefined
 
   try {
-    const rows = await query<typeof campaign extends undefined ? never : typeof campaign>(
-      'SELECT * FROM campaigns WHERE id = $1',
-      [id]
-    )
-    campaign = rows[0] as typeof campaign
+    const rows = await query<CampaignRow>('SELECT * FROM campaigns WHERE id = $1', [id])
+    campaign = rows[0]
   } catch (e) {
     console.error('[campaign send] fetch campaign error:', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -91,7 +89,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     )
   } catch (e) {
     console.error('[campaign send] populate recipients error:', e instanceof Error ? e.message : e)
-    // Non-fatal: table may not exist yet; continue sending
+    // Non-fatal: log and continue — send still works without recipient tracking
   }
 
   // Update total_targets from actual count
@@ -102,7 +100,20 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   // ── Envío en background — responde inmediatamente ────────────────────────
   ;(async () => {
+    // On resume: seed counters from persisted state so totals stay accurate
     let sent = 0, failed = 0
+    try {
+      const [counts] = await query<{ sent_count: string; failed_count: string }>(
+        `SELECT
+           COUNT(*) FILTER (WHERE status = 'sent')   AS sent_count,
+           COUNT(*) FILTER (WHERE status = 'failed') AS failed_count
+         FROM campaign_recipients
+         WHERE campaign_id = $1`,
+        [id]
+      )
+      sent   = Number(counts?.sent_count   || 0)
+      failed = Number(counts?.failed_count || 0)
+    } catch { /* campaign_recipients unavailable — start at 0 */ }
 
     for (const contact of contacts) {
       // Verificar si fue pausada o cancelada antes de cada mensaje
@@ -119,7 +130,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
           sent++
           continue
         }
-      } catch { /* recipients table may not exist; continue */ }
+      } catch { /* non-fatal: recipient tracking is best-effort */ }
 
       // Pick a random message variant
       const msgPool = Array.isArray(campaign!.messages) && campaign!.messages.length > 0
@@ -176,7 +187,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
                WHERE campaign_id = $3 AND contact_id = $4`,
               [personalizedMsg, evolutionMsgId, id, contact.id]
             )
-          } catch { /* recipients table may not exist */ }
+          } catch { /* non-fatal: recipient tracking is best-effort */ }
         } else {
           let errDetail: string | number = res.status
           try { const d = await res.json(); errDetail = d?.message || res.status } catch { /* ignore */ }
@@ -199,7 +210,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
                WHERE campaign_id = $2 AND contact_id = $3`,
               [String(errDetail), id, contact.id]
             )
-          } catch { /* recipients table may not exist */ }
+          } catch { /* non-fatal: recipient tracking is best-effort */ }
         }
       } catch (e) {
         console.error(`[campaign ${id}] Excepción para ${contact.phone_number}:`, e instanceof Error ? e.message : e)
@@ -220,7 +231,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
              WHERE campaign_id = $2 AND contact_id = $3`,
             [errMsg, id, contact.id]
           )
-        } catch { /* recipients table may not exist */ }
+        } catch { /* non-fatal: recipient tracking is best-effort */ }
       }
 
       // Actualizar progreso en la DB cada mensaje
