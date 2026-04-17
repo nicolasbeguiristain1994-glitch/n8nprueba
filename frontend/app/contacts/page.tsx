@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import * as XLSX from 'xlsx'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -519,7 +519,16 @@ export default function Contacts() {
       )}
 
       {/* Modal importación */}
-      <Dialog open={showImport} onOpenChange={setShowImport}>
+      <Dialog open={showImport} onOpenChange={v => {
+        setShowImport(v)
+        if (!v) {
+          setImportRows([])
+          setImportResult(null)
+          setImporting(false)
+          setImportPanel('')
+          setImportGaming('')
+        }
+      }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><Upload size={16}/> Importar contactos</DialogTitle>
@@ -677,7 +686,19 @@ export default function Contacts() {
       </Dialog>
 
       {/* Modal nuevo contacto */}
-      <Dialog open={showAdd} onOpenChange={v => { setShowAdd(v); setAddError('') }}>
+      <Dialog open={showAdd} onOpenChange={v => {
+        setShowAdd(v)
+        if (!v) {
+          setNewPhone('')
+          setNewName('')
+          setNewPanel('')
+          setNewGaming('')
+          setNewSegment('')
+          setNewLinea('')
+          setAddError('')
+          setAddSaving(false)
+        }
+      }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><UserPlus size={16}/> Nuevo contacto</DialogTitle>

@@ -3,17 +3,29 @@ import { query } from '@/lib/db'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const { status } = await req.json()
+
+  let body: { status?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const { status } = body
 
   const allowed = ['paused', 'cancelled', 'draft']
-  if (!allowed.includes(status)) {
+  if (!status || !allowed.includes(status)) {
     return NextResponse.json({ error: 'Status inválido' }, { status: 400 })
   }
 
-  await query(
-    `UPDATE campaigns SET status = $1::campaign_status, updated_at = NOW() WHERE id = $2`,
-    [status, id]
-  )
-
-  return NextResponse.json({ ok: true })
+  try {
+    await query(
+      `UPDATE campaigns SET status = $1::campaign_status, updated_at = NOW() WHERE id = $2`,
+      [status, id]
+    )
+    return NextResponse.json({ ok: true })
+  } catch (e) {
+    console.error('[/api/campaigns PATCH]', e instanceof Error ? e.message : e)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
 }

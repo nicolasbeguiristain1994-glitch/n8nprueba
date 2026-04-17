@@ -1,10 +1,9 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Send, Plus, Loader2, Eye, Play, BarChart2, Shield, Clock, Pause, XCircle, CheckCheck, Truck, AlertTriangle, HelpCircle, Trash2, Shuffle, UserCheck, UserX } from 'lucide-react'
@@ -43,6 +42,7 @@ export default function Campaigns() {
   const [campContacts, setCampContacts] = useState<CampaignContact[]>([])
   const [loadingContacts, setLoadingContacts] = useState(false)
   const [sending, setSending]         = useState<string | null>(null)
+  const [sendError, setSendError]     = useState<string | null>(null)
   const [actioning, setActioning]     = useState<string | null>(null)
 
   // Form
@@ -84,9 +84,20 @@ export default function Campaigns() {
 
   const sendNow = async (id: string) => {
     setSending(id)
-    await fetch(`/api/campaigns/${id}/send`, { method: 'POST' })
-    setSending(null)
-    setTimeout(load, 1000)
+    setSendError(null)
+    try {
+      const res = await fetch(`/api/campaigns/${id}/send`, { method: 'POST' })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        setSendError(d.error || `Error ${res.status}`)
+      } else {
+        setTimeout(load, 1000)
+      }
+    } catch {
+      setSendError('Error de red al enviar')
+    } finally {
+      setSending(null)
+    }
   }
 
   const openDetail = async (c: Campaign) => {
@@ -124,6 +135,14 @@ export default function Campaigns() {
           <Plus size={14} className="mr-1" /> Nueva campaña
         </Button>
       </div>
+
+      {/* Error de envío */}
+      {sendError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-sm text-red-600 flex items-center justify-between">
+          <span>{sendError}</span>
+          <button onClick={() => setSendError(null)} className="ml-4 text-red-400 hover:text-red-600">✕</button>
+        </div>
+      )}
 
       {/* Lista de campañas */}
       {campaigns.length === 0
@@ -237,7 +256,16 @@ export default function Campaigns() {
       }
 
       {/* Modal nueva campaña */}
-      <Dialog open={showNew} onOpenChange={setShowNew}>
+      <Dialog open={showNew} onOpenChange={v => {
+        setShowNew(v)
+        if (!v) {
+          setForm({ name:'', list_id:'', scheduled_at:'', media_url:'', antiblock_delay_min:3, antiblock_delay_max:8, type:'promotion', personalize_name: true })
+          setMessages([''])
+          setPreviewIdx(0)
+          setCreating(false)
+          setSendError(null)
+        }
+      }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nueva campaña</DialogTitle>

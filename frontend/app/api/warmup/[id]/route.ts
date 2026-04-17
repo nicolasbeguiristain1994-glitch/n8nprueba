@@ -3,7 +3,13 @@ import { query } from '@/lib/db'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const body = await req.json()
+
+  let body: Record<string, unknown>
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
 
   const allowed = ['warmup_status', 'daily_limit', 'target_days', 'notes', 'display_name']
   const updates: string[] = []
@@ -21,16 +27,25 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   values.push(id)
-  await query(
-    `UPDATE warmup_numbers SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${values.length}`,
-    values
-  )
-
-  return NextResponse.json({ ok: true })
+  try {
+    await query(
+      `UPDATE warmup_numbers SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${values.length}`,
+      values
+    )
+    return NextResponse.json({ ok: true })
+  } catch (e) {
+    console.error('[/api/warmup PATCH]', e instanceof Error ? e.message : e)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  await query(`DELETE FROM warmup_numbers WHERE id = $1`, [id])
-  return NextResponse.json({ ok: true })
+  try {
+    await query(`DELETE FROM warmup_numbers WHERE id = $1`, [id])
+    return NextResponse.json({ ok: true })
+  } catch (e) {
+    console.error('[/api/warmup DELETE]', e instanceof Error ? e.message : e)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
 }
