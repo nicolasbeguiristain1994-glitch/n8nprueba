@@ -2,16 +2,32 @@
 
 ## How env files work
 
-| File | Purpose |
+| File / System | Purpose |
 |---|---|
 | `.env.example` | Template committed to the repo — **no real values** |
-| `frontend/.env.local` | Local development — **never commit** |
-| Railway service variables | Staging and production — managed in Railway dashboard |
+| **Doppler** (`dev` config) | Local development — replaces `frontend/.env.local` |
+| **Doppler** (`stg` config) | Staging secrets — source of truth for staging environment |
+| **Doppler** (`prd` config) | Production secrets — source of truth for production environment |
+| Railway service variables | Injects secrets at runtime from Doppler (via `DOPPLER_TOKEN`) |
 
-Copy the template to get started:
+### Local development with Doppler
+
+```bash
+# One-time setup
+doppler setup   # choose project: whatsapp-difusion-bot, config: dev
+
+# Run the Next.js dev server with secrets injected
+cd frontend && doppler run -- npm run dev
+
+# Run migrations locally
+doppler run -- node scripts/ops/run-migrations.mjs
+```
+
+### Legacy (without Doppler)
+
 ```bash
 cp .env.example frontend/.env.local
-# then fill in real values
+# then fill in real values manually
 ```
 
 ---
@@ -99,7 +115,24 @@ openssl rand -hex 32
 ## Secret management rules
 
 - **Never share secrets in Slack, WhatsApp, email, or plain text.**
-- Use a secrets manager for team sharing: [1Password](https://1password.com), [Bitwarden](https://bitwarden.com), [Doppler](https://doppler.com), or [Infisical](https://infisical.com).
+- **Doppler is the source of truth** — edit secrets in Doppler, not directly in Railway.
 - Rotate `AUTH_SECRET` if a session token may have been exposed — it immediately invalidates all active sessions.
 - Rotate `EVOLUTION_WEBHOOK_SECRET` if the webhook endpoint may have been probed.
-- Production secrets live only in the Railway dashboard — never in files committed to git.
+- After rotating a secret in Doppler, trigger a Railway redeploy so the new value is picked up.
+
+## Doppler configs
+
+| Config | Environment | Used by |
+|---|---|---|
+| `dev` | Development | Local dev via `doppler run` |
+| `stg` | Staging | Railway staging service (`DOPPLER_TOKEN=dp.st.stg.*`) |
+| `prd` | Production | Railway production service (`DOPPLER_TOKEN=dp.st.prd.*`) |
+
+**Project:** `whatsapp-difusion-bot`  
+**Dashboard:** https://dashboard.doppler.com/workplace/projects/whatsapp-difusion-bot
+
+### Pending: Supabase anon key
+
+`SUPABASE_KEY` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are set to a placeholder in all Doppler configs.
+Get the real value from: Supabase dashboard → your project → **Settings → API → `anon public`**.
+Then update both `prd` and `stg` configs in Doppler.
