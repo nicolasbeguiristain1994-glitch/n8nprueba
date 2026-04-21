@@ -54,9 +54,14 @@ export default function Contacts() {
   const [listMode, setListMode]       = useState<'selection' | 'criteria'>('selection')
   const [newListName, setNewListName] = useState('')
   const [savingList, setSavingList]   = useState(false)
+  const [listError, setListError]     = useState<string | null>(null)
   const [criteriaPanel, setCriteriaPanel]     = useState('')
   const [criteriaGaming, setCriteriaGaming]   = useState('')
   const [criteriaSegment, setCriteriaSegment] = useState('')
+
+  // Inline update / import error
+  const [updateError, setUpdateError]   = useState<string | null>(null)
+  const [importError, setImportError]   = useState<string | null>(null)
 
   const PANEL_OPTIONS = ['Betcoin', 'Zeus', 'Bigwin', 'Farabet', 'Las Vegas']
 
@@ -133,14 +138,26 @@ export default function Contacts() {
 
   const confirmImport = async () => {
     setImporting(true)
-    const res = await fetch('/api/contacts/import', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contacts: importRows, panel: importPanel || undefined, gaming: importGaming || undefined }),
-    })
-    const data = await res.json()
-    setImportResult(data)
+    setImportError(null)
+    let res: Response
+    try {
+      res = await fetch('/api/contacts/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contacts: importRows, panel: importPanel || undefined, gaming: importGaming || undefined }),
+      })
+    } catch {
+      setImporting(false)
+      setImportError('Error de red al importar')
+      return
+    }
+    const data = await res.json().catch(() => ({}))
     setImporting(false)
+    if (!res.ok) {
+      setImportError(data.error || 'Error al importar')
+      return
+    }
+    setImportResult(data)
     load()
   }
 
@@ -153,39 +170,59 @@ export default function Contacts() {
   }
 
   const updatePanel = async (contactId: string, panel: string | null) => {
-    setContacts(prev => prev.map(c => c.id === contactId ? { ...c, panel: panel || '' } : c))
-    await fetch(`/api/contacts/${contactId}`, {
+    const old = contacts.find(c => c.id === contactId)?.panel ?? ''
+    setContacts(cs => cs.map(c => c.id === contactId ? { ...c, panel: panel || '' } : c))
+    const res = await fetch(`/api/contacts/${contactId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ panel }),
     })
+    if (!res.ok) {
+      setContacts(cs => cs.map(c => c.id === contactId ? { ...c, panel: old } : c))
+      setUpdateError('Error al actualizar panel')
+    }
   }
 
   const updateSegment = async (contactId: string, segment: string | null) => {
-    setContacts(prev => prev.map(c => c.id === contactId ? { ...c, segment: segment || '' } : c))
-    await fetch(`/api/contacts/${contactId}`, {
+    const old = contacts.find(c => c.id === contactId)?.segment ?? ''
+    setContacts(cs => cs.map(c => c.id === contactId ? { ...c, segment: segment || '' } : c))
+    const res = await fetch(`/api/contacts/${contactId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ segment }),
     })
+    if (!res.ok) {
+      setContacts(cs => cs.map(c => c.id === contactId ? { ...c, segment: old } : c))
+      setUpdateError('Error al actualizar nivel')
+    }
   }
 
   const updateGaming = async (contactId: string, gaming: string | null) => {
-    setContacts(prev => prev.map(c => c.id === contactId ? { ...c, gaming: gaming || '' } : c))
-    await fetch(`/api/contacts/${contactId}`, {
+    const old = contacts.find(c => c.id === contactId)?.gaming ?? ''
+    setContacts(cs => cs.map(c => c.id === contactId ? { ...c, gaming: gaming || '' } : c))
+    const res = await fetch(`/api/contacts/${contactId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ gaming }),
     })
+    if (!res.ok) {
+      setContacts(cs => cs.map(c => c.id === contactId ? { ...c, gaming: old } : c))
+      setUpdateError('Error al actualizar juego')
+    }
   }
 
   const updateLinea = async (contactId: string, linea: number | null) => {
-    setContacts(prev => prev.map(c => c.id === contactId ? { ...c, linea } : c))
-    await fetch(`/api/contacts/${contactId}`, {
+    const old = contacts.find(c => c.id === contactId)?.linea ?? null
+    setContacts(cs => cs.map(c => c.id === contactId ? { ...c, linea } : c))
+    const res = await fetch(`/api/contacts/${contactId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ linea }),
     })
+    if (!res.ok) {
+      setContacts(cs => cs.map(c => c.id === contactId ? { ...c, linea: old } : c))
+      setUpdateError('Error al actualizar línea')
+    }
   }
 
   const addContact = async () => {
@@ -205,7 +242,8 @@ export default function Contacts() {
 
   const deleteContact = async (id: string) => {
     if (!confirm('¿Eliminar este contacto?')) return
-    await fetch(`/api/contacts/${id}`, { method: 'DELETE' })
+    const res = await fetch(`/api/contacts/${id}`, { method: 'DELETE' })
+    if (!res.ok) return  // don't remove from UI if server rejected
     setContacts(prev => prev.filter(c => c.id !== id))
     setTotal(prev => prev - 1)
     setSelected(prev => { const n = new Set(prev); n.delete(id); return n })
@@ -213,9 +251,16 @@ export default function Contacts() {
 
   const deleteSelected = async () => {
     if (!confirm(`¿Eliminar ${selected.size} contactos seleccionados?`)) return
-    await Promise.all(Array.from(selected).map(id => fetch(`/api/contacts/${id}`, { method: 'DELETE' })))
-    setContacts(prev => prev.filter(c => !selected.has(c.id)))
-    setTotal(prev => prev - selected.size)
+    const ids = Array.from(selected)
+    const responses = await Promise.all(
+      ids.map(id => fetch(`/api/contacts/${id}`, { method: 'DELETE' })
+        .then(r => ({ id, ok: r.ok }))
+        .catch(() => ({ id, ok: false })))
+    )
+    const deleted = new Set(responses.filter(r => r.ok).map(r => r.id))
+    if (deleted.size === 0) return
+    setContacts(prev => prev.filter(c => !deleted.has(c.id)))
+    setTotal(prev => prev - deleted.size)
     setSelected(new Set())
   }
 
@@ -275,11 +320,17 @@ export default function Contacts() {
     if (listMode === 'selection' && selected.size === 0) return
     if (listMode === 'criteria' && !criteriaPanel && !criteriaGaming && !criteriaSegment) return
     setSavingList(true)
+    setListError(null)
     const body = listMode === 'selection'
       ? { name: newListName, contact_ids: Array.from(selected) }
       : { name: newListName, criteria: { panel: criteriaPanel, gaming: criteriaGaming, segment: criteriaSegment } }
-    await fetch('/api/lists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    const res = await fetch('/api/lists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     setSavingList(false)
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      setListError(d.error || 'Error al crear la lista')
+      return
+    }
     setShowList(false)
     setNewListName('')
     setSelected(new Set())
@@ -337,6 +388,14 @@ export default function Contacts() {
           </label>
         </div>
       </div>
+
+      {/* Error de actualización inline */}
+      {updateError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-sm text-red-600 flex items-center justify-between">
+          <span>{updateError}</span>
+          <button onClick={() => setUpdateError(null)} className="ml-4 text-red-400 hover:text-red-600">✕</button>
+        </div>
+      )}
 
       {/* Filtros */}
       <div className="flex gap-3 flex-wrap">
@@ -520,11 +579,13 @@ export default function Contacts() {
 
       {/* Modal importación */}
       <Dialog open={showImport} onOpenChange={v => {
+        if (importing) return  // block close during import
         setShowImport(v)
         if (!v) {
           setImportRows([])
           setImportResult(null)
           setImporting(false)
+          setImportError(null)
           setImportPanel('')
           setImportGaming('')
         }
@@ -589,8 +650,11 @@ export default function Contacts() {
                 </div>
               </div>
               <p className="text-xs text-gray-400 -mt-2">Se asignarán a todos los contactos importados</p>
+              {importError && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{importError}</p>
+              )}
               <div className="flex gap-2">
-                <Button variant="outline" className="flex-1" onClick={() => setShowImport(false)}>Cancelar</Button>
+                <Button variant="outline" className="flex-1" onClick={() => setShowImport(false)} disabled={importing}>Cancelar</Button>
                 <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={confirmImport} disabled={importing}>
                   {importing ? 'Importando…' : `Importar ${importRows.length} contactos`}
                 </Button>
@@ -601,7 +665,19 @@ export default function Contacts() {
       </Dialog>
 
       {/* Modal crear lista */}
-      <Dialog open={showList} onOpenChange={setShowList}>
+      <Dialog open={showList} onOpenChange={v => {
+        if (savingList) return  // block close during save
+        setShowList(v)
+        if (!v) {
+          setNewListName('')
+          setListMode('selection')
+          setCriteriaPanel('')
+          setCriteriaGaming('')
+          setCriteriaSegment('')
+          setSavingList(false)
+          setListError(null)
+        }
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><CheckSquare size={16}/> Crear lista de distribución</DialogTitle>
@@ -672,8 +748,11 @@ export default function Contacts() {
 
             <Input placeholder="Nombre de la lista (ej: Betcoin Slots VIP)" value={newListName} onChange={e => setNewListName(e.target.value)} />
 
+            {listError && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{listError}</p>
+            )}
             <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setShowList(false)}><X size={14}/> Cancelar</Button>
+              <Button variant="outline" className="flex-1" onClick={() => setShowList(false)} disabled={savingList}><X size={14}/> Cancelar</Button>
               <Button
                 className={`flex-1 ${listMode === 'criteria' ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-green-600 hover:bg-green-700'}`}
                 onClick={createList}

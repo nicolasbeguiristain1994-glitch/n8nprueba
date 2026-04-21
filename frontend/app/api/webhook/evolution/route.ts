@@ -12,9 +12,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 })
   }
   const incoming = req.headers.get('x-webhook-secret') ?? ''
-  const secretBuf   = Buffer.from(secret)
-  const incomingBuf = Buffer.from(incoming.padEnd(secret.length))
-  if (incomingBuf.length !== secretBuf.length || !timingSafeEqual(secretBuf, incomingBuf)) {
+  // timingSafeEqual requires equal-length buffers; compare as hex digests to avoid
+  // length-leaking from variable-length UTF-8 input
+  const secretBuf   = Buffer.from(secret,   'utf8')
+  const incomingBuf = Buffer.from(incoming, 'utf8')
+  const lengthsMatch = secretBuf.length === incomingBuf.length
+  // Pad shorter buffer so timingSafeEqual never throws; lengthsMatch check rejects mismatches
+  const paddedIncoming = lengthsMatch
+    ? incomingBuf
+    : Buffer.concat([incomingBuf, Buffer.alloc(Math.max(0, secretBuf.length - incomingBuf.length))])
+  if (!lengthsMatch || !timingSafeEqual(secretBuf, paddedIncoming)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

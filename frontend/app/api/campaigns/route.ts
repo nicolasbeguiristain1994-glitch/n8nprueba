@@ -59,6 +59,11 @@ export async function POST(req: NextRequest) {
   if (!name || msgArray.length === 0)
     return NextResponse.json({ error: 'name y al menos un mensaje son requeridos' }, { status: 400 })
 
+  const ALLOWED_TYPES = ['promotion', 'retention', 'onboarding', 'support', 'survey', 'payment', 'risk_alert']
+  const resolvedType = campaignType || 'promotion'
+  if (!ALLOWED_TYPES.includes(resolvedType))
+    return NextResponse.json({ error: `Tipo de campaña inválido. Valores permitidos: ${ALLOWED_TYPES.join(', ')}` }, { status: 400 })
+
   try {
     let total_targets = 0
     if (list_id) {
@@ -75,7 +80,7 @@ export async function POST(req: NextRequest) {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        RETURNING id`,
       [name, msgArray[0], JSON.stringify(msgArray), media_url || null, media_type || null,
-       list_id || null, campaignType || 'promotion',
+       list_id || null, resolvedType,
        scheduled_at ? 'scheduled' : 'draft',
        scheduled_at || null, total_targets,
        antiblock_delay_min ?? 3, antiblock_delay_max ?? 8,

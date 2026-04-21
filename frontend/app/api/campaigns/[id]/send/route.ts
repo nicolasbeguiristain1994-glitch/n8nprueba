@@ -1,81 +1,390 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 
+// ── Constants ──────────────────────────────────────────────────────────────
+const STALE_SENDING_MINUTES  = 15  // rows stuck in 'sending' longer than this are recovered
+const PROCESSOR_LOCK_MINUTES = 30  // stale processor lock timeout
+const LOCK_HEARTBEAT_EVERY   = 50  // refresh processor_locked_at every N sends
+
+// ── Types ──────────────────────────────────────────────────────────────────
+type CampaignRow = {
+  id: string; name: string; message: string; messages: string[] | null
+  media_url: string; list_id: string; antiblock_delay_min: number
+  antiblock_delay_max: number; personalize_name: boolean; status: string
+}
+
+type RecipientRow = {
+  id: string; contact_id: string; phone_number: string
+  first_name: string; attempts: number
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function pickMessage(campaign: CampaignRow): string {
+  const pool = Array.isArray(campaign.messages) && campaign.messages.length > 0
+    ? campaign.messages
+    : [campaign.message]
+  return pool[Math.floor(Math.random() * pool.length)]
+}
+
+function personalize(raw: string, firstName: string, campaign: CampaignRow): string {
+  const nameValue = campaign.personalize_name !== false ? (firstName || '') : ''
+  return raw
+    .replace(/\{\{nombre\}\}/gi, nameValue)
+    .replace(/\{\{name\}\}/gi,   nameValue)
+}
+
+function antiblockDelay(campaign: CampaignRow): Promise<void> {
+  const delaySec = Math.floor(
+    Math.random() * (campaign.antiblock_delay_max - campaign.antiblock_delay_min + 1)
+  ) + campaign.antiblock_delay_min
+  return new Promise(r => setTimeout(r, delaySec * 1000))
+}
+
+// ── Stale recovery ─────────────────────────────────────────────────────────
+
+/**
+ * Recover rows stuck in 'sending' longer than STALE_SENDING_MINUTES.
+ * Uses campaign_recipient_id FK to confirm sends without a contact_id join.
+ * - If whatsapp_messages confirms delivery → mark 'sent'.
+ * - Otherwise → reset to 'pending' so the processor re-sends.
+ */
+async function recoverStaleRows(campaignId: string): Promise<void> {
+  try {
+    // Confirmed sent: whatsapp_messages row exists for this campaign_recipient_id
+    await query(
+      `UPDATE campaign_recipients cr
+       SET    status = 'sent', locked_at = NULL, updated_at = NOW()
+       FROM   whatsapp_messages wm
+       WHERE  cr.campaign_id = $1
+         AND  cr.status      = 'sending'
+         AND  cr.locked_at   < NOW() - INTERVAL '${STALE_SENDING_MINUTES} minutes'
+         AND  wm.campaign_recipient_id = cr.id
+         AND  wm.status IN ('sent', 'delivered', 'read')`,
+      [campaignId]
+    )
+    // Unconfirmed: reset to pending for re-send
+    await query(
+      `UPDATE campaign_recipients
+       SET    status = 'pending', locked_at = NULL, updated_at = NOW()
+       WHERE  campaign_id = $1
+         AND  status      = 'sending'
+         AND  locked_at   < NOW() - INTERVAL '${STALE_SENDING_MINUTES} minutes'`,
+      [campaignId]
+    )
+  } catch (e) {
+    console.error(`[campaign ${campaignId}] stale recovery error:`,
+      e instanceof Error ? e.message : e)
+  }
+}
+
+// ── Atomic claim ───────────────────────────────────────────────────────────
+
+/**
+ * Atomically claim one pending recipient with FOR UPDATE SKIP LOCKED.
+ * Returns undefined if no pending rows remain.
+ *
+ * Uses a data-modifying CTE (valid Postgres 9.1+) to avoid a separate contacts
+ * query: the UPDATE runs first, then the outer SELECT joins contacts for
+ * first_name in the same round-trip.
+ *
+ * FOR UPDATE SKIP LOCKED inside the subquery ensures concurrent processors
+ * (if the lock somehow fails) cannot claim the same row.
+ */
+async function claimOne(campaignId: string): Promise<RecipientRow | undefined> {
+  const rows = await query<RecipientRow>(
+    `WITH claimed AS (
+       UPDATE campaign_recipients
+       SET    status     = 'sending',
+              locked_at  = NOW(),
+              attempts   = attempts + 1,
+              updated_at = NOW()
+       WHERE  id = (
+         SELECT id
+         FROM   campaign_recipients
+         WHERE  campaign_id = $1
+           AND  status      = 'pending'
+         ORDER BY created_at
+         LIMIT  1
+         FOR UPDATE SKIP LOCKED
+       )
+       RETURNING id, contact_id, phone_number, attempts
+     )
+     SELECT cl.id,
+            cl.contact_id,
+            cl.phone_number,
+            cl.attempts,
+            COALESCE(c.first_name, '') AS first_name
+     FROM   claimed cl
+     LEFT JOIN contacts c ON c.id = cl.contact_id`,
+    [campaignId]
+  )
+  return rows[0]
+}
+
+// ── Counter sync ───────────────────────────────────────────────────────────
+
+/**
+ * Reads aggregate counts from campaign_recipients and writes them back to
+ * campaigns.total_sent/total_failed.
+ * 'pending' here includes rows still in 'sending' (stale or in-flight),
+ * so the campaign won't be marked complete until all are resolved.
+ */
+async function syncCounters(
+  campaignId: string
+): Promise<{ sent: number; failed: number; pending: number }> {
+  try {
+    const [row] = await query<{ sent: string; failed: string; pending: string }>(
+      `SELECT
+         COUNT(*) FILTER (WHERE status = 'sent')               AS sent,
+         COUNT(*) FILTER (WHERE status = 'failed')             AS failed,
+         COUNT(*) FILTER (WHERE status IN ('pending','sending')) AS pending
+       FROM campaign_recipients
+       WHERE campaign_id = $1`,
+      [campaignId]
+    )
+    const sent    = Number(row?.sent    || 0)
+    const failed  = Number(row?.failed  || 0)
+    const pending = Number(row?.pending || 0)
+    await query(
+      `UPDATE campaigns SET total_sent = $1, total_failed = $2 WHERE id = $3`,
+      [sent, failed, campaignId]
+    )
+    return { sent, failed, pending }
+  } catch {
+    return { sent: 0, failed: 0, pending: 0 }
+  }
+}
+
+// ── Send one contact ───────────────────────────────────────────────────────
+
+/**
+ * Call n8n, then persist result.
+ *
+ * Idempotency key: recipient.id (campaign_recipients.id = campaign_recipient_id).
+ * Sent to n8n as `campaign_recipient_id` and `dedup_key` so n8n can deduplicate
+ * on its side if it receives the same request twice.
+ *
+ * whatsapp_messages upsert uses ON CONFLICT (campaign_recipient_id) so a second
+ * call for the same recipient never creates a duplicate row.
+ * - On success: DO UPDATE overwrites a prior 'failed' row with 'sent' (retry won).
+ * - On failure: DO NOTHING — never overwrite a prior 'sent' row with 'failed'.
+ */
+async function sendOne(
+  campaignId: string,
+  campaign: CampaignRow,
+  recipient: RecipientRow,
+  n8nUrl: string
+): Promise<'sent' | 'failed'> {
+  const personalizedMsg = personalize(pickMessage(campaign), recipient.first_name, campaign)
+
+  try {
+    const res = await fetch(`${n8nUrl}/webhook/send-whatsapp`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        phone:                 recipient.phone_number,
+        message:               personalizedMsg,
+        campaign_id:           campaignId,
+        campaign_name:         campaign.name,
+        contact_id:            recipient.contact_id,
+        // Idempotency keys for n8n deduplication
+        campaign_recipient_id: recipient.id,
+        dedup_key:             recipient.id,
+        media_url:             campaign.media_url || undefined,
+        source:                'campaign',
+        antiblock_delay_min:   campaign.antiblock_delay_min,
+        antiblock_delay_max:   campaign.antiblock_delay_max,
+      }),
+    })
+
+    if (res.ok) {
+      let evolutionMsgId: string | null = null
+      try {
+        const data = await res.json()
+        evolutionMsgId = data?.key?.id || data?.id || null
+      } catch { /* n8n returned empty body */ }
+
+      // Upsert outbound message — ON CONFLICT overwrites 'failed' with 'sent' (retry won),
+      // preserves 'sent'/'delivered'/'read' if already present.
+      const [wm] = await query<{ id: string }>(
+        `INSERT INTO whatsapp_messages
+           (contact_id, campaign_id, phone_number, message_body, direction, status,
+            evolution_message_id, sent_at, campaign_recipient_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'outbound', 'sent', $5, NOW(), $6, NOW(), NOW())
+         ON CONFLICT (campaign_recipient_id)
+           WHERE campaign_recipient_id IS NOT NULL
+         DO UPDATE SET
+           status               = 'sent',
+           evolution_message_id = EXCLUDED.evolution_message_id,
+           sent_at              = COALESCE(whatsapp_messages.sent_at, NOW()),
+           updated_at           = NOW()
+         RETURNING id`,
+        [recipient.contact_id, campaignId, recipient.phone_number,
+         personalizedMsg, evolutionMsgId, recipient.id]
+      )
+
+      await query(
+        `UPDATE campaign_recipients
+         SET status = 'sent', sent_at = NOW(), locked_at = NULL,
+             message_body = $1, evolution_message_id = $2,
+             updated_at = NOW()
+         WHERE id = $3`,
+        [personalizedMsg, evolutionMsgId, recipient.id]
+      )
+
+      return 'sent'
+    }
+
+    // HTTP error from n8n
+    let errDetail: string
+    try { const d = await res.json(); errDetail = d?.message || String(res.status) }
+    catch { errDetail = String(res.status) }
+    console.error(`[campaign ${campaignId}] HTTP ${errDetail} for ${recipient.phone_number}`)
+    await recordFailure(campaignId, recipient, personalizedMsg, errDetail)
+    return 'failed'
+
+  } catch (e) {
+    const errMsg = e instanceof Error ? e.message : 'network error'
+    console.error(`[campaign ${campaignId}] exception for ${recipient.phone_number}:`, errMsg)
+    await recordFailure(campaignId, recipient, personalizedMsg, errMsg)
+    return 'failed'
+  }
+}
+
+async function recordFailure(
+  campaignId: string,
+  recipient: RecipientRow,
+  personalizedMsg: string,
+  errDetail: string
+): Promise<void> {
+  // DO NOTHING on conflict: never overwrite a confirmed 'sent' row with 'failed'.
+  await query(
+    `INSERT INTO whatsapp_messages
+       (contact_id, campaign_id, phone_number, message_body, direction, status,
+        failed_at, error_detail, campaign_recipient_id, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, 'outbound', 'failed', NOW(), $5, $6, NOW(), NOW())
+     ON CONFLICT (campaign_recipient_id)
+       WHERE campaign_recipient_id IS NOT NULL
+     DO NOTHING`,
+    [recipient.contact_id, campaignId, recipient.phone_number,
+     personalizedMsg, errDetail, recipient.id]
+  )
+  await query(
+    `UPDATE campaign_recipients
+     SET status = 'failed', failed_at = NOW(), locked_at = NULL,
+         error_detail = $1, updated_at = NOW()
+     WHERE id = $2`,
+    [errDetail, recipient.id]
+  )
+}
+
+// ── Background processor ───────────────────────────────────────────────────
+
+/**
+ * Main processing loop. Holds the processor lock for its entire lifetime.
+ * The try/finally guarantees the lock is released even if an uncaught error
+ * propagates out of the loop.
+ *
+ * Flow per iteration:
+ *   1. Read campaign status — bail if paused/cancelled.
+ *   2. claimOne() — bail if no pending rows.
+ *   3. sendOne() — updates recipient + whatsapp_messages atomically.
+ *   4. syncCounters() — persist aggregate counts; bail if pending drops to 0.
+ *   5. Antiblock delay before next claim.
+ *   6. Heartbeat: refresh processor_locked_at every LOCK_HEARTBEAT_EVERY sends.
+ */
+async function processInBackground(campaign: CampaignRow, n8nUrl: string): Promise<void> {
+  const id = campaign.id
+  let sendCount = 0
+
+  try {
+    // Recover any stale rows from previous crashed runs before starting
+    await recoverStaleRows(id)
+
+    while (true) {
+      // ── 1. Status gate ─────────────────────────────────────────────────
+      const [current] = await query<{ status: string }>(
+        'SELECT status FROM campaigns WHERE id = $1', [id]
+      )
+      if (!current || current.status === 'paused' || current.status === 'cancelled') break
+
+      // ── 2. Claim one recipient ─────────────────────────────────────────
+      const recipient = await claimOne(id)
+      if (!recipient) break  // no more pending rows
+
+      // ── 3. Send ────────────────────────────────────────────────────────
+      await sendOne(id, campaign, recipient, n8nUrl)
+      sendCount++
+
+      // ── 4. Sync counters ───────────────────────────────────────────────
+      const { pending } = await syncCounters(id)
+      if (pending === 0) break
+
+      // ── 5. Antiblock delay ─────────────────────────────────────────────
+      // Re-check status after delay so pause/cancel is noticed promptly
+      await antiblockDelay(campaign)
+
+      // ── 6. Heartbeat: keep processor lock alive for long campaigns ─────
+      if (sendCount % LOCK_HEARTBEAT_EVERY === 0) {
+        await query(
+          `UPDATE campaigns SET processor_locked_at = NOW() WHERE id = $1`, [id]
+        ).catch(e =>
+          console.error(`[campaign ${id}] heartbeat error:`, e instanceof Error ? e.message : e)
+        )
+      }
+    }
+
+    // Final counter sync + completion
+    const { pending } = await syncCounters(id)
+    const [finalState] = await query<{ status: string }>(
+      'SELECT status FROM campaigns WHERE id = $1', [id]
+    )
+    if (finalState?.status === 'running' && pending === 0) {
+      await query(
+        `UPDATE campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1`, [id]
+      )
+    }
+
+  } finally {
+    // Always release the processor lock — even on uncaught error or early break
+    await query(
+      `UPDATE campaigns SET processor_locked_at = NULL WHERE id = $1`, [id]
+    ).catch(e =>
+      console.error(`[campaign ${id}] failed to release processor lock:`,
+        e instanceof Error ? e.message : e)
+    )
+  }
+}
+
+// ── Route handler ──────────────────────────────────────────────────────────
+
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
 
-  // ── Fix 5: server-only N8N_URL ──────────────────────────────────────────
   const N8N_URL = process.env.N8N_URL
   if (!N8N_URL) return NextResponse.json({ error: 'N8N_URL not configured' }, { status: 500 })
 
-  // ── Fix 4: atomically guard against duplicate starts ────────────────────
-  // Only transition from draft/scheduled/paused → running
-  let campaignRow: { id: string } | undefined
+  // ── Fetch campaign ────────────────────────────────────────────────────────
+  let campaign: CampaignRow | undefined
   try {
-    const rows = await query<{ id: string }>(
-      `UPDATE campaigns
-       SET status = 'running', started_at = COALESCE(started_at, NOW())
-       WHERE id = $1 AND status IN ('draft', 'scheduled', 'paused')
-       RETURNING id`,
-      [id]
-    )
-    campaignRow = rows[0]
+    const rows = await query<CampaignRow>('SELECT * FROM campaigns WHERE id = $1', [id])
+    campaign = rows[0]
   } catch (e) {
-    console.error('[campaign send] status update error:', e instanceof Error ? e.message : e)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-
-  if (!campaignRow) {
-    // Campaign is already running, completed, or cancelled — or doesn't exist
-    const existing = await query<{ id: string; status: string }>(
-      'SELECT id, status FROM campaigns WHERE id = $1',
-      [id]
-    )
-    if (!existing[0]) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
-    return NextResponse.json({ error: `Campaign is already ${existing[0].status}` }, { status: 409 })
-  }
-
-  // ── Fetch campaign details ───────────────────────────────────────────────
-  let campaign: {
-    id: string; name: string; message: string; messages: string[] | null; media_url: string
-    list_id: string; antiblock_delay_min: number; antiblock_delay_max: number
-    personalize_name: boolean
-  } | undefined
-
-  try {
-    const rows = await query<typeof campaign extends undefined ? never : typeof campaign>(
-      'SELECT * FROM campaigns WHERE id = $1',
-      [id]
-    )
-    campaign = rows[0] as typeof campaign
-  } catch (e) {
-    console.error('[campaign send] fetch campaign error:', e instanceof Error ? e.message : e)
+    console.error('[campaign send] fetch error:', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 
   if (!campaign) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
 
-  // ── Fetch eligible contacts ──────────────────────────────────────────────
-  let contacts: Array<{ phone_number: string; first_name: string; id: string }> = []
-  try {
-    contacts = await query<{ phone_number: string; first_name: string; id: string }>(
-      `SELECT c.phone_number, c.first_name, c.id
-       FROM contacts c
-       JOIN contact_list_members clm ON clm.contact_id = c.id
-       WHERE clm.list_id = $1
-         AND c.opt_in_marketing = true
-         AND c.do_not_contact = false
-         AND c.status = 'active'`,
-      [campaign.list_id]
-    )
-  } catch (e) {
-    console.error('[campaign send] fetch contacts error:', e instanceof Error ? e.message : e)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  const RESUMABLE = ['draft', 'scheduled', 'paused', 'running']
+  if (!RESUMABLE.includes(campaign.status)) {
+    return NextResponse.json({ error: `Campaign is already ${campaign.status}` }, { status: 409 })
   }
 
-  if (!contacts.length) return NextResponse.json({ error: 'No contacts in list' }, { status: 400 })
-
-  // ── Populate campaign_recipients (idempotent — ON CONFLICT DO NOTHING) ───
+  // ── Populate campaign_recipients (idempotent) ─────────────────────────────
+  // Hard-fail for fresh starts — if we can't seed recipients, there's nothing to send.
+  // For re-attach (running), best-effort: rows are already there from the first run.
   try {
     await query(
       `INSERT INTO campaign_recipients (campaign_id, contact_id, phone_number)
@@ -84,167 +393,91 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
        JOIN contact_list_members clm ON clm.contact_id = c.id
        WHERE clm.list_id = $2
          AND c.opt_in_marketing = true
-         AND c.do_not_contact = false
-         AND c.status = 'active'
+         AND c.do_not_contact   = false
+         AND c.status           = 'active'
        ON CONFLICT (campaign_id, contact_id) DO NOTHING`,
       [id, campaign.list_id]
     )
   } catch (e) {
     console.error('[campaign send] populate recipients error:', e instanceof Error ? e.message : e)
-    // Non-fatal: table may not exist yet; continue sending
+    if (campaign.status !== 'running') {
+      // Fresh start: no recipients seeded — cannot proceed
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    }
+    // Re-attach: recipients from the original run are intact — log and continue
   }
 
-  // Update total_targets from actual count
-  await query(
-    `UPDATE campaigns SET total_targets = $1 WHERE id = $2`,
-    [contacts.length, id]
-  )
+  // ── Count pending work ────────────────────────────────────────────────────
+  let totalPending = 0
+  try {
+    const [row] = await query<{ count: string }>(
+      `SELECT COUNT(*)::int AS count FROM campaign_recipients
+       WHERE campaign_id = $1 AND status IN ('pending','sending')`,
+      [id]
+    )
+    totalPending = Number(row?.count || 0)
+  } catch (e) {
+    console.error('[campaign send] count pending error:', e instanceof Error ? e.message : e)
+  }
 
-  // ── Envío en background — responde inmediatamente ────────────────────────
+  if (totalPending === 0 && campaign.status !== 'running') {
+    return NextResponse.json({ error: 'No contacts in list' }, { status: 400 })
+  }
+
+  // ── Atomic: acquire processor lock + (if needed) transition status ────────
+  //
+  // Single UPDATE handles all cases:
+  //   draft/scheduled/paused → transitions to running, acquires lock.
+  //   running                → only acquires lock (status unchanged via CASE).
+  //
+  // The (processor_locked_at IS NULL OR locked_at < now - 30 min) guard is the
+  // only thing preventing a second concurrent processor from launching.
+  // If another POST holds a recent lock, this UPDATE matches 0 rows and we
+  // return { started: false, alreadyProcessing: true }.
+  let lockAcquired = false
+  try {
+    const rows = await query<{ id: string }>(
+      `UPDATE campaigns
+       SET status = CASE
+             WHEN status IN ('draft','scheduled','paused') THEN 'running'
+             ELSE status
+           END,
+           started_at = CASE
+             WHEN status IN ('draft','scheduled','paused') THEN COALESCE(started_at, NOW())
+             ELSE started_at
+           END,
+           processor_locked_at = NOW(),
+           total_targets = (
+             SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = $1
+           )
+       WHERE id = $1
+         AND status IN ('draft','scheduled','paused','running')
+         AND (processor_locked_at IS NULL
+              OR processor_locked_at < NOW() - INTERVAL '${PROCESSOR_LOCK_MINUTES} minutes')
+       RETURNING id`,
+      [id]
+    )
+    lockAcquired = !!rows[0]
+  } catch (e) {
+    console.error('[campaign send] lock acquisition error:', e instanceof Error ? e.message : e)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+
+  if (!lockAcquired) {
+    return NextResponse.json({ started: false, alreadyProcessing: true })
+  }
+
+  // ── Launch background processor — respond immediately ─────────────────────
+  const campaignSnapshot = campaign
   ;(async () => {
-    let sent = 0, failed = 0
-
-    for (const contact of contacts) {
-      // Verificar si fue pausada o cancelada antes de cada mensaje
-      const [current] = await query<{ status: string }>('SELECT status FROM campaigns WHERE id = $1', [id])
-      if (current?.status === 'paused' || current?.status === 'cancelled') break
-
-      // Skip if already sent to this contact in a previous run
-      try {
-        const [existing] = await query<{ status: string }>(
-          `SELECT status FROM campaign_recipients WHERE campaign_id = $1 AND contact_id = $2`,
-          [id, contact.id]
-        )
-        if (existing?.status === 'sent') {
-          sent++
-          continue
-        }
-      } catch { /* recipients table may not exist; continue */ }
-
-      // Pick a random message variant
-      const msgPool = Array.isArray(campaign!.messages) && campaign!.messages.length > 0
-        ? campaign!.messages
-        : [campaign!.message]
-      const rawMsg = msgPool[Math.floor(Math.random() * msgPool.length)]
-
-      const nameValue = campaign!.personalize_name !== false ? (contact.first_name || '') : ''
-      const personalizedMsg = rawMsg
-        .replace(/\{\{nombre\}\}/gi, nameValue)
-        .replace(/\{\{name\}\}/gi, nameValue)
-
-      try {
-        const res = await fetch(`${N8N_URL}/webhook/send-whatsapp`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            phone: contact.phone_number,
-            message: personalizedMsg,
-            campaign_id: id,
-            campaign_name: campaign!.name,
-            contact_id: contact.id,
-            media_url: campaign!.media_url || undefined,
-            source: 'campaign',
-            antiblock_delay_min: campaign!.antiblock_delay_min,
-            antiblock_delay_max: campaign!.antiblock_delay_max,
-          }),
-        })
-
-        // Éxito si HTTP 2xx
-        if (res.ok) {
-          sent++
-          let evolutionMsgId: string | null = null
-          try {
-            const responseData = await res.json()
-            evolutionMsgId = responseData?.key?.id || responseData?.id || null
-          } catch { /* n8n respondió con body vacío */ }
-
-          // Insert outbound message record
-          await query(
-            `INSERT INTO whatsapp_messages
-               (contact_id, campaign_id, phone_number, message_body, direction, status,
-                evolution_message_id, sent_at, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, 'outbound', 'sent', $5, NOW(), NOW(), NOW())`,
-            [contact.id, id, contact.phone_number, personalizedMsg, evolutionMsgId]
-          )
-
-          // Update recipient row
-          try {
-            await query(
-              `UPDATE campaign_recipients
-               SET status = 'sent', sent_at = NOW(), message_body = $1,
-                   evolution_message_id = $2, updated_at = NOW()
-               WHERE campaign_id = $3 AND contact_id = $4`,
-              [personalizedMsg, evolutionMsgId, id, contact.id]
-            )
-          } catch { /* recipients table may not exist */ }
-        } else {
-          let errDetail: string | number = res.status
-          try { const d = await res.json(); errDetail = d?.message || res.status } catch { /* ignore */ }
-          console.error(`[campaign ${id}] Error ${errDetail} para ${contact.phone_number}`)
-          failed++
-
-          await query(
-            `INSERT INTO whatsapp_messages
-               (contact_id, campaign_id, phone_number, message_body, direction, status,
-                failed_at, error_detail, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, 'outbound', 'failed', NOW(), $5, NOW(), NOW())`,
-            [contact.id, id, contact.phone_number, personalizedMsg, String(errDetail)]
-          )
-
-          try {
-            await query(
-              `UPDATE campaign_recipients
-               SET status = 'failed', failed_at = NOW(), error_detail = $1,
-                   attempts = attempts + 1, updated_at = NOW()
-               WHERE campaign_id = $2 AND contact_id = $3`,
-              [String(errDetail), id, contact.id]
-            )
-          } catch { /* recipients table may not exist */ }
-        }
-      } catch (e) {
-        console.error(`[campaign ${id}] Excepción para ${contact.phone_number}:`, e instanceof Error ? e.message : e)
-        failed++
-        const errMsg = e instanceof Error ? e.message : 'network error'
-        await query(
-          `INSERT INTO whatsapp_messages
-             (contact_id, campaign_id, phone_number, message_body, direction, status,
-              failed_at, error_detail, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, 'outbound', 'failed', NOW(), $5, NOW(), NOW())`,
-          [contact.id, id, contact.phone_number, personalizedMsg, errMsg]
-        )
-        try {
-          await query(
-            `UPDATE campaign_recipients
-             SET status = 'failed', failed_at = NOW(), error_detail = $1,
-                 attempts = attempts + 1, updated_at = NOW()
-             WHERE campaign_id = $2 AND contact_id = $3`,
-            [errMsg, id, contact.id]
-          )
-        } catch { /* recipients table may not exist */ }
-      }
-
-      // Actualizar progreso en la DB cada mensaje
-      await query(
-        `UPDATE campaigns SET total_sent = $1, total_failed = $2 WHERE id = $3`,
-        [sent, failed, id]
-      )
-
-      // Delay antibloqueo entre mensajes (excepto en el último)
-      const isLast = contact === contacts[contacts.length - 1]
-      if (!isLast) {
-        const delaySec = Math.floor(
-          Math.random() * (campaign!.antiblock_delay_max - campaign!.antiblock_delay_min + 1)
-        ) + campaign!.antiblock_delay_min
-        await new Promise(r => setTimeout(r, delaySec * 1000))
-      }
-    }
-
-    // Solo marcar completed si no fue pausada/cancelada
-    const [finalState] = await query<{ status: string }>('SELECT status FROM campaigns WHERE id = $1', [id])
-    if (finalState?.status === 'running') {
-      await query(`UPDATE campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1`, [id])
+    try {
+      await processInBackground(campaignSnapshot, N8N_URL)
+    } catch (e) {
+      console.error(`[campaign ${id}] processInBackground uncaught:`,
+        e instanceof Error ? e.message : e)
+      // Lock was released in processInBackground's finally block
     }
   })()
 
-  return NextResponse.json({ started: true, total: contacts.length })
+  return NextResponse.json({ started: true, total: totalPending })
 }

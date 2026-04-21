@@ -1,0 +1,43 @@
+name: Frontend CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    name: Typecheck and Build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build
+        env:
+          # NEXT_PUBLIC_* vars are inlined at build time.
+          # Provide placeholder values so the build does not fail on missing vars.
+          NEXT_PUBLIC_EVOLUTION_MANAGER_URL: http://localhost:8080/manager
+          # next/font/google requires outbound network access during build.
+          # If this step fails in CI with a network error, consider switching to
+          # next/font/local. See docs/deployment.md for details.

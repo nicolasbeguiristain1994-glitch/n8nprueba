@@ -18,7 +18,7 @@ interface Line {
 
 type QrState = 'idle' | 'loading' | 'not-found' | 'creating' | 'qr' | 'connected' | 'error'
 
-const EVO_MANAGER = 'https://evolution-api-production-ec6b.up.railway.app/manager'
+const EVO_MANAGER = process.env.NEXT_PUBLIC_EVOLUTION_MANAGER_URL ?? 'https://evolution-api-production-ec6b.up.railway.app/manager'
 
 export default function Lines() {
   const [lines, setLines]     = useState<Line[]>([])

@@ -32,7 +32,7 @@ interface LogEntry {
 
 type QrState = 'idle' | 'loading' | 'not-found' | 'creating' | 'qr' | 'connected' | 'error'
 
-const EVO_MANAGER = 'https://evolution-api-production-ec6b.up.railway.app/manager'
+const EVO_MANAGER = process.env.NEXT_PUBLIC_EVOLUTION_MANAGER_URL ?? 'https://evolution-api-production-ec6b.up.railway.app/manager'
 
 const STATUS_COLORS: Record<string, string> = {
   active:    'bg-green-100 text-green-700',
@@ -419,7 +419,7 @@ export default function WarmupPage() {
       </Card>
 
       {/* ── Modal agregar ── */}
-      <Dialog open={showAdd} onOpenChange={open => { if (!open) setShowAdd(false) }}>
+      <Dialog open={showAdd} onOpenChange={open => { if (!open && !addSaving) { setShowAdd(false); setAddName(''); setAddPhone(''); setAddInstance(''); setAddDays('14'); setAddLimit('10'); setAddError('') } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -609,7 +609,7 @@ export default function WarmupPage() {
       </Dialog>
 
       {/* ── Modal logs ── */}
-      <Dialog open={!!logsFor} onOpenChange={open => { if (!open) setLogsFor(null) }}>
+      <Dialog open={!!logsFor} onOpenChange={open => { if (!open) { setLogsFor(null); setLogs([]) } }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
