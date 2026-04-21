@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
+import { isUUID } from '@/lib/validate'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
+  if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   let body: { segment?: string | null; gaming?: string | null; panel?: string | null; linea?: number | null }
   try {

@@ -77,6 +77,12 @@ export async function middleware(req: NextRequest) {
   const secret = process.env.AUTH_SECRET
 
   if (!secret || !token || !(await verifySessionToken(token, secret))) {
+    if (pathname.startsWith('/api/')) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
     const loginUrl = req.nextUrl.clone()
     loginUrl.pathname = '/login'
     return NextResponse.redirect(loginUrl)

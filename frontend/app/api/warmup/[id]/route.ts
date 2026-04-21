@@ -1,14 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
+import { isUUID } from '@/lib/validate'
+
+const ALLOWED_WARMUP_STATUSES = ['active', 'paused', 'completed', 'banned']
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
+  if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   let body: Record<string, unknown>
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  // Validate warmup_status if provided
+  if ('warmup_status' in body) {
+    if (!ALLOWED_WARMUP_STATUSES.includes(body.warmup_status as string)) {
+      return NextResponse.json({
+        error: `warmup_status inválido. Valores permitidos: ${ALLOWED_WARMUP_STATUSES.join(', ')}`
+      }, { status: 400 })
+    }
   }
 
   const allowed = ['warmup_status', 'daily_limit', 'target_days', 'notes', 'display_name']

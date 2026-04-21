@@ -47,11 +47,13 @@ function antiblockDelay(campaign: CampaignRow): Promise<void> {
  * Recover rows stuck in 'sending' longer than STALE_SENDING_MINUTES.
  * Uses campaign_recipient_id FK to confirm sends without a contact_id join.
  * - If whatsapp_messages confirms delivery → mark 'sent'.
+ * - If whatsapp_messages row is in queued/sent/delivered/read → mark 'failed'
+ *   with 'stale-queued-no-resend' (message may have been sent; do not re-send).
  * - Otherwise → reset to 'pending' so the processor re-sends.
  */
 async function recoverStaleRows(campaignId: string): Promise<void> {
   try {
-    // Confirmed sent: whatsapp_messages row exists for this campaign_recipient_id
+    // Confirmed sent: whatsapp_messages row with final status
     await query(
       `UPDATE campaign_recipients cr
        SET    status = 'sent', locked_at = NULL, updated_at = NOW()
@@ -61,6 +63,19 @@ async function recoverStaleRows(campaignId: string): Promise<void> {
          AND  cr.locked_at   < NOW() - INTERVAL '${STALE_SENDING_MINUTES} minutes'
          AND  wm.campaign_recipient_id = cr.id
          AND  wm.status IN ('sent', 'delivered', 'read')`,
+      [campaignId]
+    )
+    // Queued (in-flight but unconfirmed): mark failed to avoid duplicate send
+    await query(
+      `UPDATE campaign_recipients cr
+       SET    status = 'failed', locked_at = NULL, updated_at = NOW(),
+              error_detail = 'stale-queued-no-resend'
+       FROM   whatsapp_messages wm
+       WHERE  cr.campaign_id = $1
+         AND  cr.status      = 'sending'
+         AND  cr.locked_at   < NOW() - INTERVAL '${STALE_SENDING_MINUTES} minutes'
+         AND  wm.campaign_recipient_id = cr.id
+         AND  wm.status = 'queued'`,
       [campaignId]
     )
     // Unconfirmed: reset to pending for re-send
@@ -165,10 +180,12 @@ async function syncCounters(
  * Sent to n8n as `campaign_recipient_id` and `dedup_key` so n8n can deduplicate
  * on its side if it receives the same request twice.
  *
- * whatsapp_messages upsert uses ON CONFLICT (campaign_recipient_id) so a second
- * call for the same recipient never creates a duplicate row.
- * - On success: DO UPDATE overwrites a prior 'failed' row with 'sent' (retry won).
- * - On failure: DO NOTHING — never overwrite a prior 'sent' row with 'failed'.
+ * Pre-insert 'queued' row before n8n call so that if the process crashes between
+ * sending and recording, stale recovery can detect the in-flight message.
+ * - On success: UPDATE to 'sent' only if status = 'queued'.
+ * - On failure: UPDATE to 'failed' only if status = 'queued'.
+ * - Pre-insert uses ON CONFLICT DO UPDATE only when status NOT IN final states,
+ *   so a prior 'sent'/'delivered'/'read' row is never overwritten.
  */
 async function sendOne(
   campaignId: string,
@@ -177,6 +194,24 @@ async function sendOne(
   n8nUrl: string
 ): Promise<'sent' | 'failed'> {
   const personalizedMsg = personalize(pickMessage(campaign), recipient.first_name, campaign)
+
+  // ── Pre-insert 'queued' row before n8n call (idempotency) ──────────────────
+  // If there is already a final-status row, this is a no-op (status stays as-is).
+  await query(
+    `INSERT INTO whatsapp_messages
+       (contact_id, campaign_id, phone_number, message_body, direction, status,
+        campaign_recipient_id, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, 'outbound', 'queued', $5, NOW(), NOW())
+     ON CONFLICT (campaign_recipient_id)
+       WHERE campaign_recipient_id IS NOT NULL
+     DO UPDATE SET updated_at = NOW()
+     WHERE whatsapp_messages.status NOT IN ('sent', 'delivered', 'read')`,
+    [recipient.contact_id, campaignId, recipient.phone_number,
+     personalizedMsg, recipient.id]
+  ).catch(e =>
+    console.error(`[campaign ${campaignId}] pre-insert queued error:`,
+      e instanceof Error ? e.message : e)
+  )
 
   try {
     const res = await fetch(`${n8nUrl}/webhook/send-whatsapp`, {
@@ -205,23 +240,16 @@ async function sendOne(
         evolutionMsgId = data?.key?.id || data?.id || null
       } catch { /* n8n returned empty body */ }
 
-      // Upsert outbound message — ON CONFLICT overwrites 'failed' with 'sent' (retry won),
-      // preserves 'sent'/'delivered'/'read' if already present.
-      const [wm] = await query<{ id: string }>(
-        `INSERT INTO whatsapp_messages
-           (contact_id, campaign_id, phone_number, message_body, direction, status,
-            evolution_message_id, sent_at, campaign_recipient_id, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, 'outbound', 'sent', $5, NOW(), $6, NOW(), NOW())
-         ON CONFLICT (campaign_recipient_id)
-           WHERE campaign_recipient_id IS NOT NULL
-         DO UPDATE SET
-           status               = 'sent',
-           evolution_message_id = EXCLUDED.evolution_message_id,
-           sent_at              = COALESCE(whatsapp_messages.sent_at, NOW()),
-           updated_at           = NOW()
-         RETURNING id`,
-        [recipient.contact_id, campaignId, recipient.phone_number,
-         personalizedMsg, evolutionMsgId, recipient.id]
+      // Update from 'queued' → 'sent' — only if still in queued state
+      await query(
+        `UPDATE whatsapp_messages
+         SET status               = 'sent',
+             evolution_message_id = $1,
+             sent_at              = NOW(),
+             updated_at           = NOW()
+         WHERE campaign_recipient_id = $2
+           AND status = 'queued'`,
+        [evolutionMsgId, recipient.id]
       )
 
       await query(
@@ -258,7 +286,18 @@ async function recordFailure(
   personalizedMsg: string,
   errDetail: string
 ): Promise<void> {
-  // DO NOTHING on conflict: never overwrite a confirmed 'sent' row with 'failed'.
+  // Update queued → failed only; never overwrite a confirmed 'sent' row.
+  await query(
+    `UPDATE whatsapp_messages
+     SET status       = 'failed',
+         failed_at    = NOW(),
+         error_detail = $1,
+         updated_at   = NOW()
+     WHERE campaign_recipient_id = $2
+       AND status = 'queued'`,
+    [errDetail, recipient.id]
+  )
+  // If no queued row existed yet (very early failure), insert a failed row
   await query(
     `INSERT INTO whatsapp_messages
        (contact_id, campaign_id, phone_number, message_body, direction, status,
@@ -286,6 +325,9 @@ async function recordFailure(
  * The try/finally guarantees the lock is released even if an uncaught error
  * propagates out of the loop.
  *
+ * lockToken is used for all heartbeat and release queries so only the owner
+ * of the lock can extend or release it.
+ *
  * Flow per iteration:
  *   1. Read campaign status — bail if paused/cancelled.
  *   2. claimOne() — bail if no pending rows.
@@ -294,7 +336,7 @@ async function recordFailure(
  *   5. Antiblock delay before next claim.
  *   6. Heartbeat: refresh processor_locked_at every LOCK_HEARTBEAT_EVERY sends.
  */
-async function processInBackground(campaign: CampaignRow, n8nUrl: string): Promise<void> {
+async function processInBackground(campaign: CampaignRow, n8nUrl: string, lockToken: string): Promise<void> {
   const id = campaign.id
   let sendCount = 0
 
@@ -326,9 +368,11 @@ async function processInBackground(campaign: CampaignRow, n8nUrl: string): Promi
       await antiblockDelay(campaign)
 
       // ── 6. Heartbeat: keep processor lock alive for long campaigns ─────
+      // Only extends the lock if this processor still owns it (token match).
       if (sendCount % LOCK_HEARTBEAT_EVERY === 0) {
         await query(
-          `UPDATE campaigns SET processor_locked_at = NOW() WHERE id = $1`, [id]
+          `UPDATE campaigns SET processor_locked_at = NOW()
+           WHERE id = $1 AND processor_lock_token = $2`, [id, lockToken]
         ).catch(e =>
           console.error(`[campaign ${id}] heartbeat error:`, e instanceof Error ? e.message : e)
         )
@@ -347,9 +391,11 @@ async function processInBackground(campaign: CampaignRow, n8nUrl: string): Promi
     }
 
   } finally {
-    // Always release the processor lock — even on uncaught error or early break
+    // Always release the processor lock — only if we still own it (token match)
     await query(
-      `UPDATE campaigns SET processor_locked_at = NULL WHERE id = $1`, [id]
+      `UPDATE campaigns
+       SET processor_locked_at = NULL, processor_lock_token = NULL
+       WHERE id = $1 AND processor_lock_token = $2`, [id, lockToken]
     ).catch(e =>
       console.error(`[campaign ${id}] failed to release processor lock:`,
         e instanceof Error ? e.message : e)
@@ -430,12 +476,16 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   //   draft/scheduled/paused → transitions to running, acquires lock.
   //   running                → only acquires lock (status unchanged via CASE).
   //
+  // A unique lock token (UUID) is generated per acquisition so that heartbeat
+  // and release queries only succeed for the current owner.
+  //
   // The (processor_locked_at IS NULL OR locked_at < now - 30 min) guard is the
   // only thing preventing a second concurrent processor from launching.
   // If another POST holds a recent lock, this UPDATE matches 0 rows and we
   // return { started: false, alreadyProcessing: true }.
-  let lockAcquired = false
+  let lockToken: string | null = null
   try {
+    const newToken = crypto.randomUUID()
     const rows = await query<{ id: string }>(
       `UPDATE campaigns
        SET status = CASE
@@ -446,7 +496,8 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
              WHEN status IN ('draft','scheduled','paused') THEN COALESCE(started_at, NOW())
              ELSE started_at
            END,
-           processor_locked_at = NOW(),
+           processor_locked_at  = NOW(),
+           processor_lock_token = $2,
            total_targets = (
              SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = $1
            )
@@ -455,23 +506,24 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
          AND (processor_locked_at IS NULL
               OR processor_locked_at < NOW() - INTERVAL '${PROCESSOR_LOCK_MINUTES} minutes')
        RETURNING id`,
-      [id]
+      [id, newToken]
     )
-    lockAcquired = !!rows[0]
+    if (rows[0]) lockToken = newToken
   } catch (e) {
     console.error('[campaign send] lock acquisition error:', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 
-  if (!lockAcquired) {
+  if (!lockToken) {
     return NextResponse.json({ started: false, alreadyProcessing: true })
   }
 
   // ── Launch background processor — respond immediately ─────────────────────
   const campaignSnapshot = campaign
+  const capturedToken = lockToken
   ;(async () => {
     try {
-      await processInBackground(campaignSnapshot, N8N_URL)
+      await processInBackground(campaignSnapshot, N8N_URL, capturedToken)
     } catch (e) {
       console.error(`[campaign ${id}] processInBackground uncaught:`,
         e instanceof Error ? e.message : e)
