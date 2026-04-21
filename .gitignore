@@ -98,3 +98,4 @@ scripts/imports/data/
 exports/
 *.csv.real
 *-production.*
+.claude/
