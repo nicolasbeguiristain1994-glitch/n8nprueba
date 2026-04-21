@@ -5,7 +5,8 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, KeyRound } from 'lucide-react'
+import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink } from 'lucide-react'
+import { fetchJson } from '@/lib/fetchJson'
 
 interface Line {
   id: string; line_key: string; display_name: string; phone_number: string
@@ -18,7 +19,7 @@ interface Line {
 
 type QrState = 'idle' | 'loading' | 'not-found' | 'creating' | 'qr' | 'connected' | 'error'
 
-const EVO_MANAGER = process.env.NEXT_PUBLIC_EVOLUTION_MANAGER_URL ?? 'https://evolution-api-production-ec6b.up.railway.app/manager'
+const EVO_MANAGER = process.env.NEXT_PUBLIC_EVOLUTION_MANAGER_URL ?? ''
 
 export default function Lines() {
   const [lines, setLines]     = useState<Line[]>([])
@@ -30,13 +31,11 @@ export default function Lines() {
   const [qrBase64, setQrBase64]   = useState<string | null>(null)
   const [qrError, setQrError]     = useState<string | null>(null)
   const [canCreate, setCanCreate] = useState(false)
-  const [globalKey, setGlobalKey] = useState('')
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
-    fetch('/api/lines')
-      .then(r => r.json())
+    fetchJson<{ lines: Line[] }>('/api/lines')
       .then(d => setLines(d.lines || []))
       .catch(() => setLines([]))
       .finally(() => setLoading(false))
@@ -51,7 +50,7 @@ export default function Lines() {
   const closeQr = () => {
     stopPoll()
     setQrLine(null); setQrState('idle'); setQrBase64(null)
-    setQrError(null); setGlobalKey(''); setCanCreate(false)
+    setQrError(null); setCanCreate(false)
   }
 
   const fetchQr = useCallback(async (instance: string): Promise<boolean> => {
@@ -91,13 +90,18 @@ export default function Lines() {
       const res  = await fetch('/api/lines/qr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instance: qrLine.evolution_instance, globalKey: globalKey || undefined }),
+        body: JSON.stringify({ instance: qrLine.evolution_instance }),
       })
       const data = await res.json()
 
       if (res.status === 401) {
         setQrState('not-found')
-        setQrError('El Global API Key no tiene permisos para crear instancias. Creala manualmente en el panel de Evolution.')
+        setQrError('Sin permisos para crear instancias. Creala manualmente en el panel de Evolution.')
+        return
+      }
+      if (res.status === 500 && data?.error === 'Evolution admin key not configured') {
+        setQrState('not-found')
+        setQrError('El Global API Key de Evolution no está configurado en el servidor.')
         return
       }
       if (data.base64) {
@@ -269,30 +273,17 @@ export default function Lines() {
                   <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-3">{qrError}</p>
                 )}
 
-                {/* Opción A: crear con global key */}
-                <div className="border rounded-lg p-4 space-y-3">
-                  <p className="text-xs font-medium text-gray-700 flex items-center gap-1.5">
-                    <KeyRound size={13} /> Crear instancia automáticamente
-                  </p>
-                  <div>
-                    <label className="text-xs text-gray-500 mb-1 block">Global API Key de Evolution</label>
-                    <Input
-                      placeholder="Ej: tu-global-api-key-de-railway"
-                      value={globalKey}
-                      onChange={e => setGlobalKey(e.target.value)}
-                      className="text-xs font-mono"
-                    />
-                    <p className="text-xs text-gray-400 mt-1">
-                      Encontralo en Railway → Evolution service → Variables → <code>AUTHENTICATION_API_KEY</code>
-                    </p>
+                {/* Opción A: crear automáticamente con el key del servidor */}
+                {canCreate && (
+                  <div className="border rounded-lg p-4 space-y-3">
+                    <p className="text-xs font-medium text-gray-700">Crear instancia automáticamente</p>
+                    <Button
+                      className="w-full bg-green-600 hover:bg-green-700 text-sm"
+                      onClick={createInstance}>
+                      Crear instancia y obtener QR
+                    </Button>
                   </div>
-                  <Button
-                    className="w-full bg-green-600 hover:bg-green-700 text-sm"
-                    onClick={createInstance}
-                    disabled={!globalKey}>
-                    Crear instancia y obtener QR
-                  </Button>
-                </div>
+                )}
 
                 {/* Opción B: hacerlo en Evolution Manager */}
                 <div className="border rounded-lg p-4 space-y-2">
@@ -303,11 +294,13 @@ export default function Lines() {
                     <li>Volvé aquí y hacé click en "Obtener QR"</li>
                   </ol>
                   <div className="flex gap-2 mt-2">
-                    <a href={EVO_MANAGER} target="_blank" rel="noreferrer" className="flex-1">
-                      <Button variant="outline" size="sm" className="w-full text-xs">
-                        <ExternalLink size={12} className="mr-1" /> Abrir Evolution Manager
-                      </Button>
-                    </a>
+                    {EVO_MANAGER && (
+                      <a href={EVO_MANAGER} target="_blank" rel="noreferrer" className="flex-1">
+                        <Button variant="outline" size="sm" className="w-full text-xs">
+                          <ExternalLink size={12} className="mr-1" /> Abrir Evolution Manager
+                        </Button>
+                      </a>
+                    )}
                     <Button size="sm" variant="outline" className="flex-1 text-xs"
                       onClick={() => { setQrState('loading'); fetchQr(qrLine!.evolution_instance) }}>
                       <RefreshCw size={12} className="mr-1" /> Obtener QR

@@ -7,6 +7,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Send, Plus, Loader2, Eye, Play, BarChart2, Shield, Clock, Pause, XCircle, CheckCheck, Truck, AlertTriangle, HelpCircle, Trash2, Shuffle, UserCheck, UserX } from 'lucide-react'
+import { fetchJson } from '@/lib/fetchJson'
 
 interface CampaignList { id: string; name: string; contact_count: number }
 interface CampaignContact {
@@ -58,8 +59,12 @@ export default function Campaigns() {
   const [creating, setCreating] = useState(false)
 
   const load = useCallback(() => {
-    fetch('/api/campaigns').then(r => r.json()).then(d => setCampaigns(d.campaigns || []))
-    fetch('/api/lists').then(r => r.json()).then(d => setLists(d.lists || []))
+    fetchJson<{ campaigns: Campaign[] }>('/api/campaigns')
+      .then(d => setCampaigns(d.campaigns || []))
+      .catch(() => setCampaigns([]))
+    fetchJson<{ lists: CampaignList[] }>('/api/lists')
+      .then(d => setLists(d.lists || []))
+      .catch(() => setLists([]))
   }, [])
 
   useEffect(() => { load() }, [load])

@@ -59,20 +59,28 @@ const { Client } = pg;
 // ─── Config ───────────────────────────────────────────────────────────────────
 
 const DRY_RUN    = process.argv.includes('--dry-run');
+const YES_PROD   = process.argv.includes('--yes-i-know-this-is-production');
 const FILE_FILTER = (() => {
   const idx = process.argv.indexOf('--file');
   return idx >= 0 ? process.argv[idx + 1] : null;
 })();
 
+// Accept both naming conventions; no silent fallback for required fields
 const DB_CONFIG = {
-  host:     process.env.DB_POSTGRESDB_HOST     || 'localhost',
-  port:     parseInt(process.env.DB_POSTGRESDB_PORT || '5432'),
-  database: process.env.DB_POSTGRESDB_DATABASE  || 'postgres',
-  user:     process.env.DB_POSTGRESDB_USER      || 'postgres',
-  password: process.env.DB_POSTGRESDB_PASSWORD  || '',
-  ssl:      (process.env.DB_POSTGRESDB_SSL ?? 'true') === 'true'
-            ? { rejectUnauthorized: false }
-            : false,
+  host:     process.env.DB_POSTGRESDB_HOST     || process.env.DB_HOST,
+  port:     parseInt(process.env.DB_POSTGRESDB_PORT || process.env.DB_PORT || '5432'),
+  database: process.env.DB_POSTGRESDB_DATABASE  || process.env.DB_NAME,
+  user:     process.env.DB_POSTGRESDB_USER      || process.env.DB_USER,
+  password: process.env.DB_POSTGRESDB_PASSWORD  || process.env.DB_PASSWORD || '',
+  ssl:      (() => {
+    const sslVal = process.env.DB_POSTGRESDB_SSL ?? process.env.DB_SSL;
+    if (sslVal === 'false') return false;
+    if (sslVal === 'true')  return { rejectUnauthorized: false };
+    // No explicit setting: default SSL off for localhost, on for remote hosts
+    const host = process.env.DB_POSTGRESDB_HOST || process.env.DB_HOST || '';
+    if (sslVal === undefined && (host === 'localhost' || host === '127.0.0.1' || host === '')) return false;
+    return { rejectUnauthorized: false };
+  })(),
 };
 
 // Orden de ejecución de migraciones
@@ -94,6 +102,7 @@ const MIGRATIONS = [
   { file: 'db/migrations/012_whatsapp_lines_evolution_unique.sql', label: '012 — whatsapp_lines evolution_instance unique' },
   { file: 'db/migrations/013_campaign_recipients_durability.sql',  label: '013 — campaign_recipients durability index' },
   { file: 'db/migrations/014_campaign_durability_idempotency.sql', label: '014 — campaign durability + idempotency' },
+  { file: 'db/migrations/015_campaign_processor_lock_token.sql',  label: '015 — campaign processor lock token' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -110,10 +119,42 @@ const log = {
 // ─── Verificaciones ───────────────────────────────────────────────────────────
 
 function validate() {
-  if (!DB_CONFIG.password || DB_CONFIG.password === 'TU_PASSWORD_AQUI') {
-    log.error('DB_POSTGRESDB_PASSWORD no está configurada en .env');
-    log.error('Editá el archivo .env y completá la contraseña de Supabase.');
+  // Fail fast if required connection fields are missing
+  const missing = [];
+  if (!DB_CONFIG.host)     missing.push('DB_POSTGRESDB_HOST or DB_HOST');
+  if (!DB_CONFIG.database) missing.push('DB_POSTGRESDB_DATABASE or DB_NAME');
+  if (!DB_CONFIG.user)     missing.push('DB_POSTGRESDB_USER or DB_USER');
+  if (!DB_CONFIG.password || DB_CONFIG.password === 'TU_PASSWORD_AQUI' || DB_CONFIG.password === 'replace-me') {
+    missing.push('DB_POSTGRESDB_PASSWORD or DB_PASSWORD');
+  }
+  if (missing.length) {
+    log.error('Faltan variables de entorno requeridas:');
+    for (const m of missing) log.error(`  · ${m}`);
+    log.error('Editá el archivo .env y completá los valores.');
     process.exit(1);
+  }
+
+  // Production guard: require explicit opt-in flag
+  const isProd = (
+    process.env.NODE_ENV === 'production' ||
+    process.env.DOPPLER_CONFIG === 'prd' ||
+    (DB_CONFIG.host.includes('supabase.com') && !DB_CONFIG.host.includes('localhost'))
+  );
+  if (isProd && !YES_PROD && !DRY_RUN) {
+    log.error('');
+    log.error('  PRODUCTION DATABASE DETECTED');
+    log.error(`  Host: ${DB_CONFIG.host}`);
+    log.error('');
+    log.error('  To run migrations against production, add the flag:');
+    log.error('    --yes-i-know-this-is-production');
+    log.error('');
+    log.error('  Example:');
+    log.error('    node scripts/ops/run-migrations.mjs --yes-i-know-this-is-production');
+    log.error('');
+    process.exit(1);
+  }
+  if (isProd) {
+    log.warn('  *** PRODUCTION DATABASE — proceeding because --yes-i-know-this-is-production was passed ***');
   }
 }
 

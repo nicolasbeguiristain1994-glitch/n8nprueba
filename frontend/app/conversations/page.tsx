@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Send } from 'lucide-react'
+import { fetchJson } from '@/lib/fetchJson'
 
 interface Conv {
   phone_number: string; last_message: string
@@ -26,22 +27,23 @@ export default function Conversations() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const loadConvs = useCallback(() => {
-    fetch('/api/conversations').then(r => r.json()).then(d => setConvs(d.conversations || []))
+    fetchJson<{ conversations: Conv[] }>('/api/conversations')
+      .then(d => setConvs(d.conversations || []))
+      .catch(() => setConvs([]))
   }, [])
 
   const loadMessages = useCallback((phone: string, scroll = false) => {
-    fetch(`/api/conversations?phone=${phone}`)
-      .then(r => r.json())
+    fetchJson<{ messages: Message[] }>(`/api/conversations?phone=${phone}`)
       .then(d => {
         setMessages(prev => {
           const next = d.messages || []
-          // Solo hacer scroll si llegó un mensaje nuevo
           if (scroll || next.length !== prev.length) {
             setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
           }
           return next
         })
       })
+      .catch(() => { /* keep existing messages on transient error */ })
   }, [])
 
   // Carga inicial de conversaciones

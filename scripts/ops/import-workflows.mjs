@@ -34,6 +34,13 @@ const ONLY_LOCAL    = process.argv.includes('--local');
 const ONLY_RAILWAY  = process.argv.includes('--railway');
 const EXPORTS_DIR   = path.resolve('./exports');
 
+// Validate Railway URL when targeting Railway
+if (!ONLY_LOCAL && !process.env.N8N_RAILWAY_URL) {
+  console.error('\n  ✗ N8N_RAILWAY_URL is not set.');
+  console.error('    Set it in .env or pass via shell before targeting Railway.\n');
+  process.exit(1);
+}
+
 const INSTANCES = [];
 if (!ONLY_RAILWAY) INSTANCES.push({
   name:   'LOCAL',
@@ -42,7 +49,7 @@ if (!ONLY_RAILWAY) INSTANCES.push({
 });
 if (!ONLY_LOCAL) INSTANCES.push({
   name:   'RAILWAY',
-  url:    process.env.N8N_RAILWAY_URL || 'https://n8n-production-cec3.up.railway.app',
+  url:    process.env.N8N_RAILWAY_URL,
   apiKey: process.env.N8N_RAILWAY_API_KEY,
 });
 

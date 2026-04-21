@@ -11,7 +11,7 @@
  *   N8N_LOCAL_API_KEY     API key del n8n local
  *   N8N_RAILWAY_API_KEY   API key del n8n de Railway
  *   N8N_LOCAL_URL         (opcional) default: http://localhost:5678
- *   N8N_RAILWAY_URL       (opcional) default: https://n8n-production-cec3.up.railway.app
+ *   N8N_RAILWAY_URL       (requerido) URL de tu instancia n8n en Railway o similar
  */
 
 import fs   from 'fs';
@@ -63,8 +63,8 @@ import { stdin as input, stdout as output } from 'process';
 
 // ─── Configuración ────────────────────────────────────────────────────────────
 
-const LOCAL_URL   = process.env.N8N_LOCAL_URL   || 'http://localhost:5678';
-const RAILWAY_URL = process.env.N8N_RAILWAY_URL  || 'https://n8n-production-cec3.up.railway.app';
+const LOCAL_URL   = process.env.N8N_LOCAL_URL || 'http://localhost:5678';
+const RAILWAY_URL = process.env.N8N_RAILWAY_URL;
 
 const LOCAL_API_KEY   = process.env.N8N_LOCAL_API_KEY;
 const RAILWAY_API_KEY = process.env.N8N_RAILWAY_API_KEY;
@@ -164,6 +164,7 @@ function validateEnv() {
   const missing = [];
   if (!LOCAL_API_KEY)   missing.push('N8N_LOCAL_API_KEY');
   if (!RAILWAY_API_KEY) missing.push('N8N_RAILWAY_API_KEY');
+  if (!RAILWAY_URL)     missing.push('N8N_RAILWAY_URL');
   if (missing.length) {
     console.error(`\n  ✗ Variables de entorno faltantes: ${missing.join(', ')}`);
     console.error('    Copiá .env.example a .env y completá los valores.\n');
