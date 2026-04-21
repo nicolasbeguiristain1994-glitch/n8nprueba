@@ -1,0 +1,3 @@
+setup:
+  project: whatsapp-difusion-bot
+  config: dev
