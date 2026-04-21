@@ -233,14 +233,6 @@ async function sendOne(
         [personalizedMsg, evolutionMsgId, recipient.id]
       )
 
-      // Back-link the message to the recipient for fast lookups
-      if (wm?.id) {
-        await query(
-          `UPDATE campaign_recipients SET whatsapp_message_id = $1 WHERE id = $2`,
-          [wm.id, recipient.id]
-        ).catch(() => { /* column may not exist yet — non-fatal */ })
-      }
-
       return 'sent'
     }
 

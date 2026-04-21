@@ -21,6 +21,7 @@ export default function Conversations() {
   const [messages, setMessages]   = useState<Message[]>([])
   const [reply, setReply]         = useState('')
   const [sending, setSending]     = useState(false)
+  const [sendError, setSendError] = useState<string | null>(null)
   const selectedRef  = useRef<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
@@ -69,13 +70,26 @@ export default function Conversations() {
   const sendReply = async () => {
     if (!selected || !reply.trim()) return
     setSending(true)
-    await fetch('/api/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phones: [selected], message: reply }),
-    })
-    setReply('')
+    setSendError(null)
+    let res: Response
+    try {
+      res = await fetch('/api/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phones: [selected], message: reply }),
+      })
+    } catch {
+      setSending(false)
+      setSendError('Error de red al enviar')
+      return
+    }
     setSending(false)
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      setSendError(d.error || `Error ${res.status}`)
+      return  // preserve reply text
+    }
+    setReply('')
     openConv(selected)
   }
 
@@ -162,6 +176,14 @@ export default function Conversations() {
                   <div ref={messagesEndRef} />
                 </div>
 
+                {sendError && (
+                  <div className="px-3 pt-2 pb-0">
+                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-1.5 flex items-center justify-between">
+                      <span>{sendError}</span>
+                      <button onClick={() => setSendError(null)} className="ml-3 text-red-400 hover:text-red-600">✕</button>
+                    </p>
+                  </div>
+                )}
                 <div className="border-t border-gray-100 p-3 flex gap-2">
                   <Input
                     placeholder="Escribí una respuesta…"

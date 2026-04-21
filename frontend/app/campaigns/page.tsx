@@ -44,6 +44,8 @@ export default function Campaigns() {
   const [sending, setSending]         = useState<string | null>(null)
   const [sendError, setSendError]     = useState<string | null>(null)
   const [actioning, setActioning]     = useState<string | null>(null)
+  const [createError, setCreateError] = useState<string | null>(null)
+  const [detailError, setDetailError] = useState<string | null>(null)
 
   // Form
   const [form, setForm] = useState({
@@ -64,13 +66,26 @@ export default function Campaigns() {
 
   const createCampaign = async () => {
     setCreating(true)
+    setCreateError(null)
     const validMsgs = messages.filter(m => m.trim())
-    await fetch('/api/campaigns', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, messages: validMsgs, message: validMsgs[0] }),
-    })
+    let res: Response
+    try {
+      res = await fetch('/api/campaigns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, messages: validMsgs, message: validMsgs[0] }),
+      })
+    } catch {
+      setCreating(false)
+      setCreateError('Error de red al crear la campaña')
+      return
+    }
     setCreating(false)
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}))
+      setCreateError(d.error || `Error ${res.status}`)
+      return  // keep modal open, preserve form state
+    }
     setShowNew(false)
     setForm({ name:'', list_id:'', scheduled_at:'', media_url:'', antiblock_delay_min:3, antiblock_delay_max:8, type:'promotion', personalize_name: true })
     setMessages([''])
@@ -103,22 +118,38 @@ export default function Campaigns() {
   const openDetail = async (c: Campaign) => {
     setSelected(c)
     setCampContacts([])
+    setDetailError(null)
     setLoadingContacts(true)
-    fetch(`/api/campaigns/${c.id}/contacts`)
-      .then(r => r.json())
-      .then(d => setCampContacts(d.contacts || []))
-      .finally(() => setLoadingContacts(false))
+    try {
+      const res = await fetch(`/api/campaigns/${c.id}/contacts`)
+      setLoadingContacts(false)
+      if (!res.ok) { setDetailError('No se pudieron cargar los destinatarios'); return }
+      const d = await res.json()
+      setCampContacts(d.contacts || [])
+    } catch {
+      setLoadingContacts(false)
+      setDetailError('Error de red al cargar destinatarios')
+    }
   }
 
   const updateStatus = async (id: string, status: 'paused' | 'cancelled' | 'draft') => {
     setActioning(id)
-    await fetch(`/api/campaigns/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
-    })
+    try {
+      const res = await fetch(`/api/campaigns/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        setSendError(d.error || `Error al actualizar estado`)
+      } else {
+        load()
+      }
+    } catch {
+      setSendError('Error de red al actualizar estado')
+    }
     setActioning(null)
-    load()
   }
 
   const previewName = form.personalize_name ? 'Juan' : ''
@@ -257,12 +288,14 @@ export default function Campaigns() {
 
       {/* Modal nueva campaña */}
       <Dialog open={showNew} onOpenChange={v => {
+        if (creating) return  // block close while save is in progress
         setShowNew(v)
         if (!v) {
           setForm({ name:'', list_id:'', scheduled_at:'', media_url:'', antiblock_delay_min:3, antiblock_delay_max:8, type:'promotion', personalize_name: true })
           setMessages([''])
           setPreviewIdx(0)
           setCreating(false)
+          setCreateError(null)
           setSendError(null)
         }
       }}>
@@ -426,8 +459,14 @@ export default function Campaigns() {
               </div>
             </div>
 
+            {createError && (
+              <div className="col-span-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-600 flex items-center justify-between">
+                <span>{createError}</span>
+                <button onClick={() => setCreateError(null)} className="ml-3 text-red-400 hover:text-red-600">✕</button>
+              </div>
+            )}
             <div className="col-span-2 flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setShowNew(false)}>Cancelar</Button>
+              <Button variant="outline" className="flex-1" onClick={() => setShowNew(false)} disabled={creating}>Cancelar</Button>
               <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={createCampaign}
                       disabled={creating || !form.name || !messages.some(m => m.trim())}>
                 {creating ? <Loader2 size={14} className="mr-1 animate-spin"/> : <Send size={14} className="mr-1"/>}
@@ -439,7 +478,7 @@ export default function Campaigns() {
       </Dialog>
 
       {/* Modal detalle campaña */}
-      <Dialog open={!!selected} onOpenChange={() => setSelected(null)}>
+      <Dialog open={!!selected} onOpenChange={() => { setSelected(null); setDetailError(null) }}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -504,7 +543,9 @@ export default function Campaigns() {
               {/* Tabla de contactos */}
               <div>
                 <p className="text-sm font-medium text-gray-700 mb-2">Destinatarios</p>
-                {loadingContacts
+                {detailError
+                  ? <p className="text-sm text-red-500 bg-red-50 border border-red-200 rounded px-3 py-2">{detailError}</p>
+                  : loadingContacts
                   ? <div className="flex items-center gap-2 py-4 text-gray-400 text-sm"><Loader2 size={14} className="animate-spin"/> Cargando…</div>
                   : campContacts.length === 0
                     ? <p className="text-sm text-gray-400">Sin contactos registrados</p>

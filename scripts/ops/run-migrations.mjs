@@ -77,16 +77,21 @@ const DB_CONFIG = {
 
 // Orden de ejecución de migraciones
 const MIGRATIONS = [
-  { file: 'db/schema/init.sql',                 label: '000 — Schema inicial (tablas base)' },
-  { file: 'db/migrations/001_whatsapp_lines.sql', label: '001 — whatsapp_lines + line_metrics' },
-  { file: 'db/migrations/002_sequence_engine.sql', label: '002 — Sequence Engine functions' },
-  { file: 'db/migrations/003_import_and_inactivity.sql', label: '003 — Import logs + inactivity' },
-  { file: 'db/migrations/004_human_handoff.sql', label: '004 — Human handoff + conversation_state' },
-  { file: 'db/migrations/005_campaign_personalize_name.sql', label: '005 — Campaign personalize_name flag' },
-  { file: 'db/migrations/006_contacts_linea.sql', label: '006 — Contacts linea (1-12)' },
-  { file: 'db/migrations/007_evolution_id_unique.sql', label: '007 — Evolution message ID unique index' },
-  { file: 'db/migrations/008_campaign_recipients.sql', label: '008 — Campaign recipients table' },
-  { file: 'db/migrations/009_performance_indexes.sql', label: '009 — Performance indexes' },
+  { file: 'db/schema/init.sql',                                    label: '000 — Schema inicial (tablas base)' },
+  { file: 'db/migrations/001_whatsapp_lines.sql',                  label: '001 — whatsapp_lines + line_metrics' },
+  { file: 'db/migrations/002_sequence_engine.sql',                 label: '002 — Sequence Engine functions' },
+  { file: 'db/migrations/003_import_and_inactivity.sql',           label: '003 — Import logs + inactivity' },
+  { file: 'db/migrations/004_human_handoff.sql',                   label: '004 — Human handoff + conversation_state' },
+  { file: 'db/migrations/005_campaign_personalize_name.sql',       label: '005 — Campaign personalize_name flag' },
+  { file: 'db/migrations/006_contacts_linea.sql',                  label: '006 — Contacts linea (1-12)' },
+  { file: 'db/migrations/007_evolution_id_unique.sql',             label: '007 — Evolution message ID unique index' },
+  { file: 'db/migrations/008_campaign_recipients.sql',             label: '008 — Campaign recipients table' },
+  { file: 'db/migrations/009_performance_indexes.sql',             label: '009 — Performance indexes' },
+  { file: 'db/migrations/010_message_status_received.sql',         label: '010 — message_status: received value' },
+  { file: 'db/migrations/011_contacts_phone_unique.sql',           label: '011 — contacts.phone_number unique constraint' },
+  { file: 'db/migrations/012_whatsapp_lines_evolution_unique.sql', label: '012 — whatsapp_lines evolution_instance unique' },
+  { file: 'db/migrations/013_campaign_recipients_durability.sql',  label: '013 — campaign_recipients durability index' },
+  { file: 'db/migrations/014_campaign_durability_idempotency.sql', label: '014 — campaign durability + idempotency' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
