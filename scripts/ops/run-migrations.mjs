@@ -86,6 +86,8 @@ const MIGRATIONS = [
   { file: 'db/migrations/006_contacts_linea.sql',                  label: '006 — Contacts linea (1-12)' },
   { file: 'db/migrations/007_evolution_id_unique.sql',             label: '007 — Evolution message ID unique index' },
   { file: 'db/migrations/008_campaign_recipients.sql',             label: '008 — Campaign recipients table' },
+  { file: 'db/migrations/008b_contacts_panel_gaming.sql',          label: '008b — contacts panel/gaming columns + enum' },
+  { file: 'db/migrations/008c_contact_lists.sql',                  label: '008c — contact_lists + contact_list_members tables' },
   { file: 'db/migrations/009_performance_indexes.sql',             label: '009 — Performance indexes' },
   { file: 'db/migrations/010_message_status_received.sql',         label: '010 — message_status: received value' },
   { file: 'db/migrations/011_contacts_phone_unique.sql',           label: '011 — contacts.phone_number unique constraint' },
