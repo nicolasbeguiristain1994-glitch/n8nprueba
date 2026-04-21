@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Users, Megaphone, MessageSquare, Activity, Flame, LogOut } from 'lucide-react'
+import { LayoutDashboard, Users, Megaphone, MessageSquare, Activity, Flame, LogOut, UserCog } from 'lucide-react'
 
 const nav = [
   { href: '/',               label: 'Dashboard',      icon: LayoutDashboard },
@@ -10,6 +10,7 @@ const nav = [
   { href: '/conversations',  label: 'Conversaciones',  icon: MessageSquare },
   { href: '/lines',          label: 'Líneas',          icon: Activity },
   { href: '/warmup',         label: 'Calentamiento',   icon: Flame },
+  { href: '/users',          label: 'Usuarios',        icon: UserCog },
 ]
 
 export default function Sidebar() {

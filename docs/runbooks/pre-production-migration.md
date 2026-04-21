@@ -95,6 +95,30 @@ ORDER BY phone_number, created_at;
 Adds `campaign_recipient_id` FK column to `whatsapp_messages` and `processor_locked_at` to `campaigns`.
 Both are nullable — safe to apply with live traffic. No preflight required beyond the backup.
 
+### Migration 015 — campaign processor lock token
+
+Adds `processor_lock_token UUID` column to `campaigns` and an index on `processor_locked_at`.
+Both operations use `IF NOT EXISTS` — idempotent and safe to apply with live traffic.
+No preflight beyond the backup required.
+
+**Staging:**
+```bash
+# Replace 'whatsapp-difusion-bot' with your actual Doppler project name if different
+doppler run --project whatsapp-difusion-bot --config stg -- \
+  node scripts/ops/run-migrations.mjs --file 015 --dry-run
+doppler run --project whatsapp-difusion-bot --config stg -- \
+  node scripts/ops/run-migrations.mjs --file 015
+```
+
+**Production:**
+```bash
+# Replace 'whatsapp-difusion-bot' with your actual Doppler project name if different
+doppler run --project whatsapp-difusion-bot --config prd -- \
+  node scripts/ops/run-migrations.mjs --file 015 --dry-run
+doppler run --project whatsapp-difusion-bot --config prd -- \
+  node scripts/ops/run-migrations.mjs --file 015 --yes-i-know-this-is-production
+```
+
 ---
 
 ## 5. Apply to production

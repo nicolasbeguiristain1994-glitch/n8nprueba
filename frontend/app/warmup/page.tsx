@@ -7,9 +7,10 @@ import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
   RefreshCw, Plus, Flame, Pause, Play, Trash2, FileText,
-  QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, KeyRound,
+  QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink,
   ArrowRight, Pencil, Wifi, WifiOff,
 } from 'lucide-react'
+import { fetchJson } from '@/lib/fetchJson'
 
 interface WarmupNumber {
   id: string
@@ -32,7 +33,7 @@ interface LogEntry {
 
 type QrState = 'idle' | 'loading' | 'not-found' | 'creating' | 'qr' | 'connected' | 'error'
 
-const EVO_MANAGER = process.env.NEXT_PUBLIC_EVOLUTION_MANAGER_URL ?? 'https://evolution-api-production-ec6b.up.railway.app/manager'
+const EVO_MANAGER = process.env.NEXT_PUBLIC_EVOLUTION_MANAGER_URL ?? ''
 
 const STATUS_COLORS: Record<string, string> = {
   active:    'bg-green-100 text-green-700',
@@ -76,12 +77,11 @@ export default function WarmupPage() {
   const [qrState, setQrState]     = useState<QrState>('idle')
   const [qrBase64, setQrBase64]   = useState<string | null>(null)
   const [qrError, setQrError]     = useState<string | null>(null)
-  const [globalKey, setGlobalKey] = useState('')
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
-    const d = await fetch('/api/warmup').then(r => r.json()).catch(() => ({ numbers: [] }))
+    const d = await fetchJson<{ numbers: WarmupNumber[] }>('/api/warmup').catch(() => ({ numbers: [] }))
     setNumbers(d.numbers || [])
     setLoading(false)
   }, [])
@@ -165,7 +165,7 @@ export default function WarmupPage() {
 
   const openLogs = async (n: WarmupNumber) => {
     setLogsFor(n); setLogsLoading(true)
-    const d = await fetch(`/api/warmup/${n.id}/logs`).then(r => r.json())
+    const d = await fetchJson<{ logs: LogEntry[] }>(`/api/warmup/${n.id}/logs`).catch(() => ({ logs: [] }))
     setLogs(d.logs || []); setLogsLoading(false)
   }
 
@@ -182,7 +182,7 @@ export default function WarmupPage() {
 
   const closeQr = () => {
     stopPoll(); setQrFor(null); setQrState('idle')
-    setQrBase64(null); setQrError(null); setGlobalKey('')
+    setQrBase64(null); setQrError(null)
   }
 
   const fetchQr = useCallback(async (instance: string): Promise<boolean> => {
@@ -210,10 +210,13 @@ export default function WarmupPage() {
       const res  = await fetch('/api/lines/qr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instance: qrFor.instance_name, globalKey: globalKey || undefined }),
+        body: JSON.stringify({ instance: qrFor.instance_name }),
       })
       const data = await res.json()
-      if (res.status === 401) { setQrState('not-found'); setQrError('Global API Key sin permisos.'); return }
+      if (res.status === 401) { setQrState('not-found'); setQrError('Sin permisos para crear instancias.'); return }
+      if (res.status === 500 && data?.error === 'Evolution admin key not configured') {
+        setQrState('not-found'); setQrError('El Global API Key de Evolution no está configurado en el servidor.'); return
+      }
       if (data.base64) {
         setQrBase64(data.base64); setQrState('qr'); stopPoll()
         pollRef.current = setInterval(() => fetchQr(qrFor.instance_name), 5000)
@@ -537,24 +540,22 @@ export default function WarmupPage() {
                 </div>
                 {qrError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-3">{qrError}</p>}
                 <div className="border rounded-lg p-4 space-y-3">
-                  <p className="text-xs font-medium text-gray-700 flex items-center gap-1.5">
-                    <KeyRound size={13} /> Crear instancia automáticamente
-                  </p>
-                  <Input placeholder="Global API Key de Evolution" value={globalKey}
-                    onChange={e => setGlobalKey(e.target.value)} className="text-xs font-mono" />
+                  <p className="text-xs font-medium text-gray-700">Crear instancia automáticamente</p>
                   <Button className="w-full bg-orange-500 hover:bg-orange-600 text-sm"
-                    onClick={createInstance} disabled={!globalKey}>
+                    onClick={createInstance}>
                     Crear instancia y obtener QR
                   </Button>
                 </div>
                 <div className="border rounded-lg p-4 space-y-2">
                   <p className="text-xs font-medium text-gray-700">O creala manualmente en Evolution</p>
                   <div className="flex gap-2">
-                    <a href={EVO_MANAGER} target="_blank" rel="noreferrer" className="flex-1">
-                      <Button variant="outline" size="sm" className="w-full text-xs">
-                        <ExternalLink size={12} className="mr-1" /> Evolution Manager
-                      </Button>
-                    </a>
+                    {EVO_MANAGER && (
+                      <a href={EVO_MANAGER} target="_blank" rel="noreferrer" className="flex-1">
+                        <Button variant="outline" size="sm" className="w-full text-xs">
+                          <ExternalLink size={12} className="mr-1" /> Evolution Manager
+                        </Button>
+                      </a>
+                    )}
                     <Button size="sm" variant="outline" className="flex-1 text-xs"
                       onClick={() => { setQrState('loading'); fetchQr(qrFor!.instance_name) }}>
                       <RefreshCw size={12} className="mr-1" /> Obtener QR

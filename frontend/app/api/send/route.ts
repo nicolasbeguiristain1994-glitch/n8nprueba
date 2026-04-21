@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
+import { isE164, isUUID, clampStr } from '@/lib/validate'
 
 type LogEntry = {
   phone_number:         string
@@ -23,20 +24,36 @@ export async function POST(req: NextRequest) {
 
   const { phones, message, campaign_id, media_url, media_type } = body
 
-  if (!phones?.length || !message) {
-    return NextResponse.json({ error: 'phones y message son requeridos' }, { status: 400 })
+  if (!Array.isArray(phones) || phones.length === 0 || phones.length > 100) {
+    return NextResponse.json({ error: 'phones debe ser un array de 1 a 100 números' }, { status: 400 })
+  }
+  // Normalize: strip spaces, dashes, parentheses before E.164 validation
+  const normalizedPhones = phones.map((p: unknown) =>
+    typeof p === 'string' ? p.replace(/[\s\-().]/g, '') : p
+  )
+  const invalidPhone = normalizedPhones.find((p: unknown) => typeof p !== 'string' || !isE164(p))
+  if (invalidPhone !== undefined) {
+    return NextResponse.json({ error: `Teléfono inválido (debe ser E.164): ${invalidPhone}` }, { status: 400 })
+  }
+  const uniquePhones = [...new Set(normalizedPhones as string[])]
+  const messageStr = clampStr(message, 4096)
+  if (!messageStr) {
+    return NextResponse.json({ error: 'message es requerido y no puede estar vacío' }, { status: 400 })
+  }
+  if (campaign_id !== undefined && campaign_id !== null && !isUUID(campaign_id)) {
+    return NextResponse.json({ error: 'campaign_id debe ser un UUID válido' }, { status: 400 })
   }
 
   const results = []
   const logs: LogEntry[] = []
 
   // Send sequentially (antiblock) — collect results in memory
-  for (const phone of phones) {
+  for (const phone of uniquePhones) {
     try {
       const res = await fetch(`${N8N_URL}/webhook/send-whatsapp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, message, campaign_id, media_url, media_type, source: 'dashboard' }),
+        body: JSON.stringify({ phone, message: messageStr, campaign_id, media_url, media_type, source: 'dashboard' }),
       })
 
       if (res.ok) {
@@ -51,7 +68,7 @@ export async function POST(req: NextRequest) {
 
         logs.push({
           phone_number:         phone,
-          message_body:         message,
+          message_body:         messageStr,
           status:               'sent',
           evolution_message_id: evolutionMsgId ?? '',
           campaign_id:          campaign_id   ?? '',
@@ -65,7 +82,7 @@ export async function POST(req: NextRequest) {
 
         logs.push({
           phone_number:         phone,
-          message_body:         message,
+          message_body:         messageStr,
           status:               'failed',
           evolution_message_id: '',
           campaign_id:          campaign_id ?? '',
@@ -77,7 +94,7 @@ export async function POST(req: NextRequest) {
       const errMsg = e instanceof Error ? e.message : String(e)
       logs.push({
         phone_number:         phone,
-        message_body:         message,
+        message_body:         messageStr,
         status:               'failed',
         evolution_message_id: '',
         campaign_id:          campaign_id ?? '',
@@ -116,5 +133,5 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ results, total: phones.length })
+  return NextResponse.json({ results, total: uniquePhones.length })
 }

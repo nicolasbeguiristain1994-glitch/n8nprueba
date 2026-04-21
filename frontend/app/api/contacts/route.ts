@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
+import { isE164 } from '@/lib/validate'
 
 export async function GET(req: NextRequest) {
   const search  = req.nextUrl.searchParams.get('q') || ''
@@ -54,24 +55,24 @@ export async function POST(req: NextRequest) {
   const { phone, name, panel, gaming, segment, linea } = body
   const phone_clean = (phone || '').toString().trim().replace(/\s/g, '')
   if (!phone_clean) return NextResponse.json({ error: 'Teléfono requerido' }, { status: 400 })
+  if (!isE164(phone_clean)) return NextResponse.json({ error: 'Teléfono debe estar en formato E.164 (ej: +5491112345678)' }, { status: 400 })
+
+  const nameParts = (name || '').trim().split(' ')
+  const first_name = nameParts[0] || null
+  const last_name  = nameParts.slice(1).join(' ') || null
+  const lineaVal = linea ? Number(linea) : null
 
   try {
-    const existing = await query<{ id: string }>('SELECT id FROM contacts WHERE phone_number = $1', [phone_clean])
-    if (existing.length > 0) return NextResponse.json({ error: 'Ya existe un contacto con ese teléfono' }, { status: 409 })
-
-    const nameParts = (name || '').trim().split(' ')
-    const first_name = nameParts[0] || null
-    const last_name  = nameParts.slice(1).join(' ') || null
-
-    const lineaVal = linea ? Number(linea) : null
     const [row] = await query<{ id: string }>(
       `INSERT INTO contacts
          (external_id, phone_number, first_name, last_name, segment, panel, gaming, linea, status,
           opt_in_marketing, opt_in_sms, platform_source, created_at, updated_at)
        VALUES (gen_random_uuid()::text, $1, $2, $3, $4::contact_segment, $5, $6::gaming_type, $7, 'active', true, true, 'manual', NOW(), NOW())
+       ON CONFLICT (phone_number) DO NOTHING
        RETURNING id`,
       [phone_clean, first_name, last_name, segment || null, panel || null, gaming || null, lineaVal]
     )
+    if (!row) return NextResponse.json({ error: 'Ya existe un contacto con ese teléfono' }, { status: 409 })
     return NextResponse.json({ id: row.id })
   } catch (e: unknown) {
     console.error('[/api/contacts POST]', e instanceof Error ? e.message : e)

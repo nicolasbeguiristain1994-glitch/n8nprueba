@@ -63,6 +63,8 @@ Used by `frontend/lib/db.ts` (the pg connection pool):
 | `DB_POOL_MAX` | 5 | Max pool connections |
 | `DB_CONNECTION_TIMEOUT_MS` | 5000 | Connection timeout |
 | `DB_IDLE_TIMEOUT_MS` | 30000 | Idle connection timeout |
+| `DB_SSL` | `true` (remote) / `false` (localhost) | Set `false` to disable SSL (local dev). Default is SSL enabled with `rejectUnauthorized: false` for Supabase/Railway compatibility. |
+| `DB_SSL_REJECT_UNAUTHORIZED` | `false` | Set `true` for strict certificate validation (hardened production setups). Requires a valid CA-signed cert on the DB server. |
 
 ---
 
@@ -94,12 +96,39 @@ Used by `scripts/ops/run-migrations.mjs` — note the different prefix:
 
 ---
 
+### Auth (legacy bootstrap)
+
+Used only when the `users` table is empty (bootstrap mode). Replaced by DB-backed login once any user exists.
+
+| Variable | Description |
+|---|---|
+| `AUTH_USERNAME` | Bootstrap admin username (deprecated after RBAC migration) |
+| `AUTH_PASSWORD` | Bootstrap admin password (deprecated after RBAC migration) |
+| `AUTH_SECRET` | HMAC-SHA256 signing key for session tokens — rotate to invalidate all sessions |
+
 ### Runtime
 
 | Variable | Description |
 |---|---|
 | `NODE_ENV` | `development` or `production` |
 | `PORT` | Port the server listens on (Railway sets this automatically) |
+
+### DB SSL
+
+| Variable | Default | Description |
+|---|---|---|
+| `DB_SSL` | `true` for remote hosts | Set to `false` to disable SSL (local dev only) |
+| `DB_SSL_REJECT_UNAUTHORIZED` | `false` | Set to `true` for strict cert validation (not required for Supabase/Railway) |
+
+### Ops scripts (one-time, not deployed)
+
+These are used by scripts in `scripts/ops/` and are never deployed to Railway.
+
+| Variable | Description |
+|---|---|
+| `ADMIN_EMAIL` | Email for the first admin user (`create-admin-user.mjs`) |
+| `ADMIN_PASSWORD` | Password for the first admin user — min 10 chars |
+| `ADMIN_NAME` | Display name for the first admin user |
 
 ---
 

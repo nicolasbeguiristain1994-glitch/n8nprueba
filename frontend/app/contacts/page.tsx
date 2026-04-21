@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Search, Upload, RefreshCw, List, CheckSquare, X, Users, UserPlus, Trash2, Download } from 'lucide-react'
+import { fetchJson } from '@/lib/fetchJson'
 
 interface Contact {
   id: string; phone_number: string; first_name: string; last_name: string
@@ -88,15 +89,17 @@ export default function Contacts() {
       panel: filterPanel.trim(),
       linea: filterLinea,
     })
-    fetch(`/api/contacts?${q}`)
-      .then(r => r.json())
+    fetchJson<{ contacts: Contact[]; total: number }>(`/api/contacts?${q}`)
       .then(d => { setContacts(d.contacts || []); setTotal(d.total || 0) })
+      .catch(() => { setContacts([]); setTotal(0) })
       .finally(() => setLoading(false))
   }, [search, page, segment, filterGaming, filterPanel, filterLinea])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
-    fetch('/api/lists').then(r => r.json()).then(d => setLists(d.lists || []))
+    fetchJson<{ lists: ContactList[] }>('/api/lists')
+      .then(d => setLists(d.lists || []))
+      .catch(() => setLists([]))
   }, [])
 
   // Parse CSV o Excel

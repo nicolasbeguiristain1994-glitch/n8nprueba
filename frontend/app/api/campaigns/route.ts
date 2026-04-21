@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
+import { isUUID, clampStr } from '@/lib/validate'
 
 export async function GET() {
   try {
@@ -51,13 +52,31 @@ export async function POST(req: NextRequest) {
           antiblock_delay_min, antiblock_delay_max, type: campaignType,
           personalize_name } = body
 
-  // messages[] takes priority; fall back to single message
-  const msgArray: string[] = Array.isArray(messages) && messages.length > 0
-    ? messages.filter((m: string) => m?.trim())
-    : (message ? [message] : [])
+  const nameStr = clampStr(name, 255)
+  if (!nameStr)
+    return NextResponse.json({ error: 'name es requerido y no puede estar vacío' }, { status: 400 })
 
-  if (!name || msgArray.length === 0)
-    return NextResponse.json({ error: 'name y al menos un mensaje son requeridos' }, { status: 400 })
+  // messages[] takes priority; fall back to single message
+  const rawMsgs = Array.isArray(messages) ? messages : (message ? [message] : [])
+  if (rawMsgs.length === 0 || rawMsgs.length > 10)
+    return NextResponse.json({ error: 'Se requiere entre 1 y 10 mensajes' }, { status: 400 })
+  const msgArray: string[] = rawMsgs
+    .map((m: unknown) => clampStr(m, 4096))
+    .filter((m): m is string => m !== null && m.length > 0)
+  if (msgArray.length === 0)
+    return NextResponse.json({ error: 'Al menos un mensaje debe ser no vacío' }, { status: 400 })
+
+  if (list_id !== undefined && list_id !== null && !isUUID(list_id))
+    return NextResponse.json({ error: 'list_id debe ser un UUID válido' }, { status: 400 })
+
+  const delayMin = antiblock_delay_min !== undefined ? Number(antiblock_delay_min) : 3
+  const delayMax = antiblock_delay_max !== undefined ? Number(antiblock_delay_max) : 8
+  if (!Number.isFinite(delayMin) || delayMin < 1)
+    return NextResponse.json({ error: 'antiblock_delay_min debe ser un número positivo' }, { status: 400 })
+  if (!Number.isFinite(delayMax) || delayMax < 1)
+    return NextResponse.json({ error: 'antiblock_delay_max debe ser un número positivo' }, { status: 400 })
+  if (delayMin > delayMax)
+    return NextResponse.json({ error: 'antiblock_delay_min no puede ser mayor que antiblock_delay_max' }, { status: 400 })
 
   const ALLOWED_TYPES = ['promotion', 'retention', 'onboarding', 'support', 'survey', 'payment', 'risk_alert']
   const resolvedType = campaignType || 'promotion'
@@ -79,15 +98,15 @@ export async function POST(req: NextRequest) {
           total_targets, antiblock_delay_min, antiblock_delay_max, personalize_name)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        RETURNING id`,
-      [name, msgArray[0], JSON.stringify(msgArray), media_url || null, media_type || null,
+      [nameStr, msgArray[0], JSON.stringify(msgArray), media_url || null, media_type || null,
        list_id || null, resolvedType,
        scheduled_at ? 'scheduled' : 'draft',
        scheduled_at || null, total_targets,
-       antiblock_delay_min ?? 3, antiblock_delay_max ?? 8,
+       delayMin, delayMax,
        personalize_name !== false]
     )
 
-    return NextResponse.json({ id: campaign.id, name, status: scheduled_at ? 'scheduled' : 'draft' })
+    return NextResponse.json({ id: campaign.id, name: nameStr, status: scheduled_at ? 'scheduled' : 'draft' })
   } catch (e) {
     console.error('[/api/campaigns POST]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

@@ -16,8 +16,14 @@ import path from 'path';
   }
 })();
 
-const RAILWAY_URL = process.env.N8N_RAILWAY_URL || 'https://zestful-learning-production-537c.up.railway.app';
-const LOCAL_URL   = process.env.N8N_LOCAL_URL   || 'http://localhost:5678';
+const LOCAL_URL   = process.env.N8N_LOCAL_URL || 'http://localhost:5678';
+const RAILWAY_URL = process.env.N8N_RAILWAY_URL;
+
+if (!RAILWAY_URL) {
+  console.error('\n  ✗ N8N_RAILWAY_URL is not set.');
+  console.error('    Set it in .env or pass via shell.\n');
+  process.exit(1);
+}
 
 const TARGETS = [
   {

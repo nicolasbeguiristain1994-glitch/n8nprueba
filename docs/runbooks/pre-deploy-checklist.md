@@ -40,3 +40,15 @@ Run this before every deployment to staging or production.
 - [ ] Check Railway deployment logs for errors in the first 5 minutes
 - [ ] Verify at least one campaign send works end-to-end (or confirm no regressions in send path)
 - [ ] Monitor for unexpected errors in Railway → Logs
+
+---
+
+## RBAC-specific (first deploy of PR #11 only)
+
+If this deploy includes migration 016 (`users` table):
+
+- [ ] Follow `docs/runbooks/rbac-rollout.md` — do not skip steps
+- [ ] Run migration 016 on staging **before** production
+- [ ] Create first admin user immediately after migration (bootstrap mode ends then)
+- [ ] Smoke test login, `/users` page, logout, and `/api/auth/me` on staging
+- [ ] Confirm `AUTH_USERNAME`/`AUTH_PASSWORD` are documented before bootstrap ends

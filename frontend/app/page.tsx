@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { MessageSquare, Send, AlertCircle, Eye, Wifi, Clock, BarChart2, Shield } from 'lucide-react'
+import { fetchJson } from '@/lib/fetchJson'
 
 interface Stats {
   total: string; sent: string; failed: string; delivered: string
@@ -26,9 +27,9 @@ export default function Dashboard() {
   const [cs, setCs]           = useState<CampaignStats | null>(null)
 
   useEffect(() => {
-    fetch('/api/dashboard').then(r => r.json()).then(d => {
-      setStats(d.stats); setLines(d.lines); setRecent(d.recent); setCs(d.campaignStats)
-    })
+    fetchJson<{ stats: Stats; lines: Line[]; recent: Message[]; campaignStats: CampaignStats }>('/api/dashboard')
+      .then(d => { setStats(d.stats); setLines(d.lines || []); setRecent(d.recent || []); setCs(d.campaignStats) })
+      .catch(() => { /* show empty state */ })
   }, [])
 
   const s = stats

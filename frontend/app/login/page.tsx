@@ -1,11 +1,11 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Loader2, MessageSquare, Lock, User } from 'lucide-react'
+import { Loader2, MessageSquare, Lock, Mail } from 'lucide-react'
 
 export default function LoginPage() {
   const router = useRouter()
-  const [username, setUsername] = useState('')
+  const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [error, setError]       = useState('')
   const [loading, setLoading]   = useState(false)
@@ -18,7 +18,7 @@ export default function LoginPage() {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ email, password }),
     })
 
     if (res.ok) {
@@ -47,16 +47,16 @@ export default function LoginPage() {
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="text-xs font-medium text-gray-600 mb-1.5 block">Usuario</label>
+              <label className="text-xs font-medium text-gray-600 mb-1.5 block">Email</label>
               <div className="relative">
-                <User size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input
-                  type="text"
-                  autoComplete="username"
+                  type="email"
+                  autoComplete="email"
                   autoFocus
-                  value={username}
-                  onChange={e => setUsername(e.target.value)}
-                  placeholder="tu_usuario"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="usuario@empresa.com"
                   className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                   required
                 />
@@ -87,7 +87,7 @@ export default function LoginPage() {
 
             <button
               type="submit"
-              disabled={loading || !username || !password}
+              disabled={loading || !email || !password}
               className="w-full bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 mt-2"
             >
               {loading
