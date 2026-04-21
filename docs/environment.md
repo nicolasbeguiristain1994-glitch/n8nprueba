@@ -63,6 +63,8 @@ Used by `frontend/lib/db.ts` (the pg connection pool):
 | `DB_POOL_MAX` | 5 | Max pool connections |
 | `DB_CONNECTION_TIMEOUT_MS` | 5000 | Connection timeout |
 | `DB_IDLE_TIMEOUT_MS` | 30000 | Idle connection timeout |
+| `DB_SSL` | `true` (remote) / `false` (localhost) | Set `false` to disable SSL (local dev). Default is SSL enabled with `rejectUnauthorized: false` for Supabase/Railway compatibility. |
+| `DB_SSL_REJECT_UNAUTHORIZED` | `false` | Set `true` for strict certificate validation (hardened production setups). Requires a valid CA-signed cert on the DB server. |
 
 ---
 
