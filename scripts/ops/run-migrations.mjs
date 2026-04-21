@@ -103,6 +103,7 @@ const MIGRATIONS = [
   { file: 'db/migrations/013_campaign_recipients_durability.sql',  label: '013 — campaign_recipients durability index' },
   { file: 'db/migrations/014_campaign_durability_idempotency.sql', label: '014 — campaign durability + idempotency' },
   { file: 'db/migrations/015_campaign_processor_lock_token.sql',  label: '015 — campaign processor lock token' },
+  { file: 'db/migrations/016_users_rbac.sql',                     label: '016 — Users table + RBAC roles' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

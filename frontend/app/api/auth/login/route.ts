@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { randomBytes, createHmac } from 'node:crypto'
+import bcryptjs from 'bcryptjs'
+import { query } from '@/lib/db'
+import { createSessionToken, SESSION_DURATION_SECONDS } from '@/lib/auth'
+import type { SessionUser } from '@/lib/auth'
 
-// ── In-memory rate limiter (failed attempts only) ─────────────────────────
+// ── In-memory rate limiter (failed attempts only) ─────────────────────────────
 // Tracks FAILED credential attempts only. Successful logins do not consume
 // the budget and clear the counter for that IP.
 // Single-instance only. If Railway scales to multiple instances, move to Redis.
@@ -41,13 +44,9 @@ function clearFailedLogins(ip: string): void {
   failedAttempts.delete(ip)
 }
 
-// ── Token helpers ──────────────────────────────────────────────────────────
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 30 // 30 days in seconds
+// ── Cookie config ─────────────────────────────────────────────────────────────
 
-function b64url(input: Buffer | string): string {
-  const buf = Buffer.isBuffer(input) ? input : Buffer.from(input, 'utf8')
-  return buf.toString('base64url')
-}
+const COOKIE_MAX_AGE = SESSION_DURATION_SECONDS // 7 days
 
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req)
@@ -60,49 +59,171 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  let body: { username?: string; password?: string }
+  let body: { email?: string; password?: string; username?: string }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { username, password } = body
+  // Accept both 'email' and legacy 'username' fields
+  const rawEmail = (body.email || body.username || '').trim()
+  const password = body.password || ''
 
-  const validUser = process.env.AUTH_USERNAME
-  const validPass = process.env.AUTH_PASSWORD
-  const secret    = process.env.AUTH_SECRET
+  if (!rawEmail || !password) {
+    return NextResponse.json({ error: 'Email and password are required' }, { status: 400 })
+  }
 
-  if (!validUser || !validPass || !secret) {
+  const email  = rawEmail.toLowerCase().trim()
+  const secret = process.env.AUTH_SECRET
+
+  if (!secret) {
     return NextResponse.json({ error: 'Auth not configured' }, { status: 500 })
   }
 
-  // Wrong credentials — record failure then return a generic error
-  if (username !== validUser || password !== validPass) {
-    recordFailedLogin(ip)
-    return NextResponse.json({ error: 'Credenciales incorrectas' }, { status: 401 })
+  // ── Check if users table has any rows ─────────────────────────────────────
+  // Bootstrap fallback: if table is empty (or doesn't exist), allow login
+  // with AUTH_USERNAME + AUTH_PASSWORD env vars.
+  let userCount = 0
+  try {
+    const countRows = await query<{ count: string }>('SELECT COUNT(*)::text AS count FROM users')
+    userCount = parseInt(countRows[0]?.count ?? '0', 10)
+  } catch {
+    // Table may not exist yet — treat as zero users
+    userCount = 0
   }
 
-  // Successful login — reset failure counter so prior failures don't linger
+  // ── Bootstrap mode ────────────────────────────────────────────────────────
+  if (userCount === 0) {
+    const bootstrapUser = process.env.AUTH_USERNAME
+    const bootstrapPass = process.env.AUTH_PASSWORD
+
+    if (!bootstrapUser || !bootstrapPass) {
+      recordFailedLogin(ip)
+      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+    }
+
+    const emailMatch = email === bootstrapUser.toLowerCase().trim()
+    const passMatch  = password === bootstrapPass
+
+    if (!emailMatch || !passMatch) {
+      recordFailedLogin(ip)
+      return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+    }
+
+    clearFailedLogins(ip)
+
+    const now = Math.floor(Date.now() / 1000)
+    const sessionPayload: SessionUser = {
+      user_id:         'bootstrap',
+      email:           bootstrapUser.toLowerCase().trim(),
+      name:            'Bootstrap Admin',
+      role:            'admin',
+      sectors:         [],
+      session_version: 1,
+      iat:             now,
+      exp:             now + COOKIE_MAX_AGE,
+      nonce:           crypto.randomUUID(),
+    }
+
+    const token = createSessionToken(sessionPayload)
+    const res = NextResponse.json({
+      ok:        true,
+      bootstrap: true,
+      warning:   'No users in DB. Create an admin user and disable bootstrap mode.',
+      user: {
+        id:      'bootstrap',
+        email:   sessionPayload.email,
+        name:    'Bootstrap Admin',
+        role:    'admin',
+        sectors: [],
+      },
+    })
+    res.cookies.set('session', token, {
+      httpOnly: true,
+      secure:   process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge:   COOKIE_MAX_AGE,
+      path:     '/',
+    })
+    return res
+  }
+
+  // ── Normal DB-backed login ────────────────────────────────────────────────
+  type UserRow = {
+    id: string
+    email: string
+    name: string | null
+    role: 'admin' | 'operator' | 'viewer'
+    sectors: string[]
+    password_hash: string
+    is_active: boolean
+    session_version: number
+  }
+
+  let userRows: UserRow[]
+  try {
+    userRows = await query<UserRow>(
+      'SELECT id, email, name, role, sectors, password_hash, is_active, session_version FROM users WHERE LOWER(email) = $1',
+      [email]
+    )
+  } catch {
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+
+  const user = userRows[0]
+
+  // Generic error — do not reveal whether email exists
+  const credentialError = () => {
+    recordFailedLogin(ip)
+    return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+  }
+
+  if (!user)            return credentialError()
+  if (!user.is_active)  return credentialError()
+
+  const passwordMatch = await bcryptjs.compare(password, user.password_hash)
+  if (!passwordMatch)   return credentialError()
+
+  // Successful login
   clearFailedLogins(ip)
 
-  // ── Signed session token ───────────────────────────────────────────────────
-  // Format: base64url(payloadJson).base64url(hmacSha256Bytes)
-  // Payload embeds iat, exp, and a random nonce so every token is unique.
-  // AUTH_SECRET is the HMAC key — it is never stored in the cookie value.
-  // Rotating AUTH_SECRET immediately invalidates all existing sessions.
-  const now = Math.floor(Date.now() / 1000)
-  const payload = {
-    nonce: randomBytes(16).toString('hex'),
-    iat:   now,
-    exp:   now + COOKIE_MAX_AGE,
+  // Update last_login_at
+  try {
+    await query(
+      'UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1',
+      [user.id]
+    )
+  } catch {
+    // Non-fatal — don't fail the login if this update fails
   }
-  const payloadB64 = b64url(JSON.stringify(payload))
-  const sigBytes   = createHmac('sha256', secret).update(payloadB64).digest()
-  const token      = `${payloadB64}.${b64url(sigBytes)}`
 
-  const res = NextResponse.json({ ok: true })
-  res.cookies.set('auth_token', token, {
+  const now = Math.floor(Date.now() / 1000)
+  const sessionPayload: SessionUser = {
+    user_id:         user.id,
+    email:           user.email,
+    name:            user.name,
+    role:            user.role,
+    sectors:         Array.isArray(user.sectors) ? user.sectors : [],
+    session_version: user.session_version,
+    iat:             now,
+    exp:             now + COOKIE_MAX_AGE,
+    nonce:           crypto.randomUUID(),
+  }
+
+  const token = createSessionToken(sessionPayload)
+
+  const res = NextResponse.json({
+    ok: true,
+    user: {
+      id:      user.id,
+      email:   user.email,
+      name:    user.name,
+      role:    user.role,
+      sectors: Array.isArray(user.sectors) ? user.sectors : [],
+    },
+  })
+  res.cookies.set('session', token, {
     httpOnly: true,
     secure:   process.env.NODE_ENV === 'production',
     sameSite: 'lax',
