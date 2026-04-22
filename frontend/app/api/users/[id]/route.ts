@@ -1,6 +1,6 @@
 import bcryptjs from 'bcryptjs'
 import { query } from '@/lib/db'
-import { requireAdmin } from '@/lib/permissions'
+import { checkPermission } from '@/lib/permissions'
 
 const VALID_ROLES   = ['admin', 'operator', 'viewer'] as const
 const VALID_SECTORS = ['dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup', 'users', 'settings'] as const
@@ -20,8 +20,10 @@ type UserRow = {
 // ── GET /api/users/[id] ───────────────────────────────────────────────────────
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const err = checkPermission(req, 'users', 'manage')
+  if (err) return err
+
   try {
-    requireAdmin(req)
     const { id } = await params
 
     const rows = await query<UserRow>(
@@ -45,8 +47,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 // ── PATCH /api/users/[id] ─────────────────────────────────────────────────────
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const err = checkPermission(req, 'users', 'manage')
+  if (err) return err
+
   try {
-    requireAdmin(req)
     const { id } = await params
 
     let body: {
@@ -171,8 +175,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 // ── DELETE /api/users/[id] (soft delete) ─────────────────────────────────────
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const err = checkPermission(req, 'users', 'manage')
+  if (err) return err
+
   try {
-    requireAdmin(req)
     const { id } = await params
 
     // Fetch current user

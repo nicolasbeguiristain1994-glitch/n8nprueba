@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkAuth } from '@/lib/permissions'
+import { checkPermission } from '@/lib/permissions'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const authErr = checkAuth(req)
-  if (authErr) return authErr
+  // Promotes warmup number to production line — admin only
+  const err = checkPermission(req, 'warmup', 'manage')
+  if (err) return err
 
   const { id } = await params
 

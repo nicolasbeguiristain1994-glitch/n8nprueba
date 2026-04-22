@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
-import { checkAuth } from '@/lib/permissions'
+import { checkPermission } from '@/lib/permissions'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const authErr = checkAuth(req)
-  if (authErr) return authErr
+  const err = checkPermission(req, 'contacts', 'update')
+  if (err) return err
 
   const { id } = await params
   if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
@@ -57,8 +57,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const authErr = checkAuth(req)
-  if (authErr) return authErr
+  // delete = admin-only (operator canAccess blocks delete action)
+  const err = checkPermission(req, 'contacts', 'delete')
+  if (err) return err
 
   const { id } = await params
   try {

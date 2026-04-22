@@ -1,5 +1,5 @@
 import { query } from '@/lib/db'
-import { requireAuth } from '@/lib/permissions'
+import { requireAuth, effectivePermissions } from '@/lib/permissions'
 
 type UserRow = {
   id: string
@@ -25,6 +25,7 @@ export async function GET(req: Request) {
           role:    user.role,
           sectors: user.sectors,
         },
+        permissions: effectivePermissions(user),
       })
     }
 
@@ -46,8 +47,13 @@ export async function GET(req: Request) {
         email:   u.email,
         name:    u.name,
         role:    u.role,
-        sectors: u.sectors,
+        sectors: Array.isArray(u.sectors) ? u.sectors : [],
       },
+      // Permissions derived from fresh DB role/sectors — not from stale session token
+      permissions: effectivePermissions({
+        role:    u.role,
+        sectors: Array.isArray(u.sectors) ? u.sectors : [],
+      }),
     })
   } catch (e) {
     if (e instanceof Response) return e

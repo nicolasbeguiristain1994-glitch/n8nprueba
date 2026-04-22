@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isE164, isInstanceName } from '@/lib/validate'
-import { checkAuth } from '@/lib/permissions'
+import { checkPermission } from '@/lib/permissions'
 
 export async function GET(req: Request) {
-  const authErr = checkAuth(req)
-  if (authErr) return authErr
+  const err = checkPermission(req, 'warmup', 'read')
+  if (err) return err
 
   try {
     const numbers = await query(`
@@ -22,8 +22,8 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: NextRequest) {
-  const authErr = checkAuth(req)
-  if (authErr) return authErr
+  const err = checkPermission(req, 'warmup', 'create')
+  if (err) return err
 
   let body: {
     phone_number?: string; instance_name?: string; display_name?: string

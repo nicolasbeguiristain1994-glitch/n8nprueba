@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, withTransaction } from '@/lib/db'
 import { isUUID, clampStr } from '@/lib/validate'
-import { checkAuth } from '@/lib/permissions'
+import { checkPermission } from '@/lib/permissions'
 
 export async function GET(req: NextRequest) {
-  const authErr = checkAuth(req)
-  if (authErr) return authErr
+  const err = checkPermission(req, 'lists', 'read')
+  if (err) return err
 
   try {
     const lists = await query(`
@@ -24,8 +24,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const authErr = checkAuth(req)
-  if (authErr) return authErr
+  const err = checkPermission(req, 'lists', 'create')
+  if (err) return err
 
   let body: { name?: string; description?: string; filters?: unknown; contact_ids?: string[]; criteria?: { panel?: string; gaming?: string; segment?: string } }
   try {

@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isE164 } from '@/lib/validate'
-import { checkAuth } from '@/lib/permissions'
+import { checkPermission } from '@/lib/permissions'
 
 export async function GET(req: NextRequest) {
-  const authErr = checkAuth(req)
-  if (authErr) return authErr
+  const err = checkPermission(req, 'contacts', 'read')
+  if (err) return err
 
   const search  = req.nextUrl.searchParams.get('q') || ''
   const segment = req.nextUrl.searchParams.get('segment') || ''
@@ -49,8 +49,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const authErr = checkAuth(req)
-  if (authErr) return authErr
+  const err = checkPermission(req, 'contacts', 'create')
+  if (err) return err
 
   let body: { phone?: string; name?: string; panel?: string; gaming?: string; segment?: string; linea?: string | number }
   try {

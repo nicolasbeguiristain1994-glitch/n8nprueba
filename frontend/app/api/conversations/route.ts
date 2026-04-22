@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkAuth } from '@/lib/permissions'
+import { checkPermission } from '@/lib/permissions'
 
 // Normaliza teléfono: quita + y espacios para comparar consistentemente
 const normalize = (p: string) => p.replace(/^\+/, '').replace(/\s/g, '')
 
 export async function GET(req: NextRequest) {
-  const authErr = checkAuth(req)
-  if (authErr) return authErr
+  const err = checkPermission(req, 'conversations', 'read')
+  if (err) return err
 
   const phoneRaw = req.nextUrl.searchParams.get('phone')
 

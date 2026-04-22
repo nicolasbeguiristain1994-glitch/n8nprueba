@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkAuth } from '@/lib/permissions'
+import { checkPermission } from '@/lib/permissions'
 
 export async function GET(req: Request) {
-  const authErr = checkAuth(req)
-  if (authErr) return authErr
+  const err = checkPermission(req, 'dashboard', 'read')
+  if (err) return err
 
   try {
     const [stats, lines, recent, campaignStats] = await Promise.all([

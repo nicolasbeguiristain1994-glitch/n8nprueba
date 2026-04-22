@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkAuth } from '@/lib/permissions'
+import { checkPermission } from '@/lib/permissions'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const STALE_SENDING_MINUTES  = 15  // rows stuck in 'sending' longer than this are recovered
@@ -407,8 +407,8 @@ async function processInBackground(campaign: CampaignRow, n8nUrl: string, lockTo
 // ── Route handler ──────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const authErr = checkAuth(req)
-  if (authErr) return authErr
+  const err = checkPermission(req, 'send', 'send')
+  if (err) return err
 
   const { id } = await params
 

@@ -1,6 +1,6 @@
 import bcryptjs from 'bcryptjs'
 import { query } from '@/lib/db'
-import { requireAdmin } from '@/lib/permissions'
+import { checkPermission } from '@/lib/permissions'
 
 const VALID_ROLES    = ['admin', 'operator', 'viewer'] as const
 const VALID_SECTORS  = ['dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup', 'users', 'settings'] as const
@@ -19,9 +19,10 @@ type UserRow = {
 // ── GET /api/users ────────────────────────────────────────────────────────────
 
 export async function GET(req: Request) {
-  try {
-    requireAdmin(req)
+  const err = checkPermission(req, 'users', 'manage')
+  if (err) return err
 
+  try {
     const url    = new URL(req.url)
     const page   = Math.max(1, parseInt(url.searchParams.get('page')  || '1', 10))
     const limit  = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10)))
@@ -74,9 +75,10 @@ export async function GET(req: Request) {
 // ── POST /api/users ───────────────────────────────────────────────────────────
 
 export async function POST(req: Request) {
-  try {
-    requireAdmin(req)
+  const err = checkPermission(req, 'users', 'manage')
+  if (err) return err
 
+  try {
     let body: {
       email?: string
       password?: string
