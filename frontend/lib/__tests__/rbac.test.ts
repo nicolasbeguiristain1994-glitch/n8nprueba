@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, beforeAll } from 'vitest'
-import { canAccess, checkPermission, isCampaignOwnerOrAdmin } from '@/lib/permissions'
+import { canAccess, checkPermission, isCampaignOwnerOrAdmin, isOwnerOrAdmin } from '@/lib/permissions'
 import { createSessionToken } from '@/lib/auth'
 import type { SessionUser }   from '@/lib/auth'
 
@@ -251,5 +251,73 @@ describe('isCampaignOwnerOrAdmin — viewer', () => {
     expect(isCampaignOwnerOrAdmin(viewer, SELF_ID)).toBe(true)
     expect(canAccess(viewer, 'campaigns', 'create')).toBe(false)
     expect(canAccess(viewer, 'campaigns', 'update')).toBe(false)
+  })
+})
+
+// ── isOwnerOrAdmin (generic helper) ──────────────────────────────────────────
+//
+//  isCampaignOwnerOrAdmin is an alias — same logic, different name.
+//  These tests cover the generic helper used by contact_lists and future resources.
+
+describe('isOwnerOrAdmin — admin', () => {
+  const admin = makeSession({ role: 'admin', sectors: [] })
+
+  it('admin + owned by self → true', () => {
+    expect(isOwnerOrAdmin(admin, SELF_ID)).toBe(true)
+  })
+
+  it('admin + owned by another user → true', () => {
+    expect(isOwnerOrAdmin(admin, OTHER_ID)).toBe(true)
+  })
+
+  it('admin + owned_by = null (historical) → true', () => {
+    expect(isOwnerOrAdmin(admin, null)).toBe(true)
+  })
+})
+
+describe('isOwnerOrAdmin — operator', () => {
+  const op = makeSession({ role: 'operator', sectors: ['lists'] })
+
+  it('operator + owned by self → true', () => {
+    expect(isOwnerOrAdmin(op, SELF_ID)).toBe(true)
+  })
+
+  it('operator + owned by another user → false', () => {
+    expect(isOwnerOrAdmin(op, OTHER_ID)).toBe(false)
+  })
+
+  it('operator + owned_by = null (historical) → false', () => {
+    expect(isOwnerOrAdmin(op, null)).toBe(false)
+  })
+})
+
+describe('isOwnerOrAdmin — viewer', () => {
+  const viewer = makeSession({ role: 'viewer', sectors: ['lists'] })
+
+  it('viewer + owned by self → true (read-through)', () => {
+    expect(isOwnerOrAdmin(viewer, SELF_ID)).toBe(true)
+  })
+
+  it('viewer + owned by another user → false', () => {
+    expect(isOwnerOrAdmin(viewer, OTHER_ID)).toBe(false)
+  })
+
+  it('viewer + owned_by = null (historical) → false', () => {
+    expect(isOwnerOrAdmin(viewer, null)).toBe(false)
+  })
+
+  it('viewer ownership passes but canAccess still blocks create on lists', () => {
+    expect(isOwnerOrAdmin(viewer, SELF_ID)).toBe(true)
+    expect(canAccess(viewer, 'lists', 'create')).toBe(false)
+    expect(canAccess(viewer, 'lists', 'update')).toBe(false)
+  })
+})
+
+describe('isOwnerOrAdmin — alias consistency', () => {
+  it('isCampaignOwnerOrAdmin and isOwnerOrAdmin return identical results', () => {
+    const op = makeSession({ role: 'operator', sectors: ['campaigns'] })
+    for (const ownedBy of [SELF_ID, OTHER_ID, null]) {
+      expect(isCampaignOwnerOrAdmin(op, ownedBy)).toBe(isOwnerOrAdmin(op, ownedBy))
+    }
   })
 })

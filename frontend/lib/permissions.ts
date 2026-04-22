@@ -126,18 +126,17 @@ export function requireAuth(req: Request): SessionUser {
 }
 
 /**
- * Row-level ownership check for campaigns.
+ * Generic row-level ownership check.
  *
- * Rules:
- *   admin              → always true (sees all campaigns, including historical NULL-owned)
- *   ownedBy === null   → false for non-admin (historical campaigns are admin-only)
- *   ownedBy === userId → true (own campaign)
- *   ownedBy !== userId → false (someone else's campaign)
+ * Rules (same for every owned resource):
+ *   admin              → always true (sees all rows, including historical NULL-owned)
+ *   ownedBy === null   → false for non-admin (historical rows are admin-only)
+ *   ownedBy === userId → true  (own row)
+ *   ownedBy !== userId → false (someone else's row)
  *
- * Used by GET /api/campaigns/[id]/contacts, PATCH /api/campaigns/[id],
- * and POST /api/campaigns/[id]/send.
+ * Used by campaign and contact_list routes; extend to future resources as needed.
  */
-export function isCampaignOwnerOrAdmin(
+export function isOwnerOrAdmin(
   user: Pick<SessionUser, 'role' | 'user_id'>,
   ownedBy: string | null,
 ): boolean {
@@ -145,3 +144,9 @@ export function isCampaignOwnerOrAdmin(
   if (ownedBy === null) return false  // historical — admin-only
   return ownedBy === user.user_id
 }
+
+/**
+ * Alias kept for backwards compatibility — campaign routes and existing tests
+ * reference this name.
+ */
+export const isCampaignOwnerOrAdmin = isOwnerOrAdmin

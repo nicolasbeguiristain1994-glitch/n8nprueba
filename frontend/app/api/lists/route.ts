@@ -2,20 +2,33 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query, withTransaction } from '@/lib/db'
 import { isUUID, clampStr } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
+import { getSessionFromRequest } from '@/lib/auth'
+import { audit } from '@/lib/audit'
 
 export async function GET(req: NextRequest) {
   const err = checkPermission(req, 'lists', 'read')
   if (err) return err
 
+  const session = getSessionFromRequest(req)!  // safe: checkPermission already verified
+  const isAdmin = session.role === 'admin'
+
   try {
+    // Admin sees everything (including historical rows where owned_by IS NULL).
+    // Operator/viewer see only their own lists; NULL-owned historical lists are
+    // admin-only and never appear in non-admin results.
+    const ownerClause = isAdmin ? '' : 'WHERE cl.owned_by = $1'
+    const params      = isAdmin ? [] : [session.user_id]
+
     const lists = await query(`
       SELECT cl.id, cl.name, cl.description, cl.filters, cl.created_at,
+             cl.owned_by,
              COUNT(clm.contact_id)::int AS contact_count
       FROM contact_lists cl
       LEFT JOIN contact_list_members clm ON clm.list_id = cl.id
+      ${ownerClause}
       GROUP BY cl.id
       ORDER BY cl.created_at DESC
-    `)
+    `, params)
     return NextResponse.json({ lists })
   } catch (e) {
     console.error('[/api/lists GET]', e instanceof Error ? e.message : e)
@@ -26,6 +39,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const err = checkPermission(req, 'lists', 'create')
   if (err) return err
+  const session = getSessionFromRequest(req)!  // safe: checkPermission already verified
 
   let body: { name?: string; description?: string; filters?: unknown; contact_ids?: string[]; criteria?: { panel?: string; gaming?: string; segment?: string } }
   try {
@@ -49,8 +63,9 @@ export async function POST(req: NextRequest) {
   try {
     const result = await withTransaction(async (client) => {
       const { rows: listRows } = await client.query<{ id: string }>(
-        `INSERT INTO contact_lists (name, description, filters) VALUES ($1, $2, $3) RETURNING id`,
-        [nameStr, description || null, JSON.stringify(filters || criteria || {})]
+        `INSERT INTO contact_lists (name, description, filters, owned_by, updated_by)
+         VALUES ($1, $2, $3, $4, $4) RETURNING id`,
+        [nameStr, description || null, JSON.stringify(filters || criteria || {}), session.user_id]
       )
       const list = listRows[0]
 
@@ -81,6 +96,8 @@ export async function POST(req: NextRequest) {
       return { id: list.id, total: ids.length }
     })
 
+    void audit({ req, action: 'create', resource: 'lists', resource_id: result.id,
+      metadata: { name: nameStr, owner: session.user_id } })
     return NextResponse.json({ id: result.id, name: nameStr, total: result.total })
   } catch (e) {
     console.error('[/api/lists POST]', e instanceof Error ? e.message : e)
