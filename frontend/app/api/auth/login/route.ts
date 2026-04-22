@@ -88,8 +88,9 @@ export async function POST(req: NextRequest) {
   try {
     const countRows = await query<{ count: string }>('SELECT COUNT(*)::text AS count FROM users')
     userCount = parseInt(countRows[0]?.count ?? '0', 10)
-  } catch {
-    // Table may not exist yet — treat as zero users
+    console.log('[login] DB connected, user count:', userCount)
+  } catch (dbErr) {
+    console.error('[login] DB query failed, falling back to bootstrap:', (dbErr as Error).message)
     userCount = 0
   }
 
