@@ -104,6 +104,9 @@ const MIGRATIONS = [
   { file: 'db/migrations/014_campaign_durability_idempotency.sql', label: '014 — campaign durability + idempotency' },
   { file: 'db/migrations/015_campaign_processor_lock_token.sql',  label: '015 — campaign processor lock token' },
   { file: 'db/migrations/016_users_rbac.sql',                     label: '016 — Users table + RBAC roles' },
+  { file: 'db/migrations/017_audit_logging.sql',                  label: '017 — RBAC audit log table' },
+  { file: 'db/migrations/018_campaign_ownership.sql',             label: '018 — Campaign ownership (owned_by / updated_by)' },
+  { file: 'db/migrations/019_campaign_updated_by_fix.sql',        label: '019 — Fix campaigns.updated_by: varchar→uuid + FK' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
