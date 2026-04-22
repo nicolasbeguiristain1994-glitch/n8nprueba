@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID, clampStr } from '@/lib/validate'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermission, isOwnerOrAdmin } from '@/lib/permissions'
 import { getSessionFromRequest } from '@/lib/auth'
 import { audit } from '@/lib/audit'
 
@@ -104,6 +104,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Tipo de campaña inválido. Valores permitidos: ${ALLOWED_TYPES.join(', ')}` }, { status: 400 })
 
   try {
+    // List ownership check — must run before inserting the campaign.
+    // Non-admin can only create campaigns against lists they own.
+    // Historical lists (owned_by IS NULL) are admin-only.
+    if (list_id) {
+      const [list] = await query<{ owned_by: string | null }>(
+        'SELECT owned_by FROM contact_lists WHERE id = $1', [list_id]
+      )
+      if (!list)
+        return NextResponse.json({ error: 'List not found' }, { status: 404 })
+      if (!isOwnerOrAdmin(session, list.owned_by))
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     let total_targets = 0
     if (list_id) {
       const [r] = await query<{ count: string }>(
