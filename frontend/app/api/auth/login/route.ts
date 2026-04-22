@@ -163,12 +163,15 @@ export async function POST(req: NextRequest) {
   }
 
   let userRows: UserRow[]
+  const t0 = Date.now()
   try {
     userRows = await query<UserRow>(
       'SELECT id, email, name, role, sectors, password_hash, is_active, session_version FROM users WHERE LOWER(email) = $1',
       [email]
     )
-  } catch {
+    console.log('[login] step2 SELECT done in', Date.now() - t0, 'ms, found:', userRows.length)
+  } catch (e) {
+    console.error('[login] step2 SELECT failed:', (e as Error).message)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 
@@ -183,7 +186,10 @@ export async function POST(req: NextRequest) {
   if (!user)            return credentialError()
   if (!user.is_active)  return credentialError()
 
+  const tb = Date.now()
+  console.log('[login] step3 starting bcrypt compare...')
   const passwordMatch = await bcryptjs.compare(password, user.password_hash)
+  console.log('[login] step3 bcrypt done in', Date.now() - tb, 'ms, match:', passwordMatch)
   if (!passwordMatch)   return credentialError()
 
   // Successful login
