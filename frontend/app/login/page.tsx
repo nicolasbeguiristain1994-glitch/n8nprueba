@@ -1,10 +1,8 @@
 'use client'
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { Loader2, MessageSquare, Lock, Mail } from 'lucide-react'
 
 export default function LoginPage() {
-  const router = useRouter()
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [error, setError]       = useState('')
@@ -15,17 +13,33 @@ export default function LoginPage() {
     setLoading(true)
     setError('')
 
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    })
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 15000)
 
-    if (res.ok) {
-      router.replace('/')
-    } else {
-      const data = await res.json()
-      setError(data.error || 'Error al iniciar sesión')
+    try {
+      const res = await fetch('/api/auth/login', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ email, password }),
+        signal:  controller.signal,
+      })
+
+      const data = await res.json().catch(() => ({}))
+
+      if (!res.ok) {
+        setError((data as { error?: string }).error || `Error ${res.status}`)
+        return
+      }
+
+      // Full page navigation — avoids App Router RSC/session state issues
+      window.location.assign('/')
+    } catch (err) {
+      const aborted = err instanceof Error && err.name === 'AbortError'
+      setError(aborted
+        ? 'El login tardó demasiado. Revisá Railway logs e intentá de nuevo.'
+        : 'Error de red al iniciar sesión.')
+    } finally {
+      window.clearTimeout(timeout)
       setLoading(false)
     }
   }

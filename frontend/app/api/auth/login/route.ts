@@ -1,19 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import bcryptjs from 'bcryptjs'
+import { type PoolClient } from 'pg'
 import { getDbClient, pool } from '@/lib/db'
 import { createSessionToken, SESSION_DURATION_SECONDS } from '@/lib/auth'
 import type { SessionUser } from '@/lib/auth'
 
 // ── In-memory rate limiter (failed attempts only) ─────────────────────────────
-// Tracks FAILED credential attempts only. Successful logins do not consume
-// the budget and clear the counter for that IP.
-// Single-instance only. If Railway scales to multiple instances, move to Redis.
 const failedAttempts = new Map<string, { count: number; resetAt: number }>()
-const RATE_LIMIT_MAX    = 10              // failed attempts before lockout
-const RATE_LIMIT_WINDOW = 15 * 60 * 1000 // 15-minute window in ms
+const RATE_LIMIT_MAX    = 10
+const RATE_LIMIT_WINDOW = 15 * 60 * 1000
 
 function getClientIp(req: NextRequest): string {
-  // Railway sets x-forwarded-for; fall back to x-real-ip, then 'unknown'
   return (
     req.headers.get('x-forwarded-for')?.split(',')[0].trim() ||
     req.headers.get('x-real-ip') ||
@@ -21,14 +18,12 @@ function getClientIp(req: NextRequest): string {
   )
 }
 
-/** Pure read — returns true if IP has exceeded the failed-attempt limit. */
 function isRateLimited(ip: string): boolean {
   const entry = failedAttempts.get(ip)
   if (!entry || Date.now() > entry.resetAt) return false
   return entry.count >= RATE_LIMIT_MAX
 }
 
-/** Record one failed credential attempt for this IP. */
 function recordFailedLogin(ip: string): void {
   const now = Date.now()
   const entry = failedAttempts.get(ip)
@@ -39,19 +34,27 @@ function recordFailedLogin(ip: string): void {
   }
 }
 
-/** Reset failed-attempt counter after a successful login. */
 function clearFailedLogins(ip: string): void {
   failedAttempts.delete(ip)
 }
 
 // ── Cookie config ─────────────────────────────────────────────────────────────
-
 const COOKIE_MAX_AGE = SESSION_DURATION_SECONDS // 7 days
+
+type UserRow = {
+  id: string
+  email: string
+  name: string | null
+  role: 'admin' | 'operator' | 'viewer'
+  sectors: string[]
+  password_hash: string
+  is_active: boolean
+  session_version: number
+}
 
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req)
 
-  // Check lockout before parsing body — pure read, no state mutation yet
   if (isRateLimited(ip)) {
     return NextResponse.json(
       { error: 'Demasiados intentos. Intentá de nuevo en 15 minutos.' },
@@ -66,7 +69,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  // Accept both 'email' and legacy 'username' fields
   const rawEmail = (body.email || body.username || '').trim()
   const password = body.password || ''
 
@@ -81,67 +83,81 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Auth not configured' }, { status: 500 })
   }
 
-  // ── Acquire single DB client for all login queries ────────────────────────
-  // Using one client avoids pool exhaustion between consecutive queries when
-  // connecting via PgBouncer (Supabase session pooler).
-  type UserRow = {
-    id: string
-    email: string
-    name: string | null
-    role: 'admin' | 'operator' | 'viewer'
-    sectors: string[]
-    password_hash: string
-    is_active: boolean
-    session_version: number
-  }
-
-  let userCount = 0
-  let userRow: UserRow | undefined
-
+  console.log('[login] start')
   console.log('[login] pool before acquire — total:', pool.totalCount, 'idle:', pool.idleCount, 'waiting:', pool.waitingCount)
 
-  let dbClient
+  // ── Single DB client for all queries ─────────────────────────────────────
+  // Avoids pool exhaustion between consecutive queries over PgBouncer.
+  let dbClient: PoolClient | undefined
+  let userCount = 0
+  let userRow:   UserRow | undefined
+
   try {
     dbClient = await getDbClient()
-  } catch (e) {
-    console.error('[login] failed to acquire DB client:', (e as Error).message)
-    // Fall through to bootstrap check with userCount=0
-  }
+    console.log('[login] client acquired')
 
-  try {
-    if (dbClient) {
-      // ── Step 1: user count (bootstrap check) ───────────────────────────
-      const t1 = Date.now()
-      const countRows = await dbClient.query<{ count: string }>('SELECT COUNT(*)::text AS count FROM users')
-      userCount = parseInt(countRows.rows[0]?.count ?? '0', 10)
-      console.log('[login] step1 COUNT done in', Date.now() - t1, 'ms, count:', userCount)
+    // Step 1 — bootstrap check
+    const t1 = Date.now()
+    const countResult = await dbClient.query<{ count: string }>(
+      'SELECT COUNT(*)::text AS count FROM users'
+    )
+    userCount = parseInt(countResult.rows[0]?.count ?? '0', 10)
+    console.log('[login] step1 COUNT done in', Date.now() - t1, 'ms, count:', userCount)
 
-      if (userCount > 0) {
-        // ── Step 2: fetch user ────────────────────────────────────────────
-        const t2 = Date.now()
-        const userRows = await dbClient.query<UserRow>(
-          'SELECT id, email, name, role, sectors, password_hash, is_active, session_version FROM users WHERE LOWER(email) = $1',
-          [email]
+    if (userCount > 0) {
+      // Step 2 — fetch user
+      const t2 = Date.now()
+      const userResult = await dbClient.query<UserRow>(
+        'SELECT id, email, name, role, sectors, password_hash, is_active, session_version FROM users WHERE LOWER(email) = $1',
+        [email]
+      )
+      console.log('[login] step2 SELECT done in', Date.now() - t2, 'ms, found:', userResult.rows.length)
+      userRow = userResult.rows[0]
+
+      if (!userRow || !userRow.is_active) {
+        recordFailedLogin(ip)
+        console.log('[login] returning invalid credentials (user not found or inactive)')
+        return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+      }
+
+      // Step 3 — bcrypt compare
+      const t3 = Date.now()
+      console.log('[login] step3 starting bcrypt compare...')
+      const passwordMatch = await bcryptjs.compare(password, userRow.password_hash)
+      console.log('[login] step3 bcrypt done in', Date.now() - t3, 'ms, match:', passwordMatch)
+
+      if (!passwordMatch) {
+        recordFailedLogin(ip)
+        console.log('[login] returning invalid credentials (password mismatch)')
+        return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+      }
+
+      // Step 4 — update last_login_at (same client, non-fatal)
+      try {
+        const t4 = Date.now()
+        await dbClient.query(
+          'UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1',
+          [userRow.id]
         )
-        console.log('[login] step2 SELECT done in', Date.now() - t2, 'ms, found:', userRows.rows.length)
-        userRow = userRows.rows[0]
+        console.log('[login] step4 last_login_at done in', Date.now() - t4, 'ms')
+      } catch (e) {
+        console.error('[login] step4 last_login_at failed (non-fatal):', (e as Error).message)
       }
     }
-  } catch (dbErr) {
-    console.error('[login] DB query error:', (dbErr as Error).message)
-    if (dbClient) {
-      try { dbClient.release(true) } catch { /* ignore */ }
-      dbClient = undefined
-    }
+
+  } catch (e) {
+    console.error('[login] DB error:', (e as Error).message)
+    console.log('[login] returning service unavailable')
     return NextResponse.json({ error: 'Service unavailable' }, { status: 503 })
   } finally {
     if (dbClient) {
       dbClient.release()
       console.log('[login] pool after release — total:', pool.totalCount, 'idle:', pool.idleCount, 'waiting:', pool.waitingCount)
+      dbClient = undefined
     }
   }
 
-  // ── Bootstrap mode ────────────────────────────────────────────────────────
+  // ── Bootstrap mode (users table empty or does not exist) ─────────────────
   if (userCount === 0) {
     const bootstrapUser = process.env.AUTH_USERNAME
     const bootstrapPass = process.env.AUTH_PASSWORD
@@ -178,7 +194,7 @@ export async function POST(req: NextRequest) {
     const res = NextResponse.json({
       ok:        true,
       bootstrap: true,
-      warning:   'No users in DB. Create an admin user and disable bootstrap mode.',
+      warning:   'No users in DB. Create an admin user to disable bootstrap mode.',
       user: {
         id:      'bootstrap',
         email:   sessionPayload.email,
@@ -197,29 +213,9 @@ export async function POST(req: NextRequest) {
     return res
   }
 
-  // ── Normal DB-backed login ────────────────────────────────────────────────
-  const user = userRow
-
-  // Generic error — do not reveal whether email exists
-  const credentialError = () => {
-    recordFailedLogin(ip)
-    return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
-  }
-
-  if (!user)           return credentialError()
-  if (!user.is_active) return credentialError()
-
-  const tb = Date.now()
-  console.log('[login] step3 starting bcrypt compare...')
-  const passwordMatch = await bcryptjs.compare(password, user.password_hash)
-  console.log('[login] step3 bcrypt done in', Date.now() - tb, 'ms, match:', passwordMatch)
-  if (!passwordMatch)  return credentialError()
-
-  // Successful login
+  // ── Successful DB-backed login ────────────────────────────────────────────
+  const user = userRow!
   clearFailedLogins(ip)
-
-  // Update last_login_at — fire-and-forget, non-fatal
-  pool.query('UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [user.id]).catch(() => {})
 
   const now = Math.floor(Date.now() / 1000)
   const sessionPayload: SessionUser = {
@@ -235,6 +231,7 @@ export async function POST(req: NextRequest) {
   }
 
   const token = createSessionToken(sessionPayload)
+  console.log('[login] returning success')
 
   const res = NextResponse.json({
     ok: true,
