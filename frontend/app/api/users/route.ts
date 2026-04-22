@@ -1,9 +1,10 @@
 import bcryptjs from 'bcryptjs'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
+import { audit } from '@/lib/audit'
 
 const VALID_ROLES    = ['admin', 'operator', 'viewer'] as const
-const VALID_SECTORS  = ['dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup', 'users', 'settings'] as const
+const VALID_SECTORS  = ['dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup', 'users', 'settings', 'lists', 'send'] as const
 
 type UserRow = {
   id: string
@@ -135,6 +136,8 @@ export async function POST(req: Request) {
       return Response.json({ error: 'A user with that email already exists' }, { status: 409 })
     }
 
+    void audit({ req, action: 'create', resource: 'users', resource_id: rows[0].id,
+      metadata: { email, role } })
     return Response.json({ ok: true, id: rows[0].id }, { status: 201 })
   } catch (e) {
     if (e instanceof Response) return e

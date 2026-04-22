@@ -39,7 +39,7 @@ type User = {
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const ALL_SECTORS = [
-  'dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup', 'users', 'settings',
+  'dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup', 'users', 'settings', 'lists', 'send',
 ] as const
 
 const ROLE_LABELS: Record<Role, string> = {

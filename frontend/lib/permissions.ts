@@ -1,4 +1,6 @@
-import { getSessionFromRequest, type SessionUser } from './auth'
+import { NextResponse } from 'next/server'
+import { getSessionFromRequest } from '@/lib/auth'
+import type { SessionUser } from '@/lib/auth'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -9,145 +11,137 @@ export type Resource =
   | 'conversations'
   | 'lines'
   | 'warmup'
-  | 'lists'   // contact lists (create lists, assign contacts)
-  | 'send'    // manual one-off send (/api/send)
   | 'users'
+  | 'lists'
+  | 'send'
+  | 'audit'
   | 'settings'
 
-export type Action = 'read' | 'create' | 'update' | 'delete' | 'send' | 'manage'
+export type Action = 'read' | 'create' | 'update' | 'delete' | 'manage' | 'send'
 
-export type { SessionUser }
+// Permissions are returned as arrays of allowed actions per resource.
+// e.g. { campaigns: ['read', 'create', 'update', 'send'], users: ['read', 'create', 'update', 'delete', 'manage'] }
+export type EffectivePermissions = Partial<Record<Resource, Action[]>>
 
-// ── All known resources and actions (used for permission introspection) ───────
-
-export const ALL_RESOURCES: Resource[] = [
-  'dashboard', 'contacts', 'campaigns', 'conversations',
-  'lines', 'warmup', 'lists', 'send', 'users', 'settings',
-]
-
-export const ALL_ACTIONS: Action[] = ['read', 'create', 'update', 'delete', 'send', 'manage']
-
-// ── Permission matrix ─────────────────────────────────────────────────────────
+// ── RBAC matrix ───────────────────────────────────────────────────────────────
 //
-// admin    → full access to everything
-// operator → read/create/update/send on non-admin resources, scoped to sectors
-//            cannot: delete, manage, touch users/settings
-// viewer   → read only on resources in their sectors
-//
-// sectors (JSONB array on users row) scope non-admin access.
-// An operator/viewer with sectors=[] has no access beyond what role allows globally.
+// admin    → all resources, all actions
+// operator → read / create / update / send on assigned sectors; never delete or manage
+// viewer   → read only on assigned sectors
 
-export function canAccess(user: Pick<SessionUser, 'role' | 'sectors'>, resource: Resource, action: Action): boolean {
+/**
+ * Check whether a user (or partial role+sectors object) can perform an action
+ * on a resource.
+ */
+export function canAccess(
+  user: Pick<SessionUser, 'role' | 'sectors'>,
+  resource: Resource,
+  action: Action,
+): boolean {
   if (user.role === 'admin') return true
 
+  // delete and manage are always admin-only
+  if (action === 'delete' || action === 'manage') return false
+
+  const sectors: string[] = Array.isArray(user.sectors) ? user.sectors : []
+
+  // users and audit management are always admin-only
+  if (resource === 'users' || resource === 'audit') return false
+
+  // sector check — operator/viewer must have the resource in their sectors
+  if (!sectors.includes(resource)) return false
+
   if (user.role === 'viewer') {
-    if (action !== 'read') return false
-    return user.sectors.includes(resource)
+    return action === 'read'
   }
 
+  // operator
   if (user.role === 'operator') {
-    // Hard blocks regardless of sectors
-    if (resource === 'users' || resource === 'settings') return false
-    if (action === 'manage' || action === 'delete') return false
-    // Allowed actions for operators
-    if (!(['read', 'create', 'update', 'send'] as Action[]).includes(action)) return false
-    return user.sectors.includes(resource)
+    return action === 'read' || action === 'create' || action === 'update' || action === 'send'
   }
 
   return false
 }
 
-// ── Effective permissions helper (used by /api/auth/me) ───────────────────────
+/**
+ * Return a map of resource → action → boolean for the given user.
+ * Used by /api/auth/me to expose permissions to the frontend.
+ */
+export function effectivePermissions(
+  user: Pick<SessionUser, 'role' | 'sectors'>,
+): EffectivePermissions {
+  const resources: Resource[] = [
+    'dashboard', 'contacts', 'campaigns', 'conversations',
+    'lines', 'warmup', 'users', 'lists', 'send', 'audit', 'settings',
+  ]
+  const actions: Action[] = ['read', 'create', 'update', 'delete', 'manage', 'send']
 
-/** Returns a map of resource → allowed actions for the given user (role + sectors only). */
-export function effectivePermissions(user: Pick<SessionUser, 'role' | 'sectors'>): Partial<Record<Resource, Action[]>> {
-  const result: Partial<Record<Resource, Action[]>> = {}
-  for (const resource of ALL_RESOURCES) {
-    const allowed = ALL_ACTIONS.filter(a => canAccess(user, resource, a))
-    if (allowed.length > 0) result[resource] = allowed
+  const out: EffectivePermissions = {}
+  for (const resource of resources) {
+    const allowed = actions.filter(action => canAccess(user, resource, action))
+    if (allowed.length > 0) {
+      out[resource] = allowed
+    }
   }
-  return result
+  return out
 }
 
-// ── Non-throwing guards (return Response | null) ─────────────────────────────
-// Prefer these in Route Handlers where the function already has its own
-// try/catch — no restructuring needed, just an early-return check.
-//
-// Phase 2 RBAC: swap checkAuth() → checkRole(req, 'admin') / checkPermission()
-// in any route that needs finer-grained control.
-
-/** Returns a 401 Response if the request has no valid session, null otherwise. */
-export function checkAuth(req: Request): Response | null {
-  const user = getSessionFromRequest(req)
-  if (!user) return unauth()
+/**
+ * Synchronous permission check for use in API route handlers.
+ *
+ * Returns null if access is allowed, or a NextResponse (401/403) if not.
+ *
+ * Usage:
+ *   const err = checkPermission(req, 'warmup', 'read')
+ *   if (err) return err
+ */
+export function checkPermission(
+  req: Request,
+  resource: Resource,
+  action: Action,
+): NextResponse | null {
+  const session = getSessionFromRequest(req)
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  if (!canAccess(session, resource, action)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
   return null
 }
 
 /**
- * Returns 401/403 if the caller is not authenticated or lacks the permission.
- * Preferred pattern for route handlers:
- *   const err = checkPermission(req, 'campaigns', 'create')
- *   if (err) return err
+ * Throw a Response if the request has no valid session.
+ * Returns the SessionUser on success.
+ *
+ * Usage (in try/catch — catch (e) { if (e instanceof Response) return e }):
+ *   const user = requireAuth(req)
  */
-export function checkPermission(req: Request, resource: Resource, action: Action): Response | null {
-  const user = getSessionFromRequest(req)
-  if (!user) return unauth()
-  if (!canAccess(user, resource, action)) return forbidden(resource, action)
-  return null
-}
-
-/** Returns 401/403 if the caller does not have one of the required roles. */
-export function checkRole(req: Request, ...roles: Array<SessionUser['role']>): Response | null {
-  const user = getSessionFromRequest(req)
-  if (!user) return unauth()
-  if (!roles.includes(user.role)) {
-    return new Response(
-      JSON.stringify({ error: `Forbidden: requires role ${roles.join(' or ')}` }),
-      { status: 403, headers: { 'Content-Type': 'application/json' } }
-    )
-  }
-  return null
-}
-
-// ── Private response builders ─────────────────────────────────────────────────
-
-function unauth(): Response {
-  return new Response(
-    JSON.stringify({ error: 'Unauthorized' }),
-    { status: 401, headers: { 'Content-Type': 'application/json' } }
-  )
-}
-
-// resource/action params kept for call-site symmetry; not included in response
-// to avoid leaking internal permission details to callers.
-function forbidden(_resource: Resource, _action: Action): Response {
-  return new Response(
-    JSON.stringify({ error: 'Forbidden' }),
-    { status: 403, headers: { 'Content-Type': 'application/json' } }
-  )
-}
-
-// ── Throwing guards (throw Response on failure) ────────────────────────────
-
 export function requireAuth(req: Request): SessionUser {
-  const user = getSessionFromRequest(req)
-  if (!user) throw unauth()
-  return user
-}
-
-export function requireAdmin(req: Request): SessionUser {
-  const user = requireAuth(req)
-  if (user.role !== 'admin') {
-    throw new Response(
-      JSON.stringify({ error: 'Forbidden: admin role required' }),
-      { status: 403, headers: { 'Content-Type': 'application/json' } }
-    )
+  const session = getSessionFromRequest(req)
+  if (!session) {
+    throw Response.json({ error: 'Unauthorized' }, { status: 401 })
   }
-  return user
+  return session
 }
 
-export function requirePermission(req: Request, resource: Resource, action: Action): SessionUser {
-  const user = requireAuth(req)
-  if (!canAccess(user, resource, action)) throw forbidden(resource, action)
-  return user
+/**
+ * Row-level ownership check for campaigns.
+ *
+ * Rules:
+ *   admin              → always true (sees all campaigns, including historical NULL-owned)
+ *   ownedBy === null   → false for non-admin (historical campaigns are admin-only)
+ *   ownedBy === userId → true (own campaign)
+ *   ownedBy !== userId → false (someone else's campaign)
+ *
+ * Used by GET /api/campaigns/[id]/contacts, PATCH /api/campaigns/[id],
+ * and POST /api/campaigns/[id]/send.
+ */
+export function isCampaignOwnerOrAdmin(
+  user: Pick<SessionUser, 'role' | 'user_id'>,
+  ownedBy: string | null,
+): boolean {
+  if (user.role === 'admin') return true
+  if (ownedBy === null) return false  // historical — admin-only
+  return ownedBy === user.user_id
 }

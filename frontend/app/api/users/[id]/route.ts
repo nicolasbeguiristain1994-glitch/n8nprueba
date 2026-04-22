@@ -1,9 +1,10 @@
 import bcryptjs from 'bcryptjs'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
+import { audit } from '@/lib/audit'
 
 const VALID_ROLES   = ['admin', 'operator', 'viewer'] as const
-const VALID_SECTORS = ['dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup', 'users', 'settings'] as const
+const VALID_SECTORS = ['dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup', 'users', 'settings', 'lists', 'send'] as const
 
 type UserRow = {
   id: string
@@ -164,6 +165,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     const updateSql = `UPDATE users SET ${setClauses.join(', ')} WHERE id = $${paramIdx} RETURNING id`
     await query(updateSql, queryParams)
 
+    const changedFields: string[] = []
+    if ('name'      in body && body.name      !== undefined) changedFields.push('name')
+    if ('role'      in body && body.role      !== undefined) changedFields.push('role')
+    if ('sectors'   in body && body.sectors   !== undefined) changedFields.push('sectors')
+    if ('is_active' in body && body.is_active !== undefined) changedFields.push('is_active')
+    if (passwordChanged) changedFields.push('password_changed')
+
+    void audit({ req, action: 'update', resource: 'users', resource_id: id,
+      metadata: { changedFields } })
     return Response.json({ ok: true })
   } catch (e) {
     if (e instanceof Response) return e
@@ -210,6 +220,7 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
       [id]
     )
 
+    void audit({ req, action: 'delete', resource: 'users', resource_id: id })
     return Response.json({ ok: true })
   } catch (e) {
     if (e instanceof Response) return e

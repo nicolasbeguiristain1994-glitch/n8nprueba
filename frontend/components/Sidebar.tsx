@@ -2,20 +2,28 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { LayoutDashboard, Users, Megaphone, MessageSquare, Activity, Flame, LogOut, UserCog } from 'lucide-react'
+import { useCurrentUser } from '@/lib/useCurrentUser'
 
-const nav = [
+const BASE_NAV = [
   { href: '/',               label: 'Dashboard',      icon: LayoutDashboard },
   { href: '/contacts',       label: 'Contactos',       icon: Users },
   { href: '/campaigns',      label: 'Campañas',        icon: Megaphone },
   { href: '/conversations',  label: 'Conversaciones',  icon: MessageSquare },
   { href: '/lines',          label: 'Líneas',          icon: Activity },
   { href: '/warmup',         label: 'Calentamiento',   icon: Flame },
-  { href: '/users',          label: 'Usuarios',        icon: UserCog },
+]
+
+const ADMIN_NAV = [
+  { href: '/users', label: 'Usuarios', icon: UserCog },
 ]
 
 export default function Sidebar() {
   const path   = usePathname()
   const router = useRouter()
+  const { user } = useCurrentUser()
+
+  const isAdmin = user?.role === 'admin'
+  const nav = isAdmin ? [...BASE_NAV, ...ADMIN_NAV] : BASE_NAV
 
   const logout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' })
