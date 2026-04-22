@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, withTransaction } from '@/lib/db'
 import { isUUID, clampStr } from '@/lib/validate'
+import { checkAuth } from '@/lib/permissions'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const authErr = checkAuth(req)
+  if (authErr) return authErr
+
   try {
     const lists = await query(`
       SELECT cl.id, cl.name, cl.description, cl.filters, cl.created_at,
@@ -20,6 +24,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const authErr = checkAuth(req)
+  if (authErr) return authErr
+
   let body: { name?: string; description?: string; filters?: unknown; contact_ids?: string[]; criteria?: { panel?: string; gaming?: string; segment?: string } }
   try {
     body = await req.json()

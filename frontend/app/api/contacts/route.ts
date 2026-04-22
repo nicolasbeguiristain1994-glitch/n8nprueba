@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isE164 } from '@/lib/validate'
+import { checkAuth } from '@/lib/permissions'
 
 export async function GET(req: NextRequest) {
+  const authErr = checkAuth(req)
+  if (authErr) return authErr
+
   const search  = req.nextUrl.searchParams.get('q') || ''
   const segment = req.nextUrl.searchParams.get('segment') || ''
   const gaming  = req.nextUrl.searchParams.get('gaming') || ''
@@ -45,6 +49,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const authErr = checkAuth(req)
+  if (authErr) return authErr
+
   let body: { phone?: string; name?: string; panel?: string; gaming?: string; segment?: string; linea?: string | number }
   try {
     body = await req.json()

@@ -35,7 +35,44 @@ export function canAccess(user: SessionUser, resource: Resource, action: Action)
   return false
 }
 
-// ── Auth guard helpers (throw Response on failure) ────────────────────────────
+// ── Non-throwing guards (return Response | null) ─────────────────────────────
+// Prefer these in Route Handlers where the function already has its own
+// try/catch — no restructuring needed, just an early-return check.
+//
+// Phase 2 RBAC: swap checkAuth() → checkRole(req, 'admin') / checkPermission()
+// in any route that needs finer-grained control.
+
+/** Returns a 401 Response if the request has no valid session, null otherwise. */
+export function checkAuth(req: Request): Response | null {
+  const user = getSessionFromRequest(req)
+  if (!user) {
+    return new Response(
+      JSON.stringify({ error: 'Unauthorized' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+  return null
+}
+
+/** Returns 401/403 if the caller does not have one of the required roles. */
+export function checkRole(req: Request, ...roles: Array<SessionUser['role']>): Response | null {
+  const user = getSessionFromRequest(req)
+  if (!user) {
+    return new Response(
+      JSON.stringify({ error: 'Unauthorized' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+  if (!roles.includes(user.role)) {
+    return new Response(
+      JSON.stringify({ error: `Forbidden: requires role ${roles.join(' or ')}` }),
+      { status: 403, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+  return null
+}
+
+// ── Throwing guards (throw Response on failure) ────────────────────────────
 
 export function requireAuth(req: Request): SessionUser {
   const user = getSessionFromRequest(req)

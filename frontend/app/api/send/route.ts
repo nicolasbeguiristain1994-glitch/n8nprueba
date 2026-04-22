@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isE164, isUUID, clampStr } from '@/lib/validate'
+import { checkAuth } from '@/lib/permissions'
 
 type LogEntry = {
   phone_number:         string
@@ -12,6 +13,9 @@ type LogEntry = {
 }
 
 export async function POST(req: NextRequest) {
+  const authErr = checkAuth(req)
+  if (authErr) return authErr
+
   const N8N_URL = process.env.N8N_URL
   if (!N8N_URL) return NextResponse.json({ error: 'N8N_URL not configured' }, { status: 500 })
 

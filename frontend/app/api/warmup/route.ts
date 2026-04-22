@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isE164, isInstanceName } from '@/lib/validate'
+import { checkAuth } from '@/lib/permissions'
 
-export async function GET() {
+export async function GET(req: Request) {
+  const authErr = checkAuth(req)
+  if (authErr) return authErr
+
   try {
     const numbers = await query(`
       SELECT id, phone_number, instance_name, display_name, warmup_status, current_day, target_days,
@@ -18,6 +22,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const authErr = checkAuth(req)
+  if (authErr) return authErr
+
   let body: {
     phone_number?: string; instance_name?: string; display_name?: string
     target_days?: number; daily_limit?: number; notes?: string; timezone?: string

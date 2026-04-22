@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID, clampStr } from '@/lib/validate'
+import { checkAuth } from '@/lib/permissions'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const authErr = checkAuth(req)
+  if (authErr) return authErr
+
   try {
     const campaigns = await query(`
       SELECT c.id, c.name, c.message, c.messages, c.status, c.scheduled_at,
@@ -37,6 +41,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const authErr = checkAuth(req)
+  if (authErr) return authErr
+
   let body: {
     name?: string; message?: string; messages?: string[]; media_url?: string; media_type?: string
     list_id?: string; scheduled_at?: string; antiblock_delay_min?: number; antiblock_delay_max?: number

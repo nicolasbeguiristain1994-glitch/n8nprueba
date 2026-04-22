@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isE164 } from '@/lib/validate'
+import { checkAuth } from '@/lib/permissions'
 
 export async function POST(req: NextRequest) {
+  const authErr = checkAuth(req)
+  if (authErr) return authErr
+
   let body: { contacts?: Array<{ phone: string; name?: string; segment?: string }>; panel?: string; gaming?: string }
   try {
     body = await req.json()

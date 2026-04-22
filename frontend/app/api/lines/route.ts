@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
+import { checkAuth } from '@/lib/permissions'
 
-export async function GET() {
+export async function GET(req: Request) {
+  const authErr = checkAuth(req)
+  if (authErr) return authErr
+
   try {
     const lines = await query(`
       SELECT id, line_key, display_name, phone_number, evolution_instance,
