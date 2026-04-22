@@ -2,18 +2,29 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID, clampStr } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
+import { getSessionFromRequest } from '@/lib/auth'
+import { audit } from '@/lib/audit'
 
 export async function GET(req: NextRequest) {
   const err = checkPermission(req, 'campaigns', 'read')
   if (err) return err
 
+  const session = getSessionFromRequest(req)!  // safe: checkPermission already verified
+  const isAdmin = session.role === 'admin'
+
   try {
+    // Admin sees everything (including historical rows where owned_by IS NULL).
+    // Operator/viewer see only their own campaigns; NULL-owned historical rows
+    // are admin-only and never appear in non-admin lists.
+    const ownerClause = isAdmin ? '' : 'WHERE c.owned_by = $1'
+    const params      = isAdmin ? [] : [session.user_id]
+
     const campaigns = await query(`
       SELECT c.id, c.name, c.message, c.messages, c.status, c.scheduled_at,
              c.started_at, c.completed_at,
              c.total_targets, c.personalize_name,
              c.antiblock_delay_min, c.antiblock_delay_max,
-             c.created_at, cl.name AS list_name,
+             c.created_at, c.owned_by, cl.name AS list_name,
              -- Contar directamente desde whatsapp_messages para precisión en tiempo real
              COUNT(m.id) FILTER (WHERE m.status IN ('sent','delivered','read'))::int AS total_sent,
              COUNT(m.id) FILTER (WHERE m.status = 'delivered')::int               AS total_delivered,
@@ -30,9 +41,10 @@ export async function GET(req: NextRequest) {
       FROM campaigns c
       LEFT JOIN contact_lists cl ON cl.id = c.list_id
       LEFT JOIN whatsapp_messages m ON m.campaign_id = c.id
+      ${ownerClause}
       GROUP BY c.id, cl.name
       ORDER BY c.created_at DESC
-    `)
+    `, params)
     return NextResponse.json({ campaigns })
   } catch (e) {
     console.error('[/api/campaigns GET]', e instanceof Error ? e.message : e)
@@ -43,6 +55,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const err = checkPermission(req, 'campaigns', 'create')
   if (err) return err
+  const session = getSessionFromRequest(req)!
 
   let body: {
     name?: string; message?: string; messages?: string[]; media_url?: string; media_type?: string
@@ -102,17 +115,21 @@ export async function POST(req: NextRequest) {
     const [campaign] = await query<{ id: string }>(
       `INSERT INTO campaigns
          (name, message, messages, media_url, media_type, list_id, type, status, scheduled_at,
-          total_targets, antiblock_delay_min, antiblock_delay_max, personalize_name)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+          total_targets, antiblock_delay_min, antiblock_delay_max, personalize_name,
+          owned_by, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)
        RETURNING id`,
       [nameStr, msgArray[0], JSON.stringify(msgArray), media_url || null, media_type || null,
        list_id || null, resolvedType,
        scheduled_at ? 'scheduled' : 'draft',
        scheduled_at || null, total_targets,
        delayMin, delayMax,
-       personalize_name !== false]
+       personalize_name !== false,
+       session.user_id]
     )
 
+    void audit({ req, action: 'create', resource: 'campaigns', resource_id: campaign.id,
+      metadata: { name: nameStr } })
     return NextResponse.json({ id: campaign.id, name: nameStr, status: scheduled_at ? 'scheduled' : 'draft' })
   } catch (e) {
     console.error('[/api/campaigns POST]', e instanceof Error ? e.message : e)

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermission, isCampaignOwnerOrAdmin } from '@/lib/permissions'
+import { getSessionFromRequest } from '@/lib/auth'
+import { audit } from '@/lib/audit'
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const STALE_SENDING_MINUTES  = 15  // rows stuck in 'sending' longer than this are recovered
@@ -12,6 +14,7 @@ type CampaignRow = {
   id: string; name: string; message: string; messages: string[] | null
   media_url: string; list_id: string; antiblock_delay_min: number
   antiblock_delay_max: number; personalize_name: boolean; status: string
+  owned_by: string | null
 }
 
 type RecipientRow = {
@@ -409,6 +412,7 @@ async function processInBackground(campaign: CampaignRow, n8nUrl: string, lockTo
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const err = checkPermission(req, 'send', 'send')
   if (err) return err
+  const session = getSessionFromRequest(req)!  // safe: checkPermission already verified
 
   const { id } = await params
 
@@ -426,6 +430,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   if (!campaign) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
+
+  // Ownership check — non-admin can only send their own campaigns
+  if (!isCampaignOwnerOrAdmin(session, campaign.owned_by)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   const RESUMABLE = ['draft', 'scheduled', 'paused', 'running']
   if (!RESUMABLE.includes(campaign.status)) {
@@ -519,6 +528,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   if (!lockToken) {
+    void audit({ req, action: 'send', resource: 'campaigns', resource_id: id,
+      metadata: { alreadyProcessing: true } })
     return NextResponse.json({ started: false, alreadyProcessing: true })
   }
 
@@ -535,5 +546,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
   })()
 
+  void audit({ req, action: 'send', resource: 'campaigns', resource_id: id,
+    metadata: { started: true, total: totalPending } })
   return NextResponse.json({ started: true, total: totalPending })
 }

@@ -1,12 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermission, isCampaignOwnerOrAdmin } from '@/lib/permissions'
+import { getSessionFromRequest } from '@/lib/auth'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const err = checkPermission(req, 'campaigns', 'read')
   if (err) return err
 
+  const session = getSessionFromRequest(req)!  // safe: checkPermission already verified
   const { id } = await params
+
+  // Ownership check for non-admin users
+  if (session.role !== 'admin') {
+    const [row] = await query<{ owned_by: string | null }>(
+      'SELECT owned_by FROM campaigns WHERE id = $1', [id]
+    )
+    if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (!isCampaignOwnerOrAdmin(session, row.owned_by))
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   try {
     // Trae todos los contactos de la lista de la campaña
