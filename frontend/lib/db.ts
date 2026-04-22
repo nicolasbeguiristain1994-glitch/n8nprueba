@@ -23,7 +23,9 @@ export const pool = new Pool({
   connectionTimeoutMillis: Number(process.env.DB_CONNECTION_TIMEOUT_MS || 10000),
   idleTimeoutMillis:       Number(process.env.DB_IDLE_TIMEOUT_MS       || 30000),
   maxLifetimeSeconds:      MAX_LIFETIME_S,
-  // Apply statement_timeout on every new connection so queries never hang
+  // JS-level timeout — fires even if PgBouncer holds the query before Postgres sees it
+  query_timeout:           QUERY_TIMEOUT_MS,
+  // Apply statement_timeout on every new connection so queries never hang inside Postgres
   options:                 `--statement_timeout=${STATEMENT_TIMEOUT_MS}`,
 })
 
