@@ -1,33 +1,56 @@
 import { Pool, PoolClient } from 'pg'
 
 // ── SSL config ───────────────────────────────────────────────────────────────
-// DB_SSL=false          → disable SSL entirely
-// DB_SSL_REJECT_UNAUTHORIZED=true → strict certificate validation (default: off)
 const sslConfig = (() => {
   if (process.env.DB_SSL === 'false') return false
-  // Default: enabled with rejectUnauthorized false for Supabase/Railway compatibility
-  // Set DB_SSL_REJECT_UNAUTHORIZED=true for stricter validation
   const rejectUnauthorized = process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true'
   return { rejectUnauthorized }
 })()
 
-const pool = new Pool({
+// ── Timeouts ─────────────────────────────────────────────────────────────────
+const QUERY_TIMEOUT_MS     = Number(process.env.DB_QUERY_TIMEOUT_MS     || 10000)
+const STATEMENT_TIMEOUT_MS = Number(process.env.DB_STATEMENT_TIMEOUT_MS || 10000)
+const MAX_LIFETIME_S       = Number(process.env.DB_MAX_LIFETIME_SECONDS  || 300)
+
+export const pool = new Pool({
   host:                    process.env.DB_HOST,
   port:                    Number(process.env.DB_PORT               || 5432),
   database:                process.env.DB_NAME,
   user:                    process.env.DB_USER,
   password:                process.env.DB_PASSWORD,
   ssl:                     sslConfig,
-  max:                     Number(process.env.DB_POOL_MAX            || 5),
-  connectionTimeoutMillis: Number(process.env.DB_CONNECTION_TIMEOUT_MS || 5000),
+  max:                     Number(process.env.DB_POOL_MAX            || 3),
+  connectionTimeoutMillis: Number(process.env.DB_CONNECTION_TIMEOUT_MS || 10000),
   idleTimeoutMillis:       Number(process.env.DB_IDLE_TIMEOUT_MS       || 30000),
+  maxLifetimeSeconds:      MAX_LIFETIME_S,
+  // Apply statement_timeout on every new connection so queries never hang
+  options:                 `--statement_timeout=${STATEMENT_TIMEOUT_MS}`,
 })
 
+pool.on('error', (err) => {
+  console.error('[db] pool client error:', err.message)
+})
+
+pool.on('connect', () => {
+  console.log('[db] new client connected — pool total:', pool.totalCount, 'idle:', pool.idleCount)
+})
+
+// ── Acquire a raw client (caller must call client.release()) ─────────────────
+export async function getDbClient(): Promise<PoolClient> {
+  console.log('[db] acquiring client — pool total:', pool.totalCount, 'idle:', pool.idleCount, 'waiting:', pool.waitingCount)
+  const client = await pool.connect()
+  console.log('[db] client acquired   — pool total:', pool.totalCount, 'idle:', pool.idleCount, 'waiting:', pool.waitingCount)
+  return client
+}
+
+// ── Simple one-shot query (auto-releases connection) ─────────────────────────
 export async function query<T = Record<string, unknown>>(
   sql: string,
   params?: unknown[]
 ): Promise<T[]> {
+  const start = Date.now()
   const { rows } = await pool.query(sql, params)
+  console.log('[db] query done in', Date.now() - start, 'ms — pool total:', pool.totalCount, 'idle:', pool.idleCount)
   return rows as T[]
 }
 

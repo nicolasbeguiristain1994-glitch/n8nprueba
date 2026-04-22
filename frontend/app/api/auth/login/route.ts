@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import bcryptjs from 'bcryptjs'
-import { query } from '@/lib/db'
+import { getDbClient, pool } from '@/lib/db'
 import { createSessionToken, SESSION_DURATION_SECONDS } from '@/lib/auth'
 import type { SessionUser } from '@/lib/auth'
 
@@ -81,17 +81,64 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Auth not configured' }, { status: 500 })
   }
 
-  // ── Check if users table has any rows ─────────────────────────────────────
-  // Bootstrap fallback: if table is empty (or doesn't exist), allow login
-  // with AUTH_USERNAME + AUTH_PASSWORD env vars.
+  // ── Acquire single DB client for all login queries ────────────────────────
+  // Using one client avoids pool exhaustion between consecutive queries when
+  // connecting via PgBouncer (Supabase session pooler).
+  type UserRow = {
+    id: string
+    email: string
+    name: string | null
+    role: 'admin' | 'operator' | 'viewer'
+    sectors: string[]
+    password_hash: string
+    is_active: boolean
+    session_version: number
+  }
+
   let userCount = 0
+  let userRow: UserRow | undefined
+
+  console.log('[login] pool before acquire — total:', pool.totalCount, 'idle:', pool.idleCount, 'waiting:', pool.waitingCount)
+
+  let dbClient
   try {
-    const countRows = await query<{ count: string }>('SELECT COUNT(*)::text AS count FROM users')
-    userCount = parseInt(countRows[0]?.count ?? '0', 10)
-    console.log('[login] DB connected, user count:', userCount)
+    dbClient = await getDbClient()
+  } catch (e) {
+    console.error('[login] failed to acquire DB client:', (e as Error).message)
+    // Fall through to bootstrap check with userCount=0
+  }
+
+  try {
+    if (dbClient) {
+      // ── Step 1: user count (bootstrap check) ───────────────────────────
+      const t1 = Date.now()
+      const countRows = await dbClient.query<{ count: string }>('SELECT COUNT(*)::text AS count FROM users')
+      userCount = parseInt(countRows.rows[0]?.count ?? '0', 10)
+      console.log('[login] step1 COUNT done in', Date.now() - t1, 'ms, count:', userCount)
+
+      if (userCount > 0) {
+        // ── Step 2: fetch user ────────────────────────────────────────────
+        const t2 = Date.now()
+        const userRows = await dbClient.query<UserRow>(
+          'SELECT id, email, name, role, sectors, password_hash, is_active, session_version FROM users WHERE LOWER(email) = $1',
+          [email]
+        )
+        console.log('[login] step2 SELECT done in', Date.now() - t2, 'ms, found:', userRows.rows.length)
+        userRow = userRows.rows[0]
+      }
+    }
   } catch (dbErr) {
-    console.error('[login] DB query failed, falling back to bootstrap:', (dbErr as Error).message)
-    userCount = 0
+    console.error('[login] DB query error:', (dbErr as Error).message)
+    if (dbClient) {
+      try { dbClient.release(true) } catch { /* ignore */ }
+      dbClient = undefined
+    }
+    return NextResponse.json({ error: 'Service unavailable' }, { status: 503 })
+  } finally {
+    if (dbClient) {
+      dbClient.release()
+      console.log('[login] pool after release — total:', pool.totalCount, 'idle:', pool.idleCount, 'waiting:', pool.waitingCount)
+    }
   }
 
   // ── Bootstrap mode ────────────────────────────────────────────────────────
@@ -151,31 +198,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Normal DB-backed login ────────────────────────────────────────────────
-  type UserRow = {
-    id: string
-    email: string
-    name: string | null
-    role: 'admin' | 'operator' | 'viewer'
-    sectors: string[]
-    password_hash: string
-    is_active: boolean
-    session_version: number
-  }
-
-  let userRows: UserRow[]
-  const t0 = Date.now()
-  try {
-    userRows = await query<UserRow>(
-      'SELECT id, email, name, role, sectors, password_hash, is_active, session_version FROM users WHERE LOWER(email) = $1',
-      [email]
-    )
-    console.log('[login] step2 SELECT done in', Date.now() - t0, 'ms, found:', userRows.length)
-  } catch (e) {
-    console.error('[login] step2 SELECT failed:', (e as Error).message)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-
-  const user = userRows[0]
+  const user = userRow
 
   // Generic error — do not reveal whether email exists
   const credentialError = () => {
@@ -183,20 +206,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 
-  if (!user)            return credentialError()
-  if (!user.is_active)  return credentialError()
+  if (!user)           return credentialError()
+  if (!user.is_active) return credentialError()
 
   const tb = Date.now()
   console.log('[login] step3 starting bcrypt compare...')
   const passwordMatch = await bcryptjs.compare(password, user.password_hash)
   console.log('[login] step3 bcrypt done in', Date.now() - tb, 'ms, match:', passwordMatch)
-  if (!passwordMatch)   return credentialError()
+  if (!passwordMatch)  return credentialError()
 
   // Successful login
   clearFailedLogins(ip)
 
   // Update last_login_at — fire-and-forget, non-fatal
-  query('UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [user.id]).catch(() => {})
+  pool.query('UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [user.id]).catch(() => {})
 
   const now = Math.floor(Date.now() / 1000)
   const sessionPayload: SessionUser = {
