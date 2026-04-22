@@ -5,7 +5,7 @@ import { isUUID } from '@/lib/validate'
 
 export async function GET(req: NextRequest) {
   // Admin only — audit is always restricted to admin in canAccess
-  const err = checkPermission(req, 'audit', 'read')
+  const err = await checkPermission(req, 'audit', 'read')
   if (err) return err
 
   const url = new URL(req.url)

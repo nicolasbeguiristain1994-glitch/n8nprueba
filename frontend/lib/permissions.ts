@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getSessionFromRequest } from '@/lib/auth'
 import type { SessionUser } from '@/lib/auth'
+import { query } from '@/lib/db'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -86,25 +87,66 @@ export function effectivePermissions(
   return out
 }
 
+type FreshUserRow = {
+  role: 'admin' | 'operator' | 'viewer'
+  sectors: string[]
+  is_active: boolean
+  session_version: number
+}
+
 /**
- * Synchronous permission check for use in API route handlers.
+ * Async permission check for use in API route handlers.
+ *
+ * Queries the DB for fresh role/sectors/is_active/session_version so that
+ * admin edits (sector changes, deactivation, etc.) take effect immediately
+ * without requiring old tokens to expire.
  *
  * Returns null if access is allowed, or a NextResponse (401/403) if not.
  *
  * Usage:
- *   const err = checkPermission(req, 'warmup', 'read')
+ *   const err = await checkPermission(req, 'warmup', 'read')
  *   if (err) return err
  */
-export function checkPermission(
+export async function checkPermission(
   req: Request,
   resource: Resource,
   action: Action,
-): NextResponse | null {
+): Promise<NextResponse | null> {
   const session = getSessionFromRequest(req)
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
-  if (!canAccess(session, resource, action)) {
+
+  // Bootstrap shortcut — no DB row exists for the bootstrap user
+  if (session.user_id === 'bootstrap') {
+    if (!canAccess(session, resource, action)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+    return null
+  }
+
+  // Fetch fresh state from DB — one query per API request
+  const rows = await query<FreshUserRow>(
+    'SELECT role, sectors, is_active, session_version FROM users WHERE id = $1',
+    [session.user_id],
+  )
+  const dbUser = rows[0]
+
+  if (!dbUser || !dbUser.is_active) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  if (dbUser.session_version !== session.session_version) {
+    return NextResponse.json({ error: 'Session expired' }, { status: 401 })
+  }
+
+  // Authorise using fresh DB role/sectors — not stale cookie values
+  const freshUser = {
+    ...session,
+    role:    dbUser.role,
+    sectors: Array.isArray(dbUser.sectors) ? dbUser.sectors : [],
+  }
+
+  if (!canAccess(freshUser, resource, action)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
   return null

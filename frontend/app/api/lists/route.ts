@@ -6,7 +6,7 @@ import { getSessionFromRequest } from '@/lib/auth'
 import { audit } from '@/lib/audit'
 
 export async function GET(req: NextRequest) {
-  const err = checkPermission(req, 'lists', 'read')
+  const err = await checkPermission(req, 'lists', 'read')
   if (err) return err
 
   const session = getSessionFromRequest(req)!  // safe: checkPermission already verified
@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const err = checkPermission(req, 'lists', 'create')
+  const err = await checkPermission(req, 'lists', 'create')
   if (err) return err
   const session = getSessionFromRequest(req)!  // safe: checkPermission already verified
 

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
+import { audit } from '@/lib/audit'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // Promotes warmup number to production line — admin only
-  const err = checkPermission(req, 'warmup', 'manage')
+  const err = await checkPermission(req, 'warmup', 'manage')
   if (err) return err
 
   const { id } = await params
@@ -41,6 +42,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       `UPDATE warmup_numbers SET warmup_status = 'completed', updated_at = NOW() WHERE id = $1`, [id]
     )
 
+    void audit({ req, action: 'migrate', resource: 'warmup', resource_id: id,
+      metadata: { instance_name } })
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[/api/warmup/migrate POST]', e instanceof Error ? e.message : e)

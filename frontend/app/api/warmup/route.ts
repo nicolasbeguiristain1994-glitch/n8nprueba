@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isE164, isInstanceName } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
+import { audit } from '@/lib/audit'
 
 export async function GET(req: Request) {
-  const err = checkPermission(req, 'warmup', 'read')
+  const err = await checkPermission(req, 'warmup', 'read')
   if (err) return err
 
   try {
@@ -22,7 +23,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: NextRequest) {
-  const err = checkPermission(req, 'warmup', 'create')
+  const err = await checkPermission(req, 'warmup', 'create')
   if (err) return err
 
   let body: {
@@ -70,7 +71,10 @@ export async function POST(req: NextRequest) {
       timezone || 'America/Argentina/Buenos_Aires',
     ])
 
-    return NextResponse.json({ id: (rows[0] as { id: string }).id })
+    const newId = (rows[0] as { id: string }).id
+    void audit({ req, action: 'create', resource: 'warmup', resource_id: newId,
+      metadata: { instance_name: instance_name.trim() } })
+    return NextResponse.json({ id: newId })
   } catch (e) {
     console.error('[/api/warmup POST]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

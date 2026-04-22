@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isE164, isUUID, clampStr } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
+import { audit } from '@/lib/audit'
 
 type LogEntry = {
   phone_number:         string
@@ -13,7 +14,7 @@ type LogEntry = {
 }
 
 export async function POST(req: NextRequest) {
-  const err = checkPermission(req, 'send', 'send')
+  const err = await checkPermission(req, 'send', 'send')
   if (err) return err
 
   const N8N_URL = process.env.N8N_URL
@@ -137,5 +138,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  void audit({ req, action: 'send', resource: 'send',
+    metadata: { count: uniquePhones.length, campaign_id: campaign_id ?? null } })
   return NextResponse.json({ results, total: uniquePhones.length })
 }

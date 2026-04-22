@@ -20,7 +20,7 @@ type UserRow = {
 // ── GET /api/users ────────────────────────────────────────────────────────────
 
 export async function GET(req: Request) {
-  const err = checkPermission(req, 'users', 'manage')
+  const err = await checkPermission(req, 'users', 'manage')
   if (err) return err
 
   try {
@@ -76,7 +76,7 @@ export async function GET(req: Request) {
 // ── POST /api/users ───────────────────────────────────────────────────────────
 
 export async function POST(req: Request) {
-  const err = checkPermission(req, 'users', 'manage')
+  const err = await checkPermission(req, 'users', 'manage')
   if (err) return err
 
   try {

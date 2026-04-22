@@ -5,7 +5,7 @@ import { getSessionFromRequest } from '@/lib/auth'
 import { audit } from '@/lib/audit'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const err = checkPermission(req, 'campaigns', 'update')
+  const err = await checkPermission(req, 'campaigns', 'update')
   if (err) return err
 
   const session = getSessionFromRequest(req)!  // safe: checkPermission already verified

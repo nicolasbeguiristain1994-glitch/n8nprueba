@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isE164 } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
+import { audit } from '@/lib/audit'
 
 export async function GET(req: NextRequest) {
-  const err = checkPermission(req, 'contacts', 'read')
+  const err = await checkPermission(req, 'contacts', 'read')
   if (err) return err
 
   const search  = req.nextUrl.searchParams.get('q') || ''
@@ -49,7 +50,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const err = checkPermission(req, 'contacts', 'create')
+  const err = await checkPermission(req, 'contacts', 'create')
   if (err) return err
 
   let body: { phone?: string; name?: string; panel?: string; gaming?: string; segment?: string; linea?: string | number }
@@ -80,6 +81,8 @@ export async function POST(req: NextRequest) {
       [phone_clean, first_name, last_name, segment || null, panel || null, gaming || null, lineaVal]
     )
     if (!row) return NextResponse.json({ error: 'Ya existe un contacto con ese teléfono' }, { status: 409 })
+    void audit({ req, action: 'create', resource: 'contacts', resource_id: row.id,
+      metadata: { phone: phone_clean } })
     return NextResponse.json({ id: row.id })
   } catch (e: unknown) {
     console.error('[/api/contacts POST]', e instanceof Error ? e.message : e)

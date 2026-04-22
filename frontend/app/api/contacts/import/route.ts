@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isE164 } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
+import { audit } from '@/lib/audit'
 
 export async function POST(req: NextRequest) {
-  const err = checkPermission(req, 'contacts', 'create')
+  const err = await checkPermission(req, 'contacts', 'create')
   if (err) return err
 
   let body: { contacts?: Array<{ phone: string; name?: string; segment?: string }>; panel?: string; gaming?: string }
@@ -86,6 +87,8 @@ export async function POST(req: NextRequest) {
 
     const inserted = Number(row?.inserted || 0)
     const updated  = Number(row?.updated  || 0)
+    void audit({ req, action: 'import', resource: 'contacts',
+      metadata: { inserted, updated, skipped: skipped + invalidCount, invalid: invalidCount, total: contacts.length } })
     return NextResponse.json({ inserted, updated, skipped: skipped + invalidCount, invalid: invalidCount, total: contacts.length })
   } catch (e) {
     console.error('[contacts/import] bulk upsert error:', e instanceof Error ? e.message : e)

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkPermission } from '@/lib/permissions'
+import { audit } from '@/lib/audit'
 
 const EVO_URL = process.env.EVOLUTION_URL!
 
@@ -13,7 +14,7 @@ function validInstance(name: string): boolean {
 // Intenta obtener QR de la instancia. Si no existe y hay EVOLUTION_GLOBAL_API_KEY, la crea.
 export async function GET(req: NextRequest) {
   // QR read exposes connection state — restrict to lines manage (admin only)
-  const err = checkPermission(req, 'lines', 'manage')
+  const err = await checkPermission(req, 'lines', 'manage')
   if (err) return err
 
   const instance = req.nextUrl.searchParams.get('instance')
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest) {
 // POST /api/lines/qr  → crea la instancia usando el EVOLUTION_GLOBAL_API_KEY del servidor
 export async function POST(req: NextRequest) {
   // Creates Evolution instances — admin only
-  const err = checkPermission(req, 'lines', 'manage')
+  const err = await checkPermission(req, 'lines', 'manage')
   if (err) return err
 
   const EVO_GLOBAL = process.env.EVOLUTION_GLOBAL_API_KEY
@@ -121,9 +122,13 @@ export async function POST(req: NextRequest) {
         qrData = {}
       }
       const qrBase64 = (qrData?.base64 ?? qrData?.qrcode?.base64 ?? null) as string | null
+      void audit({ req, action: 'manage', resource: 'lines',
+        metadata: { instance: String(instance) } })
       return NextResponse.json({ created: true, base64: qrBase64 })
     }
 
+    void audit({ req, action: 'manage', resource: 'lines',
+      metadata: { instance: String(instance) } })
     return NextResponse.json({ created: true, base64 })
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 })

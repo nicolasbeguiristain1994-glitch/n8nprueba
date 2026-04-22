@@ -6,7 +6,7 @@ import { checkPermission } from '@/lib/permissions'
 const normalize = (p: string) => p.replace(/^\+/, '').replace(/\s/g, '')
 
 export async function GET(req: NextRequest) {
-  const err = checkPermission(req, 'conversations', 'read')
+  const err = await checkPermission(req, 'conversations', 'read')
   if (err) return err
 
   const phoneRaw = req.nextUrl.searchParams.get('phone')

@@ -3,7 +3,7 @@ import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
 
 export async function GET(req: Request) {
-  const err = checkPermission(req, 'lines', 'read')
+  const err = await checkPermission(req, 'lines', 'read')
   if (err) return err
 
   try {

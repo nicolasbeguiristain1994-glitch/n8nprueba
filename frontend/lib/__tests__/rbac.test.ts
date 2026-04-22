@@ -13,10 +13,30 @@
  *  8. Valid cookie, missing permission → checkPermission returns 403
  */
 
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, vi } from 'vitest'
 import { canAccess, checkPermission, isCampaignOwnerOrAdmin, isOwnerOrAdmin } from '@/lib/permissions'
 import { createSessionToken } from '@/lib/auth'
 import type { SessionUser }   from '@/lib/auth'
+
+// Mock DB so checkPermission tests don't need a real database connection.
+// Each checkPermission test must call mockDbUser() to set the DB response.
+vi.mock('@/lib/db', () => ({
+  query:           vi.fn(),
+  withTransaction: vi.fn(),
+}))
+import * as db from '@/lib/db'
+
+type DbUserRow = {
+  role: 'admin' | 'operator' | 'viewer'
+  sectors: string[]
+  is_active: boolean
+  session_version: number
+}
+
+/** Set the DB query mock to return a specific user row (or no row if null). */
+function mockDbUser(row: DbUserRow | null) {
+  vi.mocked(db.query).mockResolvedValue(row ? [row] : [])
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -132,7 +152,7 @@ describe('Case 6 — viewer with sectors["campaigns"]', () => {
 describe('Case 7 — no cookie returns 401', () => {
   it('checkPermission with no cookie → 401', async () => {
     const req = makeReqNoCookie()
-    const res = checkPermission(req, 'campaigns', 'read')
+    const res = await checkPermission(req, 'campaigns', 'read')
     expect(res).not.toBeNull()
     expect(res!.status).toBe(401)
     const body = await res!.json()
@@ -145,8 +165,9 @@ describe('Case 7 — no cookie returns 401', () => {
 describe('Case 8 — valid cookie but insufficient permission returns 403', () => {
   it('operator with sectors["campaigns"] calling send/send → 403', async () => {
     const session = makeSession({ role: 'operator', sectors: ['campaigns'] })
+    mockDbUser({ role: 'operator', sectors: ['campaigns'], is_active: true, session_version: session.session_version })
     const req = makeReqWithSession(session)
-    const res = checkPermission(req, 'send', 'send')
+    const res = await checkPermission(req, 'send', 'send')
     expect(res).not.toBeNull()
     expect(res!.status).toBe(403)
     const body = await res!.json()
@@ -155,8 +176,9 @@ describe('Case 8 — valid cookie but insufficient permission returns 403', () =
 
   it('viewer calling campaigns/create → 403', async () => {
     const session = makeSession({ role: 'viewer', sectors: ['campaigns'] })
+    mockDbUser({ role: 'viewer', sectors: ['campaigns'], is_active: true, session_version: session.session_version })
     const req = makeReqWithSession(session)
-    const res = checkPermission(req, 'campaigns', 'create')
+    const res = await checkPermission(req, 'campaigns', 'create')
     expect(res).not.toBeNull()
     expect(res!.status).toBe(403)
     const body = await res!.json()
@@ -165,8 +187,9 @@ describe('Case 8 — valid cookie but insufficient permission returns 403', () =
 
   it('operator calling users/manage → 403', async () => {
     const session = makeSession({ role: 'operator', sectors: ['users'] })
+    mockDbUser({ role: 'operator', sectors: ['users'], is_active: true, session_version: session.session_version })
     const req = makeReqWithSession(session)
-    const res = checkPermission(req, 'users', 'manage')
+    const res = await checkPermission(req, 'users', 'manage')
     expect(res).not.toBeNull()
     expect(res!.status).toBe(403)
     const body = await res!.json()
@@ -177,18 +200,20 @@ describe('Case 8 — valid cookie but insufficient permission returns 403', () =
 // ── Bonus: valid cookie + correct permission → null (pass-through) ────────────
 
 describe('Bonus — valid cookie with correct permission passes through', () => {
-  it('checkPermission returns null for admin on any resource', () => {
+  it('checkPermission returns null for admin on any resource', async () => {
     const session = makeSession({ role: 'admin', sectors: [] })
+    mockDbUser({ role: 'admin', sectors: [], is_active: true, session_version: session.session_version })
     const req = makeReqWithSession(session)
-    expect(checkPermission(req, 'campaigns', 'read')).toBeNull()
-    expect(checkPermission(req, 'users', 'manage')).toBeNull()
-    expect(checkPermission(req, 'audit', 'read')).toBeNull()
+    expect(await checkPermission(req, 'campaigns', 'read')).toBeNull()
+    expect(await checkPermission(req, 'users', 'manage')).toBeNull()
+    expect(await checkPermission(req, 'audit', 'read')).toBeNull()
   })
 
-  it('checkPermission returns null for operator[campaigns] on campaigns/read', () => {
+  it('checkPermission returns null for operator[campaigns] on campaigns/read', async () => {
     const session = makeSession({ role: 'operator', sectors: ['campaigns'] })
+    mockDbUser({ role: 'operator', sectors: ['campaigns'], is_active: true, session_version: session.session_version })
     const req = makeReqWithSession(session)
-    expect(checkPermission(req, 'campaigns', 'read')).toBeNull()
+    expect(await checkPermission(req, 'campaigns', 'read')).toBeNull()
   })
 })
 
@@ -319,5 +344,73 @@ describe('isOwnerOrAdmin — alias consistency', () => {
     for (const ownedBy of [SELF_ID, OTHER_ID, null]) {
       expect(isCampaignOwnerOrAdmin(op, ownedBy)).toBe(isOwnerOrAdmin(op, ownedBy))
     }
+  })
+})
+
+// ── Session freshness (checkPermission DB validation) ─────────────────────────
+//
+//  checkPermission now queries the DB for fresh role/sectors/is_active/session_version.
+//  These tests verify the DB-side checks using the mocked query function.
+
+describe('Session freshness — DB sectors override stale cookie', () => {
+  it('cookie missing contacts, DB has contacts → null (allow contacts/create)', async () => {
+    // Cookie was issued before admin added contacts sector
+    const session = makeSession({ role: 'operator', sectors: ['campaigns'], session_version: 2 })
+    // DB now has contacts sector and bumped session_version
+    mockDbUser({ role: 'operator', sectors: ['contacts', 'campaigns'], is_active: true, session_version: 2 })
+    const req = makeReqWithSession(session)
+    const res = await checkPermission(req, 'contacts', 'create')
+    expect(res).toBeNull()
+  })
+
+  it('cookie has contacts, DB removed contacts → 403 (deny using fresh DB)', async () => {
+    // Cookie was issued when operator had contacts; admin later removed it
+    const session = makeSession({ role: 'operator', sectors: ['contacts'], session_version: 3 })
+    // DB no longer has contacts
+    mockDbUser({ role: 'operator', sectors: [], is_active: true, session_version: 3 })
+    const req = makeReqWithSession(session)
+    const res = await checkPermission(req, 'contacts', 'create')
+    expect(res).not.toBeNull()
+    expect(res!.status).toBe(403)
+    const body = await res!.json()
+    expect(body.error).toBe('Forbidden')
+  })
+})
+
+describe('Session freshness — session_version mismatch → 401 Session expired', () => {
+  it('cookie session_version older than DB → 401', async () => {
+    const session = makeSession({ role: 'operator', sectors: ['contacts'], session_version: 1 })
+    // Admin changed something — DB version is now 2
+    mockDbUser({ role: 'operator', sectors: ['contacts'], is_active: true, session_version: 2 })
+    const req = makeReqWithSession(session)
+    const res = await checkPermission(req, 'contacts', 'create')
+    expect(res).not.toBeNull()
+    expect(res!.status).toBe(401)
+    const body = await res!.json()
+    expect(body.error).toBe('Session expired')
+  })
+})
+
+describe('Session freshness — inactive or missing user → 401', () => {
+  it('inactive DB user → 401 Unauthorized', async () => {
+    const session = makeSession({ role: 'operator', sectors: ['contacts'], session_version: 1 })
+    mockDbUser({ role: 'operator', sectors: ['contacts'], is_active: false, session_version: 1 })
+    const req = makeReqWithSession(session)
+    const res = await checkPermission(req, 'contacts', 'create')
+    expect(res).not.toBeNull()
+    expect(res!.status).toBe(401)
+    const body = await res!.json()
+    expect(body.error).toBe('Unauthorized')
+  })
+
+  it('missing DB user → 401 Unauthorized', async () => {
+    const session = makeSession({ role: 'operator', sectors: ['contacts'], session_version: 1 })
+    mockDbUser(null)  // no DB row
+    const req = makeReqWithSession(session)
+    const res = await checkPermission(req, 'contacts', 'create')
+    expect(res).not.toBeNull()
+    expect(res!.status).toBe(401)
+    const body = await res!.json()
+    expect(body.error).toBe('Unauthorized')
   })
 })

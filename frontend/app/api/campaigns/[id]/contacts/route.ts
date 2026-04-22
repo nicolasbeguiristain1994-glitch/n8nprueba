@@ -4,7 +4,7 @@ import { checkPermission, isCampaignOwnerOrAdmin } from '@/lib/permissions'
 import { getSessionFromRequest } from '@/lib/auth'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const err = checkPermission(req, 'campaigns', 'read')
+  const err = await checkPermission(req, 'campaigns', 'read')
   if (err) return err
 
   const session = getSessionFromRequest(req)!  // safe: checkPermission already verified

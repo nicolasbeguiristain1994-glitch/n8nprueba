@@ -21,7 +21,7 @@ type UserRow = {
 // ── GET /api/users/[id] ───────────────────────────────────────────────────────
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const err = checkPermission(req, 'users', 'manage')
+  const err = await checkPermission(req, 'users', 'manage')
   if (err) return err
 
   try {
@@ -48,7 +48,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 // ── PATCH /api/users/[id] ─────────────────────────────────────────────────────
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const err = checkPermission(req, 'users', 'manage')
+  const err = await checkPermission(req, 'users', 'manage')
   if (err) return err
 
   try {
@@ -185,7 +185,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 // ── DELETE /api/users/[id] (soft delete) ─────────────────────────────────────
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const err = checkPermission(req, 'users', 'manage')
+  const err = await checkPermission(req, 'users', 'manage')
   if (err) return err
 
   try {

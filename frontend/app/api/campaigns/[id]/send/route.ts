@@ -410,7 +410,7 @@ async function processInBackground(campaign: CampaignRow, n8nUrl: string, lockTo
 // ── Route handler ──────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const err = checkPermission(req, 'send', 'send')
+  const err = await checkPermission(req, 'send', 'send')
   if (err) return err
   const session = getSessionFromRequest(req)!  // safe: checkPermission already verified
 

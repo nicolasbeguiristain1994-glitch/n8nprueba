@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
+import { audit } from '@/lib/audit'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const err = checkPermission(req, 'contacts', 'update')
+  const err = await checkPermission(req, 'contacts', 'update')
   if (err) return err
 
   const { id } = await params
@@ -24,22 +25,27 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const allowedPanels   = ['Betcoin', 'Zeus', 'Bigwin', 'Farabet', 'Las Vegas']
 
   try {
+    const changedFields: string[] = []
+
     if (segment !== undefined) {
       if (segment !== null && !allowedSegments.includes(segment))
         return NextResponse.json({ error: 'Segmento inválido' }, { status: 400 })
       await query(`UPDATE contacts SET segment = $1::contact_segment, updated_at = NOW() WHERE id = $2`, [segment, id])
+      changedFields.push('segment')
     }
 
     if (gaming !== undefined) {
       if (gaming !== null && !allowedGaming.includes(gaming))
         return NextResponse.json({ error: 'Gaming inválido' }, { status: 400 })
       await query(`UPDATE contacts SET gaming = $1::gaming_type, updated_at = NOW() WHERE id = $2`, [gaming, id])
+      changedFields.push('gaming')
     }
 
     if (panel !== undefined) {
       if (panel !== null && !allowedPanels.includes(panel))
         return NextResponse.json({ error: 'Panel inválido' }, { status: 400 })
       await query(`UPDATE contacts SET panel = $1, updated_at = NOW() WHERE id = $2`, [panel, id])
+      changedFields.push('panel')
     }
 
     if (linea !== undefined) {
@@ -47,8 +53,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (lineaNum !== null && (lineaNum < 1 || lineaNum > 12))
         return NextResponse.json({ error: 'Línea inválida (1-12)' }, { status: 400 })
       await query(`UPDATE contacts SET linea = $1, updated_at = NOW() WHERE id = $2`, [lineaNum, id])
+      changedFields.push('linea')
     }
 
+    void audit({ req, action: 'update', resource: 'contacts', resource_id: id,
+      metadata: { changedFields } })
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[/api/contacts PATCH]', e instanceof Error ? e.message : e)
@@ -58,12 +67,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // delete = admin-only (operator canAccess blocks delete action)
-  const err = checkPermission(req, 'contacts', 'delete')
+  const err = await checkPermission(req, 'contacts', 'delete')
   if (err) return err
 
   const { id } = await params
   try {
     await query(`DELETE FROM contacts WHERE id = $1`, [id])
+    void audit({ req, action: 'delete', resource: 'contacts', resource_id: id })
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[/api/contacts DELETE]', e instanceof Error ? e.message : e)

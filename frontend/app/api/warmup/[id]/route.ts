@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
+import { audit } from '@/lib/audit'
 
 const ALLOWED_WARMUP_STATUSES = ['active', 'paused', 'completed', 'banned']
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const err = checkPermission(req, 'warmup', 'update')
+  const err = await checkPermission(req, 'warmup', 'update')
   if (err) return err
 
   const { id } = await params
@@ -49,6 +50,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       `UPDATE warmup_numbers SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${values.length}`,
       values
     )
+    void audit({ req, action: 'update', resource: 'warmup', resource_id: id,
+      metadata: { changedFields: allowed.filter(k => k in body) } })
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[/api/warmup PATCH]', e instanceof Error ? e.message : e)
@@ -58,12 +61,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // delete = admin-only (operator canAccess blocks delete action)
-  const err = checkPermission(req, 'warmup', 'delete')
+  const err = await checkPermission(req, 'warmup', 'delete')
   if (err) return err
 
   const { id } = await params
   try {
     await query(`DELETE FROM warmup_numbers WHERE id = $1`, [id])
+    void audit({ req, action: 'delete', resource: 'warmup', resource_id: id })
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[/api/warmup DELETE]', e instanceof Error ? e.message : e)
