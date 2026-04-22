@@ -189,15 +189,8 @@ export async function POST(req: NextRequest) {
   // Successful login
   clearFailedLogins(ip)
 
-  // Update last_login_at
-  try {
-    await query(
-      'UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1',
-      [user.id]
-    )
-  } catch {
-    // Non-fatal — don't fail the login if this update fails
-  }
+  // Update last_login_at — fire-and-forget, non-fatal
+  query('UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1', [user.id]).catch(() => {})
 
   const now = Math.floor(Date.now() / 1000)
   const sessionPayload: SessionUser = {
