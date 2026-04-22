@@ -22,8 +22,7 @@ export default function LoginPage() {
     })
 
     if (res.ok) {
-      router.push('/')
-      router.refresh()
+      router.replace('/')
     } else {
       const data = await res.json()
       setError(data.error || 'Error al iniciar sesión')
