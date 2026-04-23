@@ -27,7 +27,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://evolution-api-production-ec6b.up.railway.app/message/sendText/whatsapp-prod",
+        "url": "={{ $env.EVOLUTION_URL + '/message/sendText/' + $env.EVOLUTION_INSTANCE }}",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
