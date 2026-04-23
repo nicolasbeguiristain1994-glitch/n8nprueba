@@ -168,7 +168,10 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
           )
         }
       }
-      await client.query(updateSql, queryParams)
+      const { rows: updatedRows } = await client.query<{ id: string }>(updateSql, queryParams)
+      if (!updatedRows[0]) {
+        throw Response.json({ error: 'User not found' }, { status: 404 })
+      }
     })
 
     const changedFields: string[] = []

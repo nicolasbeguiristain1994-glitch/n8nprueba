@@ -25,6 +25,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const allowedPanels   = ['Betcoin', 'Zeus', 'Bigwin', 'Farabet', 'Las Vegas']
 
   try {
+    const existing = await query<{ id: string }>('SELECT id FROM contacts WHERE id = $1', [id])
+    if (!existing[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
     const changedFields: string[] = []
 
     if (segment !== undefined) {
