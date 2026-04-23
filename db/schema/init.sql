@@ -133,42 +133,57 @@ CREATE TABLE IF NOT EXISTS campaigns (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
     description TEXT,
-    
+
     -- Clasificación
-    type campaign_type NOT NULL,  -- onboarding | retention | payment | etc
-    channel VARCHAR(50) DEFAULT 'whatsapp',  -- whatsapp | sms | email
-    
+    type campaign_type NOT NULL DEFAULT 'promotion',
+
     -- Estado
     status campaign_status DEFAULT 'draft',
-    
+
+    -- Contenido (mensaje principal + pool de rotación)
+    message  TEXT,
+    messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+
+    -- Media adjunto (opcional)
+    media_url  TEXT,
+    media_type TEXT,
+
+    -- Lista de contactos asociada
+    -- FK a contact_lists agregado en migration 021 (contact_lists aún no existe aquí)
+    list_id UUID,
+
     -- Programación
-    scheduled_start_at TIMESTAMPTZ,
-    scheduled_end_at TIMESTAMPTZ,
-    started_at TIMESTAMPTZ,
-    ended_at TIMESTAMPTZ,
-    
-    -- Configuración
-    target_segment contact_segment,  -- Si es NULL, aplica a todos los activos
-    max_daily_messages INT,  -- Throttle: máx mensajes/día
-    rate_limit_per_hour INT DEFAULT 60,  -- Por jugador
-    
-    -- Contenido
-    template_id UUID,  -- FK a whatsapp_templates
-    
-    -- Tracking
-    total_contacts INT DEFAULT 0,
-    messages_sent INT DEFAULT 0,
-    messages_delivered INT DEFAULT 0,
-    messages_read INT DEFAULT 0,
-    messages_failed INT DEFAULT 0,
-    
-    -- Owner
-    created_by VARCHAR(255),
-    updated_by VARCHAR(255),
-    
+    scheduled_at TIMESTAMPTZ,
+    started_at   TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+
+    -- Targeting y contadores
+    total_targets INTEGER NOT NULL DEFAULT 0,
+    total_sent    INTEGER NOT NULL DEFAULT 0,
+    total_failed  INTEGER NOT NULL DEFAULT 0,
+
+    -- Antiblock delay (segundos entre envíos)
+    antiblock_delay_min INTEGER NOT NULL DEFAULT 3,
+    antiblock_delay_max INTEGER NOT NULL DEFAULT 8,
+
+    -- Personalización
+    personalize_name BOOLEAN NOT NULL DEFAULT true,
+
+    -- Processor lock (emisión en background)
+    processor_locked_at  TIMESTAMPTZ,
+    processor_lock_token UUID,
+
+    -- Ownership (para RBAC multi-tenant)
+    owned_by   UUID,
+    updated_by UUID,
+
     -- Auditoría
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+
+    CONSTRAINT campaigns_antiblock_min_pos   CHECK (antiblock_delay_min >= 1),
+    CONSTRAINT campaigns_antiblock_max_pos   CHECK (antiblock_delay_max >= 1),
+    CONSTRAINT campaigns_antiblock_order     CHECK (antiblock_delay_min <= antiblock_delay_max)
 );
 
 COMMENT ON TABLE campaigns IS 'Campañas de comunicación masiva - marketing, retención, alertas';
@@ -177,10 +192,10 @@ COMMENT ON COLUMN campaigns.status IS 'draft|scheduled|running|paused|completed|
 COMMENT ON COLUMN campaigns.target_segment IS 'Segmento objetivo - NULL = todos los activos';
 COMMENT ON COLUMN campaigns.max_daily_messages IS 'Throttle para no sobrecargar sistema';
 
-CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status);
-CREATE INDEX IF NOT EXISTS idx_campaigns_type ON campaigns(type);
-CREATE INDEX IF NOT EXISTS idx_campaigns_scheduled_start ON campaigns(scheduled_start_at DESC) WHERE status = 'scheduled';
-CREATE INDEX IF NOT EXISTS idx_campaigns_created_at ON campaigns(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_campaigns_status       ON campaigns(status);
+CREATE INDEX IF NOT EXISTS idx_campaigns_type         ON campaigns(type);
+CREATE INDEX IF NOT EXISTS idx_campaigns_scheduled_at ON campaigns(scheduled_at) WHERE scheduled_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_campaigns_created_at   ON campaigns(created_at DESC);
 
 
 -- ============================================

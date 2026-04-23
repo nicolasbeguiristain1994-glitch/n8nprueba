@@ -108,6 +108,7 @@ const MIGRATIONS = [
   { file: 'db/migrations/018_campaign_ownership.sql',             label: '018 — Campaign ownership (owned_by / updated_by)' },
   { file: 'db/migrations/019_campaign_updated_by_fix.sql',        label: '019 — Fix campaigns.updated_by: varchar→uuid + FK' },
   { file: 'db/migrations/020_contact_lists_ownership.sql',        label: '020 — Contact list ownership (owned_by / updated_by)' },
+  { file: 'db/migrations/021_campaigns_schema_alignment.sql',    label: '021 — Campaigns schema alignment with current routes' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
