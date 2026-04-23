@@ -1,5 +1,6 @@
 import bcryptjs from 'bcryptjs'
-import { query } from '@/lib/db'
+import { query, withTransaction } from '@/lib/db'
+import { isUUID } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 
@@ -26,6 +27,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
   try {
     const { id } = await params
+    if (!isUUID(id)) return Response.json({ error: 'Invalid id' }, { status: 400 })
 
     const rows = await query<UserRow>(
       `SELECT id, email, name, role, sectors, is_active, session_version, last_login_at, created_at
@@ -53,6 +55,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   try {
     const { id } = await params
+    if (!isUUID(id)) return Response.json({ error: 'Invalid id' }, { status: 400 })
 
     let body: {
       name?: string
@@ -67,7 +70,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
     }
 
-    // Fetch current user
+    // Fetch current user (outside transaction for validation/diff)
     const existing = await query<UserRow>(
       `SELECT id, role, sectors, is_active, session_version FROM users WHERE id = $1`,
       [id]
@@ -106,22 +109,9 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return Response.json({ error: errs.join('; ') }, { status: 400 })
     }
 
-    // Guard: do not allow demoting/deactivating the last admin
     const newRole     = (body.role !== undefined ? body.role : current.role) as string
     const newIsActive = body.is_active !== undefined ? (body.is_active as boolean) : current.is_active
-
-    if ((newRole !== 'admin' || newIsActive === false) && current.role === 'admin') {
-      const adminCountRows = await query<{ count: string }>(
-        `SELECT COUNT(*)::text AS count FROM users WHERE role = 'admin' AND is_active = true`
-      )
-      const adminCount = parseInt(adminCountRows[0]?.count ?? '0', 10)
-      if (adminCount <= 1) {
-        return Response.json(
-          { error: 'Cannot demote or deactivate the last active admin' },
-          { status: 400 }
-        )
-      }
-    }
+    const adminGuardNeeded = (newRole !== 'admin' || newIsActive === false) && current.role === 'admin'
 
     // Determine if session_version should be incremented
     const roleChanged     = body.role     !== undefined && body.role     !== current.role
@@ -131,7 +121,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     const bumpSession = roleChanged || sectorsChanged || activeChanged || passwordChanged
 
-    // Build update
+    // Build update clauses (outside transaction; bcrypt is slow)
     const setClauses: string[] = ['updated_at = NOW()']
     const queryParams: unknown[] = []
     let   paramIdx = 1
@@ -163,7 +153,23 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
     queryParams.push(id)
     const updateSql = `UPDATE users SET ${setClauses.join(', ')} WHERE id = $${paramIdx} RETURNING id`
-    await query(updateSql, queryParams)
+
+    // Transaction: lock active admins before guard check + update to prevent race condition
+    await withTransaction(async (client) => {
+      if (adminGuardNeeded) {
+        // Row-level lock prevents concurrent demotions from both passing the guard
+        const { rows: adminRows } = await client.query<{ id: string }>(
+          `SELECT id FROM users WHERE role = 'admin' AND is_active = true FOR UPDATE`
+        )
+        if (adminRows.length <= 1) {
+          throw Response.json(
+            { error: 'Cannot demote or deactivate the last active admin' },
+            { status: 400 }
+          )
+        }
+      }
+      await client.query(updateSql, queryParams)
+    })
 
     const changedFields: string[] = []
     if ('name'      in body && body.name      !== undefined) changedFields.push('name')
@@ -190,35 +196,37 @@ export async function DELETE(req: Request, { params }: { params: Promise<{ id: s
 
   try {
     const { id } = await params
+    if (!isUUID(id)) return Response.json({ error: 'Invalid id' }, { status: 400 })
 
-    // Fetch current user
-    const existing = await query<{ role: string; is_active: boolean }>(
-      `SELECT role, is_active FROM users WHERE id = $1`,
-      [id]
-    )
-    if (!existing[0]) {
-      return Response.json({ error: 'User not found' }, { status: 404 })
-    }
-
-    // Guard: do not allow deactivating the last admin
-    if (existing[0].role === 'admin' && existing[0].is_active) {
-      const adminCountRows = await query<{ count: string }>(
-        `SELECT COUNT(*)::text AS count FROM users WHERE role = 'admin' AND is_active = true`
+    // Transaction: lock active admins before guard check + soft-delete to prevent race condition
+    await withTransaction(async (client) => {
+      const { rows: existing } = await client.query<{ role: string; is_active: boolean }>(
+        `SELECT role, is_active FROM users WHERE id = $1`,
+        [id]
       )
-      const adminCount = parseInt(adminCountRows[0]?.count ?? '0', 10)
-      if (adminCount <= 1) {
-        return Response.json(
-          { error: 'Cannot deactivate the last active admin' },
-          { status: 400 }
-        )
+      if (!existing[0]) {
+        throw Response.json({ error: 'User not found' }, { status: 404 })
       }
-    }
 
-    // Soft delete: deactivate + invalidate all sessions
-    await query(
-      `UPDATE users SET is_active = false, session_version = session_version + 1, updated_at = NOW() WHERE id = $1`,
-      [id]
-    )
+      // Guard: do not allow deactivating the last admin
+      if (existing[0].role === 'admin' && existing[0].is_active) {
+        const { rows: adminRows } = await client.query<{ id: string }>(
+          `SELECT id FROM users WHERE role = 'admin' AND is_active = true FOR UPDATE`
+        )
+        if (adminRows.length <= 1) {
+          throw Response.json(
+            { error: 'Cannot deactivate the last active admin' },
+            { status: 400 }
+          )
+        }
+      }
+
+      // Soft delete: deactivate + invalidate all sessions
+      await client.query(
+        `UPDATE users SET is_active = false, session_version = session_version + 1, updated_at = NOW() WHERE id = $1`,
+        [id]
+      )
+    })
 
     void audit({ req, action: 'delete', resource: 'users', resource_id: id })
     return Response.json({ ok: true })

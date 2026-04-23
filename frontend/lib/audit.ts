@@ -41,11 +41,19 @@ const BLOCKED_KEYS: ReadonlySet<string> = new Set([
   'api_secret',
 ])
 
-function sanitizeMetadata(raw: Record<string, unknown>): Record<string, unknown> {
+function sanitizeValue(v: unknown, depth: number): unknown {
+  if (depth <= 0) return '[truncated]'
+  if (typeof v === 'string') return v.length > 500 ? v.slice(0, 497) + '...' : v
+  if (Array.isArray(v)) return v.map(item => sanitizeValue(item, depth - 1))
+  if (v !== null && typeof v === 'object') return sanitizeMetadata(v as Record<string, unknown>, depth - 1)
+  return v
+}
+
+function sanitizeMetadata(raw: Record<string, unknown>, depth = 5): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(raw)) {
     if (BLOCKED_KEYS.has(k.toLowerCase())) continue
-    out[k] = typeof v === 'string' && v.length > 500 ? v.slice(0, 497) + '...' : v
+    out[k] = sanitizeValue(v, depth)
   }
   return out
 }

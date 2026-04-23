@@ -15,8 +15,12 @@ export async function GET(req: Request) {
   try {
     const user = requireAuth(req)
 
-    // Bootstrap shortcut — no DB query needed
+    // Bootstrap: only valid while users table is empty
     if (user.user_id === 'bootstrap') {
+      const countRows = await query<{ count: number }>('SELECT COUNT(*)::int AS count FROM users')
+      if ((countRows[0]?.count ?? 0) > 0) {
+        return Response.json({ error: 'Session expired' }, { status: 401 })
+      }
       return Response.json({
         user: {
           id:      'bootstrap',

@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID, clampStr } from '@/lib/validate'
-import { checkPermission, isOwnerOrAdmin } from '@/lib/permissions'
-import { getSessionFromRequest } from '@/lib/auth'
+import { checkPermissionWithUser, isOwnerOrAdmin } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 
 export async function GET(req: NextRequest) {
-  const err = await checkPermission(req, 'campaigns', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'campaigns', 'read')
+  if (!auth.ok) return auth.response
 
-  const session = getSessionFromRequest(req)!  // safe: checkPermission already verified
+  const session = auth.user
   const isAdmin = session.role === 'admin'
 
   try {
@@ -53,9 +52,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const err = await checkPermission(req, 'campaigns', 'create')
-  if (err) return err
-  const session = getSessionFromRequest(req)!
+  const auth = await checkPermissionWithUser(req, 'campaigns', 'create')
+  if (!auth.ok) return auth.response
+  const session = auth.user
 
   let body: {
     name?: string; message?: string; messages?: string[]; media_url?: string; media_type?: string

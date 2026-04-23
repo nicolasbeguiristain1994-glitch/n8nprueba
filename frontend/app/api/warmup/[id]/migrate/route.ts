@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
+import { isUUID } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 
@@ -9,6 +10,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (err) return err
 
   const { id } = await params
+  if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   try {
     const rows = await query<{

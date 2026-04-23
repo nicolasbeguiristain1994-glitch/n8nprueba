@@ -71,8 +71,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   if (err) return err
 
   const { id } = await params
+  if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
   try {
-    await query(`DELETE FROM contacts WHERE id = $1`, [id])
+    const deleted = await query<{ id: string }>(`DELETE FROM contacts WHERE id = $1 RETURNING id`, [id])
+    if (!deleted[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     void audit({ req, action: 'delete', resource: 'contacts', resource_id: id })
     return NextResponse.json({ ok: true })
   } catch (e) {

@@ -1,14 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermission, isCampaignOwnerOrAdmin } from '@/lib/permissions'
-import { getSessionFromRequest } from '@/lib/auth'
+import { isUUID } from '@/lib/validate'
+import { checkPermissionWithUser, isCampaignOwnerOrAdmin } from '@/lib/permissions'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const err = await checkPermission(req, 'campaigns', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'campaigns', 'read')
+  if (!auth.ok) return auth.response
 
-  const session = getSessionFromRequest(req)!  // safe: checkPermission already verified
+  const session = auth.user
   const { id } = await params
+  if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   // Ownership check for non-admin users
   if (session.role !== 'admin') {

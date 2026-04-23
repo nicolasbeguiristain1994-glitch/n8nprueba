@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermission, isCampaignOwnerOrAdmin } from '@/lib/permissions'
-import { getSessionFromRequest } from '@/lib/auth'
+import { isUUID } from '@/lib/validate'
+import { checkPermissionWithUser, isCampaignOwnerOrAdmin } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -410,11 +410,12 @@ async function processInBackground(campaign: CampaignRow, n8nUrl: string, lockTo
 // ── Route handler ──────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const err = await checkPermission(req, 'send', 'send')
-  if (err) return err
-  const session = getSessionFromRequest(req)!  // safe: checkPermission already verified
+  const auth = await checkPermissionWithUser(req, 'send', 'send')
+  if (!auth.ok) return auth.response
+  const session = auth.user
 
   const { id } = await params
+  if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   const N8N_URL = process.env.N8N_URL
   if (!N8N_URL) return NextResponse.json({ error: 'N8N_URL not configured' }, { status: 500 })

@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermission, isCampaignOwnerOrAdmin } from '@/lib/permissions'
-import { getSessionFromRequest } from '@/lib/auth'
+import { isUUID } from '@/lib/validate'
+import { checkPermissionWithUser, isCampaignOwnerOrAdmin } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const err = await checkPermission(req, 'campaigns', 'update')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'campaigns', 'update')
+  if (!auth.ok) return auth.response
 
-  const session = getSessionFromRequest(req)!  // safe: checkPermission already verified
+  const session = auth.user
   const { id } = await params
+  if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   let body: { status?: string }
   try {
@@ -36,12 +37,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    await query(
+    const updated = await query<{ id: string }>(
       `UPDATE campaigns
        SET status = $1::campaign_status, updated_at = NOW(), updated_by = $3
-       WHERE id = $2`,
+       WHERE id = $2
+       RETURNING id`,
       [status, id, session.user_id]
     )
+    if (!updated[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     void audit({ req, action: 'update', resource: 'campaigns', resource_id: id,
       metadata: { status } })
     return NextResponse.json({ ok: true })

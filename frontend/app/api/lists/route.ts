@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, withTransaction } from '@/lib/db'
 import { isUUID, clampStr } from '@/lib/validate'
-import { checkPermission } from '@/lib/permissions'
-import { getSessionFromRequest } from '@/lib/auth'
+import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 
 export async function GET(req: NextRequest) {
-  const err = await checkPermission(req, 'lists', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'lists', 'read')
+  if (!auth.ok) return auth.response
 
-  const session = getSessionFromRequest(req)!  // safe: checkPermission already verified
+  const session = auth.user
   const isAdmin = session.role === 'admin'
 
   try {
@@ -37,9 +36,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const err = await checkPermission(req, 'lists', 'create')
-  if (err) return err
-  const session = getSessionFromRequest(req)!  // safe: checkPermission already verified
+  const auth = await checkPermissionWithUser(req, 'lists', 'create')
+  if (!auth.ok) return auth.response
+  const session = auth.user
 
   let body: { name?: string; description?: string; filters?: unknown; contact_ids?: string[]; criteria?: { panel?: string; gaming?: string; segment?: string } }
   try {

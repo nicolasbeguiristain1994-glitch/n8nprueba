@@ -24,6 +24,15 @@ export type Action = 'read' | 'create' | 'update' | 'delete' | 'manage' | 'send'
 // e.g. { campaigns: ['read', 'create', 'update', 'send'], users: ['read', 'create', 'update', 'delete', 'manage'] }
 export type EffectivePermissions = Partial<Record<Resource, Action[]>>
 
+/**
+ * Result of checkPermissionWithUser.
+ * ok: true  → access granted, user contains fresh DB role/sectors.
+ * ok: false → access denied, response is the 401/403 to return.
+ */
+export type PermissionResult =
+  | { ok: true;  user: SessionUser }
+  | { ok: false; response: NextResponse }
+
 // ── RBAC matrix ───────────────────────────────────────────────────────────────
 //
 // admin    → all resources, all actions
@@ -95,11 +104,76 @@ type FreshUserRow = {
 }
 
 /**
- * Async permission check for use in API route handlers.
+ * Async permission check that also returns the authenticated user object.
  *
  * Queries the DB for fresh role/sectors/is_active/session_version so that
- * admin edits (sector changes, deactivation, etc.) take effect immediately
- * without requiring old tokens to expire.
+ * admin edits (sector changes, deactivation, etc.) take effect immediately.
+ *
+ * For bootstrap sessions (first-run setup), the DB is checked for existing
+ * users — bootstrap is only valid while the users table is empty.
+ *
+ * Returns { ok: true, user } on success or { ok: false, response } on failure.
+ *
+ * Usage:
+ *   const auth = await checkPermissionWithUser(req, 'campaigns', 'read')
+ *   if (!auth.ok) return auth.response
+ *   const session = auth.user  // fresh DB role/sectors
+ */
+export async function checkPermissionWithUser(
+  req: Request,
+  resource: Resource,
+  action: Action,
+): Promise<PermissionResult> {
+  const session = getSessionFromRequest(req)
+  if (!session) {
+    return { ok: false, response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  }
+
+  // Bootstrap: only valid while the users table is empty (first-run setup)
+  if (session.user_id === 'bootstrap') {
+    const countRows = await query<{ count: number }>('SELECT COUNT(*)::int AS count FROM users')
+    const userCount = countRows[0]?.count ?? 0
+    if (userCount > 0) {
+      return { ok: false, response: NextResponse.json({ error: 'Session expired' }, { status: 401 }) }
+    }
+    if (!canAccess(session, resource, action)) {
+      return { ok: false, response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
+    }
+    return { ok: true, user: session }
+  }
+
+  // Fetch fresh state from DB — one query per API request
+  const rows = await query<FreshUserRow>(
+    'SELECT role, sectors, is_active, session_version FROM users WHERE id = $1',
+    [session.user_id],
+  )
+  const dbUser = rows[0]
+
+  if (!dbUser || !dbUser.is_active) {
+    return { ok: false, response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
+  }
+  if (dbUser.session_version !== session.session_version) {
+    return { ok: false, response: NextResponse.json({ error: 'Session expired' }, { status: 401 }) }
+  }
+
+  // Authorise using fresh DB role/sectors — not stale cookie values
+  const freshUser: SessionUser = {
+    ...session,
+    role:    dbUser.role,
+    sectors: Array.isArray(dbUser.sectors) ? dbUser.sectors : [],
+  }
+
+  if (!canAccess(freshUser, resource, action)) {
+    return { ok: false, response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
+  }
+  return { ok: true, user: freshUser }
+}
+
+/**
+ * Async permission check for use in API route handlers.
+ *
+ * Delegates to checkPermissionWithUser. Use checkPermissionWithUser directly
+ * when you need the authenticated user object after the check.
  *
  * Returns null if access is allowed, or a NextResponse (401/403) if not.
  *
@@ -112,44 +186,8 @@ export async function checkPermission(
   resource: Resource,
   action: Action,
 ): Promise<NextResponse | null> {
-  const session = getSessionFromRequest(req)
-  if (!session) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  // Bootstrap shortcut — no DB row exists for the bootstrap user
-  if (session.user_id === 'bootstrap') {
-    if (!canAccess(session, resource, action)) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-    return null
-  }
-
-  // Fetch fresh state from DB — one query per API request
-  const rows = await query<FreshUserRow>(
-    'SELECT role, sectors, is_active, session_version FROM users WHERE id = $1',
-    [session.user_id],
-  )
-  const dbUser = rows[0]
-
-  if (!dbUser || !dbUser.is_active) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-  if (dbUser.session_version !== session.session_version) {
-    return NextResponse.json({ error: 'Session expired' }, { status: 401 })
-  }
-
-  // Authorise using fresh DB role/sectors — not stale cookie values
-  const freshUser = {
-    ...session,
-    role:    dbUser.role,
-    sectors: Array.isArray(dbUser.sectors) ? dbUser.sectors : [],
-  }
-
-  if (!canAccess(freshUser, resource, action)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
-  return null
+  const result = await checkPermissionWithUser(req, resource, action)
+  return result.ok ? null : result.response
 }
 
 /**

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isE164, isUUID, clampStr } from '@/lib/validate'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser, isOwnerOrAdmin } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 
 type LogEntry = {
@@ -14,8 +14,9 @@ type LogEntry = {
 }
 
 export async function POST(req: NextRequest) {
-  const err = await checkPermission(req, 'send', 'send')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'send', 'send')
+  if (!auth.ok) return auth.response
+  const session = auth.user
 
   const N8N_URL = process.env.N8N_URL
   if (!N8N_URL) return NextResponse.json({ error: 'N8N_URL not configured' }, { status: 500 })
@@ -47,6 +48,16 @@ export async function POST(req: NextRequest) {
   }
   if (campaign_id !== undefined && campaign_id !== null && !isUUID(campaign_id)) {
     return NextResponse.json({ error: 'campaign_id debe ser un UUID válido' }, { status: 400 })
+  }
+
+  // Ownership check — prevent attaching sends to another user's campaign
+  if (campaign_id) {
+    const [camp] = await query<{ owned_by: string | null }>(
+      'SELECT owned_by FROM campaigns WHERE id = $1', [campaign_id]
+    )
+    if (!camp) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
+    if (!isOwnerOrAdmin(session, camp.owned_by))
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   const results = []

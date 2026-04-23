@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, beforeAll, vi } from 'vitest'
-import { canAccess, checkPermission, isCampaignOwnerOrAdmin, isOwnerOrAdmin } from '@/lib/permissions'
+import { canAccess, checkPermission, checkPermissionWithUser, isCampaignOwnerOrAdmin, isOwnerOrAdmin } from '@/lib/permissions'
 import { createSessionToken } from '@/lib/auth'
 import type { SessionUser }   from '@/lib/auth'
 
@@ -343,6 +343,100 @@ describe('isOwnerOrAdmin — alias consistency', () => {
     const op = makeSession({ role: 'operator', sectors: ['campaigns'] })
     for (const ownedBy of [SELF_ID, OTHER_ID, null]) {
       expect(isCampaignOwnerOrAdmin(op, ownedBy)).toBe(isOwnerOrAdmin(op, ownedBy))
+    }
+  })
+})
+
+// ── Bootstrap session ─────────────────────────────────────────────────────────
+//
+//  Bootstrap sessions (user_id === 'bootstrap') are valid only while the users
+//  table is empty. Once a real admin exists, they must be invalidated.
+
+function makeBootstrapSession(): SessionUser {
+  const now = Math.floor(Date.now() / 1000)
+  return {
+    user_id:         'bootstrap',
+    email:           'bootstrap@system',
+    name:            'Bootstrap',
+    role:            'admin',
+    sectors:         ['dashboard', 'contacts', 'campaigns', 'conversations',
+                      'lines', 'warmup', 'users', 'lists', 'send', 'audit', 'settings'],
+    session_version: 0,
+    iat:             now,
+    exp:             now + 3600,
+    nonce:           'bootstrap-nonce',
+  }
+}
+
+describe('Bootstrap session — allowed when users table is empty', () => {
+  it('checkPermission returns null (allow) when DB user count is 0', async () => {
+    vi.mocked(db.query).mockResolvedValue([{ count: 0 }])
+    const session = makeBootstrapSession()
+    const req = makeReqWithSession(session)
+    const res = await checkPermission(req, 'users', 'manage')
+    expect(res).toBeNull()
+  })
+
+  it('checkPermissionWithUser returns { ok: true } when DB user count is 0', async () => {
+    vi.mocked(db.query).mockResolvedValue([{ count: 0 }])
+    const session = makeBootstrapSession()
+    const req = makeReqWithSession(session)
+    const result = await checkPermissionWithUser(req, 'users', 'manage')
+    expect(result.ok).toBe(true)
+  })
+})
+
+describe('Bootstrap session — blocked when real users exist', () => {
+  it('checkPermission returns 401 when DB user count > 0', async () => {
+    vi.mocked(db.query).mockResolvedValue([{ count: 1 }])
+    const session = makeBootstrapSession()
+    const req = makeReqWithSession(session)
+    const res = await checkPermission(req, 'users', 'manage')
+    expect(res).not.toBeNull()
+    expect(res!.status).toBe(401)
+    const body = await res!.json()
+    expect(body.error).toBe('Session expired')
+  })
+
+  it('checkPermissionWithUser returns { ok: false, 401 } when DB user count > 0', async () => {
+    vi.mocked(db.query).mockResolvedValue([{ count: 2 }])
+    const session = makeBootstrapSession()
+    const req = makeReqWithSession(session)
+    const result = await checkPermissionWithUser(req, 'campaigns', 'read')
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.response.status).toBe(401)
+    }
+  })
+})
+
+// ── checkPermissionWithUser — returns fresh user from DB ──────────────────────
+//
+//  After a successful permission check, the returned user object must reflect
+//  the fresh DB role/sectors, not the (potentially stale) cookie values.
+
+describe('checkPermissionWithUser — returns fresh DB role/sectors', () => {
+  it('returned user has DB role even when cookie role differs', async () => {
+    // Cookie claims viewer but DB was promoted to operator
+    const session = makeSession({ role: 'viewer', sectors: ['campaigns'], session_version: 3 })
+    mockDbUser({ role: 'operator', sectors: ['campaigns', 'contacts'], is_active: true, session_version: 3 })
+    const req = makeReqWithSession(session)
+    const result = await checkPermissionWithUser(req, 'campaigns', 'read')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.user.role).toBe('operator')
+      expect(result.user.sectors).toContain('contacts')
+    }
+  })
+
+  it('returned user has DB sectors even when cookie sectors are stale', async () => {
+    const session = makeSession({ role: 'operator', sectors: [], session_version: 5 })
+    mockDbUser({ role: 'operator', sectors: ['send', 'campaigns'], is_active: true, session_version: 5 })
+    const req = makeReqWithSession(session)
+    const result = await checkPermissionWithUser(req, 'send', 'send')
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.user.sectors).toEqual(['send', 'campaigns'])
     }
   })
 })

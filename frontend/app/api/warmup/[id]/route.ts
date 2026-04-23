@@ -46,10 +46,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   values.push(id)
   try {
-    await query(
-      `UPDATE warmup_numbers SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${values.length}`,
+    const updated = await query<{ id: string }>(
+      `UPDATE warmup_numbers SET ${updates.join(', ')}, updated_at = NOW() WHERE id = $${values.length} RETURNING id`,
       values
     )
+    if (!updated[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     void audit({ req, action: 'update', resource: 'warmup', resource_id: id,
       metadata: { changedFields: allowed.filter(k => k in body) } })
     return NextResponse.json({ ok: true })
@@ -65,8 +66,10 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   if (err) return err
 
   const { id } = await params
+  if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
   try {
-    await query(`DELETE FROM warmup_numbers WHERE id = $1`, [id])
+    const deleted = await query<{ id: string }>(`DELETE FROM warmup_numbers WHERE id = $1 RETURNING id`, [id])
+    if (!deleted[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     void audit({ req, action: 'delete', resource: 'warmup', resource_id: id })
     return NextResponse.json({ ok: true })
   } catch (e) {

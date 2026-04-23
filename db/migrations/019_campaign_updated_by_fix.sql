@@ -10,7 +10,14 @@ DO $$ BEGIN
 EXCEPTION WHEN undefined_object THEN NULL;
 END $$;
 
--- 2. Retype varchar → uuid (safe: column is NULL/empty)
+-- 2a. Preflight: null out any values that are not valid UUIDs to prevent
+--     the USING cast from throwing on unexpected non-UUID strings.
+UPDATE campaigns
+  SET updated_by = NULL
+  WHERE updated_by IS NOT NULL
+    AND updated_by !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+
+-- 2b. Retype varchar → uuid (safe: all remaining values are valid UUIDs or NULL)
 ALTER TABLE campaigns
   ALTER COLUMN updated_by TYPE uuid USING updated_by::uuid;
 
