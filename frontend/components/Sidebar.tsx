@@ -5,16 +5,16 @@ import { LayoutDashboard, Users, Megaphone, MessageSquare, Activity, Flame, LogO
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
 const BASE_NAV = [
-  { href: '/',               label: 'Dashboard',      icon: LayoutDashboard },
-  { href: '/contacts',       label: 'Contactos',       icon: Users },
-  { href: '/campaigns',      label: 'Campañas',        icon: Megaphone },
-  { href: '/conversations',  label: 'Conversaciones',  icon: MessageSquare },
-  { href: '/lines',          label: 'Líneas',          icon: Activity },
-  { href: '/warmup',         label: 'Calentamiento',   icon: Flame },
+  { href: '/',               label: 'Dashboard',      icon: LayoutDashboard, sector: 'dashboard' },
+  { href: '/contacts',       label: 'Contactos',       icon: Users,           sector: 'contacts' },
+  { href: '/campaigns',      label: 'Campañas',        icon: Megaphone,       sector: 'campaigns' },
+  { href: '/conversations',  label: 'Conversaciones',  icon: MessageSquare,   sector: 'conversations' },
+  { href: '/lines',          label: 'Líneas',          icon: Activity,        sector: 'lines' },
+  { href: '/warmup',         label: 'Calentamiento',   icon: Flame,           sector: 'warmup' },
 ]
 
 const ADMIN_NAV = [
-  { href: '/users', label: 'Usuarios', icon: UserCog },
+  { href: '/users', label: 'Usuarios', icon: UserCog, sector: 'users' },
 ]
 
 export default function Sidebar() {
@@ -23,7 +23,10 @@ export default function Sidebar() {
   const { user } = useCurrentUser()
 
   const isAdmin = user?.role === 'admin'
-  const nav = isAdmin ? [...BASE_NAV, ...ADMIN_NAV] : BASE_NAV
+  const allNav = [...BASE_NAV, ...ADMIN_NAV]
+  const nav = isAdmin
+    ? allNav
+    : allNav.filter(item => user?.sectors?.includes(item.sector))
 
   const logout = async () => {
     await fetch('/api/auth/logout', { method: 'POST' })
