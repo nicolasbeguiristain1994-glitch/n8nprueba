@@ -23,7 +23,8 @@ export async function GET(req: NextRequest) {
              c.started_at, c.completed_at,
              c.total_targets, c.personalize_name,
              c.antiblock_delay_min, c.antiblock_delay_max,
-             c.created_at, c.owned_by, cl.name AS list_name,
+             c.use_multi_line,
+             c.created_at, c.owned_by, cl.name AS list_name, cl.id AS list_id,
              -- Contar directamente desde whatsapp_messages para precisión en tiempo real
              COUNT(m.id) FILTER (WHERE m.status IN ('sent','delivered','read'))::int AS total_sent,
              COUNT(m.id) FILTER (WHERE m.status = 'delivered')::int               AS total_delivered,
@@ -41,7 +42,7 @@ export async function GET(req: NextRequest) {
       LEFT JOIN contact_lists cl ON cl.id = c.list_id
       LEFT JOIN whatsapp_messages m ON m.campaign_id = c.id
       ${ownerClause}
-      GROUP BY c.id, cl.name
+      GROUP BY c.id, cl.id
       ORDER BY c.created_at DESC
     `, params)
     return NextResponse.json({ campaigns })
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest) {
   let body: {
     name?: string; message?: string; messages?: string[]; media_url?: string; media_type?: string
     list_id?: string; scheduled_at?: string; antiblock_delay_min?: number; antiblock_delay_max?: number
-    type?: string; personalize_name?: boolean
+    type?: string; personalize_name?: boolean; use_multi_line?: boolean
   }
   try {
     body = await req.json()
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest) {
 
   const { name, message, messages, media_url, media_type, list_id, scheduled_at,
           antiblock_delay_min, antiblock_delay_max, type: campaignType,
-          personalize_name } = body
+          personalize_name, use_multi_line } = body
 
   const nameStr = clampStr(name, 255)
   if (!nameStr)
@@ -128,8 +129,8 @@ export async function POST(req: NextRequest) {
       `INSERT INTO campaigns
          (name, message, messages, media_url, media_type, list_id, type, status, scheduled_at,
           total_targets, antiblock_delay_min, antiblock_delay_max, personalize_name,
-          owned_by, updated_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)
+          use_multi_line, owned_by, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15)
        RETURNING id`,
       [nameStr, msgArray[0], JSON.stringify(msgArray), media_url || null, media_type || null,
        list_id || null, resolvedType,
@@ -137,6 +138,7 @@ export async function POST(req: NextRequest) {
        scheduled_at || null, total_targets,
        delayMin, delayMax,
        personalize_name !== false,
+       use_multi_line === true,
        session.user_id]
     )
 

@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Send, Plus, Loader2, Eye, Play, BarChart2, Shield, Clock, Pause, XCircle, CheckCheck, Truck, AlertTriangle, HelpCircle, Trash2, Shuffle, UserCheck, UserX } from 'lucide-react'
+import { Send, Plus, Loader2, Eye, Play, BarChart2, Shield, Clock, Pause, XCircle, CheckCheck, Truck, AlertTriangle, HelpCircle, Trash2, Shuffle, UserCheck, UserX, Zap, GitBranch, RefreshCw } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 
 interface CampaignList { id: string; name: string; contact_count: number }
@@ -22,8 +22,15 @@ interface Campaign {
   total_targets: number; total_sent: number; total_delivered: number
   total_read: number; total_failed: number
   read_rate: number; delivery_rate: number
-  list_name: string; antiblock_delay_min: number; antiblock_delay_max: number
-  personalize_name: boolean; created_at: string
+  list_name: string; list_id: string | null
+  antiblock_delay_min: number; antiblock_delay_max: number
+  personalize_name: boolean; use_multi_line: boolean; created_at: string
+}
+interface DispatchSummary {
+  total: number; queued: number; processing: number
+  sent: number; failed: number; skipped: number
+  eligible_lines: number
+  line_usage: { line_id: string; line_key: string; display_name: string; sent: number; failed: number }[]
 }
 
 const STATUS_BADGE: Record<string, string> = {
@@ -47,12 +54,15 @@ export default function Campaigns() {
   const [actioning, setActioning]     = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
   const [detailError, setDetailError] = useState<string | null>(null)
+  const [dispatch, setDispatch]       = useState<DispatchSummary | null>(null)
+  const [loadingDispatch, setLoadingDispatch] = useState(false)
+  const [resuming, setResuming]       = useState<string | null>(null)
 
   // Form
   const [form, setForm] = useState({
     name: '', list_id: '', scheduled_at: '',
     media_url: '', antiblock_delay_min: 3, antiblock_delay_max: 8,
-    type: 'promotion', personalize_name: true
+    type: 'promotion', personalize_name: true, use_multi_line: false
   })
   const [messages, setMessages] = useState<string[]>([''])
   const [previewIdx, setPreviewIdx] = useState(0)
@@ -92,7 +102,7 @@ export default function Campaigns() {
       return  // keep modal open, preserve form state
     }
     setShowNew(false)
-    setForm({ name:'', list_id:'', scheduled_at:'', media_url:'', antiblock_delay_min:3, antiblock_delay_max:8, type:'promotion', personalize_name: true })
+    setForm({ name:'', list_id:'', scheduled_at:'', media_url:'', antiblock_delay_min:3, antiblock_delay_max:8, type:'promotion', personalize_name: true, use_multi_line: false })
     setMessages([''])
     setPreviewIdx(0)
     load()
@@ -102,11 +112,15 @@ export default function Campaigns() {
   const removeMessage = (i: number) => setMessages(m => m.filter((_, idx) => idx !== i))
   const updateMessage = (i: number, val: string) => setMessages(m => m.map((v, idx) => idx === i ? val : v))
 
-  const sendNow = async (id: string) => {
-    setSending(id)
+  const sendNow = async (campaign: Campaign) => {
+    setSending(campaign.id)
     setSendError(null)
     try {
-      const res = await fetch(`/api/campaigns/${id}/send`, { method: 'POST' })
+      // Multi-line campaigns use the distributor endpoint; single-line use n8n send
+      const endpoint = campaign.use_multi_line
+        ? `/api/campaigns/${campaign.id}/dispatch`
+        : `/api/campaigns/${campaign.id}/send`
+      const res = await fetch(endpoint, { method: 'POST' })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
         setSendError(d.error || `Error ${res.status}`)
@@ -120,21 +134,48 @@ export default function Campaigns() {
     }
   }
 
+  const resumeProcessor = async (id: string) => {
+    setResuming(id)
+    setSendError(null)
+    try {
+      const res = await fetch(`/api/campaigns/${id}/dispatch/process`, { method: 'POST' })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}))
+        setSendError(d.error || `Error al reanudar`)
+      } else {
+        setTimeout(load, 1500)
+      }
+    } catch {
+      setSendError('Error de red al reanudar')
+    } finally {
+      setResuming(null)
+    }
+  }
+
   const openDetail = async (c: Campaign) => {
     setSelected(c)
     setCampContacts([])
     setDetailError(null)
+    setDispatch(null)
     setLoadingContacts(true)
-    try {
-      const res = await fetch(`/api/campaigns/${c.id}/contacts`)
-      setLoadingContacts(false)
-      if (!res.ok) { setDetailError('No se pudieron cargar los destinatarios'); return }
-      const d = await res.json()
-      setCampContacts(d.contacts || [])
-    } catch {
-      setLoadingContacts(false)
-      setDetailError('Error de red al cargar destinatarios')
-    }
+
+    // Fetch contacts and (for multi-line) dispatch summary in parallel
+    const contactsFetch = fetch(`/api/campaigns/${c.id}/contacts`)
+      .then(r => r.json())
+      .then(d => setCampContacts(d.contacts || []))
+      .catch(() => setDetailError('Error de red al cargar destinatarios'))
+      .finally(() => setLoadingContacts(false))
+
+    const dispatchFetch = c.use_multi_line
+      ? (setLoadingDispatch(true),
+         fetch(`/api/campaigns/${c.id}/dispatch`)
+           .then(r => r.json())
+           .then(d => setDispatch(d))
+           .catch(() => null)
+           .finally(() => setLoadingDispatch(false)))
+      : Promise.resolve()
+
+    await Promise.all([contactsFetch, dispatchFetch])
   }
 
   const updateStatus = async (id: string, status: 'paused' | 'cancelled' | 'draft') => {
@@ -197,6 +238,11 @@ export default function Campaigns() {
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_BADGE[c.status] || ''}`}>
                           {c.status}
                         </span>
+                        {c.use_multi_line && (
+                          <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full flex items-center gap-1">
+                            <GitBranch size={10}/> multi-línea
+                          </span>
+                        )}
                         {c.scheduled_at && c.status === 'scheduled' && (
                           <span className="text-xs text-gray-400 flex items-center gap-1">
                             <Clock size={11}/> {new Date(c.scheduled_at).toLocaleString('es-AR')}
@@ -238,13 +284,24 @@ export default function Campaigns() {
                         <Eye size={13} />
                       </Button>
 
-                      {/* Enviar: draft, scheduled, paused */}
-                      {(c.status === 'draft' || c.status === 'scheduled' || c.status === 'paused') && c.list_name && (
+                      {/* Enviar: draft, scheduled */}
+                      {(c.status === 'draft' || c.status === 'scheduled') && c.list_name && (
                         <Button size="sm" className="bg-green-600 hover:bg-green-700"
-                                onClick={() => sendNow(c.id)} disabled={sending === c.id}>
+                                onClick={() => sendNow(c)} disabled={sending === c.id}>
                           {sending === c.id
                             ? <Loader2 size={13} className="animate-spin"/>
-                            : <><Play size={13} className="mr-1"/>{c.status === 'paused' ? 'Reanudar' : 'Enviar'}</>}
+                            : <><Play size={13} className="mr-1"/>Enviar</>}
+                        </Button>
+                      )}
+
+                      {/* Reanudar: paused */}
+                      {c.status === 'paused' && c.list_name && (
+                        <Button size="sm" className="bg-green-600 hover:bg-green-700"
+                                onClick={() => c.use_multi_line ? resumeProcessor(c.id) : sendNow(c)}
+                                disabled={sending === c.id || resuming === c.id}>
+                          {(sending === c.id || resuming === c.id)
+                            ? <Loader2 size={13} className="animate-spin"/>
+                            : <><Play size={13} className="mr-1"/>Reanudar</>}
                         </Button>
                       )}
 
@@ -296,7 +353,7 @@ export default function Campaigns() {
         if (creating) return  // block close while save is in progress
         setShowNew(v)
         if (!v) {
-          setForm({ name:'', list_id:'', scheduled_at:'', media_url:'', antiblock_delay_min:3, antiblock_delay_max:8, type:'promotion', personalize_name: true })
+          setForm({ name:'', list_id:'', scheduled_at:'', media_url:'', antiblock_delay_min:3, antiblock_delay_max:8, type:'promotion', personalize_name: true, use_multi_line: false })
           setMessages([''])
           setPreviewIdx(0)
           setCreating(false)
@@ -410,6 +467,28 @@ export default function Campaigns() {
                   <Plus size={13} /> Agregar variante de mensaje
                 </button>
               )}
+            </div>
+
+            {/* Modo multi-línea */}
+            <div className="col-span-2">
+              <button
+                type="button"
+                onClick={() => setForm(f => ({ ...f, use_multi_line: !f.use_multi_line }))}
+                className={`flex items-center gap-3 w-full rounded-lg border px-4 py-3 text-sm transition-colors ${
+                  form.use_multi_line
+                    ? 'border-indigo-200 bg-indigo-50 text-indigo-800'
+                    : 'border-gray-200 bg-gray-50 text-gray-500'
+                }`}
+              >
+                <div className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${form.use_multi_line ? 'bg-indigo-500' : 'bg-gray-300'}`}>
+                  <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${form.use_multi_line ? 'translate-x-4' : ''}`} />
+                </div>
+                <GitBranch size={15} className="shrink-0" />
+                {form.use_multi_line
+                  ? <span>Modo multi-línea activado — distribuye envíos entre todas las líneas elegibles</span>
+                  : <span>Modo multi-línea desactivado — usa el flujo estándar de n8n (una línea)</span>
+                }
+              </button>
             </div>
 
             {/* Personalización de nombre */}
@@ -543,7 +622,65 @@ export default function Campaigns() {
                     : <><UserX size={11} className="text-gray-400"/> Nombre personalizado desactivado</>
                   }
                 </p>
+                <p className="flex items-center gap-1">
+                  {selected.use_multi_line
+                    ? <><GitBranch size={11} className="text-indigo-500"/> Modo multi-línea</>
+                    : <><Zap size={11} className="text-gray-400"/> Modo estándar (n8n)</>
+                  }
+                </p>
               </div>
+
+              {/* Dispatch progress — multi-line only */}
+              {selected.use_multi_line && (
+                <div className="border rounded-lg p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                      <GitBranch size={14} className="text-indigo-500" /> Progreso de distribución
+                    </p>
+                    <button
+                      className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
+                      onClick={async () => {
+                        setLoadingDispatch(true)
+                        try {
+                          const d = await fetchJson<DispatchSummary>(`/api/campaigns/${selected.id}/dispatch`)
+                          setDispatch(d)
+                        } catch { /* ignore */ } finally { setLoadingDispatch(false) }
+                      }}
+                    >
+                      <RefreshCw size={11} className={loadingDispatch ? 'animate-spin' : ''}/> Actualizar
+                    </button>
+                  </div>
+                  {loadingDispatch && !dispatch
+                    ? <p className="text-xs text-gray-400 flex items-center gap-1"><Loader2 size={12} className="animate-spin"/> Cargando…</p>
+                    : dispatch
+                    ? <>
+                        <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                          <div className="bg-gray-50 rounded p-2"><p className="font-bold text-gray-700">{dispatch.total}</p><p className="text-gray-400">Total</p></div>
+                          <div className="bg-yellow-50 rounded p-2"><p className="font-bold text-yellow-600">{dispatch.queued + dispatch.processing}</p><p className="text-gray-400">Pendiente</p></div>
+                          <div className="bg-green-50 rounded p-2"><p className="font-bold text-green-600">{dispatch.sent}</p><p className="text-gray-400">Enviados</p></div>
+                          <div className="bg-red-50 rounded p-2"><p className="font-bold text-red-500">{dispatch.failed}</p><p className="text-gray-400">Fallidos</p></div>
+                        </div>
+                        <div className="text-xs text-gray-500">
+                          {dispatch.eligible_lines} línea{dispatch.eligible_lines !== 1 ? 's' : ''} elegible{dispatch.eligible_lines !== 1 ? 's' : ''} ahora
+                          {dispatch.skipped > 0 && <span className="ml-2 text-orange-500">· {dispatch.skipped} omitidos</span>}
+                        </div>
+                        {dispatch.line_usage.length > 0 && (
+                          <div className="space-y-1">
+                            <p className="text-xs font-medium text-gray-600">Uso por línea</p>
+                            {dispatch.line_usage.map(lu => (
+                              <div key={lu.line_id} className="flex items-center gap-2 text-xs">
+                                <span className="text-gray-500 truncate flex-1">{lu.display_name || lu.line_key}</span>
+                                <span className="text-green-600">{lu.sent} env.</span>
+                                {lu.failed > 0 && <span className="text-red-400">{lu.failed} err.</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    : <p className="text-xs text-gray-400">Sin datos de distribución</p>
+                  }
+                </div>
+              )}
 
               {/* Tabla de contactos */}
               <div>

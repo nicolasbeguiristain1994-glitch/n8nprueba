@@ -5,12 +5,13 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink } from 'lucide-react'
+import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 
 interface Line {
   id: string; line_key: string; display_name: string; phone_number: string
   evolution_instance: string; status: string; is_connected: boolean
+  sending_enabled: boolean; eligible: boolean
   msgs_sent_today: number; msgs_sent_hour: number
   msg_per_day: number; msg_per_hour: number
   total_sent: number; total_failed: number
@@ -22,8 +23,9 @@ type QrState = 'idle' | 'loading' | 'not-found' | 'creating' | 'qr' | 'connected
 const EVO_MANAGER = process.env.NEXT_PUBLIC_EVOLUTION_MANAGER_URL ?? ''
 
 export default function Lines() {
-  const [lines, setLines]     = useState<Line[]>([])
-  const [loading, setLoading] = useState(false)
+  const [lines, setLines]         = useState<Line[]>([])
+  const [loading, setLoading]     = useState(false)
+  const [toggling, setToggling]   = useState<string | null>(null)
 
   // QR modal
   const [qrLine, setQrLine]       = useState<Line | null>(null)
@@ -42,6 +44,20 @@ export default function Lines() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  const toggleSending = async (line: Line) => {
+    setToggling(line.id)
+    try {
+      await fetch('/api/lines', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: line.id, sending_enabled: !line.sending_enabled }),
+      })
+      load()
+    } catch { /* ignore */ } finally {
+      setToggling(null)
+    }
+  }
 
   const stopPoll = () => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
@@ -121,6 +137,7 @@ export default function Lines() {
 
   const connected = lines.filter(l => l.is_connected).length
   const active    = lines.filter(l => l.status === 'active').length
+  const eligible  = lines.filter(l => l.eligible).length
 
   return (
     <div className="space-y-5">
@@ -128,7 +145,7 @@ export default function Lines() {
         <div>
           <h1 className="text-xl font-semibold">Líneas WhatsApp</h1>
           <p className="text-sm text-gray-500">
-            {connected} conectadas · {active} activas · {lines.length} total
+            {connected} conectadas · {active} activas · {eligible} elegibles · {lines.length} total
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={load}>
@@ -137,10 +154,14 @@ export default function Lines() {
       </div>
 
       {/* Resumen */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-4">
         <Card><CardContent className="pt-4">
           <p className="text-xs text-gray-500 mb-1">Conectadas</p>
           <p className="text-2xl font-bold text-green-600">{connected}</p>
+        </CardContent></Card>
+        <Card><CardContent className="pt-4">
+          <p className="text-xs text-gray-500 mb-1">Elegibles campañas</p>
+          <p className="text-2xl font-bold text-indigo-600">{eligible}</p>
         </CardContent></Card>
         <Card><CardContent className="pt-4">
           <p className="text-xs text-gray-500 mb-1">Total enviados hoy</p>
@@ -161,15 +182,17 @@ export default function Lines() {
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Línea</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Instancia</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Elegible</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Hoy</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Esta hora</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Total enviados</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Envíos</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Acción</th>
               </tr>
             </thead>
             <tbody>
               {lines.length === 0
-                ? <tr><td colSpan={7} className="text-center py-10 text-gray-400">
+                ? <tr><td colSpan={9} className="text-center py-10 text-gray-400">
                     {loading ? 'Cargando…' : 'Sin líneas configuradas'}
                   </td></tr>
                 : lines.map(l => {
@@ -195,6 +218,12 @@ export default function Lines() {
                           </Badge>
                         </td>
                         <td className="px-4 py-3">
+                          {l.eligible
+                            ? <span className="flex items-center gap-1 text-xs text-green-600"><ShieldCheck size={13}/> Sí</span>
+                            : <span className="flex items-center gap-1 text-xs text-gray-400"><ShieldOff size={13}/> No</span>
+                          }
+                        </td>
+                        <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <div className="w-20 bg-gray-100 rounded-full h-1.5">
                               <div className="bg-green-500 h-1.5 rounded-full" style={{ width: `${Math.min(pctDay,100)}%` }} />
@@ -211,6 +240,18 @@ export default function Lines() {
                           </div>
                         </td>
                         <td className="px-4 py-3 text-gray-500">{l.total_sent.toLocaleString()}</td>
+                        <td className="px-4 py-3">
+                          <button
+                            onClick={() => toggleSending(l)}
+                            disabled={toggling === l.id}
+                            title={l.sending_enabled ? 'Desactivar envíos de campaña' : 'Activar envíos de campaña'}
+                            className={`relative inline-flex w-9 h-5 rounded-full transition-colors focus:outline-none ${
+                              l.sending_enabled ? 'bg-green-500' : 'bg-gray-300'
+                            } ${toggling === l.id ? 'opacity-50' : ''}`}
+                          >
+                            <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${l.sending_enabled ? 'translate-x-4' : ''}`} />
+                          </button>
+                        </td>
                         <td className="px-4 py-3">
                           {l.is_connected
                             ? <span className="text-xs text-green-600 flex items-center gap-1">
