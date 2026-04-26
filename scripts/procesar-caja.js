@@ -131,6 +131,7 @@ function segMonto(v) {
 }
 
 function segActividad(j) {
+  if (j.diasDesdeUltimo > 365)  return 'perdido';   // sin movimiento en 12+ meses
   if (j.diasDesdeUltimo > 60)   return 'inactivo';
   if (j.diasDesdeUltimo > 30)   return 'en_riesgo';
   if (j.diasDesdePrimero <= 30) return 'nuevo';
@@ -189,7 +190,7 @@ console.log('\nDISTRIBUCIÓN POR MONTO:');
   console.log(`  ${k.padEnd(6)}: ${(distMonto[k]||0).toString().padStart(6)} jugadores`)
 );
 console.log('\nDISTRIBUCIÓN POR ACTIVIDAD:');
-['frecuente','regular','nuevo','ocasional','en_riesgo','inactivo'].forEach(k =>
+['frecuente','regular','nuevo','ocasional','en_riesgo','inactivo','perdido'].forEach(k =>
   console.log(`  ${k.padEnd(10)}: ${(distAct[k]||0).toString().padStart(6)} jugadores`)
 );
 console.log('══════════════════════════════════════════');

@@ -74,15 +74,23 @@ export default function Contacts() {
 
   const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
 
+  // Display labels for casino amount segments (canonical → operator-facing name)
+  const NIVEL_LABEL: Record<string, string> = {
+    bajo:  'bronce',
+    medio: 'plata',
+    alto:  'oro',
+    vip:   'platino',
+  }
+
   const SEGMENT_STYLE: Record<string, string> = {
     casual:  'bg-gray-100 text-gray-600',
     regular: 'bg-blue-100 text-blue-700',
     vip:     'bg-purple-100 text-purple-700',
     whale:   'bg-amber-100 text-amber-700',
-    // casino monto values
-    bajo:    'bg-slate-100 text-slate-600',
-    medio:   'bg-sky-100 text-sky-700',
-    alto:    'bg-orange-100 text-orange-700',
+    // casino monto values — styled as bronce/plata/oro/platino
+    bajo:    'bg-orange-50 text-orange-700',    // bronce
+    medio:   'bg-slate-100 text-slate-600',     // plata
+    alto:    'bg-yellow-100 text-yellow-700',   // oro
   }
 
   const ACTIVIDAD_STYLE: Record<string, string> = {
@@ -92,6 +100,7 @@ export default function Contacts() {
     nuevo:       'bg-cyan-100 text-cyan-700',
     en_riesgo:   'bg-orange-100 text-orange-700',
     inactivo:    'bg-red-100 text-red-600',
+    perdido:     'bg-zinc-800 text-white',
   }
 
   const VALOR_RIESGO_STYLE: Record<string, string> = {
@@ -320,11 +329,11 @@ export default function Contacts() {
       'Agente':     c.panel || '',
       'Línea':      c.linea ?? '',
       'Juego':      c.gaming || '',
-      'Nivel':      c.segment || '',
-      'Actividad':  c.actividad || '',
+      'Nivel':      NIVEL_LABEL[c.segment] || c.segment || '',
+      'Estado':     c.actividad || c.status || '',
       'Riesgo':     c.valor_riesgo || '',
       'Antigüedad': c.antiguedad || '',
-      'Estado':     c.status || '',
+      'Opt-in':     c.opt_in ? 'sí' : 'no',
       'Fecha alta': c.created_at ? new Date(c.created_at).toLocaleDateString('es-AR') : '',
     }))
 
@@ -535,7 +544,13 @@ export default function Contacts() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="">Todos los niveles</SelectItem>
-            {['vip','alto','medio','bajo','casual','regular','whale'].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            <SelectItem value="vip">platino</SelectItem>
+            <SelectItem value="alto">oro</SelectItem>
+            <SelectItem value="medio">plata</SelectItem>
+            <SelectItem value="bajo">bronce</SelectItem>
+            <SelectItem value="casual">casual</SelectItem>
+            <SelectItem value="regular">regular</SelectItem>
+            <SelectItem value="whale">whale</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -623,7 +638,7 @@ export default function Contacts() {
                         <option value="ambas">🎯 Ambas</option>
                       </select>
                     </td>
-                    {/* Columna Segmento — editable con un click */}
+                    {/* Columna Nivel — editable con un click; muestra bronce/plata/oro/platino */}
                     <td className="px-4 py-3">
                       <select
                         value={c.segment || ''}
@@ -631,23 +646,18 @@ export default function Contacts() {
                         className={`text-xs px-2 py-0.5 rounded-full font-medium border-0 cursor-pointer appearance-none bg-transparent focus:outline-none focus:ring-1 focus:ring-offset-0 focus:ring-gray-300 ${c.segment ? (SEGMENT_STYLE[c.segment] ?? 'bg-gray-100 text-gray-600') : 'text-gray-400'}`}
                       >
                         <option value="">— sin nivel</option>
-                        <option value="vip">vip</option>
-                        <option value="alto">alto</option>
-                        <option value="medio">medio</option>
-                        <option value="bajo">bajo</option>
+                        <option value="vip">platino</option>
+                        <option value="alto">oro</option>
+                        <option value="medio">plata</option>
+                        <option value="bajo">bronce</option>
                         <option value="casual">casual</option>
                         <option value="regular">regular</option>
                         <option value="whale">whale</option>
                       </select>
                     </td>
-                    {/* Columna Casino — badges read-only: actividad, valor_riesgo, antiguedad */}
+                    {/* Columna Casino — indicadores de riesgo y antigüedad (actividad movida a Estado) */}
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-0.5">
-                        {c.actividad && (
-                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${ACTIVIDAD_STYLE[c.actividad] ?? 'bg-gray-100 text-gray-600'}`}>
-                            {c.actividad}
-                          </span>
-                        )}
                         {c.valor_riesgo && (
                           <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${VALOR_RIESGO_STYLE[c.valor_riesgo] ?? 'bg-gray-100 text-gray-600'}`}>
                             ⚠ {c.valor_riesgo}
@@ -658,16 +668,23 @@ export default function Contacts() {
                             {c.antiguedad}
                           </span>
                         )}
-                        {!c.actividad && !c.valor_riesgo && !c.antiguedad && (
+                        {!c.valor_riesgo && !c.antiguedad && (
                           <span className="text-gray-300 text-xs">—</span>
                         )}
                       </div>
                     </td>
+                    {/* Columna Estado — estado de actividad del jugador (casino:actividad o status del sistema) */}
                     <td className="px-4 py-3">
-                      <Badge variant={c.status === 'active' ? 'default' : 'secondary'}
-                             className={`text-xs ${c.status === 'active' ? 'bg-green-100 text-green-700' : ''}`}>
-                        {c.status}
-                      </Badge>
+                      {c.actividad ? (
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${ACTIVIDAD_STYLE[c.actividad] ?? 'bg-gray-100 text-gray-600'}`}>
+                          {c.actividad}
+                        </span>
+                      ) : (
+                        <Badge variant={c.status === 'active' ? 'default' : 'secondary'}
+                               className={`text-xs ${c.status === 'active' ? 'bg-green-100 text-green-700' : ''}`}>
+                          {c.status}
+                        </Badge>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-xs font-medium ${c.opt_in ? 'text-green-600' : 'text-gray-400'}`}>
@@ -858,6 +875,10 @@ export default function Contacts() {
                       <SelectTrigger><SelectValue placeholder="Cualquier nivel" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">Cualquier nivel</SelectItem>
+                        <SelectItem value="vip">Platino</SelectItem>
+                        <SelectItem value="alto">Oro</SelectItem>
+                        <SelectItem value="medio">Plata</SelectItem>
+                        <SelectItem value="bajo">Bronce</SelectItem>
                         <SelectItem value="casual">Casual</SelectItem>
                         <SelectItem value="regular">Regular</SelectItem>
                         <SelectItem value="whale">Whale</SelectItem>
@@ -954,10 +975,10 @@ export default function Contacts() {
                   <SelectTrigger><SelectValue placeholder="Nivel" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">Sin nivel</SelectItem>
-                    <SelectItem value="vip">VIP</SelectItem>
-                    <SelectItem value="alto">Alto</SelectItem>
-                    <SelectItem value="medio">Medio</SelectItem>
-                    <SelectItem value="bajo">Bajo</SelectItem>
+                    <SelectItem value="vip">Platino</SelectItem>
+                    <SelectItem value="alto">Oro</SelectItem>
+                    <SelectItem value="medio">Plata</SelectItem>
+                    <SelectItem value="bajo">Bronce</SelectItem>
                     <SelectItem value="casual">Casual</SelectItem>
                     <SelectItem value="regular">Regular</SelectItem>
                     <SelectItem value="whale">Whale</SelectItem>

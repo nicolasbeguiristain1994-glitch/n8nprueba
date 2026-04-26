@@ -152,11 +152,11 @@ async function main() {
           'casino:monto:'     || seg_monto,
           'casino:actividad:' || seg_actividad,
           'casino:agente:'    || agente,
-          -- valor_riesgo: only when actividad is inactivo or en_riesgo
+          -- valor_riesgo: inactivo, en_riesgo, and perdido all trigger risk classification
           CASE
-            WHEN seg_actividad IN ('inactivo','en_riesgo') AND seg_monto IN ('vip','alto') THEN 'casino:valor_riesgo:critico'
-            WHEN seg_actividad IN ('inactivo','en_riesgo') AND seg_monto = 'medio'         THEN 'casino:valor_riesgo:medio'
-            WHEN seg_actividad IN ('inactivo','en_riesgo') AND seg_monto = 'bajo'          THEN 'casino:valor_riesgo:bajo'
+            WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto IN ('vip','alto') THEN 'casino:valor_riesgo:critico'
+            WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto = 'medio'         THEN 'casino:valor_riesgo:medio'
+            WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto = 'bajo'          THEN 'casino:valor_riesgo:bajo'
             ELSE NULL
           END,
           -- antiguedad: derived from fecha_primera; NULL when fecha_primera is missing
@@ -186,6 +186,27 @@ async function main() {
 
   const taggedCount = tagRes.rows.length;
   console.log(`✅ Auto-tagging: ${taggedCount}/${contactos.length} contactos con datos de casino\n`);
+
+  // 3. Zeus panel fallback: contacts whose casino_username ends in 'z' that still
+  // have no panel assigned (not matched in casino_players). These are Zeus players
+  // not yet in the metrics export; assign ofizeus so they are routable.
+  const zeusPhones = contactos
+    .filter(c => /z$/i.test(c.casino_username || ''))
+    .map(c => c.phone)
+
+  if (zeusPhones.length > 0) {
+    const zeusRes = await pool.query(
+      `UPDATE contacts
+       SET panel = 'ofizeus', updated_at = NOW()
+       WHERE phone_number = ANY($1::text[])
+         AND panel IS NULL
+       RETURNING id`,
+      [zeusPhones]
+    )
+    if (zeusRes.rowCount > 0) {
+      console.log(`🏛️ Zeus fallback: ${zeusRes.rowCount} contactos sin match → ofizeus\n`)
+    }
+  }
 
   if (taggedCount > 0) {
     console.log('CONTACTOS CON SEGMENTO ASIGNADO:');

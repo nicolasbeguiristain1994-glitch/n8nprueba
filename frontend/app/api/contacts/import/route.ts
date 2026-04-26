@@ -151,11 +151,11 @@ export async function POST(req: NextRequest) {
                  'casino:monto:'     || seg_monto,
                  'casino:actividad:' || seg_actividad,
                  'casino:agente:'    || agente,
-                 -- valor_riesgo: only when actividad is inactivo or en_riesgo
+                 -- valor_riesgo: inactivo, en_riesgo, and perdido all trigger risk classification
                  CASE
-                   WHEN seg_actividad IN ('inactivo','en_riesgo') AND seg_monto IN ('vip','alto') THEN 'casino:valor_riesgo:critico'
-                   WHEN seg_actividad IN ('inactivo','en_riesgo') AND seg_monto = 'medio'         THEN 'casino:valor_riesgo:medio'
-                   WHEN seg_actividad IN ('inactivo','en_riesgo') AND seg_monto = 'bajo'          THEN 'casino:valor_riesgo:bajo'
+                   WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto IN ('vip','alto') THEN 'casino:valor_riesgo:critico'
+                   WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto = 'medio'         THEN 'casino:valor_riesgo:medio'
+                   WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto = 'bajo'          THEN 'casino:valor_riesgo:bajo'
                    ELSE NULL
                  END,
                  -- antiguedad: derived from fecha_primera; NULL when fecha_primera is missing
@@ -186,6 +186,25 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Zeus panel fallback: contacts whose casino_username ends in 'z' that still
+    // have no panel. These are Zeus players not yet in the metrics export.
+    const zeusPhones = normalized
+      .filter(c => c.casino_username && /z$/i.test(c.casino_username))
+      .map(c => c.phone)
+
+    if (zeusPhones.length > 0) {
+      try {
+        await query(
+          `UPDATE contacts
+           SET panel = 'ofizeus', updated_at = NOW()
+           WHERE phone_number = ANY($1::text[])
+             AND panel IS NULL`,
+          [zeusPhones]
+        )
+      } catch (zeusErr) {
+        console.warn('[contacts/import] zeus fallback skipped:', zeusErr instanceof Error ? zeusErr.message : zeusErr)
+      }
+    }
 
     void audit({ req, action: 'import', resource: 'contacts',
       metadata: { inserted, updated, skipped: skipped + invalidCount, invalid: invalidCount, total: contacts.length } })
