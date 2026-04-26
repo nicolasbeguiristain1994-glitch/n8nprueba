@@ -2,7 +2,10 @@
  * Shared casino list definitions and repopulation logic.
  * Used by:
  *   - POST /api/lists/casino/repopulate  (in-app admin action)
- *   - scripts/crear-listas-casino.js     (CLI bootstrap)
+ *
+ * NOTE: scripts/crear-listas-casino.js is a standalone Node.js script that
+ * still carries its own copy of the list definitions (CJS require, no ESM import).
+ * If you add or change a list here, mirror the change in that script too.
  */
 
 import { withTransaction } from '@/lib/db'
