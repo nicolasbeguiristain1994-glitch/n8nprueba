@@ -2,7 +2,12 @@
 -- Schema: WhatsApp Automation Platform
 -- Archivo: db/schema/01_core.sql
 -- ============================================
--- Ejecutar en orden numérico sobre Supabase
+-- LEGACY BOOTSTRAP FILE — NOT THE ACTIVE SCHEMA
+-- This file reflects an early prototype with a `players` table.
+-- The live schema uses the `contacts` table defined in db/schema/init.sql
+-- and the migration sequence in scripts/ops/run-migrations.mjs.
+-- Current segment vocabulary: bajo | medio | alto | vip  (see migration 026)
+-- Do NOT run this file on a production or staging database.
 -- ============================================
 
 -- Extensiones necesarias
@@ -20,7 +25,7 @@ CREATE TABLE IF NOT EXISTS players (
     email VARCHAR(255),
     country_code CHAR(2),                      -- ISO 3166-1 alpha-2
     status VARCHAR(20) DEFAULT 'active',       -- active | suspended | closed
-    segment VARCHAR(20) DEFAULT 'casual',      -- casual | regular | vip
+    segment VARCHAR(20) DEFAULT NULL,          -- LEGACY prototype default was 'casual'; current values: bajo|medio|alto|vip
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );

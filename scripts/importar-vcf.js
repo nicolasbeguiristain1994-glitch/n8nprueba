@@ -110,7 +110,9 @@ async function main() {
 
   console.log(`✅ Contactos: ${row.inserted} nuevos, ${row.updated} actualizados`);
 
-  // 2. Auto-tagging + setear panel
+  // 2. Auto-tagging + setear panel + setear segment (consistent with bulk import API)
+  // - panel:   only set when currently NULL (do not overwrite a manual assignment)
+  // - segment: always updated to seg_monto for matched players, same as /api/contacts/import
   const tagRes = await pool.query(`
     WITH matched AS (
       SELECT c.id AS contact_id, cp.agente, cp.seg_monto, cp.seg_actividad
@@ -133,11 +135,14 @@ async function main() {
       FROM matched
       ON CONFLICT (contact_id, tag) DO NOTHING
     )
-    UPDATE contacts SET panel = m.agente, updated_at = NOW()
+    UPDATE contacts
+      SET panel      = COALESCE(contacts.panel, m.agente),
+          segment    = m.seg_monto::contact_segment,
+          updated_at = NOW()
     FROM matched m
-    WHERE contacts.id = m.contact_id AND contacts.panel IS NULL
+    WHERE contacts.id = m.contact_id
     RETURNING contacts.first_name, contacts.panel,
-      (SELECT seg_monto FROM matched WHERE contact_id = contacts.id) AS seg_monto,
+      (SELECT seg_monto    FROM matched WHERE contact_id = contacts.id) AS seg_monto,
       (SELECT seg_actividad FROM matched WHERE contact_id = contacts.id) AS seg_actividad
   `, [JSON.stringify(contactos.map(c => ({ phone: c.phone, casino_username: c.casino_username })))]);
 

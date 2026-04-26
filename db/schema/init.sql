@@ -24,6 +24,10 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN null;
 END $$;
 
+-- NOTE: The canonical segment values are bajo/medio/alto/vip (added by migration 026).
+-- The legacy values (casual, regular, whale) are preserved here so that this bootstrap
+-- file remains idempotent on a clean DB; migration 026 then adds the current values.
+-- Do NOT use casual/regular/whale in new code — use bajo/medio/alto/vip.
 DO $$ BEGIN
     CREATE TYPE contact_segment AS ENUM ('casual', 'regular', 'vip', 'whale');
 EXCEPTION WHEN duplicate_object THEN null;
@@ -91,7 +95,7 @@ CREATE TABLE IF NOT EXISTS contacts (
     
     -- Estado y segmentación
     status contact_status DEFAULT 'active',
-    segment contact_segment DEFAULT 'casual',
+    segment contact_segment DEFAULT NULL,  -- valores actuales: bajo/medio/alto/vip (ver migration 026)
     
     -- Métricas agregadas (desnormalizadas para performance)
     total_messages_received INT DEFAULT 0,
@@ -114,7 +118,7 @@ CREATE TABLE IF NOT EXISTS contacts (
 COMMENT ON TABLE contacts IS 'Tabla de contactos/jugadores - mirror del sistema fuente con enriquecimiento';
 COMMENT ON COLUMN contacts.external_id IS 'ID del sistema fuente (casino)';
 COMMENT ON COLUMN contacts.phone_number IS 'Formato E.164 normalizado';
-COMMENT ON COLUMN contacts.segment IS 'casual|regular|vip|whale - calculado cada 24h';
+COMMENT ON COLUMN contacts.segment IS 'bajo|medio|alto|vip — valores actuales del modelo casino (migration 026). Legacy: casual|regular|whale';
 COMMENT ON COLUMN contacts.last_activity_at IS 'Última interacción (mensaje o transacción)';
 
 CREATE INDEX IF NOT EXISTS idx_contacts_external_id ON contacts(external_id);
@@ -562,7 +566,7 @@ CREATE TABLE IF NOT EXISTS aggregated_metrics (
     unique_contacts_messaged INT DEFAULT 0,
     
     -- Segmentación
-    by_segment JSONB DEFAULT '{}'::JSONB,  -- {casual: {sent: 100, delivered: 95}, vip: {...}} 
+    by_segment JSONB DEFAULT '{}'::JSONB,  -- {bajo: {...}, medio: {...}, alto: {...}, vip: {...}}
     by_domain JSONB DEFAULT '{}'::JSONB,  -- {onboarding: {sent: 50}, retention: {sent: 75}}
     by_campaign JSONB DEFAULT '{}'::JSONB,  -- {campaign_id: {name: "...", sent: 100}}
     
@@ -582,7 +586,7 @@ CREATE TABLE IF NOT EXISTS aggregated_metrics (
 );
 
 COMMENT ON TABLE aggregated_metrics IS 'Métricas agregadas diarias para dashboards y reportes';
-COMMENT ON COLUMN aggregated_metrics.by_segment IS 'Breakdown por segment: {casual: {sent: 100, delivered: 95}}';
+COMMENT ON COLUMN aggregated_metrics.by_segment IS 'Breakdown por segment: {bajo: {sent: 100, delivered: 95}, medio: {...}, alto: {...}, vip: {...}}';
 COMMENT ON COLUMN aggregated_metrics.by_domain IS 'Breakdown por dominio: {onboarding: {sent: 50}}';
 COMMENT ON COLUMN aggregated_metrics.delivery_rate IS '% de mensajes entregados vs enviados';
 
