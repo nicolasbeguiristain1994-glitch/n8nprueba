@@ -128,9 +128,12 @@ export async function POST(req: NextRequest) {
              FROM matched
              ON CONFLICT (contact_id, tag) DO NOTHING
            )
-           UPDATE contacts SET panel = m.agente, updated_at = NOW()
+           UPDATE contacts
+             SET panel      = COALESCE(contacts.panel, m.agente),
+                 segment    = m.seg_monto::contact_segment,
+                 updated_at = NOW()
            FROM matched m
-           WHERE contacts.id = m.contact_id AND contacts.panel IS NULL`,
+           WHERE contacts.id = m.contact_id`,
           [JSON.stringify(normalized.filter(c => c.casino_username).map(c => ({
             phone: c.phone,
             casino_username: c.casino_username,

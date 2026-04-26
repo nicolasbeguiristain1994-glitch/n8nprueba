@@ -12,7 +12,7 @@ import { fetchJson } from '@/lib/fetchJson'
 
 interface Contact {
   id: string; phone_number: string; first_name: string; last_name: string
-  email: string; status: string; opt_in: boolean; created_at: string; segment: string; panel: string; gaming: string; linea: number | null
+  email: string; status: string; opt_in: boolean; created_at: string; segment: string; panel: string; gaming: string; linea: number | null; actividad?: string
 }
 interface ImportRow { phone: string; name?: string; segment?: string }
 interface ContactList { id: string; name: string; contact_count: number; created_at: string }
@@ -67,10 +67,19 @@ export default function Contacts() {
   const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
 
   const SEGMENT_STYLE: Record<string, string> = {
-    casual:  'bg-gray-100 text-gray-600',
-    regular: 'bg-blue-100 text-blue-700',
-    vip:     'bg-purple-100 text-purple-700',
-    premium: 'bg-amber-100 text-amber-700',
+    bajo:   'bg-gray-100 text-gray-600',
+    medio:  'bg-blue-100 text-blue-700',
+    alto:   'bg-amber-100 text-amber-700',
+    vip:    'bg-purple-100 text-purple-700',
+  }
+
+  const ACTIVIDAD_STYLE: Record<string, string> = {
+    frecuente:  'bg-green-100 text-green-700',
+    regular:    'bg-blue-100 text-blue-700',
+    ocasional:  'bg-gray-100 text-gray-600',
+    nuevo:      'bg-cyan-100 text-cyan-700',
+    en_riesgo:  'bg-orange-100 text-orange-700',
+    inactivo:   'bg-red-100 text-red-600',
   }
 
   const GAMING_STYLE: Record<string, string> = {
@@ -286,7 +295,7 @@ export default function Contacts() {
       'Línea':      c.linea ?? '',
       'Juego':      c.gaming || '',
       'Nivel':      c.segment || '',
-      'Estado':     c.status || '',
+      'Actividad':  c.actividad || '',
       'Fecha alta': c.created_at ? new Date(c.created_at).toLocaleDateString('es-AR') : '',
     }))
 
@@ -444,7 +453,7 @@ export default function Contacts() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="">Todos los niveles</SelectItem>
-            {['casual','regular','vip','premium'].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            {['vip','alto','medio','bajo'].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
@@ -477,7 +486,7 @@ export default function Contacts() {
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Línea</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Juego</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Nivel</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Actividad</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Opt-in</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Alta</th>
                 <th className="w-8"></th>
@@ -539,17 +548,18 @@ export default function Contacts() {
                         className={`text-xs px-2 py-0.5 rounded-full font-medium border-0 cursor-pointer appearance-none bg-transparent focus:outline-none focus:ring-1 focus:ring-offset-0 focus:ring-gray-300 ${c.segment ? SEGMENT_STYLE[c.segment] : 'text-gray-400'}`}
                       >
                         <option value="">— sin nivel</option>
-                        <option value="casual">casual</option>
-                        <option value="regular">regular</option>
                         <option value="vip">vip</option>
-                        <option value="premium">premium</option>
+                        <option value="alto">alto</option>
+                        <option value="medio">medio</option>
+                        <option value="bajo">bajo</option>
                       </select>
                     </td>
                     <td className="px-4 py-3">
-                      <Badge variant={c.status === 'active' ? 'default' : 'secondary'}
-                             className={`text-xs ${c.status === 'active' ? 'bg-green-100 text-green-700' : ''}`}>
-                        {c.status}
-                      </Badge>
+                      {c.actividad
+                        ? <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ACTIVIDAD_STYLE[c.actividad] ?? 'bg-gray-100 text-gray-500'}`}>
+                            {c.actividad.replace('_', ' ')}
+                          </span>
+                        : <span className="text-xs text-gray-300">—</span>}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-xs font-medium ${c.opt_in ? 'text-green-600' : 'text-gray-400'}`}>
@@ -740,10 +750,10 @@ export default function Contacts() {
                       <SelectTrigger><SelectValue placeholder="Cualquier nivel" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">Cualquier nivel</SelectItem>
-                        <SelectItem value="casual">Casual</SelectItem>
-                        <SelectItem value="regular">Regular</SelectItem>
                         <SelectItem value="vip">VIP</SelectItem>
-                        <SelectItem value="premium">Premium</SelectItem>
+                        <SelectItem value="alto">Alto</SelectItem>
+                        <SelectItem value="medio">Medio</SelectItem>
+                        <SelectItem value="bajo">Bajo</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -837,10 +847,10 @@ export default function Contacts() {
                   <SelectTrigger><SelectValue placeholder="Nivel" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">Sin nivel</SelectItem>
-                    <SelectItem value="casual">Casual</SelectItem>
-                    <SelectItem value="regular">Regular</SelectItem>
                     <SelectItem value="vip">VIP</SelectItem>
-                    <SelectItem value="premium">Premium</SelectItem>
+                    <SelectItem value="alto">Alto</SelectItem>
+                    <SelectItem value="medio">Medio</SelectItem>
+                    <SelectItem value="bajo">Bajo</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

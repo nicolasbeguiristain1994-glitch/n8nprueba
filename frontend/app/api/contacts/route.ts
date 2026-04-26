@@ -21,7 +21,11 @@ export async function GET(req: NextRequest) {
   try {
     const rows = await query(`
       SELECT id, phone_number, first_name, last_name, email,
-             status, opt_in_marketing AS opt_in, created_at, segment, panel, gaming::text AS gaming, linea
+             status, opt_in_marketing AS opt_in, created_at, segment, panel, gaming::text AS gaming, linea,
+             (SELECT REPLACE(tag, 'casino:actividad:', '')
+              FROM contact_tags
+              WHERE contact_id = contacts.id AND tag LIKE 'casino:actividad:%'
+              LIMIT 1) AS actividad
       FROM contacts
       WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
         AND ($4 = '' OR segment::text = $4)

@@ -111,6 +111,8 @@ const MIGRATIONS = [
   { file: 'db/migrations/021_campaigns_schema_alignment.sql',    label: '021 — Campaigns schema alignment with current routes' },
   { file: 'db/migrations/022_tickets.sql',                       label: '022 — Tickets module (tickets, ticket_notes, ticket_events)' },
   { file: 'db/migrations/023_campaign_multiline.sql',            label: '023 — Multi-line campaign distributor (line_id, use_multi_line, sending_enabled, line_usage_log)' },
+  { file: 'db/migrations/025_casino_players.sql',               label: '025 — casino_players table with username_lower generated column' },
+  { file: 'db/migrations/026_contact_segment_casino.sql',       label: '026 — contact_segment enum: add bajo/medio/alto' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
