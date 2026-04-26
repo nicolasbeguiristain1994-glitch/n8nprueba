@@ -71,7 +71,7 @@ export default function Contacts() {
     casual:  'bg-gray-100 text-gray-600',
     regular: 'bg-blue-100 text-blue-700',
     vip:     'bg-purple-100 text-purple-700',
-    premium: 'bg-amber-100 text-amber-700',
+    whale:   'bg-amber-100 text-amber-700',
     // casino monto values
     bajo:    'bg-slate-100 text-slate-600',
     medio:   'bg-sky-100 text-sky-700',
@@ -475,7 +475,7 @@ export default function Contacts() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="">Todos los niveles</SelectItem>
-            {['vip','alto','medio','bajo','casual','regular','premium'].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            {['vip','alto','medio','bajo','casual','regular','whale'].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
@@ -577,7 +577,7 @@ export default function Contacts() {
                         <option value="bajo">bajo</option>
                         <option value="casual">casual</option>
                         <option value="regular">regular</option>
-                        <option value="premium">premium</option>
+                        <option value="whale">whale</option>
                       </select>
                     </td>
                     {/* Columna Casino — badges read-only: actividad, valor_riesgo, antiguedad */}
@@ -800,8 +800,7 @@ export default function Contacts() {
                         <SelectItem value="all">Cualquier nivel</SelectItem>
                         <SelectItem value="casual">Casual</SelectItem>
                         <SelectItem value="regular">Regular</SelectItem>
-                        <SelectItem value="vip">VIP</SelectItem>
-                        <SelectItem value="premium">Premium</SelectItem>
+                        <SelectItem value="whale">Whale</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -895,10 +894,13 @@ export default function Contacts() {
                   <SelectTrigger><SelectValue placeholder="Nivel" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">Sin nivel</SelectItem>
+                    <SelectItem value="vip">VIP</SelectItem>
+                    <SelectItem value="alto">Alto</SelectItem>
+                    <SelectItem value="medio">Medio</SelectItem>
+                    <SelectItem value="bajo">Bajo</SelectItem>
                     <SelectItem value="casual">Casual</SelectItem>
                     <SelectItem value="regular">Regular</SelectItem>
-                    <SelectItem value="vip">VIP</SelectItem>
-                    <SelectItem value="premium">Premium</SelectItem>
+                    <SelectItem value="whale">Whale</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

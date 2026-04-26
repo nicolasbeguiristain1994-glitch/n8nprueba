@@ -20,12 +20,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const { segment, gaming, panel, linea } = body
 
-  // Current operational vocabulary (bajo/medio/alto/vip). Legacy values (casual/regular/whale)
-  // are retained so that existing DB rows can still be written back without error.
   const allowedSegments = ['bajo', 'medio', 'alto', 'vip', 'casual', 'regular', 'whale']
   const allowedGaming   = ['slots', 'deportivas', 'ambas']
-  // Current panel/agent values used by the UI and casino import pipeline.
-  const allowedPanels   = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
+  const allowedPanels   = ['Betcoin', 'Zeus', 'Bigwin', 'Farabet', 'Las Vegas']
 
   try {
     const existing = await query<{ id: string }>('SELECT id FROM contacts WHERE id = $1', [id])
