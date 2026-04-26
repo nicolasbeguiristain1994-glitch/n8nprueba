@@ -7,8 +7,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Search, Upload, RefreshCw, List, CheckSquare, X, Users, UserPlus, Trash2, Download } from 'lucide-react'
+import { Search, Upload, RefreshCw, List, CheckSquare, X, Users, UserPlus, Trash2, Download, DatabaseZap } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
+import { useCurrentUser } from '@/lib/useCurrentUser'
 
 interface Contact {
   id: string; phone_number: string; first_name: string; last_name: string
@@ -64,6 +65,12 @@ export default function Contacts() {
   // Inline update / import error
   const [updateError, setUpdateError]   = useState<string | null>(null)
   const [importError, setImportError]   = useState<string | null>(null)
+
+  // Casino list repopulation (admin only)
+  const { user: currentUser } = useCurrentUser()
+  const [repopulating, setRepopulating]   = useState(false)
+  const [repopulateResult, setRepopulateResult] = useState<{ total_lists: number; lists: Array<{ nombre: string; members: number; created: boolean }> } | null>(null)
+  const [repopulateError, setRepopulateError]   = useState<string | null>(null)
 
   const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
 
@@ -372,6 +379,27 @@ export default function Contacts() {
     fetch('/api/lists').then(r => r.json()).then(d => setLists(d.lists || []))
   }
 
+  const repopularListas = async () => {
+    setRepopulating(true)
+    setRepopulateError(null)
+    setRepopulateResult(null)
+    try {
+      const res = await fetch('/api/lists/casino/repopulate', { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setRepopulateError(data.error || 'Error al repoblar listas')
+      } else {
+        setRepopulateResult(data)
+        // Refresh lists sidebar count
+        fetch('/api/lists').then(r => r.json()).then(d => setLists(d.lists || []))
+      }
+    } catch {
+      setRepopulateError('Error de red')
+    } finally {
+      setRepopulating(false)
+    }
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -412,6 +440,13 @@ export default function Contacts() {
               <List size={14} className="mr-1" /> Crear lista ({selected.size})
             </Button>
           )}
+          {currentUser?.role === 'admin' && (
+            <Button size="sm" variant="outline" onClick={repopularListas} disabled={repopulating}
+              className="border-violet-200 text-violet-700 hover:bg-violet-50">
+              <DatabaseZap size={14} className={`mr-1 ${repopulating ? 'animate-pulse' : ''}`} />
+              {repopulating ? 'Repoblando…' : 'Listas casino'}
+            </Button>
+          )}
           <Button size="sm" onClick={() => setShowAdd(true)} className="bg-green-600 hover:bg-green-700 text-white">
             <UserPlus size={14} className="mr-1" /> Nuevo contacto
           </Button>
@@ -428,6 +463,31 @@ export default function Contacts() {
         <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-sm text-red-600 flex items-center justify-between">
           <span>{updateError}</span>
           <button onClick={() => setUpdateError(null)} className="ml-4 text-red-400 hover:text-red-600">✕</button>
+        </div>
+      )}
+
+      {/* Repoblar listas casino — resultado */}
+      {repopulateError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-sm text-red-600 flex items-center justify-between">
+          <span>Listas casino: {repopulateError}</span>
+          <button onClick={() => setRepopulateError(null)} className="ml-4 text-red-400 hover:text-red-600">✕</button>
+        </div>
+      )}
+      {repopulateResult && (
+        <div className="bg-violet-50 border border-violet-200 rounded-lg px-4 py-3 text-sm text-violet-800 flex items-start justify-between gap-4">
+          <div>
+            <p className="font-medium mb-1">
+              Listas casino repobladas — {repopulateResult.total_lists} listas actualizadas
+            </p>
+            <ul className="grid grid-cols-2 gap-x-6 gap-y-0.5 text-xs text-violet-700 mt-1">
+              {repopulateResult.lists.map(l => (
+                <li key={l.nombre} className="truncate">
+                  {l.created ? '✅' : '🔄'} {l.nombre} — <span className="font-semibold">{l.members.toLocaleString()}</span> contactos
+                </li>
+              ))}
+            </ul>
+          </div>
+          <button onClick={() => setRepopulateResult(null)} className="text-violet-400 hover:text-violet-600 shrink-0">✕</button>
         </div>
       )}
 
