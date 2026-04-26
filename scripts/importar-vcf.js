@@ -11,7 +11,7 @@
  * Output: resumen de importación con auto-tagging
  */
 
-const { Pool } = require('/Users/nicobegui/Desktop/whatsapp-automation-platform/frontend/node_modules/pg');
+const { Pool } = require('pg');
 const fs   = require('fs');
 const path = require('path');
 

@@ -193,8 +193,9 @@ CREATE TABLE IF NOT EXISTS campaigns (
 COMMENT ON TABLE campaigns IS 'Campañas de comunicación masiva - marketing, retención, alertas';
 COMMENT ON COLUMN campaigns.type IS 'Tipo de campaña: onboarding, retention, payment, risk_alert, etc';
 COMMENT ON COLUMN campaigns.status IS 'draft|scheduled|running|paused|completed|cancelled';
-COMMENT ON COLUMN campaigns.target_segment IS 'Segmento objetivo - NULL = todos los activos';
-COMMENT ON COLUMN campaigns.max_daily_messages IS 'Throttle para no sobrecargar sistema';
+-- NOTE: target_segment and max_daily_messages were removed from this schema in an earlier
+-- refactor. The COMMENT ON statements for those columns have been removed to prevent
+-- PostgreSQL from throwing "column does not exist" errors on a fresh-DB bootstrap.
 
 CREATE INDEX IF NOT EXISTS idx_campaigns_status       ON campaigns(status);
 CREATE INDEX IF NOT EXISTS idx_campaigns_type         ON campaigns(type);
