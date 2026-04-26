@@ -22,7 +22,7 @@ if (!connectionString) {
 }
 const REPOBLAR = process.argv.includes('--repoblar')
 
-const pool = new Pool({ connectionString, ssl: { rejectUnauthorized: false } })
+const pool = new Pool({ connectionString, ssl: { rejectUnauthorized: false }, family: 4 })
 
 // ── Definición de listas ──────────────────────────────────────────────────────
 const LISTAS = [
@@ -111,6 +111,44 @@ const LISTAS = [
       FROM contacts c
       JOIN contact_tags ct_monto    ON ct_monto.contact_id    = c.id AND ct_monto.tag    IN ('casino:monto:vip', 'casino:monto:alto')
       JOIN contact_tags ct_actividad ON ct_actividad.contact_id = c.id AND ct_actividad.tag IN ('casino:actividad:frecuente','casino:actividad:regular','casino:actividad:ocasional','casino:actividad:nuevo')
+    `,
+  },
+
+  // ── Valor en Riesgo ─────────────────────────────────────────────────────────
+  // Derived from (seg_monto + seg_actividad in_riesgo|inactivo) at import time.
+  {
+    nombre:      '🚨 Críticos — VIP',
+    descripcion: 'Jugadores VIP inactivos o en riesgo. Máxima prioridad de recuperación.',
+    tags:        ['casino:valor_riesgo:critico', 'casino:monto:vip'],
+  },
+  {
+    nombre:      '🚨 Críticos — Alto',
+    descripcion: 'Jugadores de monto alto inactivos o en riesgo.',
+    tags:        ['casino:valor_riesgo:critico', 'casino:monto:alto'],
+  },
+
+  // ── Antigüedad ──────────────────────────────────────────────────────────────
+  // Derived from fecha_primera in casino_players at import time.
+  {
+    nombre:      '🕰️ Veteranos Inactivos',
+    descripcion: 'Clientes con más de 1 año de historial que dejaron de jugar. Alta probabilidad de reactivación con oferta personalizada.',
+    tags:        [],
+    custom_query: `
+      SELECT DISTINCT c.id
+      FROM contacts c
+      JOIN contact_tags ct_ant ON ct_ant.contact_id = c.id AND ct_ant.tag IN ('casino:antiguedad:veterano','casino:antiguedad:leal')
+      JOIN contact_tags ct_act ON ct_act.contact_id = c.id AND ct_act.tag = 'casino:actividad:inactivo'
+    `,
+  },
+  {
+    nombre:      '✨ Nuevos VIP / Alto',
+    descripcion: 'Jugadores nuevos o recientes (menos de 90 días) con monto VIP o alto. Onboarding de alto valor.',
+    tags:        [],
+    custom_query: `
+      SELECT DISTINCT c.id
+      FROM contacts c
+      JOIN contact_tags ct_ant   ON ct_ant.contact_id   = c.id AND ct_ant.tag   IN ('casino:antiguedad:nuevo','casino:antiguedad:reciente')
+      JOIN contact_tags ct_monto ON ct_monto.contact_id = c.id AND ct_monto.tag IN ('casino:monto:vip','casino:monto:alto')
     `,
   },
 ]

@@ -25,7 +25,15 @@ export async function GET(req: NextRequest) {
              (SELECT REPLACE(tag, 'casino:actividad:', '')
               FROM contact_tags
               WHERE contact_id = contacts.id AND tag LIKE 'casino:actividad:%'
-              LIMIT 1) AS actividad
+              LIMIT 1) AS actividad,
+             (SELECT REPLACE(tag, 'casino:valor_riesgo:', '')
+              FROM contact_tags
+              WHERE contact_id = contacts.id AND tag LIKE 'casino:valor_riesgo:%'
+              LIMIT 1) AS valor_riesgo,
+             (SELECT REPLACE(tag, 'casino:antiguedad:', '')
+              FROM contact_tags
+              WHERE contact_id = contacts.id AND tag LIKE 'casino:antiguedad:%'
+              LIMIT 1) AS antiguedad
       FROM contacts
       WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
         AND ($4 = '' OR segment::text = $4)

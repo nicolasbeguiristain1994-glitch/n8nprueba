@@ -115,7 +115,7 @@ async function main() {
   // - segment: always updated to seg_monto for matched players, same as /api/contacts/import
   const tagRes = await pool.query(`
     WITH matched AS (
-      SELECT c.id AS contact_id, cp.agente, cp.seg_monto, cp.seg_actividad
+      SELECT c.id AS contact_id, cp.agente, cp.seg_monto, cp.seg_actividad, cp.fecha_primera
       FROM contacts c
       JOIN (
         SELECT phone, casino_username FROM jsonb_to_recordset($1::jsonb) AS x(phone text, casino_username text)
@@ -126,11 +126,27 @@ async function main() {
     tags_insert AS (
       INSERT INTO contact_tags (id, contact_id, tag, added_by, added_at)
       SELECT gen_random_uuid(), contact_id,
-        unnest(ARRAY[
+        unnest(array_remove(ARRAY[
           'casino:monto:'     || seg_monto,
           'casino:actividad:' || seg_actividad,
-          'casino:agente:'    || agente
-        ]),
+          'casino:agente:'    || agente,
+          -- valor_riesgo: only when actividad is inactivo or en_riesgo
+          CASE
+            WHEN seg_actividad IN ('inactivo','en_riesgo') AND seg_monto IN ('vip','alto') THEN 'casino:valor_riesgo:critico'
+            WHEN seg_actividad IN ('inactivo','en_riesgo') AND seg_monto = 'medio'         THEN 'casino:valor_riesgo:medio'
+            WHEN seg_actividad IN ('inactivo','en_riesgo') AND seg_monto = 'bajo'          THEN 'casino:valor_riesgo:bajo'
+            ELSE NULL
+          END,
+          -- antiguedad: derived from fecha_primera; NULL when fecha_primera is missing
+          CASE
+            WHEN fecha_primera IS NULL                             THEN NULL
+            WHEN (CURRENT_DATE - fecha_primera) < 30              THEN 'casino:antiguedad:nuevo'
+            WHEN (CURRENT_DATE - fecha_primera) < 90              THEN 'casino:antiguedad:reciente'
+            WHEN (CURRENT_DATE - fecha_primera) < 365             THEN 'casino:antiguedad:establecido'
+            WHEN (CURRENT_DATE - fecha_primera) < 1095            THEN 'casino:antiguedad:veterano'
+            ELSE                                                        'casino:antiguedad:leal'
+          END
+        ], NULL)),
         'system', NOW()
       FROM matched
       ON CONFLICT (contact_id, tag) DO NOTHING
