@@ -12,7 +12,8 @@ import { fetchJson } from '@/lib/fetchJson'
 
 interface Contact {
   id: string; phone_number: string; first_name: string; last_name: string
-  email: string; status: string; opt_in: boolean; created_at: string; segment: string; panel: string; gaming: string; linea: number | null; actividad?: string
+  email: string; status: string; opt_in: boolean; created_at: string; segment: string; panel: string; gaming: string; linea: number | null
+  actividad?: string; valor_riesgo?: string; antiguedad?: string
 }
 interface ImportRow { phone: string; name?: string; segment?: string }
 interface ContactList { id: string; name: string; contact_count: number; created_at: string }
@@ -67,19 +68,37 @@ export default function Contacts() {
   const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
 
   const SEGMENT_STYLE: Record<string, string> = {
-    bajo:   'bg-gray-100 text-gray-600',
-    medio:  'bg-blue-100 text-blue-700',
-    alto:   'bg-amber-100 text-amber-700',
-    vip:    'bg-purple-100 text-purple-700',
+    casual:  'bg-gray-100 text-gray-600',
+    regular: 'bg-blue-100 text-blue-700',
+    vip:     'bg-purple-100 text-purple-700',
+    premium: 'bg-amber-100 text-amber-700',
+    // casino monto values
+    bajo:    'bg-slate-100 text-slate-600',
+    medio:   'bg-sky-100 text-sky-700',
+    alto:    'bg-orange-100 text-orange-700',
   }
 
   const ACTIVIDAD_STYLE: Record<string, string> = {
-    frecuente:  'bg-green-100 text-green-700',
-    regular:    'bg-blue-100 text-blue-700',
-    ocasional:  'bg-gray-100 text-gray-600',
-    nuevo:      'bg-cyan-100 text-cyan-700',
-    en_riesgo:  'bg-orange-100 text-orange-700',
-    inactivo:   'bg-red-100 text-red-600',
+    frecuente:   'bg-green-100 text-green-700',
+    regular:     'bg-blue-100 text-blue-700',
+    ocasional:   'bg-gray-100 text-gray-600',
+    nuevo:       'bg-cyan-100 text-cyan-700',
+    en_riesgo:   'bg-orange-100 text-orange-700',
+    inactivo:    'bg-red-100 text-red-600',
+  }
+
+  const VALOR_RIESGO_STYLE: Record<string, string> = {
+    critico: 'bg-red-100 text-red-700',
+    medio:   'bg-orange-100 text-orange-700',
+    bajo:    'bg-yellow-100 text-yellow-700',
+  }
+
+  const ANTIGUEDAD_STYLE: Record<string, string> = {
+    nuevo:       'bg-sky-100 text-sky-600',
+    reciente:    'bg-blue-100 text-blue-600',
+    establecido: 'bg-indigo-100 text-indigo-700',
+    veterano:    'bg-violet-100 text-violet-700',
+    leal:        'bg-purple-100 text-purple-700',
   }
 
   const GAMING_STYLE: Record<string, string> = {
@@ -296,6 +315,9 @@ export default function Contacts() {
       'Juego':      c.gaming || '',
       'Nivel':      c.segment || '',
       'Actividad':  c.actividad || '',
+      'Riesgo':     c.valor_riesgo || '',
+      'Antigüedad': c.antiguedad || '',
+      'Estado':     c.status || '',
       'Fecha alta': c.created_at ? new Date(c.created_at).toLocaleDateString('es-AR') : '',
     }))
 
@@ -304,7 +326,7 @@ export default function Contacts() {
     XLSX.utils.book_append_sheet(wb, ws, 'Contactos')
 
     // Column widths
-    ws['!cols'] = [14, 22, 24, 12, 8, 12, 10, 10, 12].map(w => ({ wch: w }))
+    ws['!cols'] = [14, 22, 24, 12, 8, 12, 10, 12, 12, 14, 10, 12].map(w => ({ wch: w }))
 
     const filters = [
       filterPanel && `panel-${filterPanel}`,
@@ -453,7 +475,7 @@ export default function Contacts() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="">Todos los niveles</SelectItem>
-            {['vip','alto','medio','bajo'].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+            {['vip','alto','medio','bajo','casual','regular','premium'].map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
@@ -486,7 +508,8 @@ export default function Contacts() {
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Línea</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Juego</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Nivel</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Actividad</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Casino</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Opt-in</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Alta</th>
                 <th className="w-8"></th>
@@ -494,7 +517,7 @@ export default function Contacts() {
             </thead>
             <tbody>
               {contacts.length === 0
-                ? <tr><td colSpan={10} className="text-center py-10 text-gray-400">
+                ? <tr><td colSpan={11} className="text-center py-10 text-gray-400">
                     {loading ? 'Cargando…' : 'Sin contactos'}
                   </td></tr>
                 : contacts.map(c => (
@@ -545,21 +568,46 @@ export default function Contacts() {
                       <select
                         value={c.segment || ''}
                         onChange={e => updateSegment(c.id, e.target.value || null)}
-                        className={`text-xs px-2 py-0.5 rounded-full font-medium border-0 cursor-pointer appearance-none bg-transparent focus:outline-none focus:ring-1 focus:ring-offset-0 focus:ring-gray-300 ${c.segment ? SEGMENT_STYLE[c.segment] : 'text-gray-400'}`}
+                        className={`text-xs px-2 py-0.5 rounded-full font-medium border-0 cursor-pointer appearance-none bg-transparent focus:outline-none focus:ring-1 focus:ring-offset-0 focus:ring-gray-300 ${c.segment ? (SEGMENT_STYLE[c.segment] ?? 'bg-gray-100 text-gray-600') : 'text-gray-400'}`}
                       >
                         <option value="">— sin nivel</option>
                         <option value="vip">vip</option>
                         <option value="alto">alto</option>
                         <option value="medio">medio</option>
                         <option value="bajo">bajo</option>
+                        <option value="casual">casual</option>
+                        <option value="regular">regular</option>
+                        <option value="premium">premium</option>
                       </select>
                     </td>
+                    {/* Columna Casino — badges read-only: actividad, valor_riesgo, antiguedad */}
                     <td className="px-4 py-3">
-                      {c.actividad
-                        ? <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${ACTIVIDAD_STYLE[c.actividad] ?? 'bg-gray-100 text-gray-500'}`}>
-                            {c.actividad.replace('_', ' ')}
+                      <div className="flex flex-col gap-0.5">
+                        {c.actividad && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${ACTIVIDAD_STYLE[c.actividad] ?? 'bg-gray-100 text-gray-600'}`}>
+                            {c.actividad}
                           </span>
-                        : <span className="text-xs text-gray-300">—</span>}
+                        )}
+                        {c.valor_riesgo && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${VALOR_RIESGO_STYLE[c.valor_riesgo] ?? 'bg-gray-100 text-gray-600'}`}>
+                            ⚠ {c.valor_riesgo}
+                          </span>
+                        )}
+                        {c.antiguedad && (
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${ANTIGUEDAD_STYLE[c.antiguedad] ?? 'bg-gray-100 text-gray-600'}`}>
+                            {c.antiguedad}
+                          </span>
+                        )}
+                        {!c.actividad && !c.valor_riesgo && !c.antiguedad && (
+                          <span className="text-gray-300 text-xs">—</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge variant={c.status === 'active' ? 'default' : 'secondary'}
+                             className={`text-xs ${c.status === 'active' ? 'bg-green-100 text-green-700' : ''}`}>
+                        {c.status}
+                      </Badge>
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-xs font-medium ${c.opt_in ? 'text-green-600' : 'text-gray-400'}`}>
@@ -750,10 +798,10 @@ export default function Contacts() {
                       <SelectTrigger><SelectValue placeholder="Cualquier nivel" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">Cualquier nivel</SelectItem>
+                        <SelectItem value="casual">Casual</SelectItem>
+                        <SelectItem value="regular">Regular</SelectItem>
                         <SelectItem value="vip">VIP</SelectItem>
-                        <SelectItem value="alto">Alto</SelectItem>
-                        <SelectItem value="medio">Medio</SelectItem>
-                        <SelectItem value="bajo">Bajo</SelectItem>
+                        <SelectItem value="premium">Premium</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -847,10 +895,10 @@ export default function Contacts() {
                   <SelectTrigger><SelectValue placeholder="Nivel" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">Sin nivel</SelectItem>
+                    <SelectItem value="casual">Casual</SelectItem>
+                    <SelectItem value="regular">Regular</SelectItem>
                     <SelectItem value="vip">VIP</SelectItem>
-                    <SelectItem value="alto">Alto</SelectItem>
-                    <SelectItem value="medio">Medio</SelectItem>
-                    <SelectItem value="bajo">Bajo</SelectItem>
+                    <SelectItem value="premium">Premium</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
