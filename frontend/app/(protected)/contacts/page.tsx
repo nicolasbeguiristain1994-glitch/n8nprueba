@@ -64,7 +64,7 @@ export default function Contacts() {
   const [updateError, setUpdateError]   = useState<string | null>(null)
   const [importError, setImportError]   = useState<string | null>(null)
 
-  const PANEL_OPTIONS = ['Betcoin', 'Zeus', 'Bigwin', 'Farabet', 'Las Vegas']
+  const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
 
   const SEGMENT_STYLE: Record<string, string> = {
     casual:  'bg-gray-100 text-gray-600',
@@ -282,7 +282,7 @@ export default function Contacts() {
       'Teléfono':   c.phone_number,
       'Nombre':     [c.first_name, c.last_name].filter(Boolean).join(' ') || '',
       'Email':      c.email || '',
-      'Panel':      c.panel || '',
+      'Agente':     c.panel || '',
       'Línea':      c.linea ?? '',
       'Juego':      c.gaming || '',
       'Nivel':      c.segment || '',
@@ -409,10 +409,10 @@ export default function Contacts() {
         </div>
         <Select value={filterPanel} onValueChange={v => { setFilterPanel(v ?? ''); setPage(1) }}>
           <SelectTrigger className="w-40">
-            <SelectValue placeholder="Panel" />
+            <SelectValue placeholder="Agente" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="">Todos los paneles</SelectItem>
+            <SelectItem value="">Todos los agentes</SelectItem>
             {PANEL_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
           </SelectContent>
         </Select>
@@ -473,7 +473,7 @@ export default function Contacts() {
                 </th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Teléfono</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Nombre</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Panel</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Agente</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Línea</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Juego</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Nivel</th>
@@ -501,7 +501,7 @@ export default function Contacts() {
                         onChange={e => updatePanel(c.id, e.target.value || null)}
                         className={`text-xs px-2 py-0.5 rounded-full font-medium border-0 cursor-pointer appearance-none bg-transparent focus:outline-none focus:ring-1 focus:ring-offset-0 focus:ring-gray-300 ${c.panel ? 'bg-indigo-50 text-indigo-700' : 'text-gray-400'}`}
                       >
-                        <option value="">— sin panel</option>
+                        <option value="">— sin agente</option>
                         {PANEL_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
                       </select>
                     </td>
@@ -632,12 +632,14 @@ export default function Contacts() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-medium text-gray-600 mb-1 block">Panel (opcional)</label>
-                  <Input
-                    placeholder="Ej: RoyalBet, Panel VIP…"
-                    value={importPanel}
-                    onChange={e => setImportPanel(e.target.value)}
-                  />
+                  <label className="text-xs font-medium text-gray-600 mb-1 block">Agente (opcional)</label>
+                  <Select value={importPanel || 'none'} onValueChange={v => setImportPanel(v === 'none' ? '' : (v ?? ''))}>
+                    <SelectTrigger><SelectValue placeholder="Sin asignar" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Sin asignar</SelectItem>
+                      {PANEL_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <label className="text-xs font-medium text-gray-600 mb-1 block">Tipo de juego (opcional)</label>
@@ -711,11 +713,11 @@ export default function Contacts() {
                 <p className="text-xs text-gray-400">Se incluirán todos los contactos que cumplan los criterios elegidos.</p>
                 <div className="grid grid-cols-1 gap-2">
                   <div>
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">Panel</label>
+                    <label className="text-xs font-medium text-gray-600 mb-1 block">Agente</label>
                     <Select value={criteriaPanel || 'all'} onValueChange={v => setCriteriaPanel(v === 'all' ? '' : (v ?? ''))}>
-                      <SelectTrigger><SelectValue placeholder="Cualquier panel" /></SelectTrigger>
+                      <SelectTrigger><SelectValue placeholder="Cualquier agente" /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">Cualquier panel</SelectItem>
+                        <SelectItem value="all">Cualquier agente</SelectItem>
                         {PANEL_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                       </SelectContent>
                     </Select>

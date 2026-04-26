@@ -40,7 +40,13 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response
   const session = auth.user
 
-  let body: { name?: string; description?: string; filters?: unknown; contact_ids?: string[]; criteria?: { panel?: string; gaming?: string; segment?: string } }
+  let body: {
+    name?: string
+    description?: string
+    filters?: unknown
+    contact_ids?: string[]
+    criteria?: { panel?: string; gaming?: string; segment?: string; tags?: string[] }
+  }
   try {
     body = await req.json()
   } catch {
@@ -72,15 +78,39 @@ export async function POST(req: NextRequest) {
 
       // Si vienen criterios, resolver los contactos que coinciden
       if (criteria && !contact_ids?.length) {
-        const { panel, gaming, segment } = criteria as { panel?: string; gaming?: string; segment?: string }
-        const { rows } = await client.query<{ id: string }>(
-          `SELECT id FROM contacts
-           WHERE ($1 = '' OR panel = $1)
-             AND ($2 = '' OR gaming::text = $2)
-             AND ($3 = '' OR segment::text = $3)`,
-          [panel || '', gaming || '', segment || '']
-        )
-        ids = rows.map(r => r.id)
+        const { panel, gaming, segment, tags } = criteria as {
+          panel?: string; gaming?: string; segment?: string; tags?: string[]
+        }
+
+        if (tags?.length) {
+          // Filtrar por tags de casino (contactos que tienen TODOS los tags indicados)
+          const { rows } = await client.query<{ id: string }>(
+            `SELECT c.id
+             FROM contacts c
+             WHERE ($1 = '' OR c.panel = $1)
+               AND ($2 = '' OR c.gaming::text = $2)
+               AND ($3 = '' OR c.segment::text = $3)
+               AND NOT EXISTS (
+                 -- garantiza que el contacto tiene TODOS los tags requeridos
+                 SELECT 1 FROM unnest($4::text[]) AS required_tag
+                 WHERE NOT EXISTS (
+                   SELECT 1 FROM contact_tags ct
+                   WHERE ct.contact_id = c.id AND ct.tag = required_tag
+                 )
+               )`,
+            [panel || '', gaming || '', segment || '', tags]
+          )
+          ids = rows.map(r => r.id)
+        } else {
+          const { rows } = await client.query<{ id: string }>(
+            `SELECT id FROM contacts
+             WHERE ($1 = '' OR panel = $1)
+               AND ($2 = '' OR gaming::text = $2)
+               AND ($3 = '' OR segment::text = $3)`,
+            [panel || '', gaming || '', segment || '']
+          )
+          ids = rows.map(r => r.id)
+        }
       }
 
       if (ids.length > 0) {

@@ -8,7 +8,11 @@ export async function POST(req: NextRequest) {
   const err = await checkPermission(req, 'contacts', 'create')
   if (err) return err
 
-  let body: { contacts?: Array<{ phone: string; name?: string; segment?: string }>; panel?: string; gaming?: string }
+  let body: {
+    contacts?: Array<{ phone: string; name?: string; segment?: string; casino_username?: string }>
+    panel?: string
+    gaming?: string
+  }
   try {
     body = await req.json()
   } catch {
@@ -28,7 +32,7 @@ export async function POST(req: NextRequest) {
   // Deduplicate phones before SQL; only validate E.164 rows (skip invalid silently)
   const seen = new Set<string>()
   let invalidCount = 0
-  const normalized: Array<{ phone: string; name: string | null; segment: string | null }> = []
+  const normalized: Array<{ phone: string; name: string | null; segment: string | null; casino_username: string | null }> = []
 
   for (const c of contacts) {
     const rawPhone = (c.phone || '').toString().trim().replace(/\s/g, '')
@@ -36,10 +40,13 @@ export async function POST(req: NextRequest) {
     if (!isE164(rawPhone)) { invalidCount++; continue }
     if (seen.has(rawPhone)) continue
     seen.add(rawPhone)
+    // casino_username: campo explícito > fallback al campo name
+    const casinoUsername = (c.casino_username || c.name || '').trim() || null
     normalized.push({
-      phone:   rawPhone,
-      name:    (c.name    || '').trim() || null,
-      segment: (c.segment || '').trim() || null,
+      phone:           rawPhone,
+      name:            (c.name || '').trim() || null,
+      segment:         (c.segment || '').trim() || null,
+      casino_username: casinoUsername,
     })
   }
 
@@ -54,9 +61,9 @@ export async function POST(req: NextRequest) {
   try {
     const [row] = await query<{ inserted: string; updated: string }>(
       `WITH input AS (
-         SELECT phone, name, segment
+         SELECT phone, name, segment, casino_username
          FROM   jsonb_to_recordset($1::jsonb)
-                AS x(phone text, name text, segment text)
+                AS x(phone text, name text, segment text, casino_username text)
        ), upserted AS (
          INSERT INTO contacts
            (external_id, phone_number, first_name, segment, panel, gaming, status,
@@ -87,6 +94,55 @@ export async function POST(req: NextRequest) {
 
     const inserted = Number(row?.inserted || 0)
     const updated  = Number(row?.updated  || 0)
+
+    // Auto-tagging: buscar coincidencias con casino_players y agregar tags
+    // Sólo si la tabla casino_players existe y hay contactos con casino_username
+    const casinoLookups = normalized
+      .filter(c => c.casino_username)
+      .map(c => c.casino_username!.toLowerCase())
+
+    if (casinoLookups.length > 0) {
+      try {
+        await query(
+          `WITH matched AS (
+             SELECT c.id AS contact_id, cp.agente, cp.seg_monto, cp.seg_actividad
+             FROM contacts c
+             JOIN (
+               SELECT phone, casino_username
+               FROM jsonb_to_recordset($1::jsonb)
+               AS x(phone text, casino_username text)
+               WHERE casino_username IS NOT NULL
+             ) inp ON c.phone_number = inp.phone
+             JOIN casino_players cp ON cp.username_lower = LOWER(inp.casino_username)
+             WHERE cp.seg_monto IS NOT NULL AND cp.seg_actividad IS NOT NULL AND cp.agente IS NOT NULL
+           ),
+           tags_insert AS (
+             INSERT INTO contact_tags (id, contact_id, tag, added_by, added_at)
+             SELECT gen_random_uuid(), contact_id,
+               unnest(ARRAY[
+                 'casino:monto:'     || seg_monto,
+                 'casino:actividad:' || seg_actividad,
+                 'casino:agente:'    || agente
+               ]),
+               'system', NOW()
+             FROM matched
+             ON CONFLICT (contact_id, tag) DO NOTHING
+           )
+           UPDATE contacts SET panel = m.agente, updated_at = NOW()
+           FROM matched m
+           WHERE contacts.id = m.contact_id AND contacts.panel IS NULL`,
+          [JSON.stringify(normalized.filter(c => c.casino_username).map(c => ({
+            phone: c.phone,
+            casino_username: c.casino_username,
+          })))]
+        )
+      } catch (tagErr) {
+        // No fallar el import si el auto-tagging falla (ej: tabla casino_players no existe aún)
+        console.warn('[contacts/import] casino auto-tag skipped:', tagErr instanceof Error ? tagErr.message : tagErr)
+      }
+    }
+
+
     void audit({ req, action: 'import', resource: 'contacts',
       metadata: { inserted, updated, skipped: skipped + invalidCount, invalid: invalidCount, total: contacts.length } })
     return NextResponse.json({ inserted, updated, skipped: skipped + invalidCount, invalid: invalidCount, total: contacts.length })
