@@ -68,14 +68,7 @@ export function canAccess(
 
   // operator
   if (user.role === 'operator') {
-    return (
-      action === 'read' ||
-      action === 'create' ||
-      action === 'update' ||
-      action === 'send' ||
-      action === 'assign' ||
-      action === 'transfer'
-    )
+    return action === 'read' || action === 'create' || action === 'update' || action === 'send'
   }
 
   return false
@@ -90,9 +83,9 @@ export function effectivePermissions(
 ): EffectivePermissions {
   const resources: Resource[] = [
     'dashboard', 'contacts', 'campaigns', 'conversations',
-    'lines', 'warmup', 'users', 'lists', 'send', 'audit', 'settings', 'tickets',
+    'lines', 'warmup', 'users', 'lists', 'send', 'audit', 'settings',
   ]
-  const actions: Action[] = ['read', 'create', 'update', 'delete', 'manage', 'send', 'assign', 'transfer']
+  const actions: Action[] = ['read', 'create', 'update', 'delete', 'manage', 'send']
 
   const out: EffectivePermissions = {}
   for (const resource of resources) {

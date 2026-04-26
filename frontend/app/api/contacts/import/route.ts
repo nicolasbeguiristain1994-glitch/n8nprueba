@@ -103,6 +103,34 @@ export async function POST(req: NextRequest) {
 
     if (casinoLookups.length > 0) {
       try {
+        const casinoInputJson = JSON.stringify(normalized.filter(c => c.casino_username).map(c => ({
+          phone: c.phone,
+          casino_username: c.casino_username,
+        })))
+
+        // Step 1: Clear stale exclusive-family tags for every contact that will be reprocessed.
+        // valor_riesgo and antiguedad are current-state classifications — at most one value per
+        // family per contact. The DELETE runs first (separate query) so the subsequent INSERT
+        // sees a clean slate and ON CONFLICT can never suppress a legitimate new tag value.
+        // We do NOT touch casino:monto, casino:actividad, or casino:agente here.
+        await query(
+          `DELETE FROM contact_tags
+           WHERE (tag LIKE 'casino:valor_riesgo:%' OR tag LIKE 'casino:antiguedad:%')
+             AND contact_id IN (
+               SELECT c.id
+               FROM contacts c
+               JOIN (
+                 SELECT phone, casino_username
+                 FROM jsonb_to_recordset($1::jsonb) AS x(phone text, casino_username text)
+                 WHERE casino_username IS NOT NULL
+               ) inp ON c.phone_number = inp.phone
+               JOIN casino_players cp ON cp.username_lower = LOWER(inp.casino_username)
+               WHERE cp.seg_monto IS NOT NULL AND cp.seg_actividad IS NOT NULL AND cp.agente IS NOT NULL
+             )`,
+          [casinoInputJson]
+        )
+
+        // Step 2: Insert current tags.
         await query(
           `WITH matched AS (
              SELECT c.id AS contact_id, cp.agente, cp.seg_monto, cp.seg_actividad, cp.fecha_primera
@@ -150,10 +178,7 @@ export async function POST(req: NextRequest) {
                  updated_at = NOW()
            FROM matched m
            WHERE contacts.id = m.contact_id`,
-          [JSON.stringify(normalized.filter(c => c.casino_username).map(c => ({
-            phone: c.phone,
-            casino_username: c.casino_username,
-          })))]
+          [casinoInputJson]
         )
       } catch (tagErr) {
         // No fallar el import si el auto-tagging falla (ej: tabla casino_players no existe aún)

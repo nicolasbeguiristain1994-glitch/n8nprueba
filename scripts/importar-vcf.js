@@ -113,6 +113,28 @@ async function main() {
   // 2. Auto-tagging + setear panel + setear segment (consistent with bulk import API)
   // - panel:   only set when currently NULL (do not overwrite a manual assignment)
   // - segment: always updated to seg_monto for matched players, same as /api/contacts/import
+  const casinoInputJson = JSON.stringify(contactos.map(c => ({ phone: c.phone, casino_username: c.casino_username })))
+
+  // Step 2a: Clear stale exclusive-family tags before reprocessing.
+  // valor_riesgo and antiguedad are current-state classifications — at most one value per
+  // family per contact. The DELETE runs first so the subsequent INSERT sees a clean slate.
+  // casino:monto, casino:actividad, casino:agente are left untouched.
+  await pool.query(
+    `DELETE FROM contact_tags
+     WHERE (tag LIKE 'casino:valor_riesgo:%' OR tag LIKE 'casino:antiguedad:%')
+       AND contact_id IN (
+         SELECT c.id
+         FROM contacts c
+         JOIN (
+           SELECT phone, casino_username FROM jsonb_to_recordset($1::jsonb) AS x(phone text, casino_username text)
+         ) inp ON c.phone_number = inp.phone
+         JOIN casino_players cp ON cp.username_lower = LOWER(inp.casino_username)
+         WHERE cp.seg_monto IS NOT NULL AND cp.seg_actividad IS NOT NULL AND cp.agente IS NOT NULL
+       )`,
+    [casinoInputJson]
+  )
+
+  // Step 2b: Insert current tags.
   const tagRes = await pool.query(`
     WITH matched AS (
       SELECT c.id AS contact_id, cp.agente, cp.seg_monto, cp.seg_actividad, cp.fecha_primera
@@ -160,7 +182,7 @@ async function main() {
     RETURNING contacts.first_name, contacts.panel,
       (SELECT seg_monto    FROM matched WHERE contact_id = contacts.id) AS seg_monto,
       (SELECT seg_actividad FROM matched WHERE contact_id = contacts.id) AS seg_actividad
-  `, [JSON.stringify(contactos.map(c => ({ phone: c.phone, casino_username: c.casino_username })))]);
+  `, [casinoInputJson]);
 
   const taggedCount = tagRes.rows.length;
   console.log(`✅ Auto-tagging: ${taggedCount}/${contactos.length} contactos con datos de casino\n`);
