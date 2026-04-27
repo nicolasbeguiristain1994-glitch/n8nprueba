@@ -8,11 +8,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   MessageSquare, Send, AlertCircle, Eye, Wifi, Clock,
   BarChart2, Shield, TrendingUp, TrendingDown, Users, Star, Download, Search,
+  TriangleAlert, Flame, BadgeDollarSign, HeartPulse,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { fetchJson } from '@/lib/fetchJson'
 import type { CasinoSummary, CasinoAgente, CasinoVip } from '@/app/api/dashboard/casino/route'
 import type { CasinoJugador } from '@/app/api/dashboard/casino/players/route'
+import type { RiskSummary, NuevoExtractor, DeficitJugador, VipRecuperable } from '@/app/api/dashboard/casino/risk/route'
 
 // ── Tipos dashboard de difusión ───────────────────────────────────────────────
 interface Stats {
@@ -33,6 +35,13 @@ interface CasinoData {
   summary: CasinoSummary | null
   agentes: CasinoAgente[]
   vips:    CasinoVip[]
+}
+
+interface RiskData {
+  summary:      RiskSummary | null
+  extractores:  NuevoExtractor[]
+  deficit:      DeficitJugador[]
+  recuperables: VipRecuperable[]
 }
 
 // ── Constantes de display ─────────────────────────────────────────────────────
@@ -80,6 +89,8 @@ export default function Dashboard() {
   const [tab,            setTab]            = useState<'difusion' | 'casino'>('difusion')
   const [casino,         setCasino]         = useState<CasinoData | null>(null)
   const [casinoError,    setCasinoError]    = useState<string | null>(null)
+  const [risk,           setRisk]           = useState<RiskData | null>(null)
+  const [riskTab,        setRiskTab]        = useState<'extractores' | 'deficit' | 'recuperables'>('extractores')
   const [filterAgente,   setFilterAgente]   = useState<string>('__all__')
   const [jugadores,      setJugadores]      = useState<CasinoJugador[]>([])
   const [loadingJug,     setLoadingJug]     = useState(false)
@@ -103,7 +114,21 @@ export default function Dashboard() {
     fetchJson<CasinoData>('/api/dashboard/casino')
       .then(d => { setCasino(d); setCasinoError(null) })
       .catch((e: unknown) => setCasinoError(e instanceof Error ? e.message : 'Error al cargar datos de casino'))
+
+    fetchJson<RiskData>('/api/dashboard/casino/risk')
+      .then(d => setRisk(d))
+      .catch(() => {})
   }, [])
+
+  // Re-fetch riesgo cuando cambia el agente
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (filterAgente !== '__all__') params.set('agente', filterAgente)
+    const qs = params.toString()
+    fetchJson<RiskData>(`/api/dashboard/casino/risk${qs ? '?' + qs : ''}`)
+      .then(d => setRisk(d))
+      .catch(() => {})
+  }, [filterAgente])
 
   // Re-fetch jugadores cuando cambia agente o filtros aplicados
   useEffect(() => {
@@ -510,6 +535,220 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </div>
+
+        {/* ── Sector de Riesgo ─────────────────────────────────────────── */}
+        {risk && (
+          <Card className="mb-4 border-orange-200">
+            <CardHeader className="pb-3">
+              <div className="flex items-center gap-2">
+                <TriangleAlert size={16} className="text-orange-500"/>
+                <CardTitle className="text-sm font-medium text-orange-700">Sector de Riesgo</CardTitle>
+              </div>
+
+              {/* Métricas de riesgo */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
+                <button
+                  onClick={() => setRiskTab('extractores')}
+                  className={`rounded-lg border p-3 text-left transition-colors ${riskTab === 'extractores' ? 'bg-red-50 border-red-300' : 'bg-white border-gray-200 hover:border-orange-200'}`}
+                >
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <Flame size={13} className="text-red-500"/>
+                    <p className="text-xs text-gray-500">Nuevos extractores</p>
+                  </div>
+                  <p className="text-2xl font-bold text-red-600">{risk.summary?.nuevos_extractores ?? '—'}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">ingresos {'<'} 90d, retiro {'>'} 60%</p>
+                </button>
+
+                <button
+                  onClick={() => setRiskTab('deficit')}
+                  className={`rounded-lg border p-3 text-left transition-colors ${riskTab === 'deficit' ? 'bg-orange-50 border-orange-300' : 'bg-white border-gray-200 hover:border-orange-200'}`}
+                >
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <BadgeDollarSign size={13} className="text-orange-500"/>
+                    <p className="text-xs text-gray-500">En déficit</p>
+                  </div>
+                  <p className="text-2xl font-bold text-orange-600">{risk.summary?.jugadores_deficit ?? '—'}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">retiraron más de lo que cargaron</p>
+                </button>
+
+                <div className="rounded-lg border border-gray-200 bg-white p-3">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <TrendingDown size={13} className="text-red-400"/>
+                    <p className="text-xs text-gray-500">Pérdida bruta casino</p>
+                  </div>
+                  <p className="text-xl font-bold text-red-600">
+                    {risk.summary ? fmtMoney(Number(risk.summary.perdida_bruta)) : '—'}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">suma neta en jugadores déficit</p>
+                </div>
+
+                <button
+                  onClick={() => setRiskTab('recuperables')}
+                  className={`rounded-lg border p-3 text-left transition-colors ${riskTab === 'recuperables' ? 'bg-yellow-50 border-yellow-300' : 'bg-white border-gray-200 hover:border-orange-200'}`}
+                >
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <HeartPulse size={13} className="text-yellow-600"/>
+                    <p className="text-xs text-gray-500">VIP recuperables</p>
+                  </div>
+                  <p className="text-2xl font-bold text-yellow-600">{risk.summary?.vip_recuperables ?? '—'}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">VIP/Oro aún en riesgo, no perdidos</p>
+                </button>
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-0">
+              {/* Tab: Nuevos extractores */}
+              {riskTab === 'extractores' && (
+                <div className="overflow-x-auto">
+                  {risk.extractores.length === 0
+                    ? <p className="text-sm text-gray-400 px-4 py-4">Sin nuevos extractores detectados.</p>
+                    : (
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-100 bg-red-50">
+                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Usuario</th>
+                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Agente</th>
+                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Nivel</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Días desde ingreso</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-green-600">Cargas</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-gray-400">#</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-red-500">Retiros</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-gray-400">#</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-orange-600">% Extracción</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {risk.extractores.map((e, i) => (
+                            <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-red-50/40">
+                              <td className="px-4 py-2.5 font-mono text-xs">{e.username}</td>
+                              <td className="px-4 py-2.5 text-gray-500 text-xs">{e.agente}</td>
+                              <td className="px-4 py-2.5">
+                                <Badge className={`text-xs ${NIVEL_STYLE[e.seg_monto] ?? 'bg-gray-100 text-gray-600'}`}>
+                                  {NIVEL_LABEL[e.seg_monto] ?? e.seg_monto}
+                                </Badge>
+                              </td>
+                              <td className="px-4 py-2.5 text-right text-gray-600">{e.dias_desde_ingreso}d</td>
+                              <td className="px-4 py-2.5 text-right text-green-700 font-medium">{fmtMoney(Number(e.total_cargas))}</td>
+                              <td className="px-4 py-2.5 text-right text-gray-400 text-xs">{e.cant_cargas}</td>
+                              <td className="px-4 py-2.5 text-right text-red-600 font-medium">−{fmtMoney(Number(e.total_retiros))}</td>
+                              <td className="px-4 py-2.5 text-right text-gray-400 text-xs">{e.cant_retiros}</td>
+                              <td className="px-4 py-2.5 text-right">
+                                <span className={`font-bold ${Number(e.ratio_retiro_pct) >= 90 ? 'text-red-600' : 'text-orange-500'}`}>
+                                  {e.ratio_retiro_pct}%
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )
+                  }
+                </div>
+              )}
+
+              {/* Tab: Déficit del casino */}
+              {riskTab === 'deficit' && (
+                <div className="overflow-x-auto">
+                  {risk.deficit.length === 0
+                    ? <p className="text-sm text-gray-400 px-4 py-4">Sin jugadores en déficit.</p>
+                    : (
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-100 bg-orange-50">
+                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Usuario</th>
+                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Agente</th>
+                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Nivel</th>
+                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Estado</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-green-600">Cargas</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-red-500">Retiros</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-orange-600">Déficit casino</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Últ. actividad</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {risk.deficit.map((d, i) => (
+                            <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-orange-50/40">
+                              <td className="px-4 py-2.5 font-mono text-xs">{d.username}</td>
+                              <td className="px-4 py-2.5 text-gray-500 text-xs">{d.agente}</td>
+                              <td className="px-4 py-2.5">
+                                <Badge className={`text-xs ${NIVEL_STYLE[d.seg_monto] ?? 'bg-gray-100 text-gray-600'}`}>
+                                  {NIVEL_LABEL[d.seg_monto] ?? d.seg_monto}
+                                </Badge>
+                              </td>
+                              <td className="px-4 py-2.5">
+                                <Badge className={`text-xs ${ACTIVIDAD_STYLE[d.seg_actividad] ?? 'bg-gray-100 text-gray-600'}`}>
+                                  {d.seg_actividad}
+                                </Badge>
+                              </td>
+                              <td className="px-4 py-2.5 text-right text-green-700 font-medium">{fmtMoney(Number(d.total_cargas))}</td>
+                              <td className="px-4 py-2.5 text-right text-red-600 font-medium">−{fmtMoney(Number(d.total_retiros))}</td>
+                              <td className="px-4 py-2.5 text-right font-bold text-orange-600">
+                                −{fmtMoney(Number(d.deficit))}
+                              </td>
+                              <td className="px-4 py-2.5 text-right text-gray-400 text-xs">{d.fecha_ultima ?? '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )
+                  }
+                </div>
+              )}
+
+              {/* Tab: VIP recuperables */}
+              {riskTab === 'recuperables' && (
+                <div className="overflow-x-auto">
+                  {risk.recuperables.length === 0
+                    ? <p className="text-sm text-gray-400 px-4 py-4">Sin VIP/Oro en riesgo recuperable.</p>
+                    : (
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-100 bg-yellow-50">
+                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Usuario</th>
+                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Agente</th>
+                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Nivel</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-green-600">Cargas hist.</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-red-500">Retiros hist.</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-blue-600">Neto</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Días inactivo</th>
+                            <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Últ. actividad</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {risk.recuperables.map((r, i) => {
+                            const neto = Number(r.total_cargas) - Number(r.total_retiros)
+                            return (
+                              <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-yellow-50/40">
+                                <td className="px-4 py-2.5 font-mono text-xs">{r.username}</td>
+                                <td className="px-4 py-2.5 text-gray-500 text-xs">{r.agente}</td>
+                                <td className="px-4 py-2.5">
+                                  <Badge className={`text-xs ${NIVEL_STYLE[r.seg_monto] ?? 'bg-gray-100 text-gray-600'}`}>
+                                    {NIVEL_LABEL[r.seg_monto] ?? r.seg_monto}
+                                  </Badge>
+                                </td>
+                                <td className="px-4 py-2.5 text-right text-green-700 font-medium">{fmtMoney(Number(r.total_cargas))}</td>
+                                <td className="px-4 py-2.5 text-right text-red-600">−{fmtMoney(Number(r.total_retiros))}</td>
+                                <td className={`px-4 py-2.5 text-right font-semibold ${neto >= 0 ? 'text-blue-700' : 'text-orange-600'}`}>
+                                  {neto >= 0 ? '' : '−'}{fmtMoney(Math.abs(neto))}
+                                </td>
+                                <td className="px-4 py-2.5 text-right">
+                                  <span className={r.dias_ultimo > 14 ? 'text-orange-600 font-medium' : 'text-gray-600'}>
+                                    {r.dias_ultimo}d
+                                  </span>
+                                </td>
+                                <td className="px-4 py-2.5 text-right text-gray-400 text-xs">{r.fecha_ultima ?? '—'}</td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    )
+                  }
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* ── Chart: distribución financiera por agente (CSS bars) ─────── */}
         {agts.length > 0 && (
