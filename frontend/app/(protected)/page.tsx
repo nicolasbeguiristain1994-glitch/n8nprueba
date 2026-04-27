@@ -77,6 +77,7 @@ export default function Dashboard() {
   const [lines,  setLines]  = useState<Line[]>([])
   const [recent, setRecent] = useState<Message[]>([])
   const [cs,     setCs]     = useState<CampaignStats | null>(null)
+  const [tab,            setTab]            = useState<'difusion' | 'casino'>('difusion')
   const [casino,         setCasino]         = useState<CasinoData | null>(null)
   const [casinoError,    setCasinoError]    = useState<string | null>(null)
   const [filterAgente,   setFilterAgente]   = useState<string>('__all__')
@@ -260,14 +261,30 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* ── Tabs de sección ──────────────────────────────────────────────── */}
+      <div className="flex gap-1 border-b border-gray-200">
+        {([
+          { key: 'difusion', label: 'Difusión' },
+          { key: 'casino',   label: 'Casino / Agentes' },
+        ] as const).map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`px-5 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              tab === key
+                ? 'border-gray-900 text-gray-900'
+                : 'border-transparent text-gray-400 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* ══════════════════════════════════════════════════════════════════════
           SECCIÓN: Difusión / Broadcast
           ══════════════════════════════════════════════════════════════════ */}
-      <div>
-        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-          Difusión
-        </p>
-
+      <div className={tab === 'difusion' ? 'space-y-6' : 'hidden'}>
         {/* Métricas principales de mensajes */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <MetricCard icon={<Send size={18} className="text-blue-500"/>}
@@ -280,10 +297,9 @@ export default function Dashboard() {
           <MetricCard icon={<AlertCircle size={18} className="text-red-500"/>}
             label="Fallidos" value={s?.failed ?? '—'} bad={Number(s?.failed) > 0} />
         </div>
-      </div>
 
-      {/* Campañas */}
-      {cs && (
+        {/* Campañas */}
+        {cs && (
         <div className="grid grid-cols-4 gap-3">
           {[
             { label: 'Campañas totales',    value: cs.total,     color: 'gray'   },
@@ -400,13 +416,12 @@ export default function Dashboard() {
         </Card>
       )}
 
+      </div>{/* ── fin tab Difusión ── */}
+
       {/* ══════════════════════════════════════════════════════════════════════
           SECCIÓN: Casino / Agentes
           ══════════════════════════════════════════════════════════════════ */}
-      <div>
-        <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-          Casino / Agentes
-        </p>
+      <div className={tab === 'casino' ? 'space-y-4' : 'hidden'}>
 
         {/* Error explícito — reemplaza el silencio actual */}
         {casinoError && (
