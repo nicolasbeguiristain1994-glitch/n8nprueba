@@ -159,15 +159,17 @@ export default function Dashboard() {
   // CSV export para tabla VIP
   const exportarVips = () => {
     const rows = vipsFiltrados.map(v => ({
-      'Usuario':               v.username,
-      'Agente':                v.agente,
-      'Nivel':                 NIVEL_LABEL[v.seg_monto] ?? v.seg_monto,
-      'Estado':                v.seg_actividad,
-      'Días sin movimiento':   v.dias_ultimo,
-      'Gasto total acum.':     v.total_cargas,
-      'Cargas':                v.cant_cargas,
-      'Retiros':               v.total_retiros,
-      'Último movimiento':     v.fecha_ultima,
+      'Usuario':                    v.username,
+      'Agente':                     v.agente,
+      'Nivel':                      NIVEL_LABEL[v.seg_monto] ?? v.seg_monto,
+      'Estado':                     v.seg_actividad,
+      'Días sin movimiento':        v.dias_ultimo,
+      'Cargas totales ($)':         v.total_cargas,
+      '# Cargas':                   v.cant_cargas,
+      'Retiros totales ($)':        v.total_retiros,
+      '# Retiros':                  v.cant_retiros,
+      'Neto ($)':                   v.total_cargas - v.total_retiros,
+      'Último movimiento':          v.fecha_ultima,
     }))
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
@@ -416,6 +418,72 @@ export default function Dashboard() {
           </Card>
         </div>
 
+        {/* ── Chart: distribución financiera por agente (CSS bars) ─────── */}
+        {agts.length > 0 && (
+          <Card className="mb-4">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium">Distribución por agente</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {(() => {
+                const totalCargas  = agts.reduce((s, a) => s + Number(a.sum_cargas),  0)
+                const totalJugadores = agts.reduce((s, a) => s + a.total, 0)
+                const COLORS = ['bg-blue-500','bg-green-500','bg-purple-500','bg-orange-400','bg-cyan-500']
+                return (
+                  <div className="space-y-3">
+                    {/* Barra apilada de jugadores */}
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1">Jugadores por agente</p>
+                      <div className="flex h-5 rounded overflow-hidden w-full">
+                        {agts.map((a, i) => {
+                          const pct = totalJugadores > 0 ? (a.total / totalJugadores) * 100 : 0
+                          return (
+                            <div key={a.agente}
+                              className={`${COLORS[i % COLORS.length]} flex items-center justify-center`}
+                              style={{ width: `${pct}%` }}
+                              title={`${a.agente}: ${a.total.toLocaleString('es-AR')} jugadores (${Math.round(pct)}%)`}
+                            >
+                              {pct > 8 && <span className="text-white text-xs font-medium truncate px-1">{a.agente}</span>}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                    {/* Barra apilada de cargas */}
+                    <div>
+                      <p className="text-xs text-gray-400 mb-1">Cargas acumuladas por agente</p>
+                      <div className="flex h-5 rounded overflow-hidden w-full">
+                        {agts.map((a, i) => {
+                          const pct = totalCargas > 0 ? (Number(a.sum_cargas) / totalCargas) * 100 : 0
+                          return (
+                            <div key={a.agente}
+                              className={`${COLORS[i % COLORS.length]} opacity-80 flex items-center justify-center`}
+                              style={{ width: `${pct}%` }}
+                              title={`${a.agente}: ${fmtMoney(Number(a.sum_cargas))} (${Math.round(pct)}%)`}
+                            >
+                              {pct > 8 && <span className="text-white text-xs font-medium truncate px-1">{Math.round(pct)}%</span>}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                    {/* Leyenda */}
+                    <div className="flex flex-wrap gap-3 pt-1">
+                      {agts.map((a, i) => (
+                        <div key={a.agente} className="flex items-center gap-1.5">
+                          <span className={`w-2.5 h-2.5 rounded-full ${COLORS[i % COLORS.length]}`}/>
+                          <span className="text-xs text-gray-600">{a.agente}</span>
+                          <span className="text-xs text-gray-400">({a.total.toLocaleString('es-AR')})</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
+            </CardContent>
+          </Card>
+        )}
+
         {/* ── Tabla por agente ──────────────────────────────────────────── */}
         <Card className="mb-4">
           <CardHeader className="pb-2">
@@ -435,7 +503,10 @@ export default function Dashboard() {
                         <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Activos 30d</th>
                         <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Platino</th>
                         <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Inact./Riesgo</th>
-                        <th className="px-4 py-2 w-32 text-xs font-medium text-gray-500">Actividad</th>
+                        <th className="text-right px-4 py-2 text-xs font-medium text-green-600">Σ Cargas</th>
+                        <th className="text-right px-4 py-2 text-xs font-medium text-red-500">Σ Retiros</th>
+                        <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Prom./jugador</th>
+                        <th className="px-4 py-2 w-28 text-xs font-medium text-gray-500">% Activos</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -454,13 +525,19 @@ export default function Dashboard() {
                                 : <span className="text-gray-400">—</span>
                               }
                             </td>
+                            <td className="px-4 py-2.5 text-right text-green-700 font-medium">
+                              {fmtMoney(Number(a.sum_cargas))}
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-red-600">
+                              −{fmtMoney(Number(a.sum_retiros))}
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-gray-500">
+                              {fmtMoney(Number(a.avg_cargas))}
+                            </td>
                             <td className="px-4 py-2.5">
                               <div className="flex items-center gap-1.5">
                                 <div className="flex-1 bg-gray-100 rounded-full h-1.5">
-                                  <div
-                                    className="bg-green-400 h-1.5 rounded-full"
-                                    style={{ width: `${pct}%` }}
-                                  />
+                                  <div className="bg-green-400 h-1.5 rounded-full" style={{ width: `${pct}%` }}/>
                                 </div>
                                 <span className="text-xs text-gray-400 w-8 text-right">{pct}%</span>
                               </div>
@@ -640,8 +717,10 @@ export default function Dashboard() {
                         <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Nivel</th>
                         <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Estado</th>
                         <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Días sin mov.</th>
-                        <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Gasto total acum.</th>
-                        <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Cargas</th>
+                        <th className="text-right px-4 py-2 text-xs font-medium text-green-600">Cargas totales</th>
+                        <th className="text-right px-4 py-2 text-xs font-medium text-gray-400">#</th>
+                        <th className="text-right px-4 py-2 text-xs font-medium text-red-500">Retiros totales</th>
+                        <th className="text-right px-4 py-2 text-xs font-medium text-gray-400">#</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -664,12 +743,14 @@ export default function Dashboard() {
                               {v.dias_ultimo}d
                             </span>
                           </td>
-                          <td className="px-4 py-2.5 text-right text-gray-700">
+                          <td className="px-4 py-2.5 text-right text-green-700 font-medium">
                             {fmtMoney(v.total_cargas)}
                           </td>
-                          <td className="px-4 py-2.5 text-right text-gray-500">
-                            {v.cant_cargas}
+                          <td className="px-4 py-2.5 text-right text-gray-500 text-xs">{v.cant_cargas}</td>
+                          <td className="px-4 py-2.5 text-right text-red-600">
+                            −{fmtMoney(v.total_retiros)}
                           </td>
+                          <td className="px-4 py-2.5 text-right text-gray-500 text-xs">{v.cant_retiros}</td>
                         </tr>
                       ))}
                     </tbody>

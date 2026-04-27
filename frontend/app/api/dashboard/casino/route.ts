@@ -20,19 +20,23 @@ export interface CasinoAgente {
   nuevos_mes:  number
   activos_mes: number
   vip:         number
-  en_riesgo:   number  // inactivo + en_riesgo + perdido
+  en_riesgo:   number   // inactivo + en_riesgo + perdido
+  sum_cargas:  number   // Σ cargas acumuladas históricas del agente
+  sum_retiros: number   // Σ retiros acumulados históricos del agente
+  avg_cargas:  number   // promedio de cargas por jugador
 }
 
 export interface CasinoVip {
-  username:     string
-  agente:       string
-  seg_monto:    string  // 'vip' | 'alto'
+  username:      string
+  agente:        string
+  seg_monto:     string  // 'vip' | 'alto'
   seg_actividad: string
-  dias_ultimo:  number  // CURRENT_DATE - fecha_ultima
-  total_cargas: number
-  cant_cargas:  number
+  dias_ultimo:   number  // CURRENT_DATE - fecha_ultima
+  total_cargas:  number
+  cant_cargas:   number
   total_retiros: number
-  fecha_ultima: string
+  cant_retiros:  number
+  fecha_ultima:  string
 }
 
 // ── GET /api/dashboard/casino ─────────────────────────────────────────────────
@@ -78,13 +82,16 @@ export async function GET(req: Request) {
       query<CasinoAgente>(`
         SELECT
           agente,
-          COUNT(*)::int                                                          AS total,
-          COUNT(*) FILTER (WHERE fecha_primera >= CURRENT_DATE - 30)::int       AS nuevos_mes,
-          COUNT(*) FILTER (WHERE fecha_ultima  >= CURRENT_DATE - 30)::int       AS activos_mes,
-          COUNT(*) FILTER (WHERE seg_monto = 'vip')::int                        AS vip,
+          COUNT(*)::int                                                              AS total,
+          COUNT(*) FILTER (WHERE fecha_primera >= CURRENT_DATE - 30)::int           AS nuevos_mes,
+          COUNT(*) FILTER (WHERE fecha_ultima  >= CURRENT_DATE - 30)::int           AS activos_mes,
+          COUNT(*) FILTER (WHERE seg_monto = 'vip')::int                            AS vip,
           COUNT(*) FILTER (
             WHERE seg_actividad IN ('inactivo','en_riesgo','perdido')
-          )::int                                                                 AS en_riesgo
+          )::int                                                                     AS en_riesgo,
+          COALESCE(SUM(total_cargas),  0)::bigint                                   AS sum_cargas,
+          COALESCE(SUM(total_retiros), 0)::bigint                                   AS sum_retiros,
+          ROUND(COALESCE(AVG(total_cargas), 0))::bigint                             AS avg_cargas
         FROM casino_players
         WHERE agente IS NOT NULL
         GROUP BY agente
@@ -104,6 +111,7 @@ export async function GET(req: Request) {
           total_cargas,
           cant_cargas,
           total_retiros,
+          cant_retiros,
           fecha_ultima::text                  AS fecha_ultima
         FROM casino_players
         WHERE seg_monto IN ('vip','alto')
