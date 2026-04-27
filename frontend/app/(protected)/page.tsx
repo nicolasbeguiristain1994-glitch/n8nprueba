@@ -76,7 +76,8 @@ export default function Dashboard() {
   const [lines,  setLines]  = useState<Line[]>([])
   const [recent, setRecent] = useState<Message[]>([])
   const [cs,     setCs]     = useState<CampaignStats | null>(null)
-  const [casino, setCasino] = useState<CasinoData | null>(null)
+  const [casino,         setCasino]         = useState<CasinoData | null>(null)
+  const [casinoError,    setCasinoError]    = useState<string | null>(null)
   const [filterAgente,   setFilterAgente]   = useState<string>('__all__')
   const [periodo,        setPeriodo]        = useState<'all' | '7' | '30'>('all')
   const [jugadores,      setJugadores]      = useState<CasinoJugador[]>([])
@@ -88,8 +89,8 @@ export default function Dashboard() {
       .catch(() => {})
 
     fetchJson<CasinoData>('/api/dashboard/casino')
-      .then(d => setCasino(d))
-      .catch(() => {})
+      .then(d => { setCasino(d); setCasinoError(null) })
+      .catch((e: unknown) => setCasinoError(e instanceof Error ? e.message : 'Error al cargar datos de casino'))
   }, [])
 
   // Re-fetch jugadores cuando cambia agente o período
@@ -340,6 +341,17 @@ export default function Dashboard() {
         <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
           Casino / Agentes
         </p>
+
+        {/* Error explícito — reemplaza el silencio actual */}
+        {casinoError && (
+          <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <AlertCircle size={16} className="mt-0.5 shrink-0"/>
+            <div>
+              <p className="font-medium">Error al cargar métricas de casino</p>
+              <p className="text-xs text-red-500 mt-0.5 font-mono">{casinoError}</p>
+            </div>
+          </div>
+        )}
 
         {/* Filtro global de agente — aplica a tabla de agentes Y tabla VIP */}
         <div className="flex items-center gap-3 mb-4">
