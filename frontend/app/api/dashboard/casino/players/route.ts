@@ -20,17 +20,25 @@ export interface CasinoJugador {
 
 // ── GET /api/dashboard/casino/players ────────────────────────────────────────
 // Query params:
-//   agente  — filter by agent name (optional)
-//   dias    — only players with fecha_ultima >= CURRENT_DATE - dias (optional)
+//   agente      — filter by agent name (optional)
+//   dias        — only players with fecha_ultima >= CURRENT_DATE - dias (optional)
+//   username    — case-insensitive partial match on username (optional)
+//   seg_monto   — exact match: bajo | medio | alto | vip (optional)
+//   fecha_desde — filter fecha_ultima >= date (YYYY-MM-DD, optional)
+//   fecha_hasta — filter fecha_ultima <= date (YYYY-MM-DD, optional)
 // Returns up to 500 rows ordered by total_cargas DESC.
 
 export async function GET(req: Request) {
   const err = await checkPermission(req, 'dashboard', 'read')
   if (err) return err
 
-  const url         = new URL(req.url)
-  const agenteParam = url.searchParams.get('agente') || null
-  const diasParam   = parseInt(url.searchParams.get('dias') || '') || null
+  const url            = new URL(req.url)
+  const agenteParam    = url.searchParams.get('agente')?.trim()     || null
+  const diasParam      = parseInt(url.searchParams.get('dias') || '') || null
+  const usernameParam  = url.searchParams.get('username')?.trim()   || null
+  const nivelParam     = url.searchParams.get('seg_monto')?.trim()  || null
+  const fechaDesdeParam = url.searchParams.get('fecha_desde')?.trim() || null
+  const fechaHastaParam = url.searchParams.get('fecha_hasta')?.trim() || null
 
   try {
     const rows = await query<CasinoJugador>(`
@@ -52,9 +60,13 @@ export async function GET(req: Request) {
       WHERE agente IS NOT NULL
         AND ($1::text IS NULL OR agente = $1)
         AND ($2::int  IS NULL OR fecha_ultima >= CURRENT_DATE - $2)
+        AND ($3::text IS NULL OR username ILIKE '%' || $3 || '%')
+        AND ($4::text IS NULL OR seg_monto = $4)
+        AND ($5::date IS NULL OR fecha_ultima >= $5::date)
+        AND ($6::date IS NULL OR fecha_ultima <= $6::date)
       ORDER BY total_cargas DESC
       LIMIT 500
-    `, [agenteParam, diasParam])
+    `, [agenteParam, diasParam, usernameParam, nivelParam, fechaDesdeParam, fechaHastaParam])
 
     return NextResponse.json({ jugadores: rows })
   } catch (e) {

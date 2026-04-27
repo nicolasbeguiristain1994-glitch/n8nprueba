@@ -7,8 +7,9 @@ import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   MessageSquare, Send, AlertCircle, Eye, Wifi, Clock,
-  BarChart2, Shield, TrendingUp, TrendingDown, Users, Star, Download,
+  BarChart2, Shield, TrendingUp, TrendingDown, Users, Star, Download, Search,
 } from 'lucide-react'
+import { Input } from '@/components/ui/input'
 import { fetchJson } from '@/lib/fetchJson'
 import type { CasinoSummary, CasinoAgente, CasinoVip } from '@/app/api/dashboard/casino/route'
 import type { CasinoJugador } from '@/app/api/dashboard/casino/players/route'
@@ -79,9 +80,19 @@ export default function Dashboard() {
   const [casino,         setCasino]         = useState<CasinoData | null>(null)
   const [casinoError,    setCasinoError]    = useState<string | null>(null)
   const [filterAgente,   setFilterAgente]   = useState<string>('__all__')
-  const [periodo,        setPeriodo]        = useState<'all' | '7' | '30'>('all')
   const [jugadores,      setJugadores]      = useState<CasinoJugador[]>([])
   const [loadingJug,     setLoadingJug]     = useState(false)
+
+  // ── Filtros del panel de búsqueda (inputs sin aplicar) ─────────────────────
+  const [inputUsername,   setInputUsername]   = useState('')
+  const [inputNivel,      setInputNivel]      = useState('__all__')
+  const [inputFechaDesde, setInputFechaDesde] = useState('')
+  const [inputFechaHasta, setInputFechaHasta] = useState('')
+
+  // ── Filtros aplicados (disparan el fetch) ──────────────────────────────────
+  const [appliedFilters, setAppliedFilters] = useState({
+    username: '', nivel: '__all__', fechaDesde: '', fechaHasta: '',
+  })
 
   useEffect(() => {
     fetchJson<{ stats: Stats; lines: Line[]; recent: Message[]; campaignStats: CampaignStats }>('/api/dashboard')
@@ -93,18 +104,21 @@ export default function Dashboard() {
       .catch((e: unknown) => setCasinoError(e instanceof Error ? e.message : 'Error al cargar datos de casino'))
   }, [])
 
-  // Re-fetch jugadores cuando cambia agente o período
+  // Re-fetch jugadores cuando cambia agente o filtros aplicados
   useEffect(() => {
     setLoadingJug(true)
     const params = new URLSearchParams()
-    if (filterAgente !== '__all__') params.set('agente', filterAgente)
-    if (periodo !== 'all')          params.set('dias', periodo)
+    if (filterAgente !== '__all__')             params.set('agente',      filterAgente)
+    if (appliedFilters.username)                params.set('username',    appliedFilters.username)
+    if (appliedFilters.nivel !== '__all__')      params.set('seg_monto',   appliedFilters.nivel)
+    if (appliedFilters.fechaDesde)              params.set('fecha_desde', appliedFilters.fechaDesde)
+    if (appliedFilters.fechaHasta)              params.set('fecha_hasta', appliedFilters.fechaHasta)
     const qs = params.toString()
     fetchJson<{ jugadores: CasinoJugador[] }>(`/api/dashboard/casino/players${qs ? '?' + qs : ''}`)
       .then(d => setJugadores(d.jugadores ?? []))
       .catch(() => setJugadores([]))
       .finally(() => setLoadingJug(false))
-  }, [filterAgente, periodo])
+  }, [filterAgente, appliedFilters])
 
   const s    = stats
   const sum  = casino?.summary ?? null
@@ -129,6 +143,56 @@ export default function Dashboard() {
   const finRetiros = jugadores.reduce((s, j) => s + Number(j.total_retiros), 0)
   const finNeto    = finCargas - finRetiros
 
+  // ── Helpers de fecha rápida ────────────────────────────────────────────────
+  function toISODate(d: Date) {
+    return d.toISOString().split('T')[0]
+  }
+
+  function aplicarRapido(tipo: 'hoy' | 'ayer' | 'semana' | 'mes_anterior' | 'mes_actual') {
+    const hoy  = new Date()
+    let desde  = ''
+    let hasta  = ''
+
+    if (tipo === 'hoy') {
+      desde = hasta = toISODate(hoy)
+    } else if (tipo === 'ayer') {
+      const ayer = new Date(hoy); ayer.setDate(hoy.getDate() - 1)
+      desde = hasta = toISODate(ayer)
+    } else if (tipo === 'semana') {
+      const ini = new Date(hoy); ini.setDate(hoy.getDate() - 6)
+      desde = toISODate(ini); hasta = toISODate(hoy)
+    } else if (tipo === 'mes_anterior') {
+      const primero = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1)
+      const ultimo  = new Date(hoy.getFullYear(), hoy.getMonth(), 0)
+      desde = toISODate(primero); hasta = toISODate(ultimo)
+    } else if (tipo === 'mes_actual') {
+      const primero = new Date(hoy.getFullYear(), hoy.getMonth(), 1)
+      desde = toISODate(primero); hasta = toISODate(hoy)
+    }
+
+    setInputFechaDesde(desde)
+    setInputFechaHasta(hasta)
+    setAppliedFilters(prev => ({ ...prev, fechaDesde: desde, fechaHasta: hasta }))
+  }
+
+  function handleBuscar() {
+    setAppliedFilters({
+      username:   inputUsername.trim(),
+      nivel:      inputNivel,
+      fechaDesde: inputFechaDesde,
+      fechaHasta: inputFechaHasta,
+    })
+  }
+
+  function handleLimpiar() {
+    setInputUsername(''); setInputNivel('__all__')
+    setInputFechaDesde(''); setInputFechaHasta('')
+    setAppliedFilters({ username: '', nivel: '__all__', fechaDesde: '', fechaHasta: '' })
+  }
+
+  const filtrosActivos = appliedFilters.username || appliedFilters.nivel !== '__all__'
+    || appliedFilters.fechaDesde || appliedFilters.fechaHasta
+
   // Variaciones periodo anterior
   const varNuevos  = sum ? delta(sum.nuevos_mes,  sum.nuevos_anterior)  : null
   const varActivos = sum ? delta(sum.activos_mes, sum.activos_anterior) : null
@@ -152,9 +216,11 @@ export default function Dashboard() {
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Reporte')
     ws['!cols'] = [20,12,14,10,14,10,14,10,12,14,14].map(w => ({ wch: w }))
-    const ag  = filterAgente === '__all__' ? 'todos' : filterAgente
-    const per = periodo === 'all' ? 'historico' : `ultimos${periodo}d`
-    XLSX.writeFile(wb, `casino_jugadores_${ag}_${per}_${new Date().toISOString().slice(0,10)}.xlsx`)
+    const ag    = filterAgente === '__all__' ? 'todos' : filterAgente
+    const rango = appliedFilters.fechaDesde && appliedFilters.fechaHasta
+      ? `${appliedFilters.fechaDesde}_${appliedFilters.fechaHasta}`
+      : 'historico'
+    XLSX.writeFile(wb, `casino_jugadores_${ag}_${rango}_${new Date().toISOString().slice(0,10)}.xlsx`)
   }
 
   // CSV export para tabla VIP
@@ -567,8 +633,8 @@ export default function Dashboard() {
 
         {/* ── Reporte Financiero por Jugador ───────────────────────────── */}
         <Card className="mb-4">
-          <CardHeader className="pb-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardHeader className="pb-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <CardTitle className="text-sm font-medium">
                 Reporte financiero
                 {jugadores.length > 0 && !loadingJug && (
@@ -577,25 +643,114 @@ export default function Dashboard() {
                   </span>
                 )}
               </CardTitle>
+              {jugadores.length > 0 && !loadingJug && (
+                <Button variant="outline" size="sm" onClick={exportarJugadores} className="h-7 text-xs gap-1">
+                  <Download size={13}/> Exportar
+                </Button>
+              )}
+            </div>
+
+            {/* ── Panel de búsqueda ─────────────────────────────────────── */}
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
+              {/* Botones rápidos de período */}
+              <div className="flex flex-wrap gap-1.5">
+                {([
+                  { key: 'hoy',          label: 'Hoy'          },
+                  { key: 'ayer',         label: 'Ayer'         },
+                  { key: 'semana',       label: 'Última Semana'},
+                  { key: 'mes_anterior', label: 'Mes Anterior' },
+                  { key: 'mes_actual',   label: 'Mes Actual'   },
+                ] as const).map(({ key, label }) => {
+                  const isActive = (() => {
+                    const hoy = new Date(); const t = (d: Date) => toISODate(d)
+                    if (key === 'hoy')          return inputFechaDesde === t(hoy)  && inputFechaHasta === t(hoy)
+                    if (key === 'ayer')          { const a = new Date(hoy); a.setDate(hoy.getDate()-1); return inputFechaDesde === t(a) && inputFechaHasta === t(a) }
+                    if (key === 'semana')         { const i = new Date(hoy); i.setDate(hoy.getDate()-6); return inputFechaDesde === t(i) && inputFechaHasta === t(hoy) }
+                    if (key === 'mes_anterior')   { const p = new Date(hoy.getFullYear(), hoy.getMonth()-1,1); const u = new Date(hoy.getFullYear(),hoy.getMonth(),0); return inputFechaDesde===t(p)&&inputFechaHasta===t(u) }
+                    if (key === 'mes_actual')     { const p = new Date(hoy.getFullYear(), hoy.getMonth(),1); return inputFechaDesde===t(p)&&inputFechaHasta===t(hoy) }
+                    return false
+                  })()
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => aplicarRapido(key)}
+                      className={`text-xs px-3 py-1 rounded border transition-colors ${
+                        isActive
+                          ? 'bg-gray-800 text-white border-gray-800'
+                          : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Inputs de fecha + búsqueda + nivel */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Fecha Desde</p>
+                  <Input
+                    type="date"
+                    value={inputFechaDesde}
+                    onChange={e => setInputFechaDesde(e.target.value)}
+                    className="h-8 text-sm"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Fecha Hasta</p>
+                  <Input
+                    type="date"
+                    value={inputFechaHasta}
+                    onChange={e => setInputFechaHasta(e.target.value)}
+                    className="h-8 text-sm"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Jugador</p>
+                  <Input
+                    type="text"
+                    placeholder="Buscar usuario..."
+                    value={inputUsername}
+                    onChange={e => setInputUsername(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleBuscar()}
+                    className="h-8 text-sm"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Rango</p>
+                  <Select value={inputNivel} onValueChange={v => setInputNivel(v ?? '__all__')}>
+                    <SelectTrigger className="h-8 text-sm">
+                      <SelectValue placeholder="Todos los rangos"/>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Todos los rangos</SelectItem>
+                      <SelectItem value="vip">Platino</SelectItem>
+                      <SelectItem value="alto">Oro</SelectItem>
+                      <SelectItem value="medio">Plata</SelectItem>
+                      <SelectItem value="bajo">Bronce</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Botones de acción */}
               <div className="flex items-center gap-2">
-                {/* Tabs de período */}
-                {(['all', '7', '30'] as const).map(p => (
+                <Button size="sm" onClick={handleBuscar} className="h-8 text-xs gap-1.5">
+                  <Search size={13}/> Buscar
+                </Button>
+                {filtrosActivos && (
                   <button
-                    key={p}
-                    onClick={() => setPeriodo(p)}
-                    className={`text-xs px-3 py-1 rounded-full border transition-colors ${
-                      periodo === p
-                        ? 'bg-gray-800 text-white border-gray-800'
-                        : 'text-gray-500 border-gray-200 hover:border-gray-400'
-                    }`}
+                    onClick={handleLimpiar}
+                    className="text-xs text-gray-400 hover:text-gray-600 underline"
                   >
-                    {p === 'all' ? 'Histórico' : p === '7' ? 'Últimos 7d' : 'Últimos 30d'}
+                    Limpiar filtros
                   </button>
-                ))}
-                {jugadores.length > 0 && !loadingJug && (
-                  <Button variant="outline" size="sm" onClick={exportarJugadores} className="h-7 text-xs gap-1">
-                    <Download size={13}/> Exportar
-                  </Button>
+                )}
+                {filtrosActivos && (
+                  <span className="text-xs text-blue-600 bg-blue-50 border border-blue-100 rounded px-2 py-0.5">
+                    Filtros activos
+                  </span>
                 )}
               </div>
             </div>
