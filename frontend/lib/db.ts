@@ -19,6 +19,7 @@ export const pool = new Pool({
   user:                    process.env.DB_USER,
   password:                process.env.DB_PASSWORD,
   ssl:                     sslConfig,
+  family:                  4,  // forzar IPv4 — evita ECONNREFUSED por IPv6 en Railway
   max:                     Number(process.env.DB_POOL_MAX            || 3),
   connectionTimeoutMillis: Number(process.env.DB_CONNECTION_TIMEOUT_MS || 10000),
   idleTimeoutMillis:       Number(process.env.DB_IDLE_TIMEOUT_MS       || 30000),
