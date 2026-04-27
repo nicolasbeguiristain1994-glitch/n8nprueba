@@ -6,7 +6,22 @@ import { Pool, PoolClient } from 'pg'
 
 const trim = (v: string | undefined) => v?.trim()
 
-const DATABASE_URL = trim(process.env.DATABASE_URL)
+// Inject uselibpqcompat=true if missing — prevents pg-connection-string from
+// treating sslmode=require as verify-full (SELF_SIGNED_CERT_IN_CHAIN on Railway).
+function normalizeDbUrl(raw: string | undefined): string | undefined {
+  if (!raw) return undefined
+  try {
+    const u = new URL(raw)
+    if (!u.searchParams.has('uselibpqcompat')) {
+      u.searchParams.set('uselibpqcompat', 'true')
+    }
+    return u.toString()
+  } catch {
+    return raw
+  }
+}
+
+const DATABASE_URL = normalizeDbUrl(trim(process.env.DATABASE_URL))
 
 const dbHost     = trim(process.env.DB_HOST)
 const dbPort     = Number(trim(process.env.DB_PORT)     || '5432')
