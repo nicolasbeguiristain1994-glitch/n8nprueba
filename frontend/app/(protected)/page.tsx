@@ -91,6 +91,7 @@ export default function Dashboard() {
   const [casinoError,    setCasinoError]    = useState<string | null>(null)
   const [risk,           setRisk]           = useState<RiskData | null>(null)
   const [riskTab,        setRiskTab]        = useState<'extractores' | 'deficit' | 'recuperables'>('extractores')
+  const [riskOpen,       setRiskOpen]       = useState(false)
   const [filterAgente,   setFilterAgente]   = useState<string>('__all__')
   const [jugadores,      setJugadores]      = useState<CasinoJugador[]>([])
   const [loadingJug,     setLoadingJug]     = useState(false)
@@ -539,14 +540,29 @@ export default function Dashboard() {
         {/* ── Sector de Riesgo ─────────────────────────────────────────── */}
         {risk && (
           <Card className="mb-4 border-orange-200">
-            <CardHeader className="pb-3">
-              <div className="flex items-center gap-2">
-                <TriangleAlert size={16} className="text-orange-500"/>
-                <CardTitle className="text-sm font-medium text-orange-700">Sector de Riesgo</CardTitle>
+            <CardHeader
+              className="pb-3 cursor-pointer select-none"
+              onClick={() => setRiskOpen(o => !o)}
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <TriangleAlert size={16} className="text-orange-500"/>
+                  <CardTitle className="text-sm font-medium text-orange-700">Sector de Riesgo</CardTitle>
+                  {!riskOpen && risk.summary && (
+                    <span className="ml-2 flex gap-2 text-xs">
+                      <span className="text-red-500 font-medium">{risk.summary.nuevos_extractores} extractores</span>
+                      <span className="text-gray-300">·</span>
+                      <span className="text-orange-500 font-medium">{risk.summary.jugadores_deficit} en déficit</span>
+                      <span className="text-gray-300">·</span>
+                      <span className="text-yellow-600 font-medium">{risk.summary.vip_recuperables} VIP recuperables</span>
+                    </span>
+                  )}
+                </div>
+                <span className="text-xs text-gray-400">{riskOpen ? '▲ Cerrar' : '▼ Ver detalle'}</span>
               </div>
 
-              {/* Métricas de riesgo */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
+              {/* Métricas de riesgo — solo visibles cuando está abierto */}
+              {riskOpen && <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mt-3">
                 <button
                   onClick={() => setRiskTab('extractores')}
                   className={`rounded-lg border p-3 text-left transition-colors ${riskTab === 'extractores' ? 'bg-red-50 border-red-300' : 'bg-white border-gray-200 hover:border-orange-200'}`}
@@ -593,10 +609,10 @@ export default function Dashboard() {
                   <p className="text-2xl font-bold text-yellow-600">{risk.summary?.vip_recuperables ?? '—'}</p>
                   <p className="text-xs text-gray-400 mt-0.5">VIP/Oro aún en riesgo, no perdidos</p>
                 </button>
-              </div>
+              </div>}
             </CardHeader>
 
-            <CardContent className="p-0">
+            {riskOpen && <CardContent className="p-0">
               {/* Tab: Nuevos extractores */}
               {riskTab === 'extractores' && (
                 <div className="overflow-x-auto">
@@ -746,7 +762,7 @@ export default function Dashboard() {
                   }
                 </div>
               )}
-            </CardContent>
+            </CardContent>}
           </Card>
         )}
 
