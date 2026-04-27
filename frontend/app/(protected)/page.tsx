@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import type { CasinoSummary, CasinoAgente, CasinoVip } from '@/app/api/dashboard/casino/route'
+import type { CasinoJugador } from '@/app/api/dashboard/casino/players/route'
 
 // ── Tipos dashboard de difusión ───────────────────────────────────────────────
 interface Stats {
@@ -76,7 +77,10 @@ export default function Dashboard() {
   const [recent, setRecent] = useState<Message[]>([])
   const [cs,     setCs]     = useState<CampaignStats | null>(null)
   const [casino, setCasino] = useState<CasinoData | null>(null)
-  const [filterAgente, setFilterAgente] = useState<string>('__all__')
+  const [filterAgente,   setFilterAgente]   = useState<string>('__all__')
+  const [periodo,        setPeriodo]        = useState<'all' | '7' | '30'>('all')
+  const [jugadores,      setJugadores]      = useState<CasinoJugador[]>([])
+  const [loadingJug,     setLoadingJug]     = useState(false)
 
   useEffect(() => {
     fetchJson<{ stats: Stats; lines: Line[]; recent: Message[]; campaignStats: CampaignStats }>('/api/dashboard')
@@ -87,6 +91,19 @@ export default function Dashboard() {
       .then(d => setCasino(d))
       .catch(() => {})
   }, [])
+
+  // Re-fetch jugadores cuando cambia agente o período
+  useEffect(() => {
+    setLoadingJug(true)
+    const params = new URLSearchParams()
+    if (filterAgente !== '__all__') params.set('agente', filterAgente)
+    if (periodo !== 'all')          params.set('dias', periodo)
+    const qs = params.toString()
+    fetchJson<{ jugadores: CasinoJugador[] }>(`/api/dashboard/casino/players${qs ? '?' + qs : ''}`)
+      .then(d => setJugadores(d.jugadores ?? []))
+      .catch(() => setJugadores([]))
+      .finally(() => setLoadingJug(false))
+  }, [filterAgente, periodo])
 
   const s    = stats
   const sum  = casino?.summary ?? null
@@ -106,9 +123,38 @@ export default function Dashboard() {
     ? vips
     : vips.filter(v => v.agente === filterAgente)
 
+  // Totales financieros del conjunto de jugadores cargado
+  const finCargas  = jugadores.reduce((s, j) => s + Number(j.total_cargas),  0)
+  const finRetiros = jugadores.reduce((s, j) => s + Number(j.total_retiros), 0)
+  const finNeto    = finCargas - finRetiros
+
   // Variaciones periodo anterior
   const varNuevos  = sum ? delta(sum.nuevos_mes,  sum.nuevos_anterior)  : null
   const varActivos = sum ? delta(sum.activos_mes, sum.activos_anterior) : null
+
+  // XLSX export tabla financiera
+  const exportarJugadores = () => {
+    const rows = jugadores.map(j => ({
+      'Usuario':        j.username,
+      'Agente':         j.agente,
+      'Cargas ($)':     j.total_cargas,
+      '# Cargas':       j.cant_cargas,
+      'Retiros ($)':   -j.total_retiros,
+      '# Retiros':      j.cant_retiros,
+      'Neto ($)':       j.neto,
+      'Nivel':          NIVEL_LABEL[j.seg_monto] ?? j.seg_monto,
+      'Estado':         j.seg_actividad,
+      'Días sin mov.':  j.dias_ultimo ?? '',
+      'Últ. actividad': j.fecha_ultima ?? '',
+    }))
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Reporte')
+    ws['!cols'] = [20,12,14,10,14,10,14,10,12,14,14].map(w => ({ wch: w }))
+    const ag  = filterAgente === '__all__' ? 'todos' : filterAgente
+    const per = periodo === 'all' ? 'historico' : `ultimos${periodo}d`
+    XLSX.writeFile(wb, `casino_jugadores_${ag}_${per}_${new Date().toISOString().slice(0,10)}.xlsx`)
+  }
 
   // CSV export para tabla VIP
   const exportarVips = () => {
@@ -418,6 +464,138 @@ export default function Dashboard() {
                                 </div>
                                 <span className="text-xs text-gray-400 w-8 text-right">{pct}%</span>
                               </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )
+            }
+          </CardContent>
+        </Card>
+
+        {/* ── Reporte Financiero por Jugador ───────────────────────────── */}
+        <Card className="mb-4">
+          <CardHeader className="pb-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle className="text-sm font-medium">
+                Reporte financiero
+                {jugadores.length > 0 && !loadingJug && (
+                  <span className="ml-2 text-xs font-normal text-gray-400">
+                    {jugadores.length} jugadores
+                  </span>
+                )}
+              </CardTitle>
+              <div className="flex items-center gap-2">
+                {/* Tabs de período */}
+                {(['all', '7', '30'] as const).map(p => (
+                  <button
+                    key={p}
+                    onClick={() => setPeriodo(p)}
+                    className={`text-xs px-3 py-1 rounded-full border transition-colors ${
+                      periodo === p
+                        ? 'bg-gray-800 text-white border-gray-800'
+                        : 'text-gray-500 border-gray-200 hover:border-gray-400'
+                    }`}
+                  >
+                    {p === 'all' ? 'Histórico' : p === '7' ? 'Últimos 7d' : 'Últimos 30d'}
+                  </button>
+                ))}
+                {jugadores.length > 0 && !loadingJug && (
+                  <Button variant="outline" size="sm" onClick={exportarJugadores} className="h-7 text-xs gap-1">
+                    <Download size={13}/> Exportar
+                  </Button>
+                )}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {/* Tarjetas financieras */}
+            {jugadores.length > 0 && !loadingJug && (
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                <div className="rounded-lg bg-green-50 border border-green-100 px-4 py-3">
+                  <p className="text-xs text-green-600 font-medium mb-0.5">Σ Cargas</p>
+                  <p className="text-xl font-bold text-green-700">{fmtMoney(finCargas)}</p>
+                  <p className="text-xs text-green-500 mt-0.5">{jugadores.reduce((s,j) => s + j.cant_cargas, 0).toLocaleString('es-AR')} operaciones</p>
+                </div>
+                <div className="rounded-lg bg-red-50 border border-red-100 px-4 py-3">
+                  <p className="text-xs text-red-600 font-medium mb-0.5">Σ Retiros</p>
+                  <p className="text-xl font-bold text-red-700">−{fmtMoney(finRetiros)}</p>
+                  <p className="text-xs text-red-400 mt-0.5">{jugadores.reduce((s,j) => s + j.cant_retiros, 0).toLocaleString('es-AR')} operaciones</p>
+                </div>
+                <div className={`rounded-lg border px-4 py-3 ${finNeto >= 0 ? 'bg-blue-50 border-blue-100' : 'bg-orange-50 border-orange-100'}`}>
+                  <p className={`text-xs font-medium mb-0.5 ${finNeto >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>Neto</p>
+                  <p className={`text-xl font-bold ${finNeto >= 0 ? 'text-blue-700' : 'text-orange-700'}`}>
+                    {finNeto >= 0 ? '' : '−'}{fmtMoney(Math.abs(finNeto))}
+                  </p>
+                  <p className={`text-xs mt-0.5 ${finNeto >= 0 ? 'text-blue-400' : 'text-orange-400'}`}>
+                    {finNeto >= 0 ? 'Ganancia neta' : 'Deficit neto'}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {loadingJug
+              ? <p className="text-sm text-gray-400 py-4 text-center">Cargando...</p>
+              : jugadores.length === 0
+              ? <p className="text-sm text-gray-400 py-4">Sin jugadores para el filtro seleccionado.</p>
+              : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100">
+                        <th className="text-left px-3 py-2 text-xs font-medium text-gray-500">Usuario</th>
+                        <th className="text-left px-3 py-2 text-xs font-medium text-gray-500">Agente</th>
+                        <th className="text-right px-3 py-2 text-xs font-medium text-green-600">Cargas</th>
+                        <th className="text-right px-3 py-2 text-xs font-medium text-gray-400">#</th>
+                        <th className="text-right px-3 py-2 text-xs font-medium text-red-500">Retiros</th>
+                        <th className="text-right px-3 py-2 text-xs font-medium text-gray-400">#</th>
+                        <th className="text-right px-3 py-2 text-xs font-medium text-blue-600">Neto</th>
+                        <th className="text-left px-3 py-2 text-xs font-medium text-gray-500">Nivel</th>
+                        <th className="text-left px-3 py-2 text-xs font-medium text-gray-500">Estado</th>
+                        <th className="text-right px-3 py-2 text-xs font-medium text-gray-500">Días sin mov.</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {jugadores.map((j, i) => {
+                        const neto = Number(j.neto)
+                        return (
+                          <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-gray-50">
+                            <td className="px-3 py-2 font-mono text-xs">{j.username}</td>
+                            <td className="px-3 py-2 text-gray-500 text-xs">{j.agente}</td>
+                            <td className="px-3 py-2 text-right text-green-700 font-medium">
+                              {fmtMoney(Number(j.total_cargas))}
+                            </td>
+                            <td className="px-3 py-2 text-right text-gray-400 text-xs">{j.cant_cargas}</td>
+                            <td className="px-3 py-2 text-right text-red-600 font-medium">
+                              −{fmtMoney(Number(j.total_retiros))}
+                            </td>
+                            <td className="px-3 py-2 text-right text-gray-400 text-xs">{j.cant_retiros}</td>
+                            <td className={`px-3 py-2 text-right font-semibold ${neto >= 0 ? 'text-blue-700' : 'text-orange-600'}`}>
+                              {neto >= 0 ? '' : '−'}{fmtMoney(Math.abs(neto))}
+                            </td>
+                            <td className="px-3 py-2">
+                              {j.seg_monto && (
+                                <Badge className={`text-xs ${NIVEL_STYLE[j.seg_monto] ?? 'bg-gray-100 text-gray-600'}`}>
+                                  {NIVEL_LABEL[j.seg_monto] ?? j.seg_monto}
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="px-3 py-2">
+                              {j.seg_actividad && (
+                                <Badge className={`text-xs ${ACTIVIDAD_STYLE[j.seg_actividad] ?? 'bg-gray-100 text-gray-600'}`}>
+                                  {j.seg_actividad}
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {j.dias_ultimo != null && (
+                                <span className={j.dias_ultimo > 60 ? 'text-red-600 font-medium' : j.dias_ultimo > 30 ? 'text-orange-500' : 'text-gray-600'}>
+                                  {j.dias_ultimo}d
+                                </span>
+                              )}
                             </td>
                           </tr>
                         )
