@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -8,12 +8,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   MessageSquare, Send, AlertCircle, Eye, Wifi, Clock,
   BarChart2, Shield, TrendingUp, TrendingDown, Users, Star, Download, Search,
-  TriangleAlert, Flame, BadgeDollarSign, HeartPulse,
+  TriangleAlert, Flame, BadgeDollarSign, HeartPulse, RefreshCw, DatabaseZap,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { fetchJson } from '@/lib/fetchJson'
 import type { CasinoSummary, CasinoAgente, CasinoVip } from '@/app/api/dashboard/casino/route'
-import type { CasinoJugador } from '@/app/api/dashboard/casino/players/route'
+import type { CasinoJugador, CasinoJugadoresResponse } from '@/app/api/dashboard/casino/players/route'
 import type { RiskSummary, NuevoExtractor, DeficitJugador, VipRecuperable } from '@/app/api/dashboard/casino/risk/route'
 
 // ── Tipos dashboard de difusión ───────────────────────────────────────────────
@@ -69,6 +69,22 @@ const ACTIVIDAD_STYLE: Record<string, string> = {
   perdido:    'bg-zinc-800 text-white',
 }
 
+// Risk escalates warm → urgent
+const RIESGO_STYLE: Record<string, string> = {
+  critico: 'bg-red-100 text-red-700',
+  medio:   'bg-amber-100 text-amber-700',
+  bajo:    'bg-yellow-50 text-yellow-700',
+}
+
+// Antigüedad uses cool/stable tones ordered from fresh to loyal
+const ANTIGUEDAD_STYLE: Record<string, string> = {
+  nuevo:       'bg-cyan-50 text-cyan-600',
+  reciente:    'bg-sky-100 text-sky-700',
+  establecido: 'bg-slate-100 text-slate-600',
+  veterano:    'bg-indigo-100 text-indigo-700',
+  leal:        'bg-violet-100 text-violet-700',
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function delta(current: number, prev: number) {
   const d = current - prev
@@ -93,33 +109,74 @@ export default function Dashboard() {
   const [riskTab,        setRiskTab]        = useState<'extractores' | 'deficit' | 'recuperables'>('extractores')
   const [riskOpen,       setRiskOpen]       = useState(false)
   const [filterAgente,   setFilterAgente]   = useState<string>('__all__')
+  // Ref that always holds the latest filterAgente value so refreshCasino()
+  // (called both from a button and from setInterval) can read it without
+  // depending on a stale closure.
+  const filterAgenteRef = useRef(filterAgente)
+  filterAgenteRef.current = filterAgente
+
   const [jugadores,      setJugadores]      = useState<CasinoJugador[]>([])
+  const [jugTotal,       setJugTotal]       = useState(0)
+  const [jugPage,        setJugPage]        = useState(1)
+  const [jugLimit,       setJugLimit]       = useState(100)
+  const [jugSortBy,      setJugSortBy]      = useState('total_cargas')
+  const [jugSortOrder,   setJugSortOrder]   = useState<'asc' | 'desc'>('desc')
   const [loadingJug,     setLoadingJug]     = useState(false)
+  const [lastUpdated,    setLastUpdated]    = useState<Date | null>(null)
+  const [refreshing,     setRefreshing]     = useState(false)
+  const [syncing,        setSyncing]        = useState(false)
+  const [syncMsg,        setSyncMsg]        = useState<string | null>(null)
 
   // ── Filtros del panel de búsqueda (inputs sin aplicar) ─────────────────────
   const [inputUsername,   setInputUsername]   = useState('')
   const [inputNivel,      setInputNivel]      = useState('__all__')
   const [inputFechaDesde, setInputFechaDesde] = useState('')
   const [inputFechaHasta, setInputFechaHasta] = useState('')
+  const [inputSegAct,      setInputSegAct]      = useState('__all__')
+  const [inputDiasMin,     setInputDiasMin]     = useState('')
+  const [inputDiasMax,     setInputDiasMax]     = useState('')
+  const [inputValorRiesgo, setInputValorRiesgo] = useState('__all__')
+  const [inputAntiguedad,  setInputAntiguedad]  = useState('__all__')
 
   // ── Filtros aplicados (disparan el fetch) ──────────────────────────────────
   const [appliedFilters, setAppliedFilters] = useState({
     username: '', nivel: '__all__', fechaDesde: '', fechaHasta: '',
+    segActividad: '__all__', diasMin: '', diasMax: '',
+    valorRiesgo: '__all__', antiguedad: '__all__',
   })
+
+  // ── Fetch casino (extraído para reutilizar en polling y refresh manual) ────
+  async function refreshCasino() {
+    setRefreshing(true)
+    try {
+      const agente   = filterAgenteRef.current
+      const riskQs   = agente !== '__all__' ? `?agente=${encodeURIComponent(agente)}` : ''
+      const [casinoData, riskData] = await Promise.all([
+        fetchJson<CasinoData>('/api/dashboard/casino'),
+        fetchJson<RiskData>(`/api/dashboard/casino/risk${riskQs}`),
+      ])
+      setCasino(casinoData)
+      setCasinoError(null)
+      setRisk(riskData)
+      setLastUpdated(new Date())
+    } catch (e: unknown) {
+      setCasinoError(e instanceof Error ? e.message : 'Error al cargar datos de casino')
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   useEffect(() => {
     fetchJson<{ stats: Stats; lines: Line[]; recent: Message[]; campaignStats: CampaignStats }>('/api/dashboard')
       .then(d => { setStats(d.stats); setLines(d.lines || []); setRecent(d.recent || []); setCs(d.campaignStats) })
       .catch(() => {})
 
-    fetchJson<CasinoData>('/api/dashboard/casino')
-      .then(d => { setCasino(d); setCasinoError(null) })
-      .catch((e: unknown) => setCasinoError(e instanceof Error ? e.message : 'Error al cargar datos de casino'))
+    refreshCasino()
 
-    fetchJson<RiskData>('/api/dashboard/casino/risk')
-      .then(d => setRisk(d))
-      .catch(() => {})
-  }, [])
+    // Auto-refresh casino cada 5 minutos
+    const interval = setInterval(refreshCasino, 5 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-fetch riesgo cuando cambia el agente
   useEffect(() => {
@@ -131,21 +188,52 @@ export default function Dashboard() {
       .catch(() => {})
   }, [filterAgente])
 
-  // Re-fetch jugadores cuando cambia agente o filtros aplicados
+  // Re-fetch jugadores cuando cambia agente, filtros aplicados, paginación o sort
   useEffect(() => {
     setLoadingJug(true)
     const params = new URLSearchParams()
-    if (filterAgente !== '__all__')             params.set('agente',      filterAgente)
-    if (appliedFilters.username)                params.set('username',    appliedFilters.username)
-    if (appliedFilters.nivel !== '__all__')      params.set('seg_monto',   appliedFilters.nivel)
-    if (appliedFilters.fechaDesde)              params.set('fecha_desde', appliedFilters.fechaDesde)
-    if (appliedFilters.fechaHasta)              params.set('fecha_hasta', appliedFilters.fechaHasta)
+    if (filterAgente !== '__all__')                    params.set('agente',           filterAgente)
+    if (appliedFilters.username)                       params.set('username',         appliedFilters.username)
+    if (appliedFilters.nivel !== '__all__')             params.set('seg_monto',        appliedFilters.nivel)
+    if (appliedFilters.segActividad !== '__all__')      params.set('seg_actividad',    appliedFilters.segActividad)
+    if (appliedFilters.valorRiesgo !== '__all__')       params.set('valorRiesgo',      appliedFilters.valorRiesgo)
+    if (appliedFilters.antiguedad  !== '__all__')       params.set('antiguedad',       appliedFilters.antiguedad)
+    if (appliedFilters.diasMin)                        params.set('dias_inactivo_min', appliedFilters.diasMin)
+    if (appliedFilters.diasMax)                        params.set('dias_inactivo_max', appliedFilters.diasMax)
+    if (appliedFilters.fechaDesde)                     params.set('fecha_desde',      appliedFilters.fechaDesde)
+    if (appliedFilters.fechaHasta)                     params.set('fecha_hasta',      appliedFilters.fechaHasta)
+    params.set('page',      String(jugPage))
+    params.set('limit',     String(jugLimit))
+    params.set('sortBy',    jugSortBy)
+    params.set('sortOrder', jugSortOrder)
     const qs = params.toString()
-    fetchJson<{ jugadores: CasinoJugador[] }>(`/api/dashboard/casino/players${qs ? '?' + qs : ''}`)
-      .then(d => setJugadores(d.jugadores ?? []))
-      .catch(() => setJugadores([]))
+    fetchJson<CasinoJugadoresResponse>(`/api/dashboard/casino/players${qs ? '?' + qs : ''}`)
+      .then(d => { setJugadores(d.jugadores ?? []); setJugTotal(d.total ?? 0) })
+      .catch(() => { setJugadores([]); setJugTotal(0) })
       .finally(() => setLoadingJug(false))
-  }, [filterAgente, appliedFilters])
+  }, [filterAgente, appliedFilters, jugPage, jugLimit, jugSortBy, jugSortOrder])
+
+  async function triggerSync() {
+    setSyncing(true)
+    setSyncMsg(null)
+    try {
+      const res = await fetchJson<{ ok: boolean; message: string }>('/api/dashboard/casino/sync', { method: 'POST' })
+      setSyncMsg(res.message)
+      // Refresca datos automáticamente luego de 2.5 min
+      setTimeout(refreshCasino, 2.5 * 60 * 1000)
+    } catch {
+      setSyncMsg('Error al iniciar el sync. Verificá los permisos.')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  function tiempoRelativo(date: Date): string {
+    const diff = Math.floor((Date.now() - date.getTime()) / 1000)
+    if (diff < 60)   return 'hace menos de 1 min'
+    if (diff < 3600) return `hace ${Math.floor(diff / 60)} min`
+    return `hace ${Math.floor(diff / 3600)}h`
+  }
 
   const s    = stats
   const sum  = casino?.summary ?? null
@@ -165,10 +253,11 @@ export default function Dashboard() {
     ? vips
     : vips.filter(v => v.agente === filterAgente)
 
-  // Totales financieros del conjunto de jugadores cargado
+  // Totales financieros de la página actual (no del set completo cuando hay paginación)
   const finCargas  = jugadores.reduce((s, j) => s + Number(j.total_cargas),  0)
   const finRetiros = jugadores.reduce((s, j) => s + Number(j.total_retiros), 0)
   const finNeto    = finCargas - finRetiros
+  const jugTotalPages = Math.ceil(jugTotal / jugLimit)
 
   // ── Helpers de fecha rápida ────────────────────────────────────────────────
   function toISODate(d: Date) {
@@ -199,26 +288,54 @@ export default function Dashboard() {
 
     setInputFechaDesde(desde)
     setInputFechaHasta(hasta)
+    setJugPage(1)
     setAppliedFilters(prev => ({ ...prev, fechaDesde: desde, fechaHasta: hasta }))
   }
 
   function handleBuscar() {
+    setJugPage(1)
     setAppliedFilters({
-      username:   inputUsername.trim(),
-      nivel:      inputNivel,
-      fechaDesde: inputFechaDesde,
-      fechaHasta: inputFechaHasta,
+      username:     inputUsername.trim(),
+      nivel:        inputNivel,
+      fechaDesde:   inputFechaDesde,
+      fechaHasta:   inputFechaHasta,
+      segActividad: inputSegAct,
+      diasMin:      inputDiasMin,
+      diasMax:      inputDiasMax,
+      valorRiesgo:  inputValorRiesgo,
+      antiguedad:   inputAntiguedad,
     })
   }
 
   function handleLimpiar() {
     setInputUsername(''); setInputNivel('__all__')
     setInputFechaDesde(''); setInputFechaHasta('')
-    setAppliedFilters({ username: '', nivel: '__all__', fechaDesde: '', fechaHasta: '' })
+    setInputSegAct('__all__'); setInputDiasMin(''); setInputDiasMax('')
+    setInputValorRiesgo('__all__'); setInputAntiguedad('__all__')
+    setJugPage(1)
+    setAppliedFilters({
+      username: '', nivel: '__all__', fechaDesde: '', fechaHasta: '',
+      segActividad: '__all__', diasMin: '', diasMax: '',
+      valorRiesgo: '__all__', antiguedad: '__all__',
+    })
+  }
+
+  function handleJugSort(col: string) {
+    if (jugSortBy === col) {
+      setJugSortOrder(o => o === 'asc' ? 'desc' : 'asc')
+    } else {
+      setJugSortBy(col)
+      setJugSortOrder('desc')
+    }
+    setJugPage(1)
   }
 
   const filtrosActivos = appliedFilters.username || appliedFilters.nivel !== '__all__'
     || appliedFilters.fechaDesde || appliedFilters.fechaHasta
+    || appliedFilters.segActividad !== '__all__'
+    || appliedFilters.valorRiesgo  !== '__all__'
+    || appliedFilters.antiguedad   !== '__all__'
+    || appliedFilters.diasMin || appliedFilters.diasMax
 
   // Variaciones periodo anterior
   const varNuevos  = sum ? delta(sum.nuevos_mes,  sum.nuevos_anterior)  : null
@@ -236,13 +353,15 @@ export default function Dashboard() {
       'Neto ($)':       j.neto,
       'Nivel':          NIVEL_LABEL[j.seg_monto] ?? j.seg_monto,
       'Estado':         j.seg_actividad,
-      'Días sin mov.':  j.dias_ultimo ?? '',
-      'Últ. actividad': j.fecha_ultima ?? '',
+      'Valor riesgo':   j.valor_riesgo  ?? '',
+      'Antigüedad':     j.antiguedad    ?? '',
+      'Días sin mov.':  j.dias_ultimo   ?? '',
+      'Últ. actividad': j.fecha_ultima  ?? '',
     }))
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Reporte')
-    ws['!cols'] = [20,12,14,10,14,10,14,10,12,14,14].map(w => ({ wch: w }))
+    ws['!cols'] = [20,12,14,10,14,10,14,10,12,12,14,14,14].map(w => ({ wch: w }))
     const ag    = filterAgente === '__all__' ? 'todos' : filterAgente
     const rango = appliedFilters.fechaDesde && appliedFilters.fechaHasta
       ? `${appliedFilters.fechaDesde}_${appliedFilters.fechaHasta}`
@@ -460,9 +579,9 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Filtro global de agente — aplica a tabla de agentes Y tabla VIP */}
-        <div className="flex items-center gap-3 mb-4">
-          <Select value={filterAgente} onValueChange={(v) => setFilterAgente(v ?? '__all__')}>
+        {/* Filtro global + controles de refresh/sync */}
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          <Select value={filterAgente} onValueChange={(v) => { setFilterAgente(v ?? '__all__'); setJugPage(1) }}>
             <SelectTrigger className="w-48 h-8 text-sm">
               <SelectValue placeholder="Todos los agentes"/>
             </SelectTrigger>
@@ -473,12 +592,59 @@ export default function Dashboard() {
               ))}
             </SelectContent>
           </Select>
+
           {sum && (
             <span className="text-xs text-gray-400">
               {sum.total_jugadores.toLocaleString('es-AR')} jugadores totales
             </span>
           )}
+
+          <div className="ml-auto flex items-center gap-2">
+            {/* Indicador de última actualización */}
+            {lastUpdated && (
+              <span className="text-xs text-gray-400 hidden sm:inline">
+                Actualizado {tiempoRelativo(lastUpdated)}
+              </span>
+            )}
+
+            {/* Botón: refrescar datos del dashboard */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={refreshCasino}
+              disabled={refreshing}
+              className="h-8 text-xs gap-1.5"
+            >
+              <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''}/>
+              {refreshing ? 'Actualizando…' : 'Actualizar'}
+            </Button>
+
+            {/* Botón: lanzar sync con Zeus (admin only — el endpoint valida) */}
+            <Button
+              size="sm"
+              onClick={triggerSync}
+              disabled={syncing}
+              className="h-8 text-xs gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
+            >
+              <DatabaseZap size={13} className={syncing ? 'animate-pulse' : ''}/>
+              {syncing ? 'Iniciando…' : 'Sincronizar Zeus'}
+            </Button>
+          </div>
         </div>
+
+        {/* Mensaje de estado del sync */}
+        {syncMsg && (
+          <div className="mb-3 flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm text-indigo-700">
+            <DatabaseZap size={15} className="shrink-0"/>
+            <span>{syncMsg}</span>
+            <button
+              onClick={() => setSyncMsg(null)}
+              className="ml-auto text-indigo-400 hover:text-indigo-600 text-xs"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* ── Tarjetas resumen ──────────────────────────────────────────── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
@@ -907,15 +1073,18 @@ export default function Dashboard() {
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <CardTitle className="text-sm font-medium">
                 Reporte financiero
-                {jugadores.length > 0 && !loadingJug && (
+                {!loadingJug && jugTotal > 0 && (
                   <span className="ml-2 text-xs font-normal text-gray-400">
-                    {jugadores.length} jugadores
+                    {jugTotal.toLocaleString('es-AR')} jugadores
+                    {jugTotalPages > 1 && (
+                      <span className="ml-1 text-gray-400">· pág. {jugPage}/{jugTotalPages}</span>
+                    )}
                   </span>
                 )}
               </CardTitle>
               {jugadores.length > 0 && !loadingJug && (
-                <Button variant="outline" size="sm" onClick={exportarJugadores} className="h-7 text-xs gap-1">
-                  <Download size={13}/> Exportar
+                <Button variant="outline" size="sm" onClick={exportarJugadores} className="h-7 text-xs gap-1" title={`Exporta los ${jugLimit} jugadores de la página actual`}>
+                  <Download size={13}/> Exportar página
                 </Button>
               )}
             </div>
@@ -956,7 +1125,7 @@ export default function Dashboard() {
                 })}
               </div>
 
-              {/* Inputs de fecha + búsqueda + nivel */}
+              {/* Fila 1: fechas + búsqueda + nivel */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
                 <div>
                   <p className="text-xs text-gray-400 mb-1">Fecha Desde</p>
@@ -1004,6 +1173,88 @@ export default function Dashboard() {
                 </div>
               </div>
 
+              {/* Fila 2: segmentación */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Estado actividad</p>
+                  <Select value={inputSegAct} onValueChange={v => setInputSegAct(v ?? '__all__')}>
+                    <SelectTrigger className="h-8 text-sm">
+                      <SelectValue placeholder="Todos los estados"/>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Todos los estados</SelectItem>
+                      <SelectItem value="nuevo">Nuevo</SelectItem>
+                      <SelectItem value="frecuente">Frecuente</SelectItem>
+                      <SelectItem value="regular">Regular</SelectItem>
+                      <SelectItem value="ocasional">Ocasional</SelectItem>
+                      <SelectItem value="en_riesgo">En riesgo</SelectItem>
+                      <SelectItem value="inactivo">Inactivo</SelectItem>
+                      <SelectItem value="perdido">Perdido</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Valor de riesgo</p>
+                  <Select value={inputValorRiesgo} onValueChange={v => setInputValorRiesgo(v ?? '__all__')}>
+                    <SelectTrigger className="h-8 text-sm">
+                      <SelectValue placeholder="Cualquier riesgo"/>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Cualquier riesgo</SelectItem>
+                      <SelectItem value="critico">Crítico</SelectItem>
+                      <SelectItem value="medio">Medio</SelectItem>
+                      <SelectItem value="bajo">Bajo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Antigüedad</p>
+                  <Select value={inputAntiguedad} onValueChange={v => setInputAntiguedad(v ?? '__all__')}>
+                    <SelectTrigger className="h-8 text-sm">
+                      <SelectValue placeholder="Cualquier antigüedad"/>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Cualquier antigüedad</SelectItem>
+                      <SelectItem value="nuevo">Nuevo (&lt;30d)</SelectItem>
+                      <SelectItem value="reciente">Reciente (30–90d)</SelectItem>
+                      <SelectItem value="establecido">Establecido (90–365d)</SelectItem>
+                      <SelectItem value="veterano">Veterano (1–3 años)</SelectItem>
+                      <SelectItem value="leal">Leal (&gt;3 años)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* col 4 vacía */}
+              </div>
+
+              {/* Fila 3: días de inactividad */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Días inactivo mín.</p>
+                  <Input
+                    type="number"
+                    min="0"
+                    placeholder="ej. 30"
+                    value={inputDiasMin}
+                    onChange={e => setInputDiasMin(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleBuscar()}
+                    className="h-8 text-sm"
+                  />
+                </div>
+                <div>
+                  <p className="text-xs text-gray-400 mb-1">Días inactivo máx.</p>
+                  <Input
+                    type="number"
+                    min="0"
+                    placeholder="ej. 180"
+                    value={inputDiasMax}
+                    onChange={e => setInputDiasMax(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handleBuscar()}
+                    className="h-8 text-sm"
+                  />
+                </div>
+                {/* cols 3 & 4 vacías — espacio para futuras extensiones */}
+              </div>
+
               {/* Botones de acción */}
               <div className="flex items-center gap-2">
                 <Button size="sm" onClick={handleBuscar} className="h-8 text-xs gap-1.5">
@@ -1026,7 +1277,7 @@ export default function Dashboard() {
             </div>
           </CardHeader>
           <CardContent>
-            {/* Tarjetas financieras */}
+            {/* Tarjetas financieras — totales de la página actual */}
             {jugadores.length > 0 && !loadingJug && (
               <div className="grid grid-cols-3 gap-3 mb-4">
                 <div className="rounded-lg bg-green-50 border border-green-100 px-4 py-3">
@@ -1060,16 +1311,36 @@ export default function Dashboard() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-gray-100">
-                        <th className="text-left px-3 py-2 text-xs font-medium text-gray-500">Usuario</th>
-                        <th className="text-left px-3 py-2 text-xs font-medium text-gray-500">Agente</th>
-                        <th className="text-right px-3 py-2 text-xs font-medium text-green-600">Cargas</th>
-                        <th className="text-right px-3 py-2 text-xs font-medium text-gray-400">#</th>
-                        <th className="text-right px-3 py-2 text-xs font-medium text-red-500">Retiros</th>
-                        <th className="text-right px-3 py-2 text-xs font-medium text-gray-400">#</th>
-                        <th className="text-right px-3 py-2 text-xs font-medium text-blue-600">Neto</th>
-                        <th className="text-left px-3 py-2 text-xs font-medium text-gray-500">Nivel</th>
-                        <th className="text-left px-3 py-2 text-xs font-medium text-gray-500">Estado</th>
-                        <th className="text-right px-3 py-2 text-xs font-medium text-gray-500">Días sin mov.</th>
+                        {/* Sortable columns show a sort indicator when active */}
+                        {([
+                          { col: 'username',     label: 'Usuario',      align: 'left',  color: 'text-gray-500'  },
+                          { col: 'agente',       label: 'Agente',       align: 'left',  color: 'text-gray-500'  },
+                          { col: 'total_cargas', label: 'Cargas',       align: 'right', color: 'text-green-600' },
+                          { col: 'cant_cargas',  label: '#',            align: 'right', color: 'text-gray-400'  },
+                          { col: 'total_retiros',label: 'Retiros',      align: 'right', color: 'text-red-500'   },
+                          { col: 'cant_retiros', label: '#',            align: 'right', color: 'text-gray-400'  },
+                          { col: 'neto',         label: 'Neto',         align: 'right', color: 'text-blue-600'  },
+                          { col: null,           label: 'Nivel',        align: 'left',  color: 'text-gray-500'  },
+                          { col: null,           label: 'Estado',       align: 'left',  color: 'text-gray-500'  },
+                          { col: null,           label: 'Contexto',     align: 'left',  color: 'text-gray-500'  },
+                          { col: 'dias_ultimo',  label: 'Días sin mov.',align: 'right', color: 'text-gray-500'  },
+                        ] as const).map(({ col, label, align, color }) => (
+                          col
+                            ? (
+                              <th
+                                key={col}
+                                onClick={() => handleJugSort(col)}
+                                className={`px-3 py-2 text-xs font-medium ${color} text-${align} cursor-pointer select-none hover:text-gray-700`}
+                              >
+                                {label}
+                                {jugSortBy === col ? (jugSortOrder === 'asc' ? ' ▲' : ' ▼') : ''}
+                              </th>
+                            ) : (
+                              <th key={label} className={`px-3 py-2 text-xs font-medium ${color} text-${align}`}>
+                                {label}
+                              </th>
+                            )
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
@@ -1104,6 +1375,20 @@ export default function Dashboard() {
                                 </Badge>
                               )}
                             </td>
+                            <td className="px-3 py-2">
+                              <div className="flex flex-col gap-0.5">
+                                {j.valor_riesgo && (
+                                  <Badge className={`text-xs ${RIESGO_STYLE[j.valor_riesgo] ?? 'bg-gray-100 text-gray-600'}`}>
+                                    {j.valor_riesgo}
+                                  </Badge>
+                                )}
+                                {j.antiguedad && (
+                                  <Badge className={`text-xs ${ANTIGUEDAD_STYLE[j.antiguedad] ?? 'bg-gray-100 text-gray-600'}`}>
+                                    {j.antiguedad}
+                                  </Badge>
+                                )}
+                              </div>
+                            </td>
                             <td className="px-3 py-2 text-right">
                               {j.dias_ultimo != null && (
                                 <span className={j.dias_ultimo > 60 ? 'text-red-600 font-medium' : j.dias_ultimo > 30 ? 'text-orange-500' : 'text-gray-600'}>
@@ -1119,6 +1404,57 @@ export default function Dashboard() {
                 </div>
               )
             }
+
+            {/* ── Controles de paginación ─────────────────────────────── */}
+            {jugTotal > 0 && !loadingJug && (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3">
+                {/* Info de paginación */}
+                <span className="text-xs text-gray-400">
+                  {((jugPage - 1) * jugLimit + 1).toLocaleString('es-AR')}–
+                  {Math.min(jugPage * jugLimit, jugTotal).toLocaleString('es-AR')} de{' '}
+                  {jugTotal.toLocaleString('es-AR')} jugadores
+                </span>
+
+                <div className="flex items-center gap-2">
+                  {/* Selector de filas por página */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-gray-400">Filas:</span>
+                    <select
+                      value={jugLimit}
+                      onChange={e => { setJugLimit(Number(e.target.value)); setJugPage(1) }}
+                      className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-700"
+                    >
+                      {[50, 100, 200, 500].map(n => (
+                        <option key={n} value={n}>{n}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Anterior / Siguiente */}
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline" size="sm"
+                      onClick={() => setJugPage(p => Math.max(1, p - 1))}
+                      disabled={jugPage <= 1}
+                      className="h-7 px-2 text-xs"
+                    >
+                      ← Ant.
+                    </Button>
+                    <span className="text-xs text-gray-500 px-1">
+                      {jugPage} / {jugTotalPages}
+                    </span>
+                    <Button
+                      variant="outline" size="sm"
+                      onClick={() => setJugPage(p => Math.min(jugTotalPages, p + 1))}
+                      disabled={jugPage >= jugTotalPages}
+                      className="h-7 px-2 text-xs"
+                    >
+                      Sig. →
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
