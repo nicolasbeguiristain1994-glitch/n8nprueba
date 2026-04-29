@@ -120,6 +120,11 @@ export default function Dashboard() {
 
   const [jugadores,      setJugadores]      = useState<CasinoJugador[]>([])
   const [jugTotal,       setJugTotal]       = useState(0)
+  // Full-set financial aggregates from the server (independent of page size)
+  const [jugSumCargas,      setJugSumCargas]      = useState(0)
+  const [jugSumRetiros,     setJugSumRetiros]     = useState(0)
+  const [jugSumCantCargas,  setJugSumCantCargas]  = useState(0)
+  const [jugSumCantRetiros, setJugSumCantRetiros] = useState(0)
   const [jugPage,        setJugPage]        = useState(1)
   const [jugLimit,       setJugLimit]       = useState(10)
   const [jugSortBy,      setJugSortBy]      = useState('total_cargas')
@@ -222,9 +227,19 @@ export default function Dashboard() {
     params.set('sortOrder', jugSortOrder)
     const qs = params.toString()
     fetchJson<CasinoJugadoresResponse>(`/api/dashboard/casino/players${qs ? '?' + qs : ''}`)
-      .then(d => { setJugadores(d.jugadores ?? []); setJugTotal(d.total ?? 0); setJugError(null) })
+      .then(d => {
+        setJugadores(d.jugadores ?? [])
+        setJugTotal(d.total ?? 0)
+        setJugSumCargas(d.total_cargas_sum   ?? 0)
+        setJugSumRetiros(d.total_retiros_sum  ?? 0)
+        setJugSumCantCargas(d.total_cant_cargas  ?? 0)
+        setJugSumCantRetiros(d.total_cant_retiros ?? 0)
+        setJugError(null)
+      })
       .catch((e: unknown) => {
         setJugadores([]); setJugTotal(0)
+        setJugSumCargas(0); setJugSumRetiros(0)
+        setJugSumCantCargas(0); setJugSumCantRetiros(0)
         setJugError(e instanceof Error ? e.message : 'Error al cargar jugadores')
       })
       .finally(() => setLoadingJug(false))
@@ -272,9 +287,10 @@ export default function Dashboard() {
     ? vips
     : vips.filter(v => v.agente === filterAgente)
 
-  // Totales financieros de la página actual (no del set completo cuando hay paginación)
-  const finCargas  = jugadores.reduce((s, j) => s + Number(j.total_cargas),  0)
-  const finRetiros = jugadores.reduce((s, j) => s + Number(j.total_retiros), 0)
+  // Totales financieros del set completo (todos los jugadores que cumplen los filtros,
+  // no solo la página actual). Vienen del servidor en total_cargas_sum / total_retiros_sum.
+  const finCargas  = jugSumCargas
+  const finRetiros = jugSumRetiros
   const finNeto    = finCargas - finRetiros
   const jugTotalPages = Math.ceil(jugTotal / jugLimit)
 
@@ -1400,12 +1416,12 @@ export default function Dashboard() {
                 <div className="rounded-lg bg-green-50 border border-green-100 px-4 py-3">
                   <p className="text-xs text-green-600 font-medium mb-0.5">Σ Cargas</p>
                   <p className="text-xl font-bold text-green-700">{fmtMoney(finCargas)}</p>
-                  <p className="text-xs text-green-500 mt-0.5">{jugadores.reduce((s,j) => s + j.cant_cargas, 0).toLocaleString('es-AR')} operaciones</p>
+                  <p className="text-xs text-green-500 mt-0.5">{jugSumCantCargas.toLocaleString('es-AR')} operaciones</p>
                 </div>
                 <div className="rounded-lg bg-red-50 border border-red-100 px-4 py-3">
                   <p className="text-xs text-red-600 font-medium mb-0.5">Σ Retiros</p>
                   <p className="text-xl font-bold text-red-700">−{fmtMoney(finRetiros)}</p>
-                  <p className="text-xs text-red-400 mt-0.5">{jugadores.reduce((s,j) => s + j.cant_retiros, 0).toLocaleString('es-AR')} operaciones</p>
+                  <p className="text-xs text-red-400 mt-0.5">{jugSumCantRetiros.toLocaleString('es-AR')} operaciones</p>
                 </div>
                 <div className={`rounded-lg border px-4 py-3 ${finNeto >= 0 ? 'bg-blue-50 border-blue-100' : 'bg-orange-50 border-orange-100'}`}>
                   <p className={`text-xs font-medium mb-0.5 ${finNeto >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>Neto</p>

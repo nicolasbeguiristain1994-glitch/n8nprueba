@@ -26,10 +26,17 @@ export interface CasinoJugador {
 }
 
 export interface CasinoJugadoresResponse {
-  jugadores: CasinoJugador[]
-  total:     number
-  page:      number
-  limit:     number
+  jugadores:          CasinoJugador[]
+  total:              number
+  page:               number
+  limit:              number
+  // Aggregate totals across the FULL filtered set (not just the current page).
+  // Computed server-side alongside the COUNT query so the UI can display
+  // correct Σ Cargas / Σ Retiros regardless of page size.
+  total_cargas_sum:   number
+  total_retiros_sum:  number
+  total_cant_cargas:  number
+  total_cant_retiros: number
 }
 
 // ── Sort whitelist — only these column aliases may appear in ORDER BY ─────────
@@ -226,8 +233,12 @@ export async function GET(req: Request) {
   const hasFechaFilter = !!(fechaDesdeParam || fechaHastaParam)
 
   try {
-    let rows:  CasinoJugador[]
-    let total: number
+    let rows:            CasinoJugador[]
+    let total:           number
+    let totalCargasSum:  number = 0
+    let totalRetirosSum: number = 0
+    let totalCantCargas: number = 0
+    let totalCantRetiros: number = 0
 
     if (hasFechaFilter) {
       // ── Modo período: agrega transacciones del rango dado ─────────────────
@@ -257,6 +268,7 @@ export async function GET(req: Request) {
             COUNT(*)      FILTER (WHERE ct.tipo = 'retiro')::int      AS cant_retiros
           FROM casino_transactions ct
           WHERE ct.agente = ANY(${AGENTES_SQL_ARRAY})
+            AND ct.username != ct.agente            -- excluye Carga/Retiro indirecto (transferencias de capital entre agentes)
             AND ($1::text IS NULL OR ct.agente   = $1)
             AND ($2::date IS NULL OR ct.fecha   >= $2::date)
             AND ($3::date IS NULL OR ct.fecha   <= $3::date)
@@ -320,16 +332,25 @@ export async function GET(req: Request) {
            LIMIT $9 OFFSET $10`,
           [...periodParams, limitParam, offset],
         ),
-        query<{ total: number }>(
+        query<{ total: number; total_cargas_sum: string; total_retiros_sum: string; total_cant_cargas: number; total_cant_retiros: number }>(
           `${ctePeriodo}
-           SELECT COUNT(*)::int AS total
+           SELECT
+             COUNT(*)::int                                        AS total,
+             COALESCE(SUM(p.total_cargas),  0)::bigint           AS total_cargas_sum,
+             COALESCE(SUM(p.total_retiros), 0)::bigint           AS total_retiros_sum,
+             COALESCE(SUM(p.cant_cargas),   0)::int              AS total_cant_cargas,
+             COALESCE(SUM(p.cant_retiros),  0)::int              AS total_cant_retiros
            ${joinAndWhere}`,
           periodParams,
         ),
       ])
 
-      rows  = dataRows
-      total = countRows[0]?.total ?? 0
+      rows             = dataRows
+      total            = countRows[0]?.total            ?? 0
+      totalCargasSum   = Number(countRows[0]?.total_cargas_sum  ?? 0)
+      totalRetirosSum  = Number(countRows[0]?.total_retiros_sum ?? 0)
+      totalCantCargas  = countRows[0]?.total_cant_cargas  ?? 0
+      totalCantRetiros = countRows[0]?.total_cant_retiros ?? 0
 
     } else {
       // ── Modo histórico: usa totales acumulados de casino_players ──────────
@@ -399,23 +420,36 @@ export async function GET(req: Request) {
            LIMIT $7 OFFSET $8`,
           [...histParams, limitParam, offset],
         ),
-        query<{ total: number }>(
-          `SELECT COUNT(*)::int AS total
+        query<{ total: number; total_cargas_sum: string; total_retiros_sum: string; total_cant_cargas: number; total_cant_retiros: number }>(
+          `SELECT
+             COUNT(*)::int                                        AS total,
+             COALESCE(SUM(total_cargas),  0)::bigint             AS total_cargas_sum,
+             COALESCE(SUM(total_retiros), 0)::bigint             AS total_retiros_sum,
+             COALESCE(SUM(cant_cargas),   0)::int                AS total_cant_cargas,
+             COALESCE(SUM(cant_retiros),  0)::int                AS total_cant_retiros
            FROM casino_players
            ${histWhere}`,
           histParams,
         ),
       ])
 
-      rows  = dataRows
-      total = countRows[0]?.total ?? 0
+      rows             = dataRows
+      total            = countRows[0]?.total            ?? 0
+      totalCargasSum   = Number(countRows[0]?.total_cargas_sum  ?? 0)
+      totalRetirosSum  = Number(countRows[0]?.total_retiros_sum ?? 0)
+      totalCantCargas  = countRows[0]?.total_cant_cargas  ?? 0
+      totalCantRetiros = countRows[0]?.total_cant_retiros ?? 0
     }
 
     return NextResponse.json({
-      jugadores: rows,
+      jugadores:          rows,
       total,
-      page:  pageParam,
-      limit: limitParam,
+      page:               pageParam,
+      limit:              limitParam,
+      total_cargas_sum:   totalCargasSum,
+      total_retiros_sum:  totalRetirosSum,
+      total_cant_cargas:  totalCantCargas,
+      total_cant_retiros: totalCantRetiros,
     } satisfies CasinoJugadoresResponse)
 
   } catch (e) {
