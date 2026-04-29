@@ -361,6 +361,9 @@ export default function Contacts() {
       filterGaming && `juego-${filterGaming}`,
       segment && `nivel-${segment}`,
       search && `busq-${search}`,
+      filterActividad && `actividad-${filterActividad}`,
+      filterValorRiesgo && `riesgo-${filterValorRiesgo}`,
+      filterAntiguedad && `antiguedad-${filterAntiguedad}`,
     ].filter(Boolean).join('_') || 'todos'
 
     const filename = `contactos_${filters}_${new Date().toISOString().slice(0,10)}.${format}`
