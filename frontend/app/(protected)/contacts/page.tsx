@@ -111,6 +111,7 @@ export default function Contacts() {
 
   const VALOR_RIESGO_STYLE: Record<string, string> = {
     critico: 'bg-red-100 text-red-700',
+    alto:    'bg-red-50 text-red-600',
     medio:   'bg-orange-100 text-orange-700',
     bajo:    'bg-yellow-100 text-yellow-700',
   }
