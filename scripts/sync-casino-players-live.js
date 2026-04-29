@@ -146,6 +146,9 @@ function aggregate(txs) {
     const p  = map.get(username)
     const dl = detalles.toLowerCase()
 
+    // Excluir transferencias de capital entre agentes (Carga/Retiro indirecto)
+    if (dl.includes('indirecto')) continue
+
     if (dl.includes('carga')) {
       p.total_cargas += Math.round(Math.abs(valor))
       p.cant_cargas++
@@ -163,64 +166,100 @@ function aggregate(txs) {
   return [...map.values()]
 }
 
-// ── Insertar transacciones individuales ───────────────────────────────────────
+// ── Insertar transacciones en batch ──────────────────────────────────────────
+// En lugar de 1 query por fila (lento + timeout), usa INSERT con múltiples
+// VALUES por batch (500 filas). Reduce 75K queries → ~150 queries.
+
+const BATCH_SIZE = 500
+
+/**
+ * Extracts the UTC timestamp from a Zeus fecha string if it contains time info.
+ * Zeus returns strings like "2025-11-26T02:59:58.000Z". We store this as-is
+ * so that hour-level filtering is possible. For date-only strings we return null.
+ */
+function extractUtcTs(fechaStr) {
+  if (!fechaStr) return null
+  // Must contain a T or space separator to have time component
+  if (!fechaStr.includes('T') && !fechaStr.includes(' ')) return null
+  const d = new Date(fechaStr)
+  if (isNaN(d.getTime())) return null
+  return d.toISOString()  // normalize to clean UTC ISO (e.g. "2025-11-26T02:59:58.000Z")
+}
 
 async function insertTransactions(agente, txs) {
   if (!txs.length) return 0
 
-  const client = await pool.connect()
+  // ── Parsear y filtrar ─────────────────────────────────────────────────────
+  // withId:    [ [id_rec, fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles] ]
+  // withoutId: [ [fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles] ]
+  const withId    = []
+  const withoutId = []
+
+  for (const tx of txs) {
+    const { id: id_rec = null, username, valor = 0, detalles = '', fecha } = tx
+    if (!username || !fecha) continue
+
+    const dl   = detalles.toLowerCase()
+    // Excluir transferencias de capital entre agentes — no son transacciones de jugadores
+    if (dl.includes('indirecto')) continue
+    const tipo = dl.includes('carga') ? 'carga' : dl.includes('retiro') ? 'retiro' : null
+    if (!tipo) continue
+
+    const monto        = Math.round(Math.abs(valor))
+    const fechaDate    = utcToArgDate(fecha)
+    const fechaHoraUtc = extractUtcTs(fecha)   // full UTC timestamp; null for date-only strings
+    if (!fechaDate) continue
+
+    // Siempre usar el agente consultado en Zeus, no creator_username.
+    if (id_rec) {
+      withId.push([id_rec, fechaDate, fechaHoraUtc, agente, username, tipo, monto, detalles])
+    } else {
+      withoutId.push([fechaDate, fechaHoraUtc, agente, username, tipo, monto, detalles])
+    }
+  }
+
+  // ── Helper: ejecuta un batch INSERT, retorna rowCount ─────────────────────
+  async function runBatch(sql, params) {
+    const res = await pool.query(sql, params)
+    return res.rowCount ?? 0
+  }
+
   let inserted = 0
 
-  try {
-    for (const tx of txs) {
-      const {
-        id:             id_rec   = null,   // IDREC de Zeus (puede no existir)
-        username,
-        creator_username,
-        valor          = 0,
-        detalles       = '',
-        fecha,
-      } = tx
+  // ── Batch: filas CON id_rec ───────────────────────────────────────────────
+  for (let i = 0; i < withId.length; i += BATCH_SIZE) {
+    const chunk  = withId.slice(i, i + BATCH_SIZE)
+    const values = chunk.map((_, idx) => {
+      const b = idx * 8
+      return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8})`
+    }).join(',')
+    inserted += await runBatch(
+      `INSERT INTO casino_transactions
+         (id_rec, fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles)
+       VALUES ${values}
+       ON CONFLICT (id_rec) WHERE id_rec IS NOT NULL DO UPDATE
+         SET fecha_hora_utc = EXCLUDED.fecha_hora_utc
+         WHERE casino_transactions.fecha_hora_utc IS NULL`,
+      chunk.flat(),
+    )
+  }
 
-      if (!username || !fecha) continue
-
-      const dl   = detalles.toLowerCase()
-      const tipo = dl.includes('carga') ? 'carga' : dl.includes('retiro') ? 'retiro' : null
-      if (!tipo) continue
-
-      const monto       = Math.round(Math.abs(valor))
-      const fechaDate   = utcToArgDate(fecha)   // convierte UTC → fecha en hora Argentina
-      if (!fechaDate) continue
-
-      // Siempre usar el agente que se está consultando en Zeus, no creator_username.
-      // Para transacciones de jugadores: creator_username == agente (mismo valor).
-      // Para "Carga indirecto" (capital de adminbet → betcoin): creator_username='adminbet'
-      // pero el agente dueño del movimiento ES betcoin — se perdería bajo adminbet si no.
-      const agenteNombre = agente
-
-      try {
-        if (id_rec) {
-          // Tiene ID de Zeus — upsert por id_rec
-          await client.query(`
-            INSERT INTO casino_transactions (id_rec, fecha, agente, username, tipo, monto, raw_detalles)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (id_rec) WHERE id_rec IS NOT NULL DO NOTHING
-          `, [id_rec, fechaDate, agenteNombre, username, tipo, monto, detalles])
-        } else {
-          // Sin ID — upsert por (fecha, username, tipo, monto, agente)
-          await client.query(`
-            INSERT INTO casino_transactions (fecha, agente, username, tipo, monto, raw_detalles)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (fecha, username, tipo, monto, agente) WHERE id_rec IS NULL DO NOTHING
-          `, [fechaDate, agenteNombre, username, tipo, monto, detalles])
-        }
-        inserted++
-      } catch (_) {
-        // Conflicto de unicidad — registro ya existe, ignorar
-      }
-    }
-  } finally {
-    client.release()
+  // ── Batch: filas SIN id_rec ───────────────────────────────────────────────
+  for (let i = 0; i < withoutId.length; i += BATCH_SIZE) {
+    const chunk  = withoutId.slice(i, i + BATCH_SIZE)
+    const values = chunk.map((_, idx) => {
+      const b = idx * 7
+      return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7})`
+    }).join(',')
+    inserted += await runBatch(
+      `INSERT INTO casino_transactions
+         (fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles)
+       VALUES ${values}
+       ON CONFLICT (fecha, username, tipo, monto, agente) WHERE id_rec IS NULL DO UPDATE
+         SET fecha_hora_utc = EXCLUDED.fecha_hora_utc
+         WHERE casino_transactions.fecha_hora_utc IS NULL`,
+      chunk.flat(),
+    )
   }
 
   return inserted

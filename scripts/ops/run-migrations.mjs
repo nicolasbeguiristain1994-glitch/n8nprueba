@@ -117,6 +117,8 @@ const MIGRATIONS = [
   { file: 'db/migrations/027_casino_actividad_perdido.sql',      label: '027 — casino_players seg_actividad: add perdido value' },
   { file: 'db/migrations/028_casino_transactions.sql',           label: '028 — casino_transactions table (individual transactions by date)' },
   { file: 'db/migrations/029_casino_player_labels.sql',          label: '029 — casino_players.labels TEXT[] column (operator tags)' },
+  { file: 'db/migrations/030_cleanup_ghost_agent_players.sql',   label: '030 — delete ghost agent-as-player rows from casino_players + casino_transactions' },
+  { file: 'db/migrations/031_casino_transactions_timestamp.sql', label: '031 — casino_transactions.fecha_hora_utc TIMESTAMPTZ for sub-day filtering' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

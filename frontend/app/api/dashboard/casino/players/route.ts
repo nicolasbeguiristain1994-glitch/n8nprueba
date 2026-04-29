@@ -101,6 +101,95 @@ function isValidDate(s: string): boolean {
   return !isNaN(d.getTime())
 }
 
+/** Adds n days to a YYYY-MM-DD string. Uses noon UTC to avoid DST edge cases. */
+function addDays(date: string, n: number): string {
+  const d = new Date(date + 'T12:00:00Z')
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+
+/**
+ * Converts a UTC datetime (date + HH:MM) to the Argentina local date (UTC-3, no DST).
+ * Used when tz_mode=utc to map operator-entered UTC timestamps to stored local dates.
+ */
+function utcDatetimeToArgDate(date: string, time: string): string {
+  const utcMs = new Date(date + 'T' + time + ':00Z').getTime()
+  return new Date(utcMs - 3 * 3_600_000).toISOString().slice(0, 10)
+}
+
+/**
+ * Computes effective date bounds for rows that lack fecha_hora_utc (old rows).
+ * These are DATE-level bounds used as the fallback when sub-day precision is unavailable.
+ *
+ * Matches Zeus semantics:
+ *   "From: 2026-04-01 00:00 Local" → fecha >= '2026-04-01'
+ *   "To:   2026-04-03 00:00 Local" → fecha <  '2026-04-03'  (exclusive)
+ *
+ * When horaHasta > '00:00' (local) the target date IS included for old rows
+ * (best-effort: we don't know if the transaction was before or after that hour).
+ */
+function effectiveDateBounds(
+  fechaDesde:  string | null,
+  fechaHasta:  string | null,
+  horaDesde:   string,
+  horaHasta:   string,
+  tzMode:      'local' | 'utc',
+): { desde: string | null; hastaExclusive: string | null } {
+  let desde: string | null = null
+  let hastaExclusive: string | null = null
+
+  if (fechaDesde) {
+    desde = tzMode === 'utc'
+      ? utcDatetimeToArgDate(fechaDesde, horaDesde)
+      : fechaDesde
+  }
+
+  if (fechaHasta) {
+    if (tzMode === 'utc') {
+      const argDate    = utcDatetimeToArgDate(fechaHasta, horaHasta)
+      const argMs      = new Date(fechaHasta + 'T' + horaHasta + ':00Z').getTime() - 3 * 3_600_000
+      const argMinutes = new Date(argMs).getUTCHours() * 60 + new Date(argMs).getUTCMinutes()
+      hastaExclusive   = argMinutes > 0 ? addDays(argDate, 1) : argDate
+    } else {
+      // horaHasta '00:00' → exclusive (Zeus default: date not included)
+      // horaHasta > '00:00' → include that date (overinclusive for rows without timestamps,
+      //                       but better than silently dropping the whole day)
+      hastaExclusive = horaHasta === '00:00' ? fechaHasta : addDays(fechaHasta, 1)
+    }
+  }
+
+  return { desde, hastaExclusive }
+}
+
+/**
+ * Computes exact TIMESTAMPTZ bounds for filtering casino_transactions.fecha_hora_utc.
+ *
+ * The operator enters a date+time boundary in local Argentina or UTC, exactly as
+ * Zeus displays it. Both bounds are EXCLUSIVE upper / INCLUSIVE lower:
+ *   "From: 2026-04-01 00:00 Local" → fecha_hora_utc >= '2026-04-01T03:00:00Z'
+ *   "To:   2026-04-03 00:00 Local" → fecha_hora_utc <  '2026-04-03T03:00:00Z'
+ *   "To:   2026-04-03 12:00 Local" → fecha_hora_utc <  '2026-04-03T15:00:00Z'
+ *
+ * Argentina = UTC-3 (fixed, no DST). ISO suffix '-03:00' encodes this directly.
+ * The DB driver and PostgreSQL then normalise to UTC for comparison against
+ * stored TIMESTAMPTZ values (which are also UTC internally).
+ */
+function effectiveTsBounds(
+  fechaDesde:  string | null,
+  fechaHasta:  string | null,
+  horaDesde:   string,          // HH:MM
+  horaHasta:   string,          // HH:MM — upper bound is EXCLUSIVE
+  tzMode:      'local' | 'utc',
+): { desdets: string | null; hastats: string | null } {
+  // Argentina = UTC-3, no DST
+  const TZ = tzMode === 'local' ? '-03:00' : 'Z'
+
+  const desdets = fechaDesde ? `${fechaDesde}T${horaDesde}:00${TZ}` : null
+  const hastats = fechaHasta ? `${fechaHasta}T${horaHasta}:00${TZ}` : null
+
+  return { desdets, hastats }
+}
+
 /**
  * Parse a comma-separated filter param, accepting only whitelisted values.
  * Unknown values are silently dropped; returns an empty array when nothing valid.
@@ -212,6 +301,30 @@ export async function GET(req: Request) {
     )
   }
 
+  // ── Hora / timezone params ─────────────────────────────────────────────────
+  const horaDesde = url.searchParams.get('hora_desde')?.trim() || '00:00'
+  const horaHasta = url.searchParams.get('hora_hasta')?.trim() || '00:00'
+  const tzModeRaw = url.searchParams.get('tz_mode')?.trim()    || 'local'
+  const tzMode: 'local' | 'utc' = tzModeRaw === 'utc' ? 'utc' : 'local'
+
+  const horaRegex = /^([01]\d|2[0-3]):[0-5]\d$/
+  if (!horaRegex.test(horaDesde) || !horaRegex.test(horaHasta)) {
+    return NextResponse.json(
+      { error: 'hora_desde and hora_hasta must be in HH:MM format' },
+      { status: 400 },
+    )
+  }
+
+  // Date-level bounds (fallback for rows without fecha_hora_utc)
+  const { desde: effectiveFechaDesde, hastaExclusive: effectiveFechaHasta } = effectiveDateBounds(
+    fechaDesdeParam, fechaHastaParam, horaDesde, horaHasta, tzMode,
+  )
+
+  // Exact timestamp bounds (used for rows that have fecha_hora_utc — sub-day precision)
+  const { desdets: effectiveTsDesde, hastats: effectiveTsHasta } = effectiveTsBounds(
+    fechaDesdeParam, fechaHastaParam, horaDesde, horaHasta, tzMode,
+  )
+
   // ── New tag-derived filters ─────────────────────────────────────────────────
   // Both are computed from casino_players fields — no join to contact_tags needed.
   const vrVals  = parseFilterValues(url.searchParams.get('valorRiesgo'),  VALOR_RIESGO_ALLOWED)
@@ -245,16 +358,25 @@ export async function GET(req: Request) {
       // Muestra montos reales del período (coincide con lo que muestra Zeus).
       // Une con casino_players solo para obtener segmentación y días sin mov.
       //
-      // Parameter order:
-      //   $1 agente  $2 fecha_desde  $3 fecha_hasta  $4 username
-      //   $5 seg_monto  $6 seg_actividad  $7 dias_min  $8 dias_max
+      // Date+time filtering strategy (dual-precision):
+      //   Rows WITH fecha_hora_utc  → filtered by exact TIMESTAMPTZ bounds ($9/$10)
+      //   Rows WITHOUT (NULL)       → filtered by date bounds ($2/$3) as before
       //
-      // valorRiesgo / antiguedad conditions are appended as static AND clauses
-      // (no extra parameters; values come only from the pre-defined maps above).
+      // Parameter order:
+      //   $1  agente
+      //   $2  fecha_desde_date (DATE, Argentina local, fallback for rows without TS)
+      //   $3  fecha_hasta_date (DATE, exclusive, fallback for rows without TS)
+      //   $4  username
+      //   $5  seg_monto  $6  seg_actividad  $7  dias_min  $8  dias_max
+      //   $9  ts_desde   (TIMESTAMPTZ, inclusive lower — for rows with fecha_hora_utc)
+      //   $10 ts_hasta   (TIMESTAMPTZ, exclusive upper — for rows with fecha_hora_utc)
+      //
+      // valorRiesgo / antiguedad conditions are appended as static AND clauses.
 
       const periodParams: unknown[] = [
-        agenteParam, fechaDesdeParam, fechaHastaParam, usernameParam,
-        nivelParam,  segActividadParam, diasMinParam,  diasMaxParam,
+        agenteParam, effectiveFechaDesde, effectiveFechaHasta, usernameParam,
+        nivelParam,  segActividadParam,   diasMinParam,         diasMaxParam,
+        effectiveTsDesde, effectiveTsHasta,
       ]
 
       const ctePeriodo = `
@@ -268,11 +390,21 @@ export async function GET(req: Request) {
             COUNT(*)      FILTER (WHERE ct.tipo = 'retiro')::int      AS cant_retiros
           FROM casino_transactions ct
           WHERE ct.agente = ANY(${AGENTES_SQL_ARRAY})
-            AND ct.username != ct.agente            -- excluye Carga/Retiro indirecto (transferencias de capital entre agentes)
+            AND ct.username != ct.agente          -- excluye Carga/Retiro indirecto
             AND ($1::text IS NULL OR ct.agente   = $1)
-            AND ($2::date IS NULL OR ct.fecha   >= $2::date)
-            AND ($3::date IS NULL OR ct.fecha   <= $3::date)
             AND ($4::text IS NULL OR ct.username ILIKE '%' || $4 || '%')
+            -- Lower bound: precise TS for rows that have it, date fallback for old rows
+            AND (
+              $9::timestamptz IS NULL
+              OR (ct.fecha_hora_utc IS NOT NULL AND ct.fecha_hora_utc >= $9::timestamptz)
+              OR (ct.fecha_hora_utc IS NULL     AND ct.fecha           >= $2::date)
+            )
+            -- Upper bound (exclusive): same dual strategy
+            AND (
+              $10::timestamptz IS NULL
+              OR (ct.fecha_hora_utc IS NOT NULL AND ct.fecha_hora_utc <  $10::timestamptz)
+              OR (ct.fecha_hora_utc IS NULL     AND ct.fecha            < $3::date)
+            )
           GROUP BY ct.username, ct.agente
           HAVING
             SUM(ct.monto) FILTER (WHERE ct.tipo = 'carga')  > 0
@@ -329,7 +461,7 @@ export async function GET(req: Request) {
              END AS antiguedad
            ${joinAndWhere}
            ORDER BY ${sortCol} ${sortDir}
-           LIMIT $9 OFFSET $10`,
+           LIMIT $11 OFFSET $12`,
           [...periodParams, limitParam, offset],
         ),
         query<{ total: number; total_cargas_sum: string; total_retiros_sum: string; total_cant_cargas: number; total_cant_retiros: number }>(

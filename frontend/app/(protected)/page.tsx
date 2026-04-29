@@ -156,10 +156,15 @@ export default function Dashboard() {
   const [inputDiasMax,     setInputDiasMax]     = useState('')
   const [inputValorRiesgo, setInputValorRiesgo] = useState('__all__')
   const [inputAntiguedad,  setInputAntiguedad]  = useState('__all__')
+  // Hora + zona horaria — para paridad exacta con Zeus (límite superior exclusivo)
+  const [inputHoraDesde, setInputHoraDesde] = useState('00:00')
+  const [inputHoraHasta, setInputHoraHasta] = useState('00:00')
+  const [inputTzMode,    setInputTzMode]    = useState<'local' | 'utc'>('local')
 
   // ── Filtros aplicados (disparan el fetch) ──────────────────────────────────
   const [appliedFilters, setAppliedFilters] = useState({
     username: '', nivel: '__all__', fechaDesde: '', fechaHasta: '',
+    horaDesde: '00:00', horaHasta: '00:00', tzMode: 'local' as 'local' | 'utc',
     segActividad: '__all__', diasMin: '', diasMax: '',
     valorRiesgo: '__all__', antiguedad: '__all__',
   })
@@ -219,8 +224,11 @@ export default function Dashboard() {
     if (appliedFilters.antiguedad  !== '__all__')       params.set('antiguedad',       appliedFilters.antiguedad)
     if (appliedFilters.diasMin)                        params.set('dias_inactivo_min', appliedFilters.diasMin)
     if (appliedFilters.diasMax)                        params.set('dias_inactivo_max', appliedFilters.diasMax)
-    if (appliedFilters.fechaDesde)                     params.set('fecha_desde',      appliedFilters.fechaDesde)
-    if (appliedFilters.fechaHasta)                     params.set('fecha_hasta',      appliedFilters.fechaHasta)
+    if (appliedFilters.fechaDesde)                     params.set('fecha_desde',  appliedFilters.fechaDesde)
+    if (appliedFilters.fechaHasta)                     params.set('fecha_hasta',  appliedFilters.fechaHasta)
+    if (appliedFilters.horaDesde !== '00:00')           params.set('hora_desde',   appliedFilters.horaDesde)
+    if (appliedFilters.horaHasta !== '00:00')           params.set('hora_hasta',   appliedFilters.horaHasta)
+    if (appliedFilters.tzMode    !== 'local')           params.set('tz_mode',      appliedFilters.tzMode)
     params.set('page',      String(jugPage))
     params.set('limit',     String(jugLimit))
     params.set('sortBy',    jugSortBy)
@@ -304,27 +312,39 @@ export default function Dashboard() {
     let desde  = ''
     let hasta  = ''
 
+    // NOTE: hasta is the EXCLUSIVE upper bound (Zeus semantics: fecha < hasta).
+    // "Hoy" → desde=today, hasta=tomorrow → includes today only.
+    // "Ayer" → desde=yesterday, hasta=today → includes yesterday only.
     if (tipo === 'hoy') {
-      desde = hasta = toISODate(hoy)
+      const manana = new Date(hoy); manana.setDate(hoy.getDate() + 1)
+      desde = toISODate(hoy); hasta = toISODate(manana)
     } else if (tipo === 'ayer') {
       const ayer = new Date(hoy); ayer.setDate(hoy.getDate() - 1)
-      desde = hasta = toISODate(ayer)
+      desde = toISODate(ayer); hasta = toISODate(hoy)
     } else if (tipo === 'semana') {
-      const ini = new Date(hoy); ini.setDate(hoy.getDate() - 6)
-      desde = toISODate(ini); hasta = toISODate(hoy)
+      const ini    = new Date(hoy); ini.setDate(hoy.getDate() - 6)
+      const manana = new Date(hoy); manana.setDate(hoy.getDate() + 1)
+      desde = toISODate(ini); hasta = toISODate(manana)
     } else if (tipo === 'mes_anterior') {
-      const primero = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1)
-      const ultimo  = new Date(hoy.getFullYear(), hoy.getMonth(), 0)
-      desde = toISODate(primero); hasta = toISODate(ultimo)
+      const primero    = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1)
+      const primeroAct = new Date(hoy.getFullYear(), hoy.getMonth(), 1)
+      desde = toISODate(primero); hasta = toISODate(primeroAct)
     } else if (tipo === 'mes_actual') {
       const primero = new Date(hoy.getFullYear(), hoy.getMonth(), 1)
-      desde = toISODate(primero); hasta = toISODate(hoy)
+      const manana  = new Date(hoy); manana.setDate(hoy.getDate() + 1)
+      desde = toISODate(primero); hasta = toISODate(manana)
     }
 
     setInputFechaDesde(desde)
     setInputFechaHasta(hasta)
+    setInputHoraDesde('00:00')
+    setInputHoraHasta('00:00')
     setJugPage(1)
-    setAppliedFilters(prev => ({ ...prev, fechaDesde: desde, fechaHasta: hasta }))
+    setAppliedFilters(prev => ({
+      ...prev,
+      fechaDesde: desde, fechaHasta: hasta,
+      horaDesde: '00:00', horaHasta: '00:00',
+    }))
   }
 
   function handleBuscar() {
@@ -334,6 +354,9 @@ export default function Dashboard() {
       nivel:        inputNivel,
       fechaDesde:   inputFechaDesde,
       fechaHasta:   inputFechaHasta,
+      horaDesde:    inputHoraDesde,
+      horaHasta:    inputHoraHasta,
+      tzMode:       inputTzMode,
       segActividad: inputSegAct,
       diasMin:      inputDiasMin,
       diasMax:      inputDiasMax,
@@ -345,11 +368,13 @@ export default function Dashboard() {
   function handleLimpiar() {
     setInputUsername(''); setInputNivel('__all__')
     setInputFechaDesde(''); setInputFechaHasta('')
+    setInputHoraDesde('00:00'); setInputHoraHasta('00:00'); setInputTzMode('local')
     setInputSegAct('__all__'); setInputDiasMin(''); setInputDiasMax('')
     setInputValorRiesgo('__all__'); setInputAntiguedad('__all__')
     setJugPage(1)
     setAppliedFilters({
       username: '', nivel: '__all__', fechaDesde: '', fechaHasta: '',
+      horaDesde: '00:00', horaHasta: '00:00', tzMode: 'local',
       segActividad: '__all__', diasMin: '', diasMax: '',
       valorRiesgo: '__all__', antiguedad: '__all__',
     })
@@ -414,6 +439,8 @@ export default function Dashboard() {
 
   const filtrosActivos = appliedFilters.username || appliedFilters.nivel !== '__all__'
     || appliedFilters.fechaDesde || appliedFilters.fechaHasta
+    || appliedFilters.horaDesde !== '00:00' || appliedFilters.horaHasta !== '00:00'
+    || appliedFilters.tzMode !== 'local'
     || appliedFilters.segActividad !== '__all__'
     || appliedFilters.valorRiesgo  !== '__all__'
     || appliedFilters.antiguedad   !== '__all__'
@@ -1235,11 +1262,30 @@ export default function Dashboard() {
                 ] as const).map(({ key, label }) => {
                   const isActive = (() => {
                     const hoy = new Date(); const t = (d: Date) => toISODate(d)
-                    if (key === 'hoy')          return inputFechaDesde === t(hoy)  && inputFechaHasta === t(hoy)
-                    if (key === 'ayer')          { const a = new Date(hoy); a.setDate(hoy.getDate()-1); return inputFechaDesde === t(a) && inputFechaHasta === t(a) }
-                    if (key === 'semana')         { const i = new Date(hoy); i.setDate(hoy.getDate()-6); return inputFechaDesde === t(i) && inputFechaHasta === t(hoy) }
-                    if (key === 'mes_anterior')   { const p = new Date(hoy.getFullYear(), hoy.getMonth()-1,1); const u = new Date(hoy.getFullYear(),hoy.getMonth(),0); return inputFechaDesde===t(p)&&inputFechaHasta===t(u) }
-                    if (key === 'mes_actual')     { const p = new Date(hoy.getFullYear(), hoy.getMonth(),1); return inputFechaDesde===t(p)&&inputFechaHasta===t(hoy) }
+                    // NOTE: dates use exclusive upper bound (Zeus semantics)
+                    if (key === 'hoy') {
+                      const m = new Date(hoy); m.setDate(hoy.getDate() + 1)
+                      return inputFechaDesde === t(hoy) && inputFechaHasta === t(m)
+                    }
+                    if (key === 'ayer') {
+                      const a = new Date(hoy); a.setDate(hoy.getDate() - 1)
+                      return inputFechaDesde === t(a) && inputFechaHasta === t(hoy)
+                    }
+                    if (key === 'semana') {
+                      const i = new Date(hoy); i.setDate(hoy.getDate() - 6)
+                      const m = new Date(hoy); m.setDate(hoy.getDate() + 1)
+                      return inputFechaDesde === t(i) && inputFechaHasta === t(m)
+                    }
+                    if (key === 'mes_anterior') {
+                      const p  = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1)
+                      const pa = new Date(hoy.getFullYear(), hoy.getMonth(), 1)
+                      return inputFechaDesde === t(p) && inputFechaHasta === t(pa)
+                    }
+                    if (key === 'mes_actual') {
+                      const p = new Date(hoy.getFullYear(), hoy.getMonth(), 1)
+                      const m = new Date(hoy); m.setDate(hoy.getDate() + 1)
+                      return inputFechaDesde === t(p) && inputFechaHasta === t(m)
+                    }
                     return false
                   })()
                   return (
@@ -1258,25 +1304,61 @@ export default function Dashboard() {
                 })}
               </div>
 
-              {/* Fila 1: fechas + búsqueda + nivel */}
+              {/* Fila 1: fechas + hora + tz + búsqueda + nivel */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
                 <div>
                   <p className="text-xs text-gray-400 mb-1">Fecha Desde</p>
-                  <Input
-                    type="date"
-                    value={inputFechaDesde}
-                    onChange={e => setInputFechaDesde(e.target.value)}
-                    className="h-8 text-sm"
-                  />
+                  <div className="flex gap-1">
+                    <Input
+                      type="date"
+                      value={inputFechaDesde}
+                      onChange={e => setInputFechaDesde(e.target.value)}
+                      className="h-8 text-sm flex-1 min-w-0"
+                    />
+                    <Input
+                      type="time"
+                      value={inputHoraDesde}
+                      onChange={e => setInputHoraDesde(e.target.value)}
+                      className="h-8 text-xs w-20 shrink-0"
+                      title="Hora desde (HH:MM)"
+                    />
+                  </div>
                 </div>
                 <div>
-                  <p className="text-xs text-gray-400 mb-1">Fecha Hasta</p>
-                  <Input
-                    type="date"
-                    value={inputFechaHasta}
-                    onChange={e => setInputFechaHasta(e.target.value)}
-                    className="h-8 text-sm"
-                  />
+                  <div className="flex items-center justify-between mb-1">
+                    <p className="text-xs text-gray-400">Fecha Hasta <span className="text-gray-300">(excl.)</span></p>
+                    {/* Local / UTC toggle */}
+                    <div className="flex rounded border border-gray-200 overflow-hidden">
+                      {(['local', 'utc'] as const).map(m => (
+                        <button
+                          key={m}
+                          onClick={() => setInputTzMode(m)}
+                          className={`px-1.5 py-0.5 text-xs leading-none transition-colors ${
+                            inputTzMode === m
+                              ? 'bg-gray-700 text-white'
+                              : 'bg-white text-gray-400 hover:text-gray-600'
+                          }`}
+                        >
+                          {m.toUpperCase()}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-1">
+                    <Input
+                      type="date"
+                      value={inputFechaHasta}
+                      onChange={e => setInputFechaHasta(e.target.value)}
+                      className="h-8 text-sm flex-1 min-w-0"
+                    />
+                    <Input
+                      type="time"
+                      value={inputHoraHasta}
+                      onChange={e => setInputHoraHasta(e.target.value)}
+                      className="h-8 text-xs w-20 shrink-0"
+                      title="Hora hasta (HH:MM) — 00:00 = exclusivo (como Zeus)"
+                    />
+                  </div>
                 </div>
                 <div>
                   <p className="text-xs text-gray-400 mb-1">Jugador</p>
