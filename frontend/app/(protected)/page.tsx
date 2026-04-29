@@ -9,7 +9,10 @@ import {
   MessageSquare, Send, AlertCircle, Eye, Wifi, Clock,
   BarChart2, Shield, TrendingUp, TrendingDown, Users, Star, Download, Search,
   TriangleAlert, Flame, BadgeDollarSign, HeartPulse, RefreshCw, DatabaseZap,
+  Tag, X,
 } from 'lucide-react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { AGENTES_PERMITIDOS } from '@/lib/casino-agents'
 import { Input } from '@/components/ui/input'
 import { fetchJson } from '@/lib/fetchJson'
 import type { CasinoSummary, CasinoAgente, CasinoVip } from '@/app/api/dashboard/casino/route'
@@ -118,7 +121,7 @@ export default function Dashboard() {
   const [jugadores,      setJugadores]      = useState<CasinoJugador[]>([])
   const [jugTotal,       setJugTotal]       = useState(0)
   const [jugPage,        setJugPage]        = useState(1)
-  const [jugLimit,       setJugLimit]       = useState(100)
+  const [jugLimit,       setJugLimit]       = useState(10)
   const [jugSortBy,      setJugSortBy]      = useState('total_cargas')
   const [jugSortOrder,   setJugSortOrder]   = useState<'asc' | 'desc'>('desc')
   const [loadingJug,     setLoadingJug]     = useState(false)
@@ -127,6 +130,16 @@ export default function Dashboard() {
   const [refreshing,     setRefreshing]     = useState(false)
   const [syncing,        setSyncing]        = useState(false)
   const [syncMsg,        setSyncMsg]        = useState<string | null>(null)
+
+  // ── Estado para edición de etiquetas de jugador ────────────────────────────
+  const [labelTarget,  setLabelTarget]  = useState<string | null>(null)   // username en edición
+  const [labelCurrent, setLabelCurrent] = useState<string[]>([])
+  const [labelInput,   setLabelInput]   = useState('')
+  const [labelSaving,  setLabelSaving]  = useState(false)
+
+  // ── Paginación del sector de riesgo (cliente) ──────────────────────────────
+  const [riskPages, setRiskPages] = useState({ extractores: 1, deficit: 1, recuperables: 1 })
+  const RISK_PAGE_SIZE = 10
 
   // ── Filtros del panel de búsqueda (inputs sin aplicar) ─────────────────────
   const [inputUsername,   setInputUsername]   = useState('')
@@ -244,8 +257,10 @@ export default function Dashboard() {
   const agts = casino?.agentes ?? []
   const vips = casino?.vips    ?? []
 
-  // Agentes únicos para el filtro
-  const agentesDisponibles = agts.map(a => a.agente)
+  // Agentes únicos para el filtro — sólo los de la lista permitida
+  const agentesDisponibles = agts
+    .map(a => a.agente)
+    .filter(a => (AGENTES_PERMITIDOS as readonly string[]).includes(a))
 
   // Filtro de agentes para la tabla por agente
   const agtesFiltrados = filterAgente === '__all__'
@@ -322,6 +337,53 @@ export default function Dashboard() {
       segActividad: '__all__', diasMin: '', diasMax: '',
       valorRiesgo: '__all__', antiguedad: '__all__',
     })
+  }
+
+  function openLabels(j: CasinoJugador) {
+    setLabelTarget(j.username)
+    setLabelCurrent(j.labels ?? [])
+    setLabelInput('')
+    setLabelError(null)
+  }
+
+  function addLabel() {
+    const t = labelInput.trim()
+    if (!t || labelCurrent.includes(t) || labelCurrent.length >= 10) return
+    setLabelCurrent(prev => [...prev, t])
+    setLabelInput('')
+  }
+
+  function removeLabel(l: string) {
+    setLabelCurrent(prev => prev.filter(x => x !== l))
+  }
+
+  const [labelError, setLabelError] = useState<string | null>(null)
+
+  async function saveLabels() {
+    if (!labelTarget) return
+    setLabelSaving(true)
+    setLabelError(null)
+    try {
+      const res = await fetch(`/api/dashboard/casino/players/${encodeURIComponent(labelTarget)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ labels: labelCurrent }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setLabelError((body as { error?: string }).error ?? `Error ${res.status}`)
+        return
+      }
+      // Actualizar localmente sin re-fetch
+      setJugadores(prev => prev.map(j =>
+        j.username === labelTarget ? { ...j, labels: labelCurrent } : j
+      ))
+      setLabelTarget(null)
+    } catch {
+      setLabelError('Error de red. Verificá la conexión.')
+    } finally {
+      setLabelSaving(false)
+    }
   }
 
   function handleJugSort(col: string) {
@@ -784,154 +846,205 @@ export default function Dashboard() {
 
             {riskOpen && <CardContent className="p-0">
               {/* Tab: Nuevos extractores */}
-              {riskTab === 'extractores' && (
-                <div className="overflow-x-auto">
-                  {risk.extractores.length === 0
-                    ? <p className="text-sm text-gray-400 px-4 py-4">Sin nuevos extractores detectados.</p>
-                    : (
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-gray-100 bg-red-50">
-                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Usuario</th>
-                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Agente</th>
-                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Nivel</th>
-                            <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Días desde ingreso</th>
-                            <th className="text-right px-4 py-2 text-xs font-medium text-green-600">Cargas</th>
-                            <th className="text-right px-4 py-2 text-xs font-medium text-gray-400">#</th>
-                            <th className="text-right px-4 py-2 text-xs font-medium text-red-500">Retiros</th>
-                            <th className="text-right px-4 py-2 text-xs font-medium text-gray-400">#</th>
-                            <th className="text-right px-4 py-2 text-xs font-medium text-orange-600">% Extracción</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {risk.extractores.map((e, i) => (
-                            <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-red-50/40">
-                              <td className="px-4 py-2.5 font-mono text-xs">{e.username}</td>
-                              <td className="px-4 py-2.5 text-gray-500 text-xs">{e.agente}</td>
-                              <td className="px-4 py-2.5">
-                                <Badge className={`text-xs ${NIVEL_STYLE[e.seg_monto] ?? 'bg-gray-100 text-gray-600'}`}>
-                                  {NIVEL_LABEL[e.seg_monto] ?? e.seg_monto}
-                                </Badge>
-                              </td>
-                              <td className="px-4 py-2.5 text-right text-gray-600">{e.dias_desde_ingreso}d</td>
-                              <td className="px-4 py-2.5 text-right text-green-700 font-medium">{fmtMoney(Number(e.total_cargas))}</td>
-                              <td className="px-4 py-2.5 text-right text-gray-400 text-xs">{e.cant_cargas}</td>
-                              <td className="px-4 py-2.5 text-right text-red-600 font-medium">−{fmtMoney(Number(e.total_retiros))}</td>
-                              <td className="px-4 py-2.5 text-right text-gray-400 text-xs">{e.cant_retiros}</td>
-                              <td className="px-4 py-2.5 text-right">
-                                <span className={`font-bold ${Number(e.ratio_retiro_pct) >= 90 ? 'text-red-600' : 'text-orange-500'}`}>
-                                  {e.ratio_retiro_pct}%
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )
-                  }
-                </div>
-              )}
+              {riskTab === 'extractores' && (() => {
+                const totalPages = Math.ceil(risk.extractores.length / RISK_PAGE_SIZE)
+                const page = riskPages.extractores
+                const slice = risk.extractores.slice((page - 1) * RISK_PAGE_SIZE, page * RISK_PAGE_SIZE)
+                return (
+                  <div className="overflow-x-auto">
+                    {risk.extractores.length === 0
+                      ? <p className="text-sm text-gray-400 px-4 py-4">Sin nuevos extractores detectados.</p>
+                      : (
+                        <>
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-gray-100 bg-red-50">
+                                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Usuario</th>
+                                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Agente</th>
+                                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Nivel</th>
+                                <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Días desde ingreso</th>
+                                <th className="text-right px-4 py-2 text-xs font-medium text-green-600">Cargas</th>
+                                <th className="text-right px-4 py-2 text-xs font-medium text-gray-400">#</th>
+                                <th className="text-right px-4 py-2 text-xs font-medium text-red-500">Retiros</th>
+                                <th className="text-right px-4 py-2 text-xs font-medium text-gray-400">#</th>
+                                <th className="text-right px-4 py-2 text-xs font-medium text-orange-600">% Extracción</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {slice.map((e, i) => (
+                                <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-red-50/40">
+                                  <td className="px-4 py-2.5 font-mono text-xs">{e.username}</td>
+                                  <td className="px-4 py-2.5 text-gray-500 text-xs">{e.agente}</td>
+                                  <td className="px-4 py-2.5">
+                                    <Badge className={`text-xs ${NIVEL_STYLE[e.seg_monto] ?? 'bg-gray-100 text-gray-600'}`}>
+                                      {NIVEL_LABEL[e.seg_monto] ?? e.seg_monto}
+                                    </Badge>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-gray-600">{e.dias_desde_ingreso}d</td>
+                                  <td className="px-4 py-2.5 text-right text-green-700 font-medium">{fmtMoney(Number(e.total_cargas))}</td>
+                                  <td className="px-4 py-2.5 text-right text-gray-400 text-xs">{e.cant_cargas}</td>
+                                  <td className="px-4 py-2.5 text-right text-red-600 font-medium">−{fmtMoney(Number(e.total_retiros))}</td>
+                                  <td className="px-4 py-2.5 text-right text-gray-400 text-xs">{e.cant_retiros}</td>
+                                  <td className="px-4 py-2.5 text-right">
+                                    <span className={`font-bold ${Number(e.ratio_retiro_pct) >= 90 ? 'text-red-600' : 'text-orange-500'}`}>
+                                      {e.ratio_retiro_pct}%
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {totalPages > 1 && (
+                            <div className="flex items-center justify-between px-4 py-2 border-t border-gray-100 text-xs text-gray-400">
+                              <span>{((page-1)*RISK_PAGE_SIZE+1)}–{Math.min(page*RISK_PAGE_SIZE, risk.extractores.length)} de {risk.extractores.length}</span>
+                              <div className="flex gap-1">
+                                <button onClick={() => setRiskPages(p => ({ ...p, extractores: Math.max(1, p.extractores - 1) }))} disabled={page <= 1} className="px-2 py-0.5 border rounded disabled:opacity-30 hover:bg-gray-50">←</button>
+                                <span className="px-2 py-0.5">{page}/{totalPages}</span>
+                                <button onClick={() => setRiskPages(p => ({ ...p, extractores: Math.min(totalPages, p.extractores + 1) }))} disabled={page >= totalPages} className="px-2 py-0.5 border rounded disabled:opacity-30 hover:bg-gray-50">→</button>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )
+                    }
+                  </div>
+                )
+              })()}
 
               {/* Tab: Déficit del casino */}
-              {riskTab === 'deficit' && (
-                <div className="overflow-x-auto">
-                  {risk.deficit.length === 0
-                    ? <p className="text-sm text-gray-400 px-4 py-4">Sin jugadores en déficit.</p>
-                    : (
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-gray-100 bg-orange-50">
-                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Usuario</th>
-                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Agente</th>
-                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Nivel</th>
-                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Estado</th>
-                            <th className="text-right px-4 py-2 text-xs font-medium text-green-600">Cargas</th>
-                            <th className="text-right px-4 py-2 text-xs font-medium text-red-500">Retiros</th>
-                            <th className="text-right px-4 py-2 text-xs font-medium text-orange-600">Déficit casino</th>
-                            <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Últ. actividad</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {risk.deficit.map((d, i) => (
-                            <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-orange-50/40">
-                              <td className="px-4 py-2.5 font-mono text-xs">{d.username}</td>
-                              <td className="px-4 py-2.5 text-gray-500 text-xs">{d.agente}</td>
-                              <td className="px-4 py-2.5">
-                                <Badge className={`text-xs ${NIVEL_STYLE[d.seg_monto] ?? 'bg-gray-100 text-gray-600'}`}>
-                                  {NIVEL_LABEL[d.seg_monto] ?? d.seg_monto}
-                                </Badge>
-                              </td>
-                              <td className="px-4 py-2.5">
-                                <Badge className={`text-xs ${ACTIVIDAD_STYLE[d.seg_actividad] ?? 'bg-gray-100 text-gray-600'}`}>
-                                  {d.seg_actividad}
-                                </Badge>
-                              </td>
-                              <td className="px-4 py-2.5 text-right text-green-700 font-medium">{fmtMoney(Number(d.total_cargas))}</td>
-                              <td className="px-4 py-2.5 text-right text-red-600 font-medium">−{fmtMoney(Number(d.total_retiros))}</td>
-                              <td className="px-4 py-2.5 text-right font-bold text-orange-600">
-                                −{fmtMoney(Number(d.deficit))}
-                              </td>
-                              <td className="px-4 py-2.5 text-right text-gray-400 text-xs">{d.fecha_ultima ?? '—'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )
-                  }
-                </div>
-              )}
+              {riskTab === 'deficit' && (() => {
+                const totalPages = Math.ceil(risk.deficit.length / RISK_PAGE_SIZE)
+                const page = riskPages.deficit
+                const slice = risk.deficit.slice((page - 1) * RISK_PAGE_SIZE, page * RISK_PAGE_SIZE)
+                return (
+                  <div className="overflow-x-auto">
+                    {risk.deficit.length === 0
+                      ? <p className="text-sm text-gray-400 px-4 py-4">Sin jugadores en déficit.</p>
+                      : (
+                        <>
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-gray-100 bg-orange-50">
+                                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Usuario</th>
+                                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Agente</th>
+                                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Nivel</th>
+                                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Estado</th>
+                                <th className="text-right px-4 py-2 text-xs font-medium text-green-600">Cargas</th>
+                                <th className="text-right px-4 py-2 text-xs font-medium text-red-500">Retiros</th>
+                                <th className="text-right px-4 py-2 text-xs font-medium text-orange-600">Déficit casino</th>
+                                <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Últ. actividad</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {slice.map((d, i) => (
+                                <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-orange-50/40">
+                                  <td className="px-4 py-2.5 font-mono text-xs">{d.username}</td>
+                                  <td className="px-4 py-2.5 text-gray-500 text-xs">{d.agente}</td>
+                                  <td className="px-4 py-2.5">
+                                    <Badge className={`text-xs ${NIVEL_STYLE[d.seg_monto] ?? 'bg-gray-100 text-gray-600'}`}>
+                                      {NIVEL_LABEL[d.seg_monto] ?? d.seg_monto}
+                                    </Badge>
+                                  </td>
+                                  <td className="px-4 py-2.5">
+                                    <Badge className={`text-xs ${ACTIVIDAD_STYLE[d.seg_actividad] ?? 'bg-gray-100 text-gray-600'}`}>
+                                      {d.seg_actividad}
+                                    </Badge>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-green-700 font-medium">{fmtMoney(Number(d.total_cargas))}</td>
+                                  <td className="px-4 py-2.5 text-right text-red-600 font-medium">−{fmtMoney(Number(d.total_retiros))}</td>
+                                  <td className="px-4 py-2.5 text-right font-bold text-orange-600">
+                                    −{fmtMoney(Number(d.deficit))}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right text-gray-400 text-xs">{d.fecha_ultima ?? '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {totalPages > 1 && (
+                            <div className="flex items-center justify-between px-4 py-2 border-t border-gray-100 text-xs text-gray-400">
+                              <span>{((page-1)*RISK_PAGE_SIZE+1)}–{Math.min(page*RISK_PAGE_SIZE, risk.deficit.length)} de {risk.deficit.length}</span>
+                              <div className="flex gap-1">
+                                <button onClick={() => setRiskPages(p => ({ ...p, deficit: Math.max(1, p.deficit - 1) }))} disabled={page <= 1} className="px-2 py-0.5 border rounded disabled:opacity-30 hover:bg-gray-50">←</button>
+                                <span className="px-2 py-0.5">{page}/{totalPages}</span>
+                                <button onClick={() => setRiskPages(p => ({ ...p, deficit: Math.min(totalPages, p.deficit + 1) }))} disabled={page >= totalPages} className="px-2 py-0.5 border rounded disabled:opacity-30 hover:bg-gray-50">→</button>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )
+                    }
+                  </div>
+                )
+              })()}
 
               {/* Tab: VIP recuperables */}
-              {riskTab === 'recuperables' && (
-                <div className="overflow-x-auto">
-                  {risk.recuperables.length === 0
-                    ? <p className="text-sm text-gray-400 px-4 py-4">Sin VIP/Oro en riesgo recuperable.</p>
-                    : (
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-gray-100 bg-yellow-50">
-                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Usuario</th>
-                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Agente</th>
-                            <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Nivel</th>
-                            <th className="text-right px-4 py-2 text-xs font-medium text-green-600">Cargas hist.</th>
-                            <th className="text-right px-4 py-2 text-xs font-medium text-red-500">Retiros hist.</th>
-                            <th className="text-right px-4 py-2 text-xs font-medium text-blue-600">Neto</th>
-                            <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Días inactivo</th>
-                            <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Últ. actividad</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {risk.recuperables.map((r, i) => {
-                            const neto = Number(r.total_cargas) - Number(r.total_retiros)
-                            return (
-                              <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-yellow-50/40">
-                                <td className="px-4 py-2.5 font-mono text-xs">{r.username}</td>
-                                <td className="px-4 py-2.5 text-gray-500 text-xs">{r.agente}</td>
-                                <td className="px-4 py-2.5">
-                                  <Badge className={`text-xs ${NIVEL_STYLE[r.seg_monto] ?? 'bg-gray-100 text-gray-600'}`}>
-                                    {NIVEL_LABEL[r.seg_monto] ?? r.seg_monto}
-                                  </Badge>
-                                </td>
-                                <td className="px-4 py-2.5 text-right text-green-700 font-medium">{fmtMoney(Number(r.total_cargas))}</td>
-                                <td className="px-4 py-2.5 text-right text-red-600">−{fmtMoney(Number(r.total_retiros))}</td>
-                                <td className={`px-4 py-2.5 text-right font-semibold ${neto >= 0 ? 'text-blue-700' : 'text-orange-600'}`}>
-                                  {neto >= 0 ? '' : '−'}{fmtMoney(Math.abs(neto))}
-                                </td>
-                                <td className="px-4 py-2.5 text-right">
-                                  <span className={r.dias_ultimo > 14 ? 'text-orange-600 font-medium' : 'text-gray-600'}>
-                                    {r.dias_ultimo}d
-                                  </span>
-                                </td>
-                                <td className="px-4 py-2.5 text-right text-gray-400 text-xs">{r.fecha_ultima ?? '—'}</td>
+              {riskTab === 'recuperables' && (() => {
+                const totalPages = Math.ceil(risk.recuperables.length / RISK_PAGE_SIZE)
+                const page = riskPages.recuperables
+                const slice = risk.recuperables.slice((page - 1) * RISK_PAGE_SIZE, page * RISK_PAGE_SIZE)
+                return (
+                  <div className="overflow-x-auto">
+                    {risk.recuperables.length === 0
+                      ? <p className="text-sm text-gray-400 px-4 py-4">Sin VIP/Oro en riesgo recuperable.</p>
+                      : (
+                        <>
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="border-b border-gray-100 bg-yellow-50">
+                                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Usuario</th>
+                                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Agente</th>
+                                <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Nivel</th>
+                                <th className="text-right px-4 py-2 text-xs font-medium text-green-600">Cargas hist.</th>
+                                <th className="text-right px-4 py-2 text-xs font-medium text-red-500">Retiros hist.</th>
+                                <th className="text-right px-4 py-2 text-xs font-medium text-blue-600">Neto</th>
+                                <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Días inactivo</th>
+                                <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Últ. actividad</th>
                               </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                    )
-                  }
-                </div>
-              )}
+                            </thead>
+                            <tbody>
+                              {slice.map((r, i) => {
+                                const neto = Number(r.total_cargas) - Number(r.total_retiros)
+                                return (
+                                  <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-yellow-50/40">
+                                    <td className="px-4 py-2.5 font-mono text-xs">{r.username}</td>
+                                    <td className="px-4 py-2.5 text-gray-500 text-xs">{r.agente}</td>
+                                    <td className="px-4 py-2.5">
+                                      <Badge className={`text-xs ${NIVEL_STYLE[r.seg_monto] ?? 'bg-gray-100 text-gray-600'}`}>
+                                        {NIVEL_LABEL[r.seg_monto] ?? r.seg_monto}
+                                      </Badge>
+                                    </td>
+                                    <td className="px-4 py-2.5 text-right text-green-700 font-medium">{fmtMoney(Number(r.total_cargas))}</td>
+                                    <td className="px-4 py-2.5 text-right text-red-600">−{fmtMoney(Number(r.total_retiros))}</td>
+                                    <td className={`px-4 py-2.5 text-right font-semibold ${neto >= 0 ? 'text-blue-700' : 'text-orange-600'}`}>
+                                      {neto >= 0 ? '' : '−'}{fmtMoney(Math.abs(neto))}
+                                    </td>
+                                    <td className="px-4 py-2.5 text-right">
+                                      <span className={r.dias_ultimo > 14 ? 'text-orange-600 font-medium' : 'text-gray-600'}>
+                                        {r.dias_ultimo}d
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-2.5 text-right text-gray-400 text-xs">{r.fecha_ultima ?? '—'}</td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                          {totalPages > 1 && (
+                            <div className="flex items-center justify-between px-4 py-2 border-t border-gray-100 text-xs text-gray-400">
+                              <span>{((page-1)*RISK_PAGE_SIZE+1)}–{Math.min(page*RISK_PAGE_SIZE, risk.recuperables.length)} de {risk.recuperables.length}</span>
+                              <div className="flex gap-1">
+                                <button onClick={() => setRiskPages(p => ({ ...p, recuperables: Math.max(1, p.recuperables - 1) }))} disabled={page <= 1} className="px-2 py-0.5 border rounded disabled:opacity-30 hover:bg-gray-50">←</button>
+                                <span className="px-2 py-0.5">{page}/{totalPages}</span>
+                                <button onClick={() => setRiskPages(p => ({ ...p, recuperables: Math.min(totalPages, p.recuperables + 1) }))} disabled={page >= totalPages} className="px-2 py-0.5 border rounded disabled:opacity-30 hover:bg-gray-50">→</button>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      )
+                    }
+                  </div>
+                )
+              })()}
             </CardContent>}
           </Card>
         )}
@@ -1338,6 +1451,7 @@ export default function Dashboard() {
                           { col: null,           label: 'Estado',       align: 'left',  color: 'text-gray-500'  },
                           { col: null,           label: 'Contexto',     align: 'left',  color: 'text-gray-500'  },
                           { col: 'dias_ultimo',  label: 'Días sin mov.',align: 'right', color: 'text-gray-500'  },
+                          { col: null,           label: 'Etiquetas',    align: 'left',  color: 'text-gray-500'  },
                         ] as const).map(({ col, label, align, color }) => (
                           col
                             ? (
@@ -1410,6 +1524,22 @@ export default function Dashboard() {
                                 </span>
                               )}
                             </td>
+                            <td className="px-3 py-2">
+                              <div className="flex flex-wrap items-center gap-1">
+                                {(j.labels ?? []).map(lbl => (
+                                  <span key={lbl} className="inline-flex items-center gap-0.5 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded px-1.5 py-0.5 text-xs">
+                                    {lbl}
+                                  </span>
+                                ))}
+                                <button
+                                  onClick={() => openLabels(j)}
+                                  className="text-gray-300 hover:text-indigo-500 transition-colors"
+                                  title="Editar etiquetas"
+                                >
+                                  <Tag size={12}/>
+                                </button>
+                              </div>
+                            </td>
                           </tr>
                         )
                       })}
@@ -1438,7 +1568,7 @@ export default function Dashboard() {
                       onChange={e => { setJugLimit(Number(e.target.value)); setJugPage(1) }}
                       className="text-xs border border-gray-200 rounded px-1.5 py-1 bg-white text-gray-700"
                     >
-                      {[50, 100, 200, 500].map(n => (
+                      {[10, 25, 50, 100].map(n => (
                         <option key={n} value={n}>{n}</option>
                       ))}
                     </select>
@@ -1548,6 +1678,65 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── Modal: edición de etiquetas de jugador ─────────────────────────── */}
+      <Dialog open={labelTarget !== null} onOpenChange={open => { if (!open) setLabelTarget(null) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-medium flex items-center gap-2">
+              <Tag size={14} className="text-indigo-500"/>
+              Etiquetas — <span className="font-mono text-indigo-700">{labelTarget}</span>
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Etiquetas actuales */}
+          <div className="flex flex-wrap gap-1.5 min-h-8">
+            {labelCurrent.length === 0
+              ? <p className="text-xs text-gray-400 italic">Sin etiquetas</p>
+              : labelCurrent.map(lbl => (
+                  <span key={lbl} className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-full px-2.5 py-1 text-xs">
+                    {lbl}
+                    <button onClick={() => removeLabel(lbl)} className="text-indigo-300 hover:text-indigo-600">
+                      <X size={10}/>
+                    </button>
+                  </span>
+                ))
+            }
+          </div>
+
+          {/* Agregar nueva etiqueta */}
+          {labelCurrent.length < 10 && (
+            <div className="flex gap-2">
+              <Input
+                value={labelInput}
+                onChange={e => setLabelInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addLabel()}
+                placeholder="Nueva etiqueta (Enter para agregar)"
+                className="h-8 text-sm flex-1"
+                maxLength={40}
+              />
+              <Button size="sm" variant="outline" onClick={addLabel} className="h-8 text-xs shrink-0">
+                Agregar
+              </Button>
+            </div>
+          )}
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-gray-400">{labelCurrent.length}/10 etiquetas</p>
+            {labelError && (
+              <p className="text-xs text-red-600 font-medium">{labelError}</p>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-1">
+            <Button variant="outline" size="sm" onClick={() => setLabelTarget(null)} className="h-8 text-xs">
+              Cancelar
+            </Button>
+            <Button size="sm" onClick={saveLabels} disabled={labelSaving} className="h-8 text-xs bg-indigo-600 hover:bg-indigo-700 text-white">
+              {labelSaving ? 'Guardando…' : 'Guardar'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

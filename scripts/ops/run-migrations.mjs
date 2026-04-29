@@ -115,6 +115,8 @@ const MIGRATIONS = [
   { file: 'db/migrations/025_casino_players.sql',                label: '025 — casino_players segmentation table' },
   { file: 'db/migrations/026_contact_segment_casino.sql',        label: '026 — contact_segment enum: bajo/medio/alto casino values' },
   { file: 'db/migrations/027_casino_actividad_perdido.sql',      label: '027 — casino_players seg_actividad: add perdido value' },
+  { file: 'db/migrations/028_casino_transactions.sql',           label: '028 — casino_transactions table (individual transactions by date)' },
+  { file: 'db/migrations/029_casino_player_labels.sql',          label: '029 — casino_players.labels TEXT[] column (operator tags)' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

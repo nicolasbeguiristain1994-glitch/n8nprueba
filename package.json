@@ -1,8 +1,8 @@
 {
-  "devDependencies": {
-    "pg": "^8.20.0"
-  },
   "dependencies": {
-    "bcryptjs": "^3.0.3"
+    "bcryptjs": "^3.0.3",
+    "pg": "^8.20.0",
+    "playwright": "^1.59.1",
+    "xlsx": "^0.18.5"
   }
 }

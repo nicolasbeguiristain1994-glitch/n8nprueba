@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
+import { AGENTES_SQL_ARRAY } from '@/lib/casino-agents'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -21,6 +22,7 @@ export interface CasinoJugador {
   // same casino_players columns (seg_actividad, seg_monto, fecha_primera).
   valor_riesgo:  string | null   // 'critico' | 'medio' | 'bajo' | null
   antiguedad:    string | null   // 'nuevo' | 'reciente' | 'establecido' | 'veterano' | 'leal' | null
+  labels:        string[]        // etiquetas operativas asignadas desde el dashboard
 }
 
 export interface CasinoJugadoresResponse {
@@ -254,7 +256,8 @@ export async function GET(req: Request) {
             SUM(ct.monto) FILTER (WHERE ct.tipo = 'retiro')::bigint  AS total_retiros,
             COUNT(*)      FILTER (WHERE ct.tipo = 'retiro')::int      AS cant_retiros
           FROM casino_transactions ct
-          WHERE ($1::text IS NULL OR ct.agente   = $1)
+          WHERE ct.agente = ANY(${AGENTES_SQL_ARRAY})
+            AND ($1::text IS NULL OR ct.agente   = $1)
             AND ($2::date IS NULL OR ct.fecha   >= $2::date)
             AND ($3::date IS NULL OR ct.fecha   <= $3::date)
             AND ($4::text IS NULL OR ct.username ILIKE '%' || $4 || '%')
@@ -294,6 +297,7 @@ export async function GET(req: Request) {
                THEN (CURRENT_DATE - cp.fecha_ultima)::int
              END                            AS dias_ultimo,
              cp.fecha_ultima::text,
+             COALESCE(cp.labels, '{}')                AS labels,
              CASE
                WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
                     AND cp.seg_monto IN ('vip','alto') THEN 'critico'
@@ -344,7 +348,7 @@ export async function GET(req: Request) {
       ]
 
       const histWhere = `
-        WHERE agente IS NOT NULL
+        WHERE agente = ANY(${AGENTES_SQL_ARRAY})
           AND ($1::text IS NULL OR agente        = $1)
           AND ($2::text IS NULL OR username      ILIKE '%' || $2 || '%')
           AND ($3::text IS NULL OR seg_monto     = $3)
@@ -371,6 +375,7 @@ export async function GET(req: Request) {
                THEN (CURRENT_DATE - fecha_ultima)::int
              END                         AS dias_ultimo,
              fecha_ultima::text,
+             COALESCE(labels, '{}')      AS labels,
              CASE
                WHEN seg_actividad IN ('perdido','inactivo','en_riesgo')
                     AND seg_monto IN ('vip','alto') THEN 'critico'

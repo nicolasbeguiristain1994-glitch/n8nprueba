@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
+import { AGENTES_SQL_ARRAY } from '@/lib/casino-agents'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -75,7 +76,7 @@ export async function GET(req: Request) {
           )::int                                                        AS prioridad_reactivacion,
           COUNT(*)::int                                                 AS total_jugadores
         FROM casino_players
-        WHERE agente IS NOT NULL
+        WHERE agente = ANY(${AGENTES_SQL_ARRAY})
       `),
 
       // ── Por agente ──────────────────────────────────────────────────────────
@@ -93,7 +94,7 @@ export async function GET(req: Request) {
           COALESCE(SUM(total_retiros), 0)::bigint                                   AS sum_retiros,
           ROUND(COALESCE(AVG(total_cargas), 0))::bigint                             AS avg_cargas
         FROM casino_players
-        WHERE agente IS NOT NULL
+        WHERE agente = ANY(${AGENTES_SQL_ARRAY})
         GROUP BY agente
         ORDER BY total DESC
       `),
@@ -116,7 +117,7 @@ export async function GET(req: Request) {
         FROM casino_players
         WHERE seg_monto IN ('vip','alto')
           AND fecha_ultima IS NOT NULL
-          AND agente       IS NOT NULL
+          AND agente = ANY(${AGENTES_SQL_ARRAY})
         ORDER BY
           CASE seg_actividad
             WHEN 'perdido'    THEN 1

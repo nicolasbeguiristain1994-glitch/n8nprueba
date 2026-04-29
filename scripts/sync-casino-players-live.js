@@ -31,17 +31,38 @@ if (!API_KEY || !PLAYER_TOKEN) {
   process.exit(1)
 }
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10_000,
+  connectionTimeoutMillis: 30_000,
+  idleTimeoutMillis: 600_000,   // 10 min — mayor que la llamada más larga a Zeus
+})
 
-// ── CLI args: --desde=YYYY-MM-DD --hasta=YYYY-MM-DD ───────────────────────────
+// ── CLI args: --desde=YYYY-MM-DD --hasta=YYYY-MM-DD --auto ───────────────────
 
 const args = Object.fromEntries(
   process.argv.slice(2)
     .filter(a => a.startsWith('--'))
-    .map(a => { const [k, v] = a.slice(2).split('='); return [k, v] })
+    .map(a => { const [k, v] = a.slice(2).split('='); return [k, v ?? 'true'] })
 )
+const AUTO  = args.auto === 'true'
 const DESDE = args.desde || '2020-01-01'
 const HASTA = args.hasta || new Date().toISOString().split('T')[0]
+// --agentes=betcoin,royal,ofizeus  → filtra qué agentes sincronizar
+const AGENTES_FILTER = args.agentes
+  ? args.agentes.split(',').map(a => a.trim()).filter(Boolean)
+  : null   // null = todos
+
+async function resolveDesde() {
+  if (!AUTO) return DESDE
+  const { rows } = await pool.query(
+    `SELECT (MAX(fecha) + INTERVAL '1 day')::date::text AS desde FROM casino_transactions`
+  )
+  const desde = rows[0]?.desde ?? '2020-01-01'
+  console.log(`[sync] --auto: última fecha en BD → desde ${desde}`)
+  return desde
+}
 
 // ── API ───────────────────────────────────────────────────────────────────────
 
@@ -49,11 +70,35 @@ function fmtDate(d) {
   return `${d} 00:00:00`  // espacio — URLSearchParams lo codifica como + que es lo que la API espera
 }
 
+/**
+ * Suma un día a una fecha YYYY-MM-DD.
+ * Zeus usa endDate EXCLUSIVO (igual que el panel: rango abril → endDate=May1).
+ * Usar noon UTC para evitar problemas de horario de verano.
+ */
+function addOneDay(dateStr) {
+  const d = new Date(`${dateStr}T12:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + 1)
+  return d.toISOString().substring(0, 10)
+}
+
+/**
+ * Convierte un timestamp UTC de Zeus a fecha local Argentina (UTC-3, sin DST).
+ * Zeus devuelve timestamps UTC (Z). Una transacción de las 22:00 ARG es
+ * 01:00 UTC del día siguiente — substring(0,10) daría la fecha incorrecta.
+ */
+function utcToArgDate(fechaStr) {
+  if (!fechaStr) return null
+  const d = new Date(fechaStr)
+  if (isNaN(d.getTime())) return typeof fechaStr === 'string' ? fechaStr.substring(0, 10) : null
+  // Argentina = UTC−3, sin horario de verano (IANA: America/Argentina/Buenos_Aires)
+  return new Date(d.getTime() - 3 * 3_600_000).toISOString().substring(0, 10)
+}
+
 async function fetchTransactions(agente, desde, hasta) {
   const params = new URLSearchParams({
     username:  agente,
     startDate: fmtDate(desde),
-    endDate:   fmtDate(hasta),
+    endDate:   fmtDate(addOneDay(hasta)),  // exclusivo: día siguiente a hasta (igual que el panel Zeus)
     timezone:  TIMEZONE,
   })
   const url = `${API_BASE}/api/records/movimiento-fichas?${params}`
@@ -144,10 +189,14 @@ async function insertTransactions(agente, txs) {
       if (!tipo) continue
 
       const monto       = Math.round(Math.abs(valor))
-      const fechaDate   = typeof fecha === 'string' ? fecha.substring(0, 10) : null
+      const fechaDate   = utcToArgDate(fecha)   // convierte UTC → fecha en hora Argentina
       if (!fechaDate) continue
 
-      const agenteNombre = creator_username || agente
+      // Siempre usar el agente que se está consultando en Zeus, no creator_username.
+      // Para transacciones de jugadores: creator_username == agente (mismo valor).
+      // Para "Carga indirecto" (capital de adminbet → betcoin): creator_username='adminbet'
+      // pero el agente dueño del movimiento ES betcoin — se perdería bajo adminbet si no.
+      const agenteNombre = agente
 
       try {
         if (id_rec) {
@@ -213,13 +262,26 @@ async function upsert(players) {
 
 async function getAgentes() {
   const { rows } = await pool.query(
-    `SELECT DISTINCT agente FROM casino_players WHERE agente IS NOT NULL ORDER BY agente`
+    `SELECT DISTINCT agente FROM casino_players
+     WHERE agente IS NOT NULL
+       AND ($1::text[] IS NULL OR agente = ANY($1::text[]))
+     ORDER BY agente`,
+    [AGENTES_FILTER]
   )
   return rows.map(r => r.agente)
 }
 
 async function main() {
-  console.log(`[sync] Iniciando: ${DESDE} → ${HASTA}`)
+  const desde = await resolveDesde()
+  const hasta = HASTA
+
+  if (AUTO && desde > hasta) {
+    console.log(`[sync] Ya sincronizado hasta ${hasta}, nada que hacer.`)
+    await pool.end()
+    return
+  }
+
+  console.log(`[sync] Iniciando: ${desde} → ${hasta}`)
 
   const agentes = await getAgentes()
   console.log(`[sync] ${agentes.length} agentes: ${agentes.join(', ')}`)
@@ -228,7 +290,7 @@ async function main() {
 
   for (const agente of agentes) {
     try {
-      const txs      = await fetchTransactions(agente, DESDE, HASTA)
+      const txs      = await fetchTransactions(agente, desde, hasta)
       const players  = aggregate(txs)
       const nPlayers = await upsert(players)
       const nTxs     = await insertTransactions(agente, txs)
