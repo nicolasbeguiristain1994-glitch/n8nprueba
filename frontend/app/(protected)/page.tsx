@@ -122,6 +122,7 @@ export default function Dashboard() {
   const [jugSortBy,      setJugSortBy]      = useState('total_cargas')
   const [jugSortOrder,   setJugSortOrder]   = useState<'asc' | 'desc'>('desc')
   const [loadingJug,     setLoadingJug]     = useState(false)
+  const [jugError,       setJugError]       = useState<string | null>(null)
   const [lastUpdated,    setLastUpdated]    = useState<Date | null>(null)
   const [refreshing,     setRefreshing]     = useState(false)
   const [syncing,        setSyncing]        = useState(false)
@@ -208,8 +209,11 @@ export default function Dashboard() {
     params.set('sortOrder', jugSortOrder)
     const qs = params.toString()
     fetchJson<CasinoJugadoresResponse>(`/api/dashboard/casino/players${qs ? '?' + qs : ''}`)
-      .then(d => { setJugadores(d.jugadores ?? []); setJugTotal(d.total ?? 0) })
-      .catch(() => { setJugadores([]); setJugTotal(0) })
+      .then(d => { setJugadores(d.jugadores ?? []); setJugTotal(d.total ?? 0); setJugError(null) })
+      .catch((e: unknown) => {
+        setJugadores([]); setJugTotal(0)
+        setJugError(e instanceof Error ? e.message : 'Error al cargar jugadores')
+      })
       .finally(() => setLoadingJug(false))
   }, [filterAgente, appliedFilters, jugPage, jugLimit, jugSortBy, jugSortOrder])
 
@@ -1304,6 +1308,16 @@ export default function Dashboard() {
 
             {loadingJug
               ? <p className="text-sm text-gray-400 py-4 text-center">Cargando...</p>
+              : jugError
+              ? (
+                <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 my-2">
+                  <AlertCircle size={15} className="mt-0.5 shrink-0"/>
+                  <div>
+                    <p className="font-medium">Error al cargar jugadores</p>
+                    <p className="text-xs text-red-500 mt-0.5 font-mono">{jugError}</p>
+                  </div>
+                </div>
+              )
               : jugadores.length === 0
               ? <p className="text-sm text-gray-400 py-4">Sin jugadores para el filtro seleccionado.</p>
               : (
