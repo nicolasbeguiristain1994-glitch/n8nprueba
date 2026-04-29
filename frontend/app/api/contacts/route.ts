@@ -5,7 +5,7 @@ import { checkPermission } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 
 const ACTIVIDAD_ALLOWED   = new Set(['nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido'])
-const VALOR_RIESGO_ALLOWED = new Set(['bajo', 'medio', 'alto', 'critico'])
+const VALOR_RIESGO_ALLOWED = new Set(['bajo', 'medio', 'critico'])
 const ANTIGUEDAD_ALLOWED  = new Set(['nuevo', 'reciente', 'establecido', 'veterano', 'leal'])
 
 export async function GET(req: NextRequest) {

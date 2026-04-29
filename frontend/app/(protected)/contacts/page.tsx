@@ -111,7 +111,6 @@ export default function Contacts() {
 
   const VALOR_RIESGO_STYLE: Record<string, string> = {
     critico: 'bg-red-100 text-red-700',
-    alto:    'bg-red-50 text-red-600',
     medio:   'bg-orange-100 text-orange-700',
     bajo:    'bg-yellow-100 text-yellow-700',
   }
@@ -614,7 +613,6 @@ export default function Contacts() {
           <SelectContent>
             <SelectItem value="">Cualquier riesgo</SelectItem>
             <SelectItem value="critico">crítico</SelectItem>
-            <SelectItem value="alto">alto</SelectItem>
             <SelectItem value="medio">medio</SelectItem>
             <SelectItem value="bajo">bajo</SelectItem>
           </SelectContent>
@@ -999,7 +997,6 @@ export default function Contacts() {
                       <SelectContent>
                         <SelectItem value="all">Cualquier riesgo</SelectItem>
                         <SelectItem value="critico">crítico</SelectItem>
-                        <SelectItem value="alto">alto</SelectItem>
                         <SelectItem value="medio">medio</SelectItem>
                         <SelectItem value="bajo">bajo</SelectItem>
                       </SelectContent>
