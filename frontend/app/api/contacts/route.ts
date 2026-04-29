@@ -4,19 +4,36 @@ import { isE164 } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 
+const ACTIVIDAD_ALLOWED   = new Set(['nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido'])
+const VALOR_RIESGO_ALLOWED = new Set(['bajo', 'medio', 'alto', 'critico'])
+const ANTIGUEDAD_ALLOWED  = new Set(['nuevo', 'reciente', 'establecido', 'veterano', 'leal'])
+
 export async function GET(req: NextRequest) {
   const err = await checkPermission(req, 'contacts', 'read')
   if (err) return err
 
-  const search  = req.nextUrl.searchParams.get('q') || ''
-  const segment = req.nextUrl.searchParams.get('segment') || ''
-  const gaming  = req.nextUrl.searchParams.get('gaming') || ''
-  const panel   = req.nextUrl.searchParams.get('panel') || ''
-  const download = req.nextUrl.searchParams.get('download') === 'true'
-  const page    = Number(req.nextUrl.searchParams.get('page') || 1)
-  const limit   = download ? 100000 : 50
-  const offset  = download ? 0 : (page - 1) * limit
-  const linea   = req.nextUrl.searchParams.get('linea') || ''
+  const search      = req.nextUrl.searchParams.get('q') || ''
+  const segment     = req.nextUrl.searchParams.get('segment') || ''
+  const gaming      = req.nextUrl.searchParams.get('gaming') || ''
+  const panel       = req.nextUrl.searchParams.get('panel') || ''
+  const download    = req.nextUrl.searchParams.get('download') === 'true'
+  const page        = Number(req.nextUrl.searchParams.get('page') || 1)
+  const limit       = download ? 100000 : 50
+  const offset      = download ? 0 : (page - 1) * limit
+  const linea       = req.nextUrl.searchParams.get('linea') || ''
+  const actividad   = req.nextUrl.searchParams.get('actividad') || ''
+  const valorRiesgo = req.nextUrl.searchParams.get('valorRiesgo') || ''
+  const antiguedad  = req.nextUrl.searchParams.get('antiguedad') || ''
+
+  if (actividad && !ACTIVIDAD_ALLOWED.has(actividad)) {
+    return NextResponse.json({ error: `Invalid actividad "${actividad}"` }, { status: 400 })
+  }
+  if (valorRiesgo && !VALOR_RIESGO_ALLOWED.has(valorRiesgo)) {
+    return NextResponse.json({ error: `Invalid valorRiesgo "${valorRiesgo}"` }, { status: 400 })
+  }
+  if (antiguedad && !ANTIGUEDAD_ALLOWED.has(antiguedad)) {
+    return NextResponse.json({ error: `Invalid antiguedad "${antiguedad}"` }, { status: 400 })
+  }
 
   try {
     const rows = await query(`
@@ -40,9 +57,21 @@ export async function GET(req: NextRequest) {
         AND ($5 = '' OR gaming::text = $5)
         AND ($6 = '' OR panel = $6)
         AND ($7 = '' OR linea::text = $7)
+        AND ($8 = '' OR EXISTS (
+          SELECT 1 FROM contact_tags ct
+          WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:actividad:' || $8
+        ))
+        AND ($9 = '' OR EXISTS (
+          SELECT 1 FROM contact_tags ct
+          WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:valor_riesgo:' || $9
+        ))
+        AND ($10 = '' OR EXISTS (
+          SELECT 1 FROM contact_tags ct
+          WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $10
+        ))
       ORDER BY created_at DESC
       LIMIT $2 OFFSET $3
-    `, [`%${search}%`, limit, offset, segment, gaming, panel, linea])
+    `, [`%${search}%`, limit, offset, segment, gaming, panel, linea, actividad, valorRiesgo, antiguedad])
 
     const [{ count }] = await query<{ count: string }>(
       `SELECT COUNT(*) FROM contacts
@@ -50,8 +79,20 @@ export async function GET(req: NextRequest) {
          AND ($2 = '' OR segment::text = $2)
          AND ($3 = '' OR gaming::text = $3)
          AND ($4 = '' OR panel = $4)
-         AND ($5 = '' OR linea::text = $5)`,
-      [`%${search}%`, segment, gaming, panel, linea]
+         AND ($5 = '' OR linea::text = $5)
+         AND ($6 = '' OR EXISTS (
+           SELECT 1 FROM contact_tags ct
+           WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:actividad:' || $6
+         ))
+         AND ($7 = '' OR EXISTS (
+           SELECT 1 FROM contact_tags ct
+           WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:valor_riesgo:' || $7
+         ))
+         AND ($8 = '' OR EXISTS (
+           SELECT 1 FROM contact_tags ct
+           WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $8
+         ))`,
+      [`%${search}%`, segment, gaming, panel, linea, actividad, valorRiesgo, antiguedad]
     )
 
     return NextResponse.json({ contacts: rows, total: Number(count), page, limit })

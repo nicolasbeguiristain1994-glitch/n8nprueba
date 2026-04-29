@@ -26,7 +26,10 @@ export default function Contacts() {
   const [segment, setSegment]   = useState('')
   const [filterGaming, setFilterGaming] = useState('')
   const [filterPanel, setFilterPanel]   = useState('')
-  const [filterLinea, setFilterLinea]   = useState('')
+  const [filterLinea, setFilterLinea]         = useState('')
+  const [filterActividad, setFilterActividad]     = useState('')
+  const [filterValorRiesgo, setFilterValorRiesgo] = useState('')
+  const [filterAntiguedad, setFilterAntiguedad]   = useState('')
   const [page, setPage]         = useState(1)
   const [loading, setLoading]     = useState(false)
   const [selected, setSelected]   = useState<Set<string>>(new Set())
@@ -58,9 +61,12 @@ export default function Contacts() {
   const [newListName, setNewListName] = useState('')
   const [savingList, setSavingList]   = useState(false)
   const [listError, setListError]     = useState<string | null>(null)
-  const [criteriaPanel, setCriteriaPanel]     = useState('')
-  const [criteriaGaming, setCriteriaGaming]   = useState('')
-  const [criteriaSegment, setCriteriaSegment] = useState('')
+  const [criteriaPanel, setCriteriaPanel]           = useState('')
+  const [criteriaGaming, setCriteriaGaming]         = useState('')
+  const [criteriaSegment, setCriteriaSegment]       = useState('')
+  const [criteriaActividad, setCriteriaActividad]   = useState('')
+  const [criteriaValorRiesgo, setCriteriaValorRiesgo] = useState('')
+  const [criteriaAntiguedad, setCriteriaAntiguedad] = useState('')
 
   // Inline update / import error
   const [updateError, setUpdateError]   = useState<string | null>(null)
@@ -132,12 +138,15 @@ export default function Contacts() {
       gaming: filterGaming,
       panel: filterPanel.trim(),
       linea: filterLinea,
+      actividad: filterActividad,
+      valorRiesgo: filterValorRiesgo,
+      antiguedad: filterAntiguedad,
     })
     fetchJson<{ contacts: Contact[]; total: number }>(`/api/contacts?${q}`)
       .then(d => { setContacts(d.contacts || []); setTotal(d.total || 0) })
       .catch(() => { setContacts([]); setTotal(0) })
       .finally(() => setLoading(false))
-  }, [search, page, segment, filterGaming, filterPanel, filterLinea])
+  }, [search, page, segment, filterGaming, filterPanel, filterLinea, filterActividad, filterValorRiesgo, filterAntiguedad])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
@@ -317,7 +326,9 @@ export default function Contacts() {
     setDownloading(true)
     const q = new URLSearchParams({
       q: search, segment, gaming: filterGaming,
-      panel: filterPanel.trim(), linea: filterLinea, download: 'true',
+      panel: filterPanel.trim(), linea: filterLinea,
+      actividad: filterActividad, valorRiesgo: filterValorRiesgo,
+      antiguedad: filterAntiguedad, download: 'true',
     })
     const d = await fetch(`/api/contacts?${q}`).then(r => r.json())
     const rows: Contact[] = d.contacts || []
@@ -368,12 +379,31 @@ export default function Contacts() {
   const createList = async () => {
     if (!newListName) return
     if (listMode === 'selection' && selected.size === 0) return
-    if (listMode === 'criteria' && !criteriaPanel && !criteriaGaming && !criteriaSegment) return
+    const hasCriteria = criteriaPanel || criteriaGaming || criteriaSegment ||
+      criteriaActividad || criteriaValorRiesgo || criteriaAntiguedad
+    if (listMode === 'criteria' && !hasCriteria) return
     setSavingList(true)
     setListError(null)
-    const body = listMode === 'selection'
-      ? { name: newListName, contact_ids: Array.from(selected) }
-      : { name: newListName, criteria: { panel: criteriaPanel, gaming: criteriaGaming, segment: criteriaSegment } }
+
+    let body: object
+    if (listMode === 'selection') {
+      body = { name: newListName, contact_ids: Array.from(selected) }
+    } else {
+      const tags: string[] = []
+      if (criteriaActividad)   tags.push(`casino:actividad:${criteriaActividad}`)
+      if (criteriaValorRiesgo) tags.push(`casino:valor_riesgo:${criteriaValorRiesgo}`)
+      if (criteriaAntiguedad)  tags.push(`casino:antiguedad:${criteriaAntiguedad}`)
+      body = {
+        name: newListName,
+        criteria: {
+          panel: criteriaPanel,
+          gaming: criteriaGaming,
+          segment: criteriaSegment,
+          ...(tags.length ? { tags } : {}),
+        },
+      }
+    }
+
     const res = await fetch('/api/lists', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     setSavingList(false)
     if (!res.ok) {
@@ -385,6 +415,7 @@ export default function Contacts() {
     setNewListName('')
     setSelected(new Set())
     setCriteriaPanel(''); setCriteriaGaming(''); setCriteriaSegment('')
+    setCriteriaActividad(''); setCriteriaValorRiesgo(''); setCriteriaAntiguedad('')
     fetch('/api/lists').then(r => r.json()).then(d => setLists(d.lists || []))
   }
 
@@ -500,7 +531,7 @@ export default function Contacts() {
         </div>
       )}
 
-      {/* Filtros */}
+      {/* Filtros — fila 1 */}
       <div className="flex gap-3 flex-wrap">
         <div className="relative flex-1 min-w-48">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -553,6 +584,56 @@ export default function Contacts() {
             <SelectItem value="whale">whale</SelectItem>
           </SelectContent>
         </Select>
+      </div>
+
+      {/* Filtros — fila 2: dimensiones casino */}
+      <div className="flex gap-3 flex-wrap items-center">
+        <Select value={filterActividad} onValueChange={v => { setFilterActividad(v ?? ''); setPage(1) }}>
+          <SelectTrigger className="w-40">
+            <SelectValue placeholder="Actividad" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">Toda actividad</SelectItem>
+            <SelectItem value="frecuente">frecuente</SelectItem>
+            <SelectItem value="regular">regular</SelectItem>
+            <SelectItem value="ocasional">ocasional</SelectItem>
+            <SelectItem value="nuevo">nuevo</SelectItem>
+            <SelectItem value="en_riesgo">en riesgo</SelectItem>
+            <SelectItem value="inactivo">inactivo</SelectItem>
+            <SelectItem value="perdido">perdido</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={filterValorRiesgo} onValueChange={v => { setFilterValorRiesgo(v ?? ''); setPage(1) }}>
+          <SelectTrigger className="w-40">
+            <SelectValue placeholder="Valor riesgo" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">Cualquier riesgo</SelectItem>
+            <SelectItem value="critico">crítico</SelectItem>
+            <SelectItem value="alto">alto</SelectItem>
+            <SelectItem value="medio">medio</SelectItem>
+            <SelectItem value="bajo">bajo</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={filterAntiguedad} onValueChange={v => { setFilterAntiguedad(v ?? ''); setPage(1) }}>
+          <SelectTrigger className="w-40">
+            <SelectValue placeholder="Antigüedad" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">Cualquier antigüedad</SelectItem>
+            <SelectItem value="leal">leal</SelectItem>
+            <SelectItem value="veterano">veterano</SelectItem>
+            <SelectItem value="establecido">establecido</SelectItem>
+            <SelectItem value="reciente">reciente</SelectItem>
+            <SelectItem value="nuevo">nuevo</SelectItem>
+          </SelectContent>
+        </Select>
+        {(filterActividad || filterValorRiesgo || filterAntiguedad) && (
+          <Button variant="ghost" size="sm" className="text-gray-400 hover:text-gray-600 h-8 px-2"
+            onClick={() => { setFilterActividad(''); setFilterValorRiesgo(''); setFilterAntiguedad(''); setPage(1) }}>
+            <X size={13} className="mr-1" /> Limpiar casino
+          </Button>
+        )}
       </div>
 
       {/* Listas existentes */}
@@ -814,6 +895,9 @@ export default function Contacts() {
           setCriteriaPanel('')
           setCriteriaGaming('')
           setCriteriaSegment('')
+          setCriteriaActividad('')
+          setCriteriaValorRiesgo('')
+          setCriteriaAntiguedad('')
           setSavingList(false)
           setListError(null)
         }
@@ -885,6 +969,52 @@ export default function Contacts() {
                       </SelectContent>
                     </Select>
                   </div>
+                  <div className="border-t border-gray-100 pt-2">
+                    <p className="text-xs font-medium text-gray-500 mb-2">Casino (tags)</p>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 mb-1 block">Actividad</label>
+                    <Select value={criteriaActividad || 'all'} onValueChange={v => setCriteriaActividad(v === 'all' ? '' : (v ?? ''))}>
+                      <SelectTrigger><SelectValue placeholder="Cualquier actividad" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Cualquier actividad</SelectItem>
+                        <SelectItem value="frecuente">frecuente</SelectItem>
+                        <SelectItem value="regular">regular</SelectItem>
+                        <SelectItem value="ocasional">ocasional</SelectItem>
+                        <SelectItem value="nuevo">nuevo</SelectItem>
+                        <SelectItem value="en_riesgo">en riesgo</SelectItem>
+                        <SelectItem value="inactivo">inactivo</SelectItem>
+                        <SelectItem value="perdido">perdido</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 mb-1 block">Valor riesgo</label>
+                    <Select value={criteriaValorRiesgo || 'all'} onValueChange={v => setCriteriaValorRiesgo(v === 'all' ? '' : (v ?? ''))}>
+                      <SelectTrigger><SelectValue placeholder="Cualquier riesgo" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Cualquier riesgo</SelectItem>
+                        <SelectItem value="critico">crítico</SelectItem>
+                        <SelectItem value="alto">alto</SelectItem>
+                        <SelectItem value="medio">medio</SelectItem>
+                        <SelectItem value="bajo">bajo</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-600 mb-1 block">Antigüedad</label>
+                    <Select value={criteriaAntiguedad || 'all'} onValueChange={v => setCriteriaAntiguedad(v === 'all' ? '' : (v ?? ''))}>
+                      <SelectTrigger><SelectValue placeholder="Cualquier antigüedad" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Cualquier antigüedad</SelectItem>
+                        <SelectItem value="leal">leal</SelectItem>
+                        <SelectItem value="veterano">veterano</SelectItem>
+                        <SelectItem value="establecido">establecido</SelectItem>
+                        <SelectItem value="reciente">reciente</SelectItem>
+                        <SelectItem value="nuevo">nuevo</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               </div>
             )}
@@ -899,7 +1029,7 @@ export default function Contacts() {
               <Button
                 className={`flex-1 ${listMode === 'criteria' ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-green-600 hover:bg-green-700'}`}
                 onClick={createList}
-                disabled={savingList || !newListName || (listMode === 'selection' && selected.size === 0) || (listMode === 'criteria' && !criteriaPanel && !criteriaGaming && !criteriaSegment)}>
+                disabled={savingList || !newListName || (listMode === 'selection' && selected.size === 0) || (listMode === 'criteria' && !criteriaPanel && !criteriaGaming && !criteriaSegment && !criteriaActividad && !criteriaValorRiesgo && !criteriaAntiguedad)}>
                 {savingList ? 'Guardando…' : 'Crear lista'}
               </Button>
             </div>
