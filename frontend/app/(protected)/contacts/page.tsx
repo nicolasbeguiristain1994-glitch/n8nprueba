@@ -155,14 +155,45 @@ export default function Contacts() {
       .catch(() => setLists([]))
   }, [])
 
-  // Parse CSV o Excel
+  // Parse VCF — misma lógica que importar-vcf.js
+  const parseVcfText = (text: string): ImportRow[] => {
+    const normalizePhone = (raw: string): string | null => {
+      let p = raw.replace(/[-\s()]/g, '')
+      if (!p.startsWith('+')) p = '+' + p
+      if (!/^\+\d{7,15}$/.test(p)) return null
+      return p
+    }
+    const rows: ImportRow[] = []
+    const seen = new Set<string>()
+    // split maneja también "vcfBEGIN:VCARD" (ruido prefijo)
+    const cards = text.split('BEGIN:VCARD').filter(c => c.trim())
+    for (const card of cards) {
+      const fnMatch  = card.match(/^FN:(.+)$/m)
+      const telLines = [...card.matchAll(/^TEL[^:]*:(.+)$/gm)]
+      if (!fnMatch) continue
+      const name = fnMatch[1].trim()
+      let phone: string | null = null
+      for (const tel of telLines) {
+        const n = normalizePhone(tel[1].trim())
+        if (n) { phone = n; break }
+      }
+      if (!phone || seen.has(phone)) continue
+      seen.add(phone)
+      rows.push({ phone, name })
+    }
+    return rows
+  }
+
+  // Parse CSV, Excel o VCF
   const handleFile = (file: File) => {
     const reader = new FileReader()
     reader.onload = (e) => {
       const data = e.target?.result
       let rows: ImportRow[] = []
 
-      if (file.name.endsWith('.csv')) {
+      if (file.name.endsWith('.vcf')) {
+        rows = parseVcfText(data as string)
+      } else if (file.name.endsWith('.csv')) {
         const text = data as string
         const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
         const header = lines[0].toLowerCase().split(',').map(h => h.trim().replace(/"/g, ''))
@@ -188,7 +219,7 @@ export default function Contacts() {
       }
       setImportRows(rows)
     }
-    if (file.name.endsWith('.csv')) reader.readAsText(file)
+    if (file.name.endsWith('.csv') || file.name.endsWith('.vcf')) reader.readAsText(file)
     else reader.readAsBinaryString(file)
   }
 
@@ -299,7 +330,11 @@ export default function Contacts() {
   const deleteContact = async (id: string) => {
     if (!confirm('¿Eliminar este contacto?')) return
     const res = await fetch(`/api/contacts/${id}`, { method: 'DELETE' })
-    if (!res.ok) return  // don't remove from UI if server rejected
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      alert(`Error al eliminar: ${data.error || res.statusText}`)
+      return
+    }
     setContacts(prev => prev.filter(c => c.id !== id))
     setTotal(prev => prev - 1)
     setSelected(prev => { const n = new Set(prev); n.delete(id); return n })
@@ -495,7 +530,7 @@ export default function Contacts() {
           </Button>
           <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200 rounded-md bg-white hover:bg-gray-50 transition-colors font-medium">
             <Upload size={14} /> Importar
-            <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden"
+            <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.vcf" className="hidden"
               onChange={e => { const f = e.target.files?.[0]; if(f){ handleFile(f); setShowImport(true); e.target.value=''; }}} />
           </label>
         </div>
@@ -827,7 +862,7 @@ export default function Contacts() {
           ) : (
             <div className="space-y-3">
               <p className="text-sm text-gray-500">
-                {importRows.length} contactos detectados. Columnas reconocidas: <code className="bg-gray-100 px-1 rounded">phone/tel/numero</code>, <code className="bg-gray-100 px-1 rounded">name/nombre</code>, <code className="bg-gray-100 px-1 rounded">segment/grupo</code>
+                {importRows.length} contactos detectados. CSV/Excel: <code className="bg-gray-100 px-1 rounded">phone/tel/numero</code>, <code className="bg-gray-100 px-1 rounded">name/nombre</code>, <code className="bg-gray-100 px-1 rounded">segment/grupo</code> · VCF: extrae <code className="bg-gray-100 px-1 rounded">FN</code> + <code className="bg-gray-100 px-1 rounded">TEL</code>
               </p>
               <div className="max-h-64 overflow-y-auto border rounded-lg">
                 <table className="w-full text-sm">
