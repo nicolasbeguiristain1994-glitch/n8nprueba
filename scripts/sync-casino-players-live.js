@@ -307,7 +307,17 @@ async function getAgentes() {
      ORDER BY agente`,
     [AGENTES_FILTER]
   )
-  return rows.map(r => r.agente)
+  const fromDb = rows.map(r => r.agente)
+
+  // Bootstrap fallback: si casino_players está vacía Y se pasó --agentes
+  // explícitamente, usar ese listado directamente en lugar de abortar silenciosamente.
+  // Sin --agentes, el comportamiento original se preserva (no sync si tabla vacía).
+  if (fromDb.length === 0 && AGENTES_FILTER !== null) {
+    console.log('[sync] casino_players vacía — usando lista --agentes como bootstrap')
+    return AGENTES_FILTER
+  }
+
+  return fromDb
 }
 
 async function main() {
