@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
            gen_random_uuid()::text,
            phone,
            NULLIF(name, ''),
-           NULLIF(segment, ''),
+           NULLIF(segment, '')::contact_segment,
            $2,
            $3::gaming_type,
            'active', true, true, 'import', NOW(), NOW()
@@ -214,7 +214,6 @@ export async function POST(req: NextRequest) {
     const code = (e as Record<string, unknown>)?.code
     const detail = (e as Record<string, unknown>)?.detail
     console.error('[contacts/import] bulk upsert error — code:', code, '| detail:', detail, '| msg:', msg)
-    // TEMP: exponer error real para diagnóstico — remover antes de prod
-    return NextResponse.json({ error: `DB error [${code}]: ${msg}` }, { status: 500 })
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
