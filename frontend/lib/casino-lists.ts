@@ -87,11 +87,12 @@ export async function repopularListasCasino(ownerId: string | null): Promise<Rep
 
     const listRow = await withTransaction(async (client) => {
       const { rows } = await client.query<{ id: string; is_new: boolean }>(
-        `INSERT INTO contact_lists (name, description, filters, owned_by, updated_by)
-         VALUES ($1, $2, $3, $4, $4)
+        `INSERT INTO contact_lists (name, description, filters, source, owned_by, updated_by)
+         VALUES ($1, $2, $3, 'casino', $4, $4)
          ON CONFLICT (name) DO UPDATE
            SET description = EXCLUDED.description,
                filters     = EXCLUDED.filters,
+               source      = 'casino',
                updated_by  = EXCLUDED.updated_by
          RETURNING id, (xmax = 0) AS is_new`,
         [lista.nombre, lista.descripcion, filters, ownerId],
