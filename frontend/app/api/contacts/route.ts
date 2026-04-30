@@ -1,16 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isE164 } from '@/lib/validate'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
+import { visibilityClause } from '@/lib/contact-visibility'
 
 const ACTIVIDAD_ALLOWED   = new Set(['nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido'])
 const VALOR_RIESGO_ALLOWED = new Set(['bajo', 'medio', 'critico'])
 const ANTIGUEDAD_ALLOWED  = new Set(['nuevo', 'reciente', 'establecido', 'veterano', 'leal'])
 
 export async function GET(req: NextRequest) {
-  const err = await checkPermission(req, 'contacts', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'contacts', 'read')
+  if (!auth.ok) return auth.response
+  const { user } = auth
 
   const search      = req.nextUrl.searchParams.get('q') || ''
   const segment     = req.nextUrl.searchParams.get('segment') || ''
@@ -34,6 +36,10 @@ export async function GET(req: NextRequest) {
   if (antiguedad && !ANTIGUEDAD_ALLOWED.has(antiguedad)) {
     return NextResponse.json({ error: `Invalid antiguedad "${antiguedad}"` }, { status: 400 })
   }
+
+  // Los primeros 10 parámetros son los filtros existentes.
+  // El filtro de visibilidad se inyecta como $11 si aplica.
+  const vis = visibilityClause(user.role, user.user_id, 10)
 
   try {
     const rows = await query(`
@@ -69,9 +75,10 @@ export async function GET(req: NextRequest) {
           SELECT 1 FROM contact_tags ct
           WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $10
         ))
+        ${vis.sql}
       ORDER BY created_at DESC
       LIMIT $2 OFFSET $3
-    `, [`%${search}%`, limit, offset, segment, gaming, panel, linea, actividad, valorRiesgo, antiguedad])
+    `, [`%${search}%`, limit, offset, segment, gaming, panel, linea, actividad, valorRiesgo, antiguedad, ...vis.params])
 
     const [{ count }] = await query<{ count: string }>(
       `SELECT COUNT(*) FROM contacts
@@ -91,8 +98,10 @@ export async function GET(req: NextRequest) {
          AND ($8 = '' OR EXISTS (
            SELECT 1 FROM contact_tags ct
            WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $8
-         ))`,
-      [`%${search}%`, segment, gaming, panel, linea, actividad, valorRiesgo, antiguedad]
+         ))
+         ${visibilityClause(user.role, user.user_id, 8).sql}`,
+      [`%${search}%`, segment, gaming, panel, linea, actividad, valorRiesgo, antiguedad,
+       ...visibilityClause(user.role, user.user_id, 8).params]
     )
 
     return NextResponse.json({ contacts: rows, total: Number(count), page, limit })
@@ -103,12 +112,12 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const err = await checkPermission(req, 'contacts', 'create')
-  if (err) return err
+  const err = await checkPermissionWithUser(req, 'contacts', 'create')
+  if (!err.ok) return err.response
 
   let body: { phone?: string; name?: string; panel?: string; gaming?: string; segment?: string; linea?: string | number }
   try {
-    body = await req.json()
+    body = await (req as NextRequest).json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }

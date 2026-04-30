@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Loader2, Plus, Pencil, UserX, UserCheck, KeyRound, Search, Users } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Loader2, Plus, Pencil, UserX, UserCheck, KeyRound, Search, Users, Eye } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -350,6 +351,7 @@ function ResetPasswordModal({
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function UsersPage() {
+  const router = useRouter()
   const [users, setUsers]         = useState<User[]>([])
   const [loading, setLoading]     = useState(true)
   const [search, setSearch]       = useState('')
@@ -553,6 +555,17 @@ export default function UsersPage() {
                       >
                         {user.is_active ? <UserX size={13} /> : <UserCheck size={13} />}
                       </Button>
+                      {/* Visibilidad de contactos — solo para operadores/viewers */}
+                      {user.role !== 'admin' && (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          title="Gestionar visibilidad"
+                          onClick={() => router.push(`/users/${user.id}/visibility`)}
+                        >
+                          <Eye size={13} />
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

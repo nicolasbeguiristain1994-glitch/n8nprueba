@@ -1,15 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
+import { canSeeContact } from '@/lib/contact-visibility'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const err = await checkPermission(req, 'contacts', 'update')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'contacts', 'update')
+  if (!auth.ok) return auth.response
+  const { user } = auth
 
   const { id } = await params
   if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
+
+  // Verificar visibilidad: operadores solo pueden editar contactos asignados
+  if (!(await canSeeContact(user.role, user.user_id, id))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   let body: { segment?: string | null; gaming?: string | null; panel?: string | null; linea?: number | null }
   try {
@@ -70,8 +77,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   // delete = admin-only (operator canAccess blocks delete action)
-  const err = await checkPermission(req, 'contacts', 'delete')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'contacts', 'delete')
+  if (!auth.ok) return auth.response
 
   const { id } = await params
   if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
