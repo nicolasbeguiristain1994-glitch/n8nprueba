@@ -43,15 +43,25 @@ export async function POST(req: NextRequest) {
   const desde = req.nextUrl.searchParams.get('desde')
   const hasta  = req.nextUrl.searchParams.get('hasta')
 
-  // El script vive en <repo-root>/scripts/ — Next.js corre desde frontend/
-  const scriptPath = path.resolve(process.cwd(), '..', 'scripts', 'sync-casino-players-live.js')
+  // Los scripts viven en <repo-root>/scripts/ — Next.js corre desde frontend/
+  const scriptsDir   = path.resolve(process.cwd(), '..', 'scripts')
+  const syncScript   = path.join(scriptsDir, 'sync-casino-players-live.js')
+  const segScript    = path.join(scriptsDir, 'segmentar-casino-players.js')
 
-  const scriptArgs = desde
+  const syncArgs = desde
     ? [`--desde=${desde}`, ...(hasta ? [`--hasta=${hasta}`] : [])]
     : ['--auto']
 
+  // Encadena sync → segmentación: la segmentación solo corre si el sync termina OK.
+  // Se lanza en un proceso detached para no bloquear la respuesta HTTP.
+  const chainCmd = [
+    'node', syncScript, ...syncArgs,
+    '&&',
+    'node', segScript,
+  ].join(' ')
+
   try {
-    const child = spawn('node', [scriptPath, ...scriptArgs], {
+    const child = spawn('sh', ['-c', chainCmd], {
       detached: true,
       stdio:    'ignore',
       env: {
@@ -67,8 +77,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok:      true,
       message: desde
-        ? `Sync iniciado para el rango ${desde} → ${hasta ?? 'hoy'}. Los datos se actualizarán en ~2 minutos.`
-        : 'Sync incremental iniciado (--auto). Los datos se actualizarán en ~2 minutos.',
+        ? `Sync iniciado para el rango ${desde} → ${hasta ?? 'hoy'}. Los datos (con segmentación) se actualizarán en ~5 minutos.`
+        : 'Sync incremental + segmentación iniciados (--auto). Los datos se actualizarán en ~5 minutos.',
       pid:  child.pid,
       mode: desde ? 'range' : 'auto',
     })

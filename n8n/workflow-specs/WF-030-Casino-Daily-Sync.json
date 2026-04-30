@@ -1,0 +1,215 @@
+{
+  "name": "WF-030-Casino-Daily-Sync",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 4 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "id": "a1b2c3d4-0001-4000-8000-000000000001",
+      "name": "Diario 04:00 UTC"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PLATFORM_BASE_URL }}/api/dashboard/casino/sync",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 0],
+      "id": "a1b2c3d4-0002-4000-8000-000000000002",
+      "name": "Trigger Sync + Segmentación",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "PLATFORM_AUTH_CRED",
+          "name": "Platform Auth Token"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-ok",
+              "leftValue": "={{ $json.body.ok }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [500, 0],
+      "id": "a1b2c3d4-0003-4000-8000-000000000003",
+      "name": "¿OK?"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [750, -100],
+      "id": "a1b2c3d4-0004-4000-8000-000000000004",
+      "name": "Sync iniciado OK"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "error",
+              "value": "={{ $('Trigger Sync + Segmentación').item.json.body.error ?? $('Trigger Sync + Segmentación').item.json.body.message ?? 'respuesta inesperada del servidor' }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $('Trigger Sync + Segmentación').item.json.statusCode }}"
+            },
+            {
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [750, 100],
+      "id": "a1b2c3d4-0005-4000-8000-000000000005",
+      "name": "Capturar Error"
+    },
+    {
+      "parameters": {
+        "errorMessage": "=Casino Sync falló ({{ $now.toISO() }}): status={{ $json.status }} — {{ $json.error }}"
+      },
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [1000, 100],
+      "id": "a1b2c3d4-0006-4000-8000-000000000006",
+      "name": "Falló — Lanzar error"
+    }
+  ],
+  "connections": {
+    "Diario 04:00 UTC": {
+      "main": [
+        [
+          {
+            "node": "Trigger Sync + Segmentación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Sync + Segmentación": {
+      "main": [
+        [
+          {
+            "node": "¿OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿OK?": {
+      "main": [
+        [
+          {
+            "node": "Sync iniciado OK",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Capturar Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Capturar Error": {
+      "main": [
+        [
+          {
+            "node": "Falló — Lanzar error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "meta": {
+    "instanceId": "casino-daily-sync"
+  },
+  "pinData": {},
+  "versionId": "2",
+  "triggerCount": 0,
+  "tags": ["casino", "sync", "scheduled"],
+  "_readme": {
+    "flujo": [
+      "1. Cron dispara a las 04:00 UTC (= 01:00 ARG)",
+      "2. POST /api/dashboard/casino/sync lanza en background:",
+      "     node sync-casino-players-live.js --auto",
+      "     && node segmentar-casino-players.js",
+      "3. Si ok=true → NoOp (éxito, ejecución verde)",
+      "4. Si ok=false o HTTP error → Set captura detalles → StopAndError (ejecución roja, alerta en n8n)"
+    ],
+    "env_vars_n8n": [
+      "PLATFORM_BASE_URL = URL base del frontend (ej: https://tu-app.railway.app)"
+    ],
+    "credenciales_n8n": [
+      "Tipo: HTTP Header Auth",
+      "Nombre exacto: Platform Auth Token",
+      "Header Name: Authorization",
+      "Header Value: Bearer <JWT de sesión admin o token estático>"
+    ],
+    "env_vars_railway": [
+      "ZEUS_API_KEY      = tu API key de Zeus",
+      "ZEUS_PLAYER_TOKEN = tu player token de Zeus",
+      "DATABASE_URL      = ya configurado"
+    ],
+    "nota_timing": "El endpoint responde en <1 seg (proceso detached). El sync real tarda ~2-5 min en background. La segmentación corre automáticamente al terminar el sync."
+  }
+}
