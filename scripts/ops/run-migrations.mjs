@@ -119,6 +119,7 @@ const MIGRATIONS = [
   { file: 'db/migrations/029_casino_player_labels.sql',          label: '029 — casino_players.labels TEXT[] column (operator tags)' },
   { file: 'db/migrations/030_cleanup_ghost_agent_players.sql',   label: '030 — delete ghost agent-as-player rows from casino_players + casino_transactions' },
   { file: 'db/migrations/031_casino_transactions_timestamp.sql', label: '031 — casino_transactions.fecha_hora_utc TIMESTAMPTZ for sub-day filtering' },
+  { file: 'db/migrations/032_enable_rls.sql',                   label: '032 — Enable RLS on all public tables (blocks anon key access)' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
