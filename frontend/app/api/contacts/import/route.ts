@@ -214,6 +214,7 @@ export async function POST(req: NextRequest) {
     const code = (e as Record<string, unknown>)?.code
     const detail = (e as Record<string, unknown>)?.detail
     console.error('[contacts/import] bulk upsert error — code:', code, '| detail:', detail, '| msg:', msg)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    // TEMP: exponer error real para diagnóstico — remover antes de prod
+    return NextResponse.json({ error: `DB error [${code}]: ${msg}` }, { status: 500 })
   }
 }
