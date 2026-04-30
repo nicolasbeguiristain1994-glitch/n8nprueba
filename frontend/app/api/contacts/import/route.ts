@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
   let body: {
     contacts?: Array<{ phone: string; name?: string; segment?: string; casino_username?: string }>
     panel?: string
-    gaming?: string
+    linea?: number
   }
   try {
     body = await req.json()
@@ -19,14 +19,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { contacts, panel, gaming } = body
+  const { contacts, panel, linea } = body
   if (!contacts?.length) return NextResponse.json({ error: 'No contacts provided' }, { status: 400 })
   if (!Array.isArray(contacts) || contacts.length > 5000) {
     return NextResponse.json({ error: 'contacts debe ser un array de máximo 5000 filas' }, { status: 400 })
   }
 
-  const panelValue  = panel?.trim() || null
-  const gamingValue = gaming        || null
+  const panelValue = panel?.trim() || null
+  const lineaValue = linea ? Number(linea) : null
+  if (lineaValue !== null && (lineaValue < 1 || lineaValue > 12)) {
+    return NextResponse.json({ error: 'Línea inválida (1-12)' }, { status: 400 })
+  }
 
   // Normalize and pre-filter in JS — count skipped rows before hitting DB
   // Deduplicate phones before SQL; only validate E.164 rows (skip invalid silently)
@@ -66,7 +69,7 @@ export async function POST(req: NextRequest) {
                 AS x(phone text, name text, segment text, casino_username text)
        ), upserted AS (
          INSERT INTO contacts
-           (external_id, phone_number, first_name, segment, panel, gaming, status,
+           (external_id, phone_number, first_name, segment, panel, linea, status,
             opt_in_marketing, opt_in_sms, platform_source, created_at, updated_at)
          SELECT
            gen_random_uuid()::text,
@@ -74,14 +77,14 @@ export async function POST(req: NextRequest) {
            NULLIF(name, ''),
            NULLIF(segment, '')::contact_segment,
            $2,
-           $3::gaming_type,
+           $3,
            'active', true, true, 'import', NOW(), NOW()
          FROM input
          ON CONFLICT (phone_number) DO UPDATE
            SET first_name = COALESCE(EXCLUDED.first_name, contacts.first_name),
                segment    = COALESCE(EXCLUDED.segment,    contacts.segment),
                panel      = COALESCE(EXCLUDED.panel,      contacts.panel),
-               gaming     = COALESCE(EXCLUDED.gaming,     contacts.gaming),
+               linea      = COALESCE(EXCLUDED.linea,      contacts.linea),
                updated_at = NOW()
          RETURNING id, xmax::text
        )
@@ -89,7 +92,7 @@ export async function POST(req: NextRequest) {
          COUNT(*) FILTER (WHERE xmax = '0')  AS inserted,
          COUNT(*) FILTER (WHERE xmax != '0') AS updated
        FROM upserted`,
-      [JSON.stringify(normalized), panelValue, gamingValue]
+      [JSON.stringify(normalized), panelValue, lineaValue]
     )
 
     const inserted = Number(row?.inserted || 0)

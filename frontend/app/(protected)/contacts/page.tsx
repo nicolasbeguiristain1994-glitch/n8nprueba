@@ -39,7 +39,7 @@ export default function Contacts() {
   const [showImport, setShowImport]   = useState(false)
   const [importRows, setImportRows]   = useState<ImportRow[]>([])
   const [importPanel, setImportPanel]   = useState('')
-  const [importGaming, setImportGaming] = useState('')
+  const [importLinea, setImportLinea]   = useState('')
   const [importing, setImporting]     = useState(false)
   const [importResult, setImportResult] = useState<{ inserted: number; updated: number; skipped: number } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -231,7 +231,7 @@ export default function Contacts() {
       res = await fetch('/api/contacts/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contacts: importRows, panel: importPanel || undefined, gaming: importGaming || undefined }),
+        body: JSON.stringify({ contacts: importRows, panel: importPanel || undefined, linea: importLinea ? Number(importLinea) : undefined }),
       })
     } catch {
       setImporting(false)
@@ -843,7 +843,7 @@ export default function Contacts() {
           setImporting(false)
           setImportError(null)
           setImportPanel('')
-          setImportGaming('')
+          setImportLinea('')
         }
       }}>
         <DialogContent className="max-w-2xl">
@@ -857,7 +857,7 @@ export default function Contacts() {
                 <div className="bg-blue-50 rounded-lg p-4"><p className="text-2xl font-bold text-blue-600">{importResult.updated}</p><p className="text-xs text-gray-500">Actualizados</p></div>
                 <div className="bg-gray-50 rounded-lg p-4"><p className="text-2xl font-bold text-gray-500">{importResult.skipped}</p><p className="text-xs text-gray-500">Omitidos</p></div>
               </div>
-              <Button className="w-full" onClick={() => { setShowImport(false); setImportRows([]); setImportResult(null); setImportPanel(''); setImportGaming('') }}>Cerrar</Button>
+              <Button className="w-full" onClick={() => { setShowImport(false); setImportRows([]); setImportResult(null); setImportPanel(''); setImportLinea('') }}>Cerrar</Button>
             </div>
           ) : (
             <div className="space-y-3">
@@ -895,14 +895,14 @@ export default function Contacts() {
                   </Select>
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-gray-600 mb-1 block">Tipo de juego (opcional)</label>
-                  <Select value={importGaming} onValueChange={v => setImportGaming(v === 'none' ? '' : (v ?? ''))}>
+                  <label className="text-xs font-medium text-gray-600 mb-1 block">Línea (opcional)</label>
+                  <Select value={importLinea || 'none'} onValueChange={v => setImportLinea(v === 'none' ? '' : (v ?? ''))}>
                     <SelectTrigger><SelectValue placeholder="Sin asignar" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Sin asignar</SelectItem>
-                      <SelectItem value="slots">🎰 Slots</SelectItem>
-                      <SelectItem value="deportivas">⚽ Deportivas</SelectItem>
-                      <SelectItem value="ambas">🎯 Ambas</SelectItem>
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map(n => (
+                        <SelectItem key={n} value={String(n)}>Línea {n}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
