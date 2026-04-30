@@ -362,6 +362,32 @@ export async function GET(req: Request) {
       //   Rows WITH fecha_hora_utc  → filtered by exact TIMESTAMPTZ bounds ($9/$10)
       //   Rows WITHOUT (NULL)       → filtered by date bounds ($2/$3) as before
       //
+      // OVERINCLUSION RISK (NULL rows + non-default hora):
+      //   When hora_desde or hora_hasta is not '00:00', rows where
+      //   fecha_hora_utc IS NULL fall back to DATE-only filtering and are
+      //   overinclusive: the entire day is included even if the entered hour
+      //   would have excluded some transactions.
+      //   When hora_desde = hora_hasta = '00:00' (the default), the DATE
+      //   fallback is exact — there is no overinclusion.
+      //
+      // PRODUCTION READINESS CONDITION for exact hour-level parity:
+      //   Run this SQL on the production DB before claiming Zeus parity with hora:
+      //
+      //   SELECT agente,
+      //          COUNT(*) AS total,
+      //          COUNT(fecha_hora_utc) AS with_ts,
+      //          COUNT(*) - COUNT(fecha_hora_utc) AS null_ts,
+      //          ROUND(100.0 * COUNT(fecha_hora_utc) / NULLIF(COUNT(*),0), 1) AS pct
+      //   FROM casino_transactions
+      //   WHERE agente = ANY('{bigwin,ofizeus,betcoin,royal,farabet}'::text[])
+      //   GROUP BY agente ORDER BY pct;
+      //
+      //   Threshold: pct = 100.0 per agente (or ≥ 95.0 if residual rows are
+      //   outside the queryable date range). Achieve 100% by running:
+      //     node scripts/seed-casino-transactions.js
+      //   after applying migration 031. The seed backfills fecha_hora_utc for
+      //   all historical rows present in the captured files via DO UPDATE.
+      //
       // Parameter order:
       //   $1  agente
       //   $2  fecha_desde_date (DATE, Argentina local, fallback for rows without TS)
