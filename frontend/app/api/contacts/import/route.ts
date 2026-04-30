@@ -210,7 +210,10 @@ export async function POST(req: NextRequest) {
       metadata: { inserted, updated, skipped: skipped + invalidCount, invalid: invalidCount, total: contacts.length } })
     return NextResponse.json({ inserted, updated, skipped: skipped + invalidCount, invalid: invalidCount, total: contacts.length })
   } catch (e) {
-    console.error('[contacts/import] bulk upsert error:', e instanceof Error ? e.message : e)
+    const msg = e instanceof Error ? e.message : String(e)
+    const code = (e as Record<string, unknown>)?.code
+    const detail = (e as Record<string, unknown>)?.detail
+    console.error('[contacts/import] bulk upsert error — code:', code, '| detail:', detail, '| msg:', msg)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
