@@ -28,7 +28,6 @@ export default function Contacts() {
   const [filterPanel, setFilterPanel]   = useState('')
   const [filterLinea, setFilterLinea]         = useState('')
   const [filterActividad, setFilterActividad]     = useState('')
-  const [filterValorRiesgo, setFilterValorRiesgo] = useState('')
   const [filterAntiguedad, setFilterAntiguedad]   = useState('')
   const [page, setPage]         = useState(1)
   const [loading, setLoading]     = useState(false)
@@ -65,7 +64,6 @@ export default function Contacts() {
   const [criteriaGaming, setCriteriaGaming]         = useState('')
   const [criteriaSegment, setCriteriaSegment]       = useState('')
   const [criteriaActividad, setCriteriaActividad]   = useState('')
-  const [criteriaValorRiesgo, setCriteriaValorRiesgo] = useState('')
   const [criteriaAntiguedad, setCriteriaAntiguedad] = useState('')
 
   // Inline update / import error
@@ -82,10 +80,10 @@ export default function Contacts() {
 
   // Display labels for casino amount segments (canonical → operator-facing name)
   const NIVEL_LABEL: Record<string, string> = {
-    bajo:  'bronce',
-    medio: 'plata',
-    alto:  'oro',
-    vip:   'platino',
+    bajo:  'Bajo',
+    medio: 'Medio',
+    alto:  'Vip',
+    vip:   'Super Vip',
   }
 
   const SEGMENT_STYLE: Record<string, string> = {
@@ -139,14 +137,13 @@ export default function Contacts() {
       panel: filterPanel.trim(),
       linea: filterLinea,
       actividad: filterActividad,
-      valorRiesgo: filterValorRiesgo,
       antiguedad: filterAntiguedad,
     })
     fetchJson<{ contacts: Contact[]; total: number }>(`/api/contacts?${q}`)
       .then(d => { setContacts(d.contacts || []); setTotal(d.total || 0) })
       .catch(() => { setContacts([]); setTotal(0) })
       .finally(() => setLoading(false))
-  }, [search, page, segment, filterGaming, filterPanel, filterLinea, filterActividad, filterValorRiesgo, filterAntiguedad])
+  }, [search, page, segment, filterGaming, filterPanel, filterLinea, filterActividad, filterAntiguedad])
 
   useEffect(() => { load() }, [load])
   useEffect(() => {
@@ -356,13 +353,14 @@ export default function Contacts() {
   }
 
   const [downloading, setDownloading] = useState(false)
+  const [selectingAll, setSelectingAll] = useState(false)
 
   const downloadContacts = async (format: 'csv' | 'xlsx') => {
     setDownloading(true)
     const q = new URLSearchParams({
       q: search, segment, gaming: filterGaming,
       panel: filterPanel.trim(), linea: filterLinea,
-      actividad: filterActividad, valorRiesgo: filterValorRiesgo,
+      actividad: filterActividad,
       antiguedad: filterAntiguedad, download: 'true',
     })
     const d = await fetch(`/api/contacts?${q}`).then(r => r.json())
@@ -396,7 +394,6 @@ export default function Contacts() {
       segment && `nivel-${segment}`,
       search && `busq-${search}`,
       filterActividad && `actividad-${filterActividad}`,
-      filterValorRiesgo && `riesgo-${filterValorRiesgo}`,
       filterAntiguedad && `antiguedad-${filterAntiguedad}`,
     ].filter(Boolean).join('_') || 'todos'
 
@@ -418,7 +415,7 @@ export default function Contacts() {
     if (!newListName) return
     if (listMode === 'selection' && selected.size === 0) return
     const hasCriteria = criteriaPanel || criteriaGaming || criteriaSegment ||
-      criteriaActividad || criteriaValorRiesgo || criteriaAntiguedad
+      criteriaActividad || criteriaAntiguedad
     if (listMode === 'criteria' && !hasCriteria) return
     setSavingList(true)
     setListError(null)
@@ -429,7 +426,6 @@ export default function Contacts() {
     } else {
       const tags: string[] = []
       if (criteriaActividad)   tags.push(`casino:actividad:${criteriaActividad}`)
-      if (criteriaValorRiesgo) tags.push(`casino:valor_riesgo:${criteriaValorRiesgo}`)
       if (criteriaAntiguedad)  tags.push(`casino:antiguedad:${criteriaAntiguedad}`)
       body = {
         name: newListName,
@@ -453,7 +449,7 @@ export default function Contacts() {
     setNewListName('')
     setSelected(new Set())
     setCriteriaPanel(''); setCriteriaGaming(''); setCriteriaSegment('')
-    setCriteriaActividad(''); setCriteriaValorRiesgo(''); setCriteriaAntiguedad('')
+    setCriteriaActividad(''); setCriteriaAntiguedad('')
     fetch('/api/lists').then(r => r.json()).then(d => setLists(d.lists || []))
   }
 
@@ -475,6 +471,24 @@ export default function Contacts() {
       setRepopulateError('Error de red')
     } finally {
       setRepopulating(false)
+    }
+  }
+
+  const selectAllFiltered = async () => {
+    setSelectingAll(true)
+    try {
+      const q = new URLSearchParams({
+        q: search, segment, gaming: filterGaming,
+        panel: filterPanel.trim(), linea: filterLinea,
+        actividad: filterActividad, antiguedad: filterAntiguedad,
+        select_all: 'true',
+      })
+      const d = await fetchJson<{ ids: string[] }>(`/api/contacts?${q}`)
+      setSelected(new Set(d.ids || []))
+    } catch {
+      // ignore
+    } finally {
+      setSelectingAll(false)
     }
   }
 
@@ -510,6 +524,11 @@ export default function Contacts() {
               <Trash2 size={14} className="mr-1" /> Eliminar ({selected.size})
             </Button>
           )}
+          <Button size="sm" variant="outline" onClick={selectAllFiltered} disabled={selectingAll}
+            className="border-blue-200 text-blue-700 hover:bg-blue-50">
+            <CheckSquare size={14} className="mr-1" />
+            {selectingAll ? 'Seleccionando…' : 'Seleccionar todos'}
+          </Button>
           <Button size="sm" variant="outline" onClick={() => { setListMode('criteria'); setShowList(true) }} className="border-indigo-200 text-indigo-700">
             <List size={14} className="mr-1" /> Lista por criterios
           </Button>
@@ -591,7 +610,7 @@ export default function Contacts() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="">Todas las líneas</SelectItem>
-            {Array.from({ length: 12 }, (_, i) => i + 1).map(n => (
+            {Array.from({ length: 100 }, (_, i) => i + 1).map(n => (
               <SelectItem key={n} value={String(n)}>Línea {n}</SelectItem>
             ))}
           </SelectContent>
@@ -613,13 +632,10 @@ export default function Contacts() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="">Todos los niveles</SelectItem>
-            <SelectItem value="vip">platino</SelectItem>
-            <SelectItem value="alto">oro</SelectItem>
-            <SelectItem value="medio">plata</SelectItem>
-            <SelectItem value="bajo">bronce</SelectItem>
-            <SelectItem value="casual">casual</SelectItem>
-            <SelectItem value="regular">regular</SelectItem>
-            <SelectItem value="whale">whale</SelectItem>
+            <SelectItem value="vip">Super Vip</SelectItem>
+            <SelectItem value="alto">Vip</SelectItem>
+            <SelectItem value="medio">Medio</SelectItem>
+            <SelectItem value="bajo">Bajo</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -641,17 +657,6 @@ export default function Contacts() {
             <SelectItem value="perdido">perdido</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={filterValorRiesgo} onValueChange={v => { setFilterValorRiesgo(v ?? ''); setPage(1) }}>
-          <SelectTrigger className="w-40">
-            <SelectValue placeholder="Valor riesgo" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="">Cualquier riesgo</SelectItem>
-            <SelectItem value="critico">crítico</SelectItem>
-            <SelectItem value="medio">medio</SelectItem>
-            <SelectItem value="bajo">bajo</SelectItem>
-          </SelectContent>
-        </Select>
         <Select value={filterAntiguedad} onValueChange={v => { setFilterAntiguedad(v ?? ''); setPage(1) }}>
           <SelectTrigger className="w-40">
             <SelectValue placeholder="Antigüedad" />
@@ -665,9 +670,9 @@ export default function Contacts() {
             <SelectItem value="nuevo">nuevo</SelectItem>
           </SelectContent>
         </Select>
-        {(filterActividad || filterValorRiesgo || filterAntiguedad) && (
+        {(filterActividad || filterAntiguedad) && (
           <Button variant="ghost" size="sm" className="text-gray-400 hover:text-gray-600 h-8 px-2"
-            onClick={() => { setFilterActividad(''); setFilterValorRiesgo(''); setFilterAntiguedad(''); setPage(1) }}>
+            onClick={() => { setFilterActividad(''); setFilterAntiguedad(''); setPage(1) }}>
             <X size={13} className="mr-1" /> Limpiar casino
           </Button>
         )}
@@ -738,7 +743,7 @@ export default function Contacts() {
                         className={`text-xs px-2 py-0.5 rounded-full font-medium border-0 cursor-pointer appearance-none bg-transparent focus:outline-none focus:ring-1 focus:ring-offset-0 focus:ring-gray-300 ${c.linea ? 'bg-orange-50 text-orange-700' : 'text-gray-400'}`}
                       >
                         <option value="">— sin línea</option>
-                        {Array.from({ length: 12 }, (_, i) => i + 1).map(n => (
+                        {Array.from({ length: 100 }, (_, i) => i + 1).map(n => (
                           <option key={n} value={n}>Línea {n}</option>
                         ))}
                       </select>
@@ -764,13 +769,10 @@ export default function Contacts() {
                         className={`text-xs px-2 py-0.5 rounded-full font-medium border-0 cursor-pointer appearance-none bg-transparent focus:outline-none focus:ring-1 focus:ring-offset-0 focus:ring-gray-300 ${c.segment ? (SEGMENT_STYLE[c.segment] ?? 'bg-gray-100 text-gray-600') : 'text-gray-400'}`}
                       >
                         <option value="">— sin nivel</option>
-                        <option value="vip">platino</option>
-                        <option value="alto">oro</option>
-                        <option value="medio">plata</option>
-                        <option value="bajo">bronce</option>
-                        <option value="casual">casual</option>
-                        <option value="regular">regular</option>
-                        <option value="whale">whale</option>
+                        <option value="vip">Super Vip</option>
+                        <option value="alto">Vip</option>
+                        <option value="medio">Medio</option>
+                        <option value="bajo">Bajo</option>
                       </select>
                     </td>
                     {/* Columna Casino — indicadores de riesgo y antigüedad (actividad movida a Estado) */}
@@ -900,7 +902,7 @@ export default function Contacts() {
                     <SelectTrigger><SelectValue placeholder="Sin asignar" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Sin asignar</SelectItem>
-                      {Array.from({ length: 12 }, (_, i) => i + 1).map(n => (
+                      {Array.from({ length: 100 }, (_, i) => i + 1).map(n => (
                         <SelectItem key={n} value={String(n)}>Línea {n}</SelectItem>
                       ))}
                     </SelectContent>
@@ -933,7 +935,6 @@ export default function Contacts() {
           setCriteriaGaming('')
           setCriteriaSegment('')
           setCriteriaActividad('')
-          setCriteriaValorRiesgo('')
           setCriteriaAntiguedad('')
           setSavingList(false)
           setListError(null)
@@ -996,13 +997,10 @@ export default function Contacts() {
                       <SelectTrigger><SelectValue placeholder="Cualquier nivel" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">Cualquier nivel</SelectItem>
-                        <SelectItem value="vip">Platino</SelectItem>
-                        <SelectItem value="alto">Oro</SelectItem>
-                        <SelectItem value="medio">Plata</SelectItem>
-                        <SelectItem value="bajo">Bronce</SelectItem>
-                        <SelectItem value="casual">Casual</SelectItem>
-                        <SelectItem value="regular">Regular</SelectItem>
-                        <SelectItem value="whale">Whale</SelectItem>
+                        <SelectItem value="vip">Super Vip</SelectItem>
+                        <SelectItem value="alto">Vip</SelectItem>
+                        <SelectItem value="medio">Medio</SelectItem>
+                        <SelectItem value="bajo">Bajo</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1022,18 +1020,6 @@ export default function Contacts() {
                         <SelectItem value="en_riesgo">en riesgo</SelectItem>
                         <SelectItem value="inactivo">inactivo</SelectItem>
                         <SelectItem value="perdido">perdido</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">Valor riesgo</label>
-                    <Select value={criteriaValorRiesgo || 'all'} onValueChange={v => setCriteriaValorRiesgo(v === 'all' ? '' : (v ?? ''))}>
-                      <SelectTrigger><SelectValue placeholder="Cualquier riesgo" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Cualquier riesgo</SelectItem>
-                        <SelectItem value="critico">crítico</SelectItem>
-                        <SelectItem value="medio">medio</SelectItem>
-                        <SelectItem value="bajo">bajo</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1065,7 +1051,7 @@ export default function Contacts() {
               <Button
                 className={`flex-1 ${listMode === 'criteria' ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-green-600 hover:bg-green-700'}`}
                 onClick={createList}
-                disabled={savingList || !newListName || (listMode === 'selection' && selected.size === 0) || (listMode === 'criteria' && !criteriaPanel && !criteriaGaming && !criteriaSegment && !criteriaActividad && !criteriaValorRiesgo && !criteriaAntiguedad)}>
+                disabled={savingList || !newListName || (listMode === 'selection' && selected.size === 0) || (listMode === 'criteria' && !criteriaPanel && !criteriaGaming && !criteriaSegment && !criteriaActividad && !criteriaAntiguedad)}>
                 {savingList ? 'Guardando…' : 'Crear lista'}
               </Button>
             </div>
@@ -1117,7 +1103,7 @@ export default function Contacts() {
                   <SelectTrigger><SelectValue placeholder="Línea" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">Sin línea</SelectItem>
-                    {Array.from({ length: 12 }, (_, i) => i + 1).map(n => (
+                    {Array.from({ length: 100 }, (_, i) => i + 1).map(n => (
                       <SelectItem key={n} value={String(n)}>Línea {n}</SelectItem>
                     ))}
                   </SelectContent>
@@ -1141,13 +1127,10 @@ export default function Contacts() {
                   <SelectTrigger><SelectValue placeholder="Nivel" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">Sin nivel</SelectItem>
-                    <SelectItem value="vip">Platino</SelectItem>
-                    <SelectItem value="alto">Oro</SelectItem>
-                    <SelectItem value="medio">Plata</SelectItem>
-                    <SelectItem value="bajo">Bronce</SelectItem>
-                    <SelectItem value="casual">Casual</SelectItem>
-                    <SelectItem value="regular">Regular</SelectItem>
-                    <SelectItem value="whale">Whale</SelectItem>
+                    <SelectItem value="vip">Super Vip</SelectItem>
+                    <SelectItem value="alto">Vip</SelectItem>
+                    <SelectItem value="medio">Medio</SelectItem>
+                    <SelectItem value="bajo">Bajo</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

@@ -50,6 +50,8 @@ type UserRow = {
   password_hash: string
   is_active: boolean
   session_version: number
+  can_download_contacts: boolean
+  allowed_agents: string[]
 }
 
 export async function POST(req: NextRequest) {
@@ -108,7 +110,7 @@ export async function POST(req: NextRequest) {
       // Step 2 — fetch user
       const t2 = Date.now()
       const userResult = await dbClient.query<UserRow>(
-        'SELECT id, email, name, role, sectors, password_hash, is_active, session_version FROM users WHERE LOWER(email) = $1',
+        'SELECT id, email, name, role, sectors, password_hash, is_active, session_version, can_download_contacts, allowed_agents FROM users WHERE LOWER(email) = $1',
         [email]
       )
       console.log('[login] step2 SELECT done in', Date.now() - t2, 'ms, found:', userResult.rows.length)
@@ -179,15 +181,17 @@ export async function POST(req: NextRequest) {
 
     const now = Math.floor(Date.now() / 1000)
     const sessionPayload: SessionUser = {
-      user_id:         'bootstrap',
-      email:           bootstrapUser.toLowerCase().trim(),
-      name:            'Bootstrap Admin',
-      role:            'admin',
-      sectors:         [],
-      session_version: 1,
-      iat:             now,
-      exp:             now + COOKIE_MAX_AGE,
-      nonce:           crypto.randomUUID(),
+      user_id:               'bootstrap',
+      email:                 bootstrapUser.toLowerCase().trim(),
+      name:                  'Bootstrap Admin',
+      role:                  'admin',
+      sectors:               [],
+      session_version:       1,
+      can_download_contacts: true,
+      allowed_agents:        [],
+      iat:                   now,
+      exp:                   now + COOKIE_MAX_AGE,
+      nonce:                 crypto.randomUUID(),
     }
 
     const token = createSessionToken(sessionPayload)
@@ -219,15 +223,17 @@ export async function POST(req: NextRequest) {
 
   const now = Math.floor(Date.now() / 1000)
   const sessionPayload: SessionUser = {
-    user_id:         user.id,
-    email:           user.email,
-    name:            user.name,
-    role:            user.role,
-    sectors:         Array.isArray(user.sectors) ? user.sectors : [],
-    session_version: user.session_version,
-    iat:             now,
-    exp:             now + COOKIE_MAX_AGE,
-    nonce:           crypto.randomUUID(),
+    user_id:               user.id,
+    email:                 user.email,
+    name:                  user.name,
+    role:                  user.role,
+    sectors:               Array.isArray(user.sectors) ? user.sectors : [],
+    session_version:       user.session_version,
+    can_download_contacts: user.can_download_contacts ?? true,
+    allowed_agents:        Array.isArray(user.allowed_agents) ? user.allowed_agents : [],
+    iat:                   now,
+    exp:                   now + COOKIE_MAX_AGE,
+    nonce:                 crypto.randomUUID(),
   }
 
   const token = createSessionToken(sessionPayload)

@@ -49,15 +49,17 @@ beforeAll(() => {
 function makeSession(override: Partial<SessionUser> = {}): SessionUser {
   const now = Math.floor(Date.now() / 1000)
   return {
-    user_id:         'aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa',
-    email:           'test@example.com',
-    name:            'Test',
-    role:            'viewer',
-    sectors:         [],
-    session_version: 1,
-    iat:             now,
-    exp:             now + 3600,
-    nonce:           'test-nonce',
+    user_id:               'aaaaaaaa-0000-0000-0000-aaaaaaaaaaaa',
+    email:                 'test@example.com',
+    name:                  'Test',
+    role:                  'viewer',
+    sectors:               [],
+    session_version:       1,
+    can_download_contacts: true,
+    allowed_agents:        [],
+    iat:                   now,
+    exp:                   now + 3600,
+    nonce:                 'test-nonce',
     ...override,
   }
 }
@@ -355,16 +357,18 @@ describe('isOwnerOrAdmin — alias consistency', () => {
 function makeBootstrapSession(): SessionUser {
   const now = Math.floor(Date.now() / 1000)
   return {
-    user_id:         'bootstrap',
-    email:           'bootstrap@system',
-    name:            'Bootstrap',
-    role:            'admin',
-    sectors:         ['dashboard', 'contacts', 'campaigns', 'conversations',
-                      'lines', 'warmup', 'users', 'lists', 'send', 'audit', 'settings'],
-    session_version: 0,
-    iat:             now,
-    exp:             now + 3600,
-    nonce:           'bootstrap-nonce',
+    user_id:               'bootstrap',
+    email:                 'bootstrap@system',
+    name:                  'Bootstrap',
+    role:                  'admin',
+    sectors:               ['dashboard', 'contacts', 'campaigns', 'conversations',
+                            'lines', 'warmup', 'users', 'lists', 'send', 'audit', 'settings'],
+    session_version:       0,
+    can_download_contacts: true,
+    allowed_agents:        [],
+    iat:                   now,
+    exp:                   now + 3600,
+    nonce:                 'bootstrap-nonce',
   }
 }
 

@@ -46,7 +46,7 @@ type OperatorUser = {
 }
 
 const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
-const SEGMENT_LABEL: Record<string, string> = { bajo: 'bronce', medio: 'plata', alto: 'oro', vip: 'platino' }
+const SEGMENT_LABEL: Record<string, string> = { bajo: 'Bajo', medio: 'Medio', alto: 'Vip', vip: 'Super Vip' }
 
 // ── Sub-component: contact card ───────────────────────────────────────────────
 
@@ -240,21 +240,21 @@ export default function VisibilityPage() {
                   value={searchAvail} onChange={e => { setSearchAvail(e.target.value); setAvailPage(1) }} />
               </div>
               <div className="flex gap-1.5">
-                <Select value={filterPanel || 'all'} onValueChange={v => { setFilterPanel(v === 'all' ? '' : v); setAvailPage(1) }}>
+                <Select value={filterPanel || 'all'} onValueChange={v => { setFilterPanel(v === 'all' || !v ? '' : v); setAvailPage(1) }}>
                   <SelectTrigger className="h-7 text-xs flex-1"><SelectValue placeholder="Agente" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todos los agentes</SelectItem>
                     {PANEL_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <Select value={filterSegment || 'all'} onValueChange={v => { setFilterSegment(v === 'all' ? '' : v); setAvailPage(1) }}>
+                <Select value={filterSegment || 'all'} onValueChange={v => { setFilterSegment(v === 'all' || !v ? '' : v); setAvailPage(1) }}>
                   <SelectTrigger className="h-7 text-xs flex-1"><SelectValue placeholder="Nivel" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todos los niveles</SelectItem>
-                    <SelectItem value="vip">platino</SelectItem>
-                    <SelectItem value="alto">oro</SelectItem>
-                    <SelectItem value="medio">plata</SelectItem>
-                    <SelectItem value="bajo">bronce</SelectItem>
+                    <SelectItem value="vip">Super Vip</SelectItem>
+                    <SelectItem value="alto">Vip</SelectItem>
+                    <SelectItem value="medio">Medio</SelectItem>
+                    <SelectItem value="bajo">Bajo</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

@@ -5,41 +5,96 @@ import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { visibilityClause } from '@/lib/contact-visibility'
 
-const ACTIVIDAD_ALLOWED   = new Set(['nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido'])
-const VALOR_RIESGO_ALLOWED = new Set(['bajo', 'medio', 'critico'])
-const ANTIGUEDAD_ALLOWED  = new Set(['nuevo', 'reciente', 'establecido', 'veterano', 'leal'])
+const ACTIVIDAD_ALLOWED  = new Set(['nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido'])
+const ANTIGUEDAD_ALLOWED = new Set(['nuevo', 'reciente', 'establecido', 'veterano', 'leal'])
 
 export async function GET(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'contacts', 'read')
   if (!auth.ok) return auth.response
   const { user } = auth
 
-  const search      = req.nextUrl.searchParams.get('q') || ''
-  const segment     = req.nextUrl.searchParams.get('segment') || ''
-  const gaming      = req.nextUrl.searchParams.get('gaming') || ''
-  const panel       = req.nextUrl.searchParams.get('panel') || ''
-  const download    = req.nextUrl.searchParams.get('download') === 'true'
-  const page        = Number(req.nextUrl.searchParams.get('page') || 1)
-  const limit       = download ? 100000 : 50
-  const offset      = download ? 0 : (page - 1) * limit
-  const linea       = req.nextUrl.searchParams.get('linea') || ''
-  const actividad   = req.nextUrl.searchParams.get('actividad') || ''
-  const valorRiesgo = req.nextUrl.searchParams.get('valorRiesgo') || ''
-  const antiguedad  = req.nextUrl.searchParams.get('antiguedad') || ''
+  const search    = req.nextUrl.searchParams.get('q') || ''
+  const segment   = req.nextUrl.searchParams.get('segment') || ''
+  const gaming    = req.nextUrl.searchParams.get('gaming') || ''
+  const panel     = req.nextUrl.searchParams.get('panel') || ''
+  const download  = req.nextUrl.searchParams.get('download') === 'true'
+  const selectAll = req.nextUrl.searchParams.get('select_all') === 'true'
+  const page      = Number(req.nextUrl.searchParams.get('page') || 1)
+  const limit     = download ? 100000 : 50
+  const offset    = download ? 0 : (page - 1) * limit
+  const linea     = req.nextUrl.searchParams.get('linea') || ''
+  const actividad = req.nextUrl.searchParams.get('actividad') || ''
+  const antiguedad = req.nextUrl.searchParams.get('antiguedad') || ''
 
   if (actividad && !ACTIVIDAD_ALLOWED.has(actividad)) {
     return NextResponse.json({ error: `Invalid actividad "${actividad}"` }, { status: 400 })
-  }
-  if (valorRiesgo && !VALOR_RIESGO_ALLOWED.has(valorRiesgo)) {
-    return NextResponse.json({ error: `Invalid valorRiesgo "${valorRiesgo}"` }, { status: 400 })
   }
   if (antiguedad && !ANTIGUEDAD_ALLOWED.has(antiguedad)) {
     return NextResponse.json({ error: `Invalid antiguedad "${antiguedad}"` }, { status: 400 })
   }
 
-  // Los primeros 10 parámetros son los filtros existentes.
-  // El filtro de visibilidad se inyecta como $11 si aplica.
-  const vis = visibilityClause(user.role, user.user_id, 10)
+  // Bloquear descarga si el usuario no tiene permiso
+  if (download && !user.can_download_contacts) {
+    return NextResponse.json({ error: 'Sin permiso para descargar contactos' }, { status: 403 })
+  }
+
+  // Filtro por agentes permitidos (solo no-admins con lista explícita)
+  const agentAllowed = (
+    user.role !== 'admin' &&
+    Array.isArray(user.allowed_agents) &&
+    user.allowed_agents.length > 0
+  ) ? user.allowed_agents : null
+
+  // ── select_all: devuelve solo IDs sin paginación ──────────────────────────────
+  if (selectAll) {
+    // 7 base params: $1=%search%, $2=segment, $3=gaming, $4=panel, $5=linea, $6=actividad, $7=antiguedad
+    const vis2         = visibilityClause(user.role, user.user_id, 7)
+    const agentFilter2 = agentAllowed
+      ? ` AND panel = ANY($${8 + vis2.params.length}::text[])`
+      : ''
+    const agentParams2 = agentAllowed ? [agentAllowed] : []
+    try {
+      const idRows = await query<{ id: string }>(`
+        SELECT id FROM contacts
+        WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
+          AND ($2 = '' OR segment::text = $2)
+          AND ($3 = '' OR gaming::text = $3)
+          AND ($4 = '' OR panel = $4)
+          AND ($5 = '' OR linea::text = $5)
+          AND ($6 = '' OR EXISTS (
+            SELECT 1 FROM contact_tags ct
+            WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:actividad:' || $6
+          ))
+          AND ($7 = '' OR EXISTS (
+            SELECT 1 FROM contact_tags ct
+            WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $7
+          ))
+          ${vis2.sql}${agentFilter2}
+        ORDER BY created_at DESC
+        LIMIT 100000
+      `, [`%${search}%`, segment, gaming, panel, linea, actividad, antiguedad,
+          ...vis2.params, ...agentParams2])
+      return NextResponse.json({ ids: idRows.map(r => r.id) })
+    } catch (e) {
+      console.error('[/api/contacts GET select_all]', e instanceof Error ? e.message : e)
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    }
+  }
+
+  // ── Query principal ───────────────────────────────────────────────────────────
+  // 9 base params: $1=%search%, $2=limit, $3=offset, $4=segment, $5=gaming,
+  //                $6=panel, $7=linea, $8=actividad, $9=antiguedad
+  const vis         = visibilityClause(user.role, user.user_id, 9)
+  const agentFilter = agentAllowed
+    ? ` AND panel = ANY($${10 + vis.params.length}::text[])`
+    : ''
+  const agentParams = agentAllowed ? [agentAllowed] : []
+
+  // 7 base params for count query (no limit/offset)
+  const vis7          = visibilityClause(user.role, user.user_id, 7)
+  const agentFilterCt = agentAllowed
+    ? ` AND panel = ANY($${8 + vis7.params.length}::text[])`
+    : ''
 
   try {
     const rows = await query(`
@@ -69,16 +124,13 @@ export async function GET(req: NextRequest) {
         ))
         AND ($9 = '' OR EXISTS (
           SELECT 1 FROM contact_tags ct
-          WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:valor_riesgo:' || $9
+          WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $9
         ))
-        AND ($10 = '' OR EXISTS (
-          SELECT 1 FROM contact_tags ct
-          WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $10
-        ))
-        ${vis.sql}
+        ${vis.sql}${agentFilter}
       ORDER BY created_at DESC
       LIMIT $2 OFFSET $3
-    `, [`%${search}%`, limit, offset, segment, gaming, panel, linea, actividad, valorRiesgo, antiguedad, ...vis.params])
+    `, [`%${search}%`, limit, offset, segment, gaming, panel, linea, actividad, antiguedad,
+        ...vis.params, ...agentParams])
 
     const [{ count }] = await query<{ count: string }>(
       `SELECT COUNT(*) FROM contacts
@@ -93,15 +145,11 @@ export async function GET(req: NextRequest) {
          ))
          AND ($7 = '' OR EXISTS (
            SELECT 1 FROM contact_tags ct
-           WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:valor_riesgo:' || $7
+           WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $7
          ))
-         AND ($8 = '' OR EXISTS (
-           SELECT 1 FROM contact_tags ct
-           WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $8
-         ))
-         ${visibilityClause(user.role, user.user_id, 8).sql}`,
-      [`%${search}%`, segment, gaming, panel, linea, actividad, valorRiesgo, antiguedad,
-       ...visibilityClause(user.role, user.user_id, 8).params]
+         ${vis7.sql}${agentFilterCt}`,
+      [`%${search}%`, segment, gaming, panel, linea, actividad, antiguedad,
+       ...vis7.params, ...agentParams]
     )
 
     return NextResponse.json({ contacts: rows, total: Number(count), page, limit })

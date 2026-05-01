@@ -27,7 +27,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const { segment, gaming, panel, linea } = body
 
-  const allowedSegments = ['bajo', 'medio', 'alto', 'vip', 'casual', 'regular', 'whale']
+  const allowedSegments = ['bajo', 'medio', 'alto', 'vip']
   const allowedGaming   = ['slots', 'deportivas', 'ambas']
   const allowedPanels   = ['Betcoin', 'Zeus', 'Bigwin', 'Farabet', 'Las Vegas']
 
@@ -60,8 +60,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     if (linea !== undefined) {
       const lineaNum = linea === null ? null : Number(linea)
-      if (lineaNum !== null && (lineaNum < 1 || lineaNum > 12))
-        return NextResponse.json({ error: 'Línea inválida (1-12)' }, { status: 400 })
+      if (lineaNum !== null && (lineaNum < 1 || lineaNum > 100))
+        return NextResponse.json({ error: 'Línea inválida (1-100)' }, { status: 400 })
       await query(`UPDATE contacts SET linea = $1, updated_at = NOW() WHERE id = $2`, [lineaNum, id])
       changedFields.push('linea')
     }

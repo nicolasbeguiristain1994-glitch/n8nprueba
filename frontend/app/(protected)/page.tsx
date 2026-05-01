@@ -49,10 +49,10 @@ interface RiskData {
 
 // ── Constantes de display ─────────────────────────────────────────────────────
 const NIVEL_LABEL: Record<string, string> = {
-  bajo:  'Bronce',
-  medio: 'Plata',
-  alto:  'Oro',
-  vip:   'Platino',
+  bajo:  'Bajo',
+  medio: 'Medio',
+  alto:  'Vip',
+  vip:   'Super Vip',
 }
 
 const NIVEL_STYLE: Record<string, string> = {
@@ -106,6 +106,7 @@ export default function Dashboard() {
   const [recent, setRecent] = useState<Message[]>([])
   const [cs,     setCs]     = useState<CampaignStats | null>(null)
   const [tab,            setTab]            = useState<'difusion' | 'casino'>('difusion')
+  const [casinoTab,      setCasinoTab]      = useState<'riesgo' | 'financiero'>('riesgo')
   const [casino,         setCasino]         = useState<CasinoData | null>(null)
   const [casinoError,    setCasinoError]    = useState<string | null>(null)
   const [risk,           setRisk]           = useState<RiskData | null>(null)
@@ -792,7 +793,7 @@ export default function Dashboard() {
             <CardContent className="pt-5">
               <div className="flex items-center gap-2 mb-1">
                 <Star size={16} className="text-purple-500"/>
-                <span className="text-xs text-gray-500">VIP Platino</span>
+                <span className="text-xs text-gray-500">Super Vip</span>
               </div>
               <p className="text-2xl font-bold text-purple-600">{sum?.total_vip ?? '—'}</p>
               <p className="text-xs text-gray-400 mt-0.5">jugadores de mayor volumen</p>
@@ -807,10 +808,32 @@ export default function Dashboard() {
                 <span className="text-xs text-gray-500">Prioridad reactivación</span>
               </div>
               <p className="text-2xl font-bold text-orange-600">{sum?.prioridad_reactivacion ?? '—'}</p>
-              <p className="text-xs text-gray-400 mt-0.5">VIP/Oro inactivos o en riesgo</p>
+              <p className="text-xs text-gray-400 mt-0.5">Super Vip/Vip inactivos o en riesgo</p>
             </CardContent>
           </Card>
         </div>
+
+        {/* ── Tabs internas: Sector de Riesgo / Reporte Financiero ──────── */}
+        <div className="flex gap-1 border-b border-gray-200 mb-4">
+          {([
+            { key: 'riesgo',     label: 'Sector de riesgo'   },
+            { key: 'financiero', label: 'Reporte financiero' },
+          ] as const).map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setCasinoTab(key)}
+              className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                casinoTab === key
+                  ? 'border-gray-900 text-gray-900'
+                  : 'border-transparent text-gray-400 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className={casinoTab === 'riesgo' ? '' : 'hidden'}>
 
         {/* ── Sector de Riesgo ─────────────────────────────────────────── */}
         {risk && (
@@ -1175,7 +1198,7 @@ export default function Dashboard() {
                         <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Total</th>
                         <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Nuevos 30d</th>
                         <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Activos 30d</th>
-                        <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Platino</th>
+                        <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Super Vip</th>
                         <th className="text-right px-4 py-2 text-xs font-medium text-gray-500">Inact./Riesgo</th>
                         <th className="text-right px-4 py-2 text-xs font-medium text-green-600">Σ Cargas</th>
                         <th className="text-right px-4 py-2 text-xs font-medium text-red-500">Σ Retiros</th>
@@ -1226,6 +1249,10 @@ export default function Dashboard() {
             }
           </CardContent>
         </Card>
+
+        </div>{/* ── fin casinoTab riesgo ── */}
+
+        <div className={casinoTab === 'financiero' ? '' : 'hidden'}>
 
         {/* ── Reporte Financiero por Jugador ───────────────────────────── */}
         <Card className="mb-4">
@@ -1379,10 +1406,10 @@ export default function Dashboard() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__all__">Todos los rangos</SelectItem>
-                      <SelectItem value="vip">Platino</SelectItem>
-                      <SelectItem value="alto">Oro</SelectItem>
-                      <SelectItem value="medio">Plata</SelectItem>
-                      <SelectItem value="bajo">Bronce</SelectItem>
+                      <SelectItem value="vip">Super Vip</SelectItem>
+                      <SelectItem value="alto">Vip</SelectItem>
+                      <SelectItem value="medio">Medio</SelectItem>
+                      <SelectItem value="bajo">Bajo</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1775,6 +1802,9 @@ export default function Dashboard() {
             }
           </CardContent>
         </Card>
+
+        </div>{/* ── fin casinoTab financiero ── */}
+
       </div>
 
       {/* ── Modal: edición de etiquetas de jugador ─────────────────────────── */}

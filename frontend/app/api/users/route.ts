@@ -15,6 +15,8 @@ type UserRow = {
   is_active: boolean
   last_login_at: string | null
   created_at: string
+  can_download_contacts: boolean
+  allowed_agents: string[]
 }
 
 // ── GET /api/users ────────────────────────────────────────────────────────────
@@ -35,7 +37,7 @@ export async function GET(req: Request) {
 
     if (search) {
       sql = `
-        SELECT id, email, name, role, sectors, is_active, last_login_at, created_at
+        SELECT id, email, name, role, sectors, is_active, last_login_at, created_at, can_download_contacts, allowed_agents
         FROM users
         WHERE (LOWER(email) LIKE $1 OR LOWER(name) LIKE $1)
         ORDER BY created_at DESC
@@ -44,7 +46,7 @@ export async function GET(req: Request) {
       params = [`%${search.toLowerCase()}%`, limit, offset]
     } else {
       sql = `
-        SELECT id, email, name, role, sectors, is_active, last_login_at, created_at
+        SELECT id, email, name, role, sectors, is_active, last_login_at, created_at, can_download_contacts, allowed_agents
         FROM users
         ORDER BY created_at DESC
         LIMIT $1 OFFSET $2
@@ -86,6 +88,8 @@ export async function POST(req: Request) {
       name?: string
       role?: string
       sectors?: unknown
+      can_download_contacts?: boolean
+      allowed_agents?: unknown
     }
     try {
       body = await req.json()
@@ -122,14 +126,19 @@ export async function POST(req: Request) {
       return Response.json({ error: errs.join('; ') }, { status: 400 })
     }
 
+    const can_download = body.can_download_contacts !== undefined ? Boolean(body.can_download_contacts) : true
+    const allowed_agts = Array.isArray(body.allowed_agents)
+      ? (body.allowed_agents as unknown[]).filter((a): a is string => typeof a === 'string')
+      : []
+
     const passwordHash = await bcryptjs.hash(password, 12)
 
     const rows = await query<{ id: string }>(
-      `INSERT INTO users (email, password_hash, name, role, sectors, is_active)
-       VALUES ($1, $2, $3, $4::user_role, $5::jsonb, true)
+      `INSERT INTO users (email, password_hash, name, role, sectors, is_active, can_download_contacts, allowed_agents)
+       VALUES ($1, $2, $3, $4::user_role, $5::jsonb, true, $6, $7)
        ON CONFLICT DO NOTHING
        RETURNING id`,
-      [email, passwordHash, name, role, JSON.stringify(sectors)]
+      [email, passwordHash, name, role, JSON.stringify(sectors), can_download, JSON.stringify(allowed_agts)]
     )
 
     if (!rows[0]) {

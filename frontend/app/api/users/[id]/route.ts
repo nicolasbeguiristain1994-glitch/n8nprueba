@@ -17,6 +17,8 @@ type UserRow = {
   session_version: number
   last_login_at: string | null
   created_at: string
+  can_download_contacts: boolean
+  allowed_agents: string[]
 }
 
 // ── GET /api/users/[id] ───────────────────────────────────────────────────────
@@ -30,7 +32,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     if (!isUUID(id)) return Response.json({ error: 'Invalid id' }, { status: 400 })
 
     const rows = await query<UserRow>(
-      `SELECT id, email, name, role, sectors, is_active, session_version, last_login_at, created_at
+      `SELECT id, email, name, role, sectors, is_active, session_version, last_login_at, created_at, can_download_contacts, allowed_agents
        FROM users WHERE id = $1`,
       [id]
     )
@@ -63,6 +65,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       sectors?: unknown
       is_active?: unknown
       password?: string
+      can_download_contacts?: boolean
+      allowed_agents?: unknown
     }
     try {
       body = await req.json()
@@ -147,6 +151,17 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       setClauses.push(`password_hash = $${paramIdx++}`)
       queryParams.push(hash)
     }
+    if ('can_download_contacts' in body && body.can_download_contacts !== undefined) {
+      setClauses.push(`can_download_contacts = $${paramIdx++}`)
+      queryParams.push(Boolean(body.can_download_contacts))
+    }
+    if ('allowed_agents' in body && body.allowed_agents !== undefined) {
+      const agts = Array.isArray(body.allowed_agents)
+        ? (body.allowed_agents as unknown[]).filter((a): a is string => typeof a === 'string')
+        : []
+      setClauses.push(`allowed_agents = $${paramIdx++}`)
+      queryParams.push(JSON.stringify(agts))
+    }
     if (bumpSession) {
       setClauses.push(`session_version = session_version + 1`)
     }
@@ -180,6 +195,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if ('sectors'   in body && body.sectors   !== undefined) changedFields.push('sectors')
     if ('is_active' in body && body.is_active !== undefined) changedFields.push('is_active')
     if (passwordChanged) changedFields.push('password_changed')
+    if ('can_download_contacts' in body) changedFields.push('can_download_contacts')
+    if ('allowed_agents' in body) changedFields.push('allowed_agents')
 
     void audit({ req, action: 'update', resource: 'users', resource_id: id,
       metadata: { changedFields } })

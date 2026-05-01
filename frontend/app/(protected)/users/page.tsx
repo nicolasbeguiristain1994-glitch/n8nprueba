@@ -35,9 +35,13 @@ type User = {
   is_active: boolean
   last_login_at: string | null
   created_at: string
+  can_download_contacts: boolean
+  allowed_agents: string[]
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
+
+const ALL_AGENTS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal'] as const
 
 const ALL_SECTORS = [
   'dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup', 'users', 'settings', 'lists', 'send',
@@ -103,6 +107,8 @@ type UserFormData = {
   password: string
   role: Role
   sectors: string[]
+  can_download_contacts: boolean
+  allowed_agents: string[]
 }
 
 function UserFormModal({
@@ -115,15 +121,17 @@ function UserFormModal({
   open: boolean
   onClose: () => void
   onSave: (data: UserFormData) => Promise<void>
-  initialData?: Partial<UserFormData>
+  initialData?: Partial<UserFormData> & { can_download_contacts?: boolean; allowed_agents?: string[] }
   mode: 'create' | 'edit'
 }) {
   const [form, setForm] = useState<UserFormData>({
-    email:    initialData?.email    ?? '',
-    name:     initialData?.name     ?? '',
-    password: '',
-    role:     initialData?.role     ?? 'viewer',
-    sectors:  initialData?.sectors  ?? [],
+    email:                 initialData?.email                ?? '',
+    name:                  initialData?.name                 ?? '',
+    password:              '',
+    role:                  initialData?.role                 ?? 'viewer',
+    sectors:               initialData?.sectors              ?? [],
+    can_download_contacts: initialData?.can_download_contacts ?? true,
+    allowed_agents:        initialData?.allowed_agents        ?? [],
   })
   const [loading, setLoading] = useState(false)
   const [error, setError]     = useState('')
@@ -131,11 +139,13 @@ function UserFormModal({
   useEffect(() => {
     if (open) {
       setForm({
-        email:    initialData?.email    ?? '',
-        name:     initialData?.name     ?? '',
-        password: '',
-        role:     initialData?.role     ?? 'viewer',
-        sectors:  initialData?.sectors  ?? [],
+        email:                 initialData?.email                ?? '',
+        name:                  initialData?.name                 ?? '',
+        password:              '',
+        role:                  initialData?.role                 ?? 'viewer',
+        sectors:               initialData?.sectors              ?? [],
+        can_download_contacts: initialData?.can_download_contacts ?? true,
+        allowed_agents:        initialData?.allowed_agents        ?? [],
       })
       setError('')
     }
@@ -241,6 +251,43 @@ function UserFormModal({
                 >
                   {s}
                 </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Descarga de contactos */}
+          <div className="flex items-center gap-2 mt-1">
+            <input
+              type="checkbox"
+              id="form-can-download"
+              checked={form.can_download_contacts}
+              onChange={e => setForm(f => ({ ...f, can_download_contacts: e.target.checked }))}
+              className="rounded"
+            />
+            <label htmlFor="form-can-download" className="text-sm text-gray-700">
+              Permitir descarga de contactos
+            </label>
+          </div>
+
+          {/* Agentes permitidos */}
+          <div className="mt-2">
+            <label className="text-xs font-medium text-gray-600 mb-1 block">Agentes permitidos (vacío = todos)</label>
+            <div className="flex flex-wrap gap-2">
+              {ALL_AGENTS.map(agent => (
+                <label key={agent} className="flex items-center gap-1.5 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.allowed_agents.includes(agent)}
+                    onChange={e => setForm(f => ({
+                      ...f,
+                      allowed_agents: e.target.checked
+                        ? [...f.allowed_agents, agent]
+                        : f.allowed_agents.filter(a => a !== agent),
+                    }))}
+                    className="rounded"
+                  />
+                  {agent}
+                </label>
               ))}
             </div>
           </div>
@@ -388,7 +435,15 @@ export default function UsersPage() {
     const res = await fetch('/api/users', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(form),
+      body:    JSON.stringify({
+        email:                 form.email,
+        password:              form.password,
+        name:                  form.name,
+        role:                  form.role,
+        sectors:               form.sectors,
+        can_download_contacts: form.can_download_contacts,
+        allowed_agents:        form.allowed_agents,
+      }),
     })
     if (!res.ok) {
       const d = await res.json()
@@ -400,9 +455,11 @@ export default function UsersPage() {
   const handleEdit = async (form: UserFormData) => {
     if (!editTarget) return
     const payload: Partial<UserFormData> & { is_active?: boolean } = {
-      name:    form.name,
-      role:    form.role,
-      sectors: form.sectors,
+      name:                  form.name,
+      role:                  form.role,
+      sectors:               form.sectors,
+      can_download_contacts: form.can_download_contacts,
+      allowed_agents:        form.allowed_agents,
     }
     const res = await fetch(`/api/users/${editTarget.id}`, {
       method:  'PATCH',
@@ -612,7 +669,12 @@ export default function UsersPage() {
         mode="edit"
         onClose={() => setEditTarget(null)}
         onSave={handleEdit}
-        initialData={editTarget ? { ...editTarget, name: editTarget.name ?? undefined } : undefined}
+        initialData={editTarget ? {
+          ...editTarget,
+          name:                  editTarget.name ?? undefined,
+          can_download_contacts: editTarget.can_download_contacts,
+          allowed_agents:        editTarget.allowed_agents ?? [],
+        } : undefined}
       />
 
       {/* Reset password modal */}

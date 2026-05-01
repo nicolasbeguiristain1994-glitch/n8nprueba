@@ -10,6 +10,8 @@ export type SessionUser = {
   role: 'admin' | 'operator' | 'viewer'
   sectors: string[]
   session_version: number
+  can_download_contacts: boolean
+  allowed_agents: string[]
   iat: number
   exp: number
   nonce: string

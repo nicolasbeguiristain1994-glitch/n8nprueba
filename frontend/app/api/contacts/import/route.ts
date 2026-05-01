@@ -27,8 +27,8 @@ export async function POST(req: NextRequest) {
 
   const panelValue = panel?.trim() || null
   const lineaValue = linea ? Number(linea) : null
-  if (lineaValue !== null && (lineaValue < 1 || lineaValue > 12)) {
-    return NextResponse.json({ error: 'Línea inválida (1-12)' }, { status: 400 })
+  if (lineaValue !== null && (lineaValue < 1 || lineaValue > 100)) {
+    return NextResponse.json({ error: 'Línea inválida (1-100)' }, { status: 400 })
   }
 
   // Normalize and pre-filter in JS — count skipped rows before hitting DB
