@@ -9,6 +9,8 @@ type UserRow = {
   sectors: string[]
   is_active: boolean
   session_version: number
+  can_download_contacts: boolean
+  allowed_agents: string[]
 }
 
 export async function GET(req: Request) {
@@ -35,7 +37,7 @@ export async function GET(req: Request) {
 
     // Re-fetch from DB to get fresh is_active and session_version
     const rows = await query<UserRow>(
-      'SELECT id, email, name, role, sectors, is_active, session_version FROM users WHERE id = $1',
+      'SELECT id, email, name, role, sectors, is_active, session_version, can_download_contacts, allowed_agents FROM users WHERE id = $1',
       [user.user_id]
     )
 
@@ -47,11 +49,13 @@ export async function GET(req: Request) {
 
     return Response.json({
       user: {
-        id:      u.id,
-        email:   u.email,
-        name:    u.name,
-        role:    u.role,
-        sectors: Array.isArray(u.sectors) ? u.sectors : [],
+        id:                    u.id,
+        email:                 u.email,
+        name:                  u.name,
+        role:                  u.role,
+        sectors:               Array.isArray(u.sectors) ? u.sectors : [],
+        can_download_contacts: u.can_download_contacts,
+        allowed_agents:        Array.isArray(u.allowed_agents) ? u.allowed_agents : [],
       },
       // Permissions derived from fresh DB role/sectors — not from stale session token
       permissions: effectivePermissions({

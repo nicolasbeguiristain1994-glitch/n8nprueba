@@ -503,6 +503,7 @@ export default function Contacts() {
           <Button variant="outline" size="sm" onClick={load}>
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </Button>
+          {currentUser?.can_download_contacts && (
           <div className="relative group">
             <Button variant="outline" size="sm" disabled={downloading} className="border-teal-200 text-teal-700 hover:bg-teal-50">
               <Download size={14} className={`mr-1 ${downloading ? 'animate-bounce' : ''}`} />
@@ -519,6 +520,7 @@ export default function Contacts() {
               </button>
             </div>
           </div>
+          )}
           {selected.size > 0 && (
             <Button size="sm" variant="outline" onClick={deleteSelected} className="border-red-200 text-red-600 hover:bg-red-50">
               <Trash2 size={14} className="mr-1" /> Eliminar ({selected.size})

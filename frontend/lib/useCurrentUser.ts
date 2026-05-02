@@ -9,6 +9,8 @@ export type CurrentUser = {
   name: string | null
   role: 'admin' | 'operator' | 'viewer'
   sectors: string[]
+  can_download_contacts: boolean
+  allowed_agents: string[]
 }
 
 export type UseCurrentUserResult = {
