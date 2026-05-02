@@ -44,12 +44,20 @@ export function visibilityClause(
     return { sql: '', params: [] }
   }
 
+  // Si el operador tiene contactos asignados explícitamente → filtrar a esos.
+  // Si no tiene ninguno asignado → ver todos (el filtro allowed_agents ya restringe por panel).
   return {
     sql: `
-      AND EXISTS (
-        SELECT 1 FROM operator_contact_visibility ocv
-        WHERE ocv.contact_id = ${alias}.id
-          AND ocv.operator_id = $${paramBase + 1}
+      AND (
+        EXISTS (
+          SELECT 1 FROM operator_contact_visibility ocv
+          WHERE ocv.contact_id = ${alias}.id
+            AND ocv.operator_id = $${paramBase + 1}
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM operator_contact_visibility
+          WHERE operator_id = $${paramBase + 1}
+        )
       )`,
     params: [userId],
   }
