@@ -68,6 +68,18 @@ export default function Campaigns() {
   const [previewIdx, setPreviewIdx] = useState(0)
   const [creating, setCreating] = useState(false)
 
+  // Plantillas
+  const [useTemplate,      setUseTemplate]      = useState(false)
+  const [templateList,     setTemplateList]     = useState<{ id: string; name: string; components: unknown[] }[]>([])
+  const [selectedTemplate, setSelectedTemplate] = useState<string>('')
+
+  // Cargar plantillas aprobadas cuando se abre el modal
+  const loadTemplates = useCallback(() => {
+    fetchJson<{ templates: { id: string; name: string; components: unknown[] }[] }>('/api/templates?status=APROBADA')
+      .then(d => setTemplateList(d.templates || []))
+      .catch(() => setTemplateList([]))
+  }, [])
+
   const load = useCallback(() => {
     fetchJson<{ campaigns: Campaign[] }>('/api/campaigns')
       .then(d => setCampaigns(d.campaigns || []))
@@ -85,10 +97,14 @@ export default function Campaigns() {
     const validMsgs = messages.filter(m => m.trim())
     let res: Response
     try {
+      const payload: Record<string, unknown> = { ...form, messages: validMsgs, message: validMsgs[0] }
+      if (useTemplate && selectedTemplate) {
+        payload.template_id = selectedTemplate
+      }
       res = await fetch('/api/campaigns', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, messages: validMsgs, message: validMsgs[0] }),
+        body: JSON.stringify(payload),
       })
     } catch {
       setCreating(false)
@@ -106,6 +122,18 @@ export default function Campaigns() {
     setMessages([''])
     setPreviewIdx(0)
     load()
+  }
+
+  const onSelectTemplate = (tplId: string | null) => {
+    if (!tplId) return
+    setSelectedTemplate(tplId)
+    const tpl = templateList.find(t => t.id === tplId)
+    if (!tpl) return
+    const bodyComp = (tpl.components as Array<{ type: string; text?: string }>).find(c => c.type === 'BODY')
+    if (bodyComp?.text) {
+      setMessages([bodyComp.text])
+      setPreviewIdx(0)
+    }
   }
 
   const addMessage    = () => { if (messages.length < 10) setMessages(m => [...m, '']) }
@@ -359,6 +387,8 @@ export default function Campaigns() {
           setCreating(false)
           setCreateError(null)
           setSendError(null)
+          setUseTemplate(false)
+          setSelectedTemplate('')
         }
       }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -366,6 +396,43 @@ export default function Campaigns() {
             <DialogTitle>Nueva campaña</DialogTitle>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-4">
+            {/* Toggle plantilla */}
+            <div className="col-span-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !useTemplate
+                  setUseTemplate(next)
+                  if (next) { loadTemplates(); setSelectedTemplate('') }
+                  else { setSelectedTemplate('') }
+                }}
+                className={`flex items-center gap-3 w-full rounded-lg border px-4 py-3 text-sm transition-colors ${
+                  useTemplate
+                    ? 'border-green-200 bg-green-50 text-green-800'
+                    : 'border-gray-200 bg-gray-50 text-gray-500'
+                }`}
+              >
+                <div className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${useTemplate ? 'bg-green-500' : 'bg-gray-300'}`}>
+                  <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${useTemplate ? 'translate-x-4' : ''}`} />
+                </div>
+                {useTemplate ? 'Usar plantilla aprobada activado' : 'Usar plantilla aprobada (opcional)'}
+              </button>
+              {useTemplate && (
+                <div className="mt-2">
+                  <Select value={selectedTemplate} onValueChange={onSelectTemplate}>
+                    <SelectTrigger className="text-sm"><SelectValue placeholder="Seleccionar plantilla…" /></SelectTrigger>
+                    <SelectContent>
+                      {templateList.length === 0
+                        ? <SelectItem value="_none" disabled>No hay plantillas aprobadas</SelectItem>
+                        : templateList.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)
+                      }
+                    </SelectContent>
+                  </Select>
+                  {selectedTemplate && <p className="text-xs text-green-600 mt-1">Mensaje cargado desde la plantilla seleccionada.</p>}
+                </div>
+              )}
+            </div>
+
             <div className="col-span-2">
               <label className="text-xs font-medium text-gray-600 mb-1 block">Nombre de la campaña</label>
               <Input placeholder="Ej: Promo Abril 2026" value={form.name} onChange={e => setForm(f=>({...f,name:e.target.value}))} />

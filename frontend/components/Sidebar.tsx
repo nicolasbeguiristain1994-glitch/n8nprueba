@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Users, Megaphone, MessageSquare, Activity, Flame, LogOut, UserCog, Settings } from 'lucide-react'
+import { LayoutDashboard, Users, Megaphone, MessageSquare, Activity, Flame, LogOut, UserCog, Settings, FileText } from 'lucide-react'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
 const BASE_NAV = [
@@ -14,8 +14,9 @@ const BASE_NAV = [
 ]
 
 const ADMIN_NAV = [
-  { href: '/users',    label: 'Usuarios', icon: UserCog,  sector: 'users' },
-  { href: '/settings', label: 'Ajustes',  icon: Settings, sector: 'settings' },
+  { href: '/users',     label: 'Usuarios',   icon: UserCog,  sector: 'users' },
+  { href: '/templates', label: 'Plantillas', icon: FileText, sector: 'templates' },
+  { href: '/settings',  label: 'Ajustes',    icon: Settings, sector: 'settings' },
 ]
 
 export default function Sidebar() {
