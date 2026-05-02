@@ -160,7 +160,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
         ? (body.allowed_agents as unknown[]).filter((a): a is string => typeof a === 'string')
         : []
       setClauses.push(`allowed_agents = $${paramIdx++}`)
-      queryParams.push(JSON.stringify(agts))
+      queryParams.push(agts)
     }
     if (bumpSession) {
       setClauses.push(`session_version = session_version + 1`)

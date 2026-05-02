@@ -138,7 +138,7 @@ export async function POST(req: Request) {
        VALUES ($1, $2, $3, $4::user_role, $5::jsonb, true, $6, $7)
        ON CONFLICT DO NOTHING
        RETURNING id`,
-      [email, passwordHash, name, role, JSON.stringify(sectors), can_download, JSON.stringify(allowed_agts)]
+      [email, passwordHash, name, role, JSON.stringify(sectors), can_download, allowed_agts]
     )
 
     if (!rows[0]) {
