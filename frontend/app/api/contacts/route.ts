@@ -4,6 +4,7 @@ import { isE164 } from '@/lib/validate'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { visibilityClause } from '@/lib/contact-visibility'
+import { getAppSetting } from '@/lib/app-settings'
 
 const ACTIVIDAD_ALLOWED  = new Set(['nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido'])
 const ANTIGUEDAD_ALLOWED = new Set(['nuevo', 'reciente', 'establecido', 'veterano', 'leal'])
@@ -33,9 +34,15 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: `Invalid antiguedad "${antiguedad}"` }, { status: 400 })
   }
 
-  // Bloquear descarga si el usuario no tiene permiso
-  if (download && !user.can_download_contacts) {
-    return NextResponse.json({ error: 'Sin permiso para descargar contactos' }, { status: 403 })
+  // Bloquear descarga si está deshabilitada globalmente o el usuario no tiene permiso
+  if (download) {
+    const exportGlobal = await getAppSetting<boolean>('perms_contacts_export_global', true)
+    if (!exportGlobal) {
+      return NextResponse.json({ error: 'La descarga de contactos está deshabilitada por el administrador' }, { status: 403 })
+    }
+    if (!user.can_download_contacts) {
+      return NextResponse.json({ error: 'Sin permiso para descargar contactos' }, { status: 403 })
+    }
   }
 
   // Filtro por agentes permitidos (solo no-admins con lista explícita)

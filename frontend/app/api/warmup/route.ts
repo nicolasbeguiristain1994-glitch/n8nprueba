@@ -3,6 +3,7 @@ import { query } from '@/lib/db'
 import { isE164, isInstanceName } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
+import { getAppSetting } from '@/lib/app-settings'
 
 export async function GET(req: Request) {
   const err = await checkPermission(req, 'warmup', 'read')
@@ -54,6 +55,17 @@ export async function POST(req: NextRequest) {
   }
   if (!Number.isFinite(resolvedLimit) || resolvedLimit < 1) {
     return NextResponse.json({ error: 'daily_limit debe ser un entero positivo' }, { status: 400 })
+  }
+
+  // Verificar límite global de líneas en calentamiento
+  const maxWarmup = await getAppSetting<number>('limits_max_warmup_lines', 20)
+  const countResult = await query<{ count: number }>('SELECT COUNT(*)::int AS count FROM warmup_numbers')
+  const currentCount = countResult[0]?.count ?? 0
+  if (currentCount >= maxWarmup) {
+    return NextResponse.json(
+      { error: `Límite alcanzado: no se pueden agregar más de ${maxWarmup} líneas de calentamiento` },
+      { status: 400 }
+    )
   }
 
   try {

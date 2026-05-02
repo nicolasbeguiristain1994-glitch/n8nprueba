@@ -196,6 +196,22 @@ export default function Dashboard() {
       .then(d => { setStats(d.stats); setLines(d.lines || []); setRecent(d.recent || []); setCs(d.campaignStats) })
       .catch(() => {})
 
+    // Carga el modo horario y agente por defecto desde ajustes del sistema
+    fetch('/api/settings')
+      .then(r => r.json())
+      .then((d: { settings?: { casino_default_time_mode?: string; casino_default_agent?: string } }) => {
+        const tzMode = d.settings?.casino_default_time_mode
+        if (tzMode === 'local' || tzMode === 'utc') {
+          setInputTzMode(tzMode)
+          setAppliedFilters(prev => ({ ...prev, tzMode }))
+        }
+        const agent = d.settings?.casino_default_agent
+        if (agent && agent !== '__all__') {
+          setFilterAgente(agent)
+        }
+      })
+      .catch(() => {}) // settings son opcionales, no romper el dashboard
+
     refreshCasino()
 
     // Auto-refresh casino cada 5 minutos
