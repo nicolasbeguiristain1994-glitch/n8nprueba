@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { phone_number, instance_name, display_name, target_days = 14, daily_limit = 10, notes, timezone } = body
+  const { phone_number, instance_name, display_name, target_days = 21, daily_limit = 10, notes, timezone } = body
 
   if (!phone_number || !instance_name) {
     return NextResponse.json({ error: 'phone_number e instance_name son requeridos' }, { status: 400 })

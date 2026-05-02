@@ -11,6 +11,7 @@ import {
   ArrowRight, Pencil, Wifi, WifiOff,
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
+import { getDailyLimitForDay } from '@/lib/warmup-engine'
 
 interface WarmupNumber {
   id: string
@@ -54,7 +55,7 @@ export default function WarmupPage() {
   const [addName, setAddName]         = useState('')
   const [addPhone, setAddPhone]       = useState('')
   const [addInstance, setAddInstance] = useState('')
-  const [addDays, setAddDays]         = useState('14')
+  const [addDays, setAddDays]         = useState('21')
   const [addLimit, setAddLimit]       = useState('10')
   const [addSaving, setAddSaving]     = useState(false)
   const [addError, setAddError]       = useState('')
@@ -92,7 +93,7 @@ export default function WarmupPage() {
   const openAdd = () => {
     setShowAdd(true); setAddError('')
     setAddName(''); setAddPhone(''); setAddInstance('')
-    setAddDays('14'); setAddLimit('10')
+    setAddDays('21'); setAddLimit('10')
   }
 
   // ── Stats ─────────────────────────────────────────────────
@@ -112,7 +113,7 @@ export default function WarmupPage() {
         phone_number: addPhone.trim(),
         instance_name: addInstance.trim(),
         display_name: addName.trim() || undefined,
-        target_days: Number(addDays) || 14,
+        target_days: Number(addDays) || 21,
         daily_limit: Number(addLimit) || 10,
       }),
     })
@@ -130,7 +131,7 @@ export default function WarmupPage() {
       const newEntry: WarmupNumber = {
         id: '', phone_number: savedPhone, instance_name: savedInstance,
         display_name: savedName || null, warmup_status: 'active',
-        current_day: 1, target_days: Number(addDays) || 14,
+        current_day: 1, target_days: Number(addDays) || 21,
         messages_sent_today: 0, daily_limit: Number(addLimit) || 10,
         last_message_at: null, notes: null,
       }
@@ -279,7 +280,7 @@ export default function WarmupPage() {
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Progreso</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Hoy</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Total enviados</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Último envío</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Acción</th>
               </tr>
             </thead>
@@ -303,10 +304,11 @@ export default function WarmupPage() {
                     }
                   </td></tr>
                 : numbers.map(n => {
-                    const dayPct = n.target_days ? (n.current_day / n.target_days) * 100 : 0
-                    const msgPct = n.daily_limit  ? (n.messages_sent_today / n.daily_limit) * 100 : 0
-                    const isComplete = n.warmup_status === 'completed'
-                    const label = n.display_name || n.instance_name
+                    const dayPct       = n.target_days ? (n.current_day / n.target_days) * 100 : 0
+                    const effectiveLimit = getDailyLimitForDay(n.current_day, n.target_days)
+                    const msgPct       = effectiveLimit ? (n.messages_sent_today / effectiveLimit) * 100 : 0
+                    const isComplete   = n.warmup_status === 'completed'
+                    const label        = n.display_name || n.instance_name
                     const isEditing = editingId === n.id
 
                     return (
@@ -365,11 +367,15 @@ export default function WarmupPage() {
                             <div className="w-16 bg-gray-100 rounded-full h-1.5">
                               <div className="bg-green-400 h-1.5 rounded-full" style={{ width: `${Math.min(msgPct, 100)}%` }} />
                             </div>
-                            <span className="text-xs text-gray-500">{n.messages_sent_today}/{n.daily_limit}</span>
+                            <span className="text-xs text-gray-500">{n.messages_sent_today}/{effectiveLimit}</span>
                           </div>
                         </td>
 
-                        <td className="px-4 py-3 text-gray-500 text-sm">—</td>
+                        <td className="px-4 py-3 text-gray-400 text-xs">
+                          {n.last_message_at
+                            ? new Date(n.last_message_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+                            : '—'}
+                        </td>
 
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">
