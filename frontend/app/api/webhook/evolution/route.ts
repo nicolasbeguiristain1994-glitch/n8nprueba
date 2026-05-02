@@ -1,6 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
 import { query } from '@/lib/db'
+import { normalizePhone } from '@/lib/validate'
+
+// ── Palabras clave de opt-out ─────────────────────────────────────────────────
+// Comparación normalizada: sin acentos, minúsculas, trim.
+// Se agrega automáticamente el número a la blacklist si coincide.
+const OPT_OUT_KEYWORDS = new Set([
+  'baja', 'stop', 'no', 'no quiero', 'cancelar', 'no me escribas',
+  'remover', 'salir', 'detener', 'borrar', 'desuscribir', 'unsub',
+  'unsubscribe', 'remove', 'leave', 'quit', 'out',
+])
+
+function normalizeText(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // eliminar acentos
+    .replace(/[^a-z0-9 ]/g, '')     // solo letras, números y espacios
+    .trim()
+}
+
+function isOptOut(text: string): boolean {
+  const normalized = normalizeText(text)
+  return OPT_OUT_KEYWORDS.has(normalized)
+}
 
 // Evolution API v2 webhook handler
 // Handles: messages.upsert (inbound) + messages.update (status updates)
@@ -102,6 +127,39 @@ export async function POST(req: NextRequest) {
          ON CONFLICT (evolution_message_id) WHERE evolution_message_id IS NOT NULL DO NOTHING`,
         [phone, body_text, msgId || null, sent_at]
       )
+
+      // ── Detección de opt-out automático ──────────────────────────────────────
+      // Si el mensaje contiene una keyword de baja, agrega el número a blacklist.
+      if (typeof body_text === 'string' && isOptOut(body_text)) {
+        const normalized = normalizePhone(phone)
+        if (normalized) {
+          try {
+            // Solo insertar si no existe ya un registro activo
+            const existing = await query<{ id: string }>(
+              `SELECT id FROM blacklist WHERE phone_number_normalized = $1 AND removed_at IS NULL`,
+              [normalized],
+            )
+            if (existing.length === 0) {
+              await query(
+                `INSERT INTO blacklist
+                   (phone_number_raw, phone_number_normalized, reason, source, original_message)
+                 VALUES ($1, $2, $3, 'automatic', $4)
+                 ON CONFLICT (phone_number_normalized) WHERE removed_at IS NULL DO NOTHING`,
+                [
+                  phone,
+                  normalized,
+                  `Opt-out automático: "${body_text.slice(0, 200)}"`,
+                  body_text.slice(0, 500),
+                ],
+              )
+              console.log(`[webhook/evolution] opt-out detectado: ${phone} → blacklisted`)
+            }
+          } catch (blErr) {
+            // No bloquear el flujo si falla el blacklisting
+            console.error('[webhook/evolution] error al blacklistear opt-out:', blErr instanceof Error ? blErr.message : blErr)
+          }
+        }
+      }
 
       return NextResponse.json({ ok: true })
     } catch (e) {

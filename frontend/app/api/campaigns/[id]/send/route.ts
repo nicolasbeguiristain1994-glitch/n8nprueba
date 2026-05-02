@@ -445,6 +445,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // ── Populate campaign_recipients (idempotent) ─────────────────────────────
   // Hard-fail for fresh starts — if we can't seed recipients, there's nothing to send.
   // For re-attach (running), best-effort: rows are already there from the first run.
+  // ── Contar excluidos por blacklist (para logging y respuesta al cliente) ──
+  let blacklistExcluded = 0
+  try {
+    const [blRow] = await query<{ count: string }>(
+      `SELECT COUNT(DISTINCT c.id)::int AS count
+       FROM contacts c
+       JOIN contact_list_members clm ON clm.contact_id = c.id
+       JOIN blacklist bl ON bl.phone_number_normalized = regexp_replace(c.phone_number, '[^0-9]', '', 'g')
+       WHERE clm.list_id = $1
+         AND bl.removed_at IS NULL`,
+      [campaign.list_id]
+    )
+    blacklistExcluded = Number(blRow?.count ?? 0)
+  } catch { /* no bloquear si falla */ }
+
   try {
     await query(
       `INSERT INTO campaign_recipients (campaign_id, contact_id, phone_number)
@@ -455,6 +470,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
          AND c.opt_in_marketing = true
          AND c.do_not_contact   = false
          AND c.status           = 'active'
+         AND NOT EXISTS (
+           SELECT 1 FROM blacklist bl
+           WHERE bl.phone_number_normalized = regexp_replace(c.phone_number, '[^0-9]', '', 'g')
+             AND bl.removed_at IS NULL
+         )
        ON CONFLICT (campaign_id, contact_id) DO NOTHING`,
       [id, campaign.list_id]
     )
@@ -548,6 +568,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   })()
 
   void audit({ req, action: 'send', resource: 'campaigns', resource_id: id,
-    metadata: { started: true, total: totalPending } })
-  return NextResponse.json({ started: true, total: totalPending })
+    metadata: { started: true, total: totalPending, blacklist_excluded: blacklistExcluded } })
+  return NextResponse.json({ started: true, total: totalPending, blacklist_excluded: blacklistExcluded })
 }

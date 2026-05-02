@@ -202,6 +202,11 @@ export async function createDispatchUnits(
        AND c.opt_in_marketing = true
        AND c.do_not_contact   = false
        AND c.status           = 'active'
+       AND NOT EXISTS (
+         SELECT 1 FROM blacklist bl
+         WHERE bl.phone_number_normalized = regexp_replace(c.phone_number, '[^0-9]', '', 'g')
+           AND bl.removed_at IS NULL
+       )
      ON CONFLICT (campaign_id, contact_id) DO NOTHING`,
     [campaignId, listId]
   )
