@@ -4,12 +4,13 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { Send } from 'lucide-react'
+import { Send, AlertCircle } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 
 interface Conv {
   phone_number: string; last_message: string
   last_direction: string; last_status: string; last_at: string
+  is_escalated?: boolean; escalation_reason?: string
 }
 interface Message {
   id: string; phone_number: string; message_body: string
@@ -126,13 +127,23 @@ export default function Conversations() {
                 >
                   <div className="flex items-center justify-between mb-0.5">
                     <span className="text-sm font-medium font-mono">{c.phone_number}</span>
-                    <span className="text-xs text-gray-400">{fmt(c.last_at)}</span>
+                    <div className="flex items-center gap-1">
+                      {c.is_escalated && (
+                        <span title="Necesita atención humana">
+                          <AlertCircle size={13} className="text-amber-500" />
+                        </span>
+                      )}
+                      <span className="text-xs text-gray-400">{fmt(c.last_at)}</span>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <Badge variant={c.last_direction === 'inbound' ? 'secondary' : 'outline'} className="text-xs py-0">
                       {c.last_direction === 'inbound' ? '↓' : '↑'}
                     </Badge>
-                    <p className="text-xs text-gray-500 truncate flex-1">{c.last_message}</p>
+                    {c.is_escalated
+                      ? <p className="text-xs text-amber-600 font-medium truncate flex-1">⚡ Necesita atención humana</p>
+                      : <p className="text-xs text-gray-500 truncate flex-1">{c.last_message}</p>
+                    }
                   </div>
                 </button>
               ))
@@ -151,10 +162,16 @@ export default function Conversations() {
                   <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center text-xs font-medium">
                     {selected.slice(-2)}
                   </div>
-                  <div>
+                  <div className="flex-1">
                     <p className="text-sm font-medium font-mono">{selected}</p>
                     <p className="text-xs text-gray-400">{messages.length} mensajes</p>
                   </div>
+                  {convs.find(c => c.phone_number === selected)?.is_escalated && (
+                    <span className="flex items-center gap-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+                      <AlertCircle size={11} />
+                      Atención humana requerida
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-2">

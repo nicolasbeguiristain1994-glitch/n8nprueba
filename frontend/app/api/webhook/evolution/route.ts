@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
 import { query } from '@/lib/db'
 import { normalizePhone } from '@/lib/validate'
+import { evaluateAutomations } from '@/lib/automation-engine'
 
 // ── Palabras clave de opt-out ─────────────────────────────────────────────────
 // Comparación normalizada: sin acentos, minúsculas, trim.
@@ -159,6 +160,23 @@ export async function POST(req: NextRequest) {
             console.error('[webhook/evolution] error al blacklistear opt-out:', blErr instanceof Error ? blErr.message : blErr)
           }
         }
+      }
+
+      // ── Evaluación de automatizaciones (fire-and-forget) ─────────────────────
+      // Solo si el mensaje no es un opt-out (ya fue manejado arriba).
+      // El engine nunca lanza excepciones — los errores son capturados internamente.
+      if (typeof body_text === 'string' && !isOptOut(body_text)) {
+        const insertedMsg = await query<{ id: string }>(
+          `SELECT id FROM whatsapp_messages
+           WHERE evolution_message_id = $1
+           LIMIT 1`,
+          [msgId || null],
+        ).catch(() => [] as { id: string }[])
+
+        const messageId = insertedMsg[0]?.id ?? null
+
+        // Fire-and-forget: no bloquea la respuesta al webhook
+        void evaluateAutomations(phone, body_text, messageId)
       }
 
       return NextResponse.json({ ok: true })

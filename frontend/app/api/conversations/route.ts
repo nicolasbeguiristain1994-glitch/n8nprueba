@@ -25,15 +25,21 @@ export async function GET(req: NextRequest) {
     }
 
     // Lista de conversaciones — agrupa outbound e inbound del mismo número
+    // Incluye is_escalated de conversation_state para mostrar handoff en UI
     const conversations = await query(`
-      SELECT DISTINCT ON (REPLACE(phone_number, '+', ''))
-        REPLACE(phone_number, '+', '') AS phone_number,
-        message_body  AS last_message,
-        direction     AS last_direction,
-        status        AS last_status,
-        created_at    AS last_at
-      FROM whatsapp_messages
-      ORDER BY REPLACE(phone_number, '+', ''), created_at DESC
+      SELECT DISTINCT ON (REPLACE(wm.phone_number, '+', ''))
+        REPLACE(wm.phone_number, '+', '') AS phone_number,
+        wm.message_body  AS last_message,
+        wm.direction     AS last_direction,
+        wm.status        AS last_status,
+        wm.created_at    AS last_at,
+        COALESCE(cs.is_escalated, false)  AS is_escalated,
+        cs.escalation_reason
+      FROM whatsapp_messages wm
+      LEFT JOIN conversation_state cs
+        ON cs.phone_number = REPLACE(wm.phone_number, '+', '')
+        AND cs.resolved_at IS NULL
+      ORDER BY REPLACE(wm.phone_number, '+', ''), wm.created_at DESC
       LIMIT 60
     `)
 
