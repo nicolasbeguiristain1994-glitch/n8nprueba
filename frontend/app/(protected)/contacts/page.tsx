@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Search, Upload, RefreshCw, List, CheckSquare, X, Users, UserPlus, Trash2, Download, DatabaseZap } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
+import { PageHeader } from '@/components/layout/PageHeader'
 
 interface Contact {
   id: string; phone_number: string; first_name: string; last_name: string
@@ -494,68 +495,69 @@ export default function Contacts() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">Contactos</h1>
-          <p className="text-sm text-gray-500">{total.toLocaleString()} contactos{selected.size > 0 && ` · ${selected.size} seleccionados`}</p>
-        </div>
-        <div className="flex gap-2 flex-wrap justify-end">
-          <Button variant="outline" size="sm" onClick={load}>
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          </Button>
-          {currentUser?.can_download_contacts && (
-          <div className="relative group">
-            <Button variant="outline" size="sm" disabled={downloading} className="border-teal-200 text-teal-700 hover:bg-teal-50">
-              <Download size={14} className={`mr-1 ${downloading ? 'animate-bounce' : ''}`} />
-              {downloading ? 'Descargando…' : 'Descargar'}
+      <PageHeader
+        title="Contactos"
+        count={total}
+        description={selected.size > 0 ? `${selected.size} seleccionados` : undefined}
+        actions={
+          <>
+            <Button variant="outline" size="sm" onClick={load}>
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             </Button>
-            <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 hidden group-hover:block min-w-36">
-              <button onClick={() => downloadContacts('xlsx')}
-                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 rounded-t-lg">
-                <span className="text-green-600 font-bold text-xs">XLS</span> Excel (.xlsx)
-              </button>
-              <button onClick={() => downloadContacts('csv')}
-                className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 rounded-b-lg border-t border-gray-100">
-                <span className="text-blue-600 font-bold text-xs">CSV</span> CSV (.csv)
-              </button>
-            </div>
-          </div>
-          )}
-          {selected.size > 0 && (
-            <Button size="sm" variant="outline" onClick={deleteSelected} className="border-red-200 text-red-600 hover:bg-red-50">
-              <Trash2 size={14} className="mr-1" /> Eliminar ({selected.size})
+            {currentUser?.can_download_contacts && (
+              <div className="relative group">
+                <Button variant="outline" size="sm" disabled={downloading} className="border-teal-200 text-teal-700 hover:bg-teal-50">
+                  <Download size={14} className={`mr-1 ${downloading ? 'animate-bounce' : ''}`} />
+                  {downloading ? 'Descargando…' : 'Descargar'}
+                </Button>
+                <div className="absolute right-0 top-full mt-1 bg-popover border border-border rounded-lg shadow-lg z-20 hidden group-hover:block min-w-36">
+                  <button onClick={() => downloadContacts('xlsx')}
+                    className="w-full text-left px-4 py-2 text-sm hover:bg-muted flex items-center gap-2 rounded-t-lg">
+                    <span className="text-green-600 font-bold text-xs">XLS</span> Excel (.xlsx)
+                  </button>
+                  <button onClick={() => downloadContacts('csv')}
+                    className="w-full text-left px-4 py-2 text-sm hover:bg-muted flex items-center gap-2 rounded-b-lg border-t border-border">
+                    <span className="text-blue-600 font-bold text-xs">CSV</span> CSV (.csv)
+                  </button>
+                </div>
+              </div>
+            )}
+            {selected.size > 0 && (
+              <Button size="sm" variant="outline" onClick={deleteSelected} className="border-red-200 text-red-600 hover:bg-red-50">
+                <Trash2 size={14} className="mr-1" /> Eliminar ({selected.size})
+              </Button>
+            )}
+            <Button size="sm" variant="outline" onClick={selectAllFiltered} disabled={selectingAll}
+              className="border-blue-200 text-blue-700 hover:bg-blue-50">
+              <CheckSquare size={14} className="mr-1" />
+              {selectingAll ? 'Seleccionando…' : 'Seleccionar todos'}
             </Button>
-          )}
-          <Button size="sm" variant="outline" onClick={selectAllFiltered} disabled={selectingAll}
-            className="border-blue-200 text-blue-700 hover:bg-blue-50">
-            <CheckSquare size={14} className="mr-1" />
-            {selectingAll ? 'Seleccionando…' : 'Seleccionar todos'}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => { setListMode('criteria'); setShowList(true) }} className="border-indigo-200 text-indigo-700">
-            <List size={14} className="mr-1" /> Lista por criterios
-          </Button>
-          {selected.size > 0 && (
-            <Button size="sm" variant="outline" onClick={() => { setListMode('selection'); setShowList(true) }} className="border-green-200 text-green-700">
-              <List size={14} className="mr-1" /> Crear lista ({selected.size})
+            <Button size="sm" variant="outline" onClick={() => { setListMode('criteria'); setShowList(true) }} className="border-indigo-200 text-indigo-700">
+              <List size={14} className="mr-1" /> Lista por criterios
             </Button>
-          )}
-          {currentUser?.role === 'admin' && (
-            <Button size="sm" variant="outline" onClick={repopularListas} disabled={repopulating}
-              className="border-violet-200 text-violet-700 hover:bg-violet-50">
-              <DatabaseZap size={14} className={`mr-1 ${repopulating ? 'animate-pulse' : ''}`} />
-              {repopulating ? 'Repoblando…' : 'Listas casino'}
+            {selected.size > 0 && (
+              <Button size="sm" variant="outline" onClick={() => { setListMode('selection'); setShowList(true) }} className="border-green-200 text-green-700">
+                <List size={14} className="mr-1" /> Crear lista ({selected.size})
+              </Button>
+            )}
+            {currentUser?.role === 'admin' && (
+              <Button size="sm" variant="outline" onClick={repopularListas} disabled={repopulating}
+                className="border-violet-200 text-violet-700 hover:bg-violet-50">
+                <DatabaseZap size={14} className={`mr-1 ${repopulating ? 'animate-pulse' : ''}`} />
+                {repopulating ? 'Repoblando…' : 'Listas casino'}
+              </Button>
+            )}
+            <Button size="sm" onClick={() => setShowAdd(true)} className="bg-green-600 hover:bg-green-700 text-white">
+              <UserPlus size={14} className="mr-1" /> Nuevo contacto
             </Button>
-          )}
-          <Button size="sm" onClick={() => setShowAdd(true)} className="bg-green-600 hover:bg-green-700 text-white">
-            <UserPlus size={14} className="mr-1" /> Nuevo contacto
-          </Button>
-          <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-200 rounded-md bg-white hover:bg-gray-50 transition-colors font-medium">
-            <Upload size={14} /> Importar
-            <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.vcf" className="hidden"
-              onChange={e => { const f = e.target.files?.[0]; if(f){ handleFile(f); setShowImport(true); e.target.value=''; }}} />
-          </label>
-        </div>
-      </div>
+            <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-input rounded-md bg-background hover:bg-muted transition-colors font-medium">
+              <Upload size={14} /> Importar
+              <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.vcf" className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if(f){ handleFile(f); setShowImport(true); e.target.value=''; }}} />
+            </label>
+          </>
+        }
+      />
 
       {/* Error de actualización inline */}
       {updateError && (
