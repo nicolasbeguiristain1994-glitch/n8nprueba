@@ -36,6 +36,23 @@
  */
 
 import { query } from '@/lib/db'
+import { humanLikeDelay, buildDelayConfig } from '@/lib/anti-ban-delays'
+import {
+  getLinePersonality,
+  shouldLineBeActiveNow,
+  getAdjustedDelayConfig,
+  updateLastActiveAt,
+  loadPersonalityFromDB,
+  savePersonalityToDB,
+  evictPersonality,
+  getLoadedLineIds,
+  type LinePersonality,
+} from '@/lib/line-personality'
+import {
+  getProxyForLine,
+  reportProxySendFailure,
+  flushExpiredBlacklist,
+} from '@/lib/proxy-manager'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -117,11 +134,31 @@ function personalize(raw: string, firstName: string, campaign: CampaignForDispat
     .replace(/\{\{name\}\}/gi,   nameValue)
 }
 
-function antiblockDelay(campaign: CampaignForDispatch): Promise<void> {
-  const delaySec = Math.floor(
-    Math.random() * (campaign.antiblock_delay_max - campaign.antiblock_delay_min + 1)
-  ) + campaign.antiblock_delay_min
-  return new Promise(r => setTimeout(r, delaySec * 1000))
+// antiblockDelay reemplazada por humanLikeDelay — ver anti-ban-delays.ts
+
+// ── isNetworkError ─────────────────────────────────────────────────────────────
+
+/**
+ * Clasifica si un error de envío es de RED (atribuible al proxy) o de
+ * la capa de aplicación (WhatsApp / Evolution).
+ *
+ * Solo los errores de red deben incrementar el contador de fallos del proxy.
+ * Errores como "número inválido" o "cuenta baneada" no son culpa del proxy.
+ */
+function isNetworkError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return (
+    msg.includes('econnrefused')  ||  // proxy rechazó la conexión
+    msg.includes('econnreset')    ||  // conexión cortada abruptamente
+    msg.includes('etimedout')     ||  // timeout de TCP (código de error de Node.js)
+    msg.includes('enotfound')     ||  // DNS no resolvió el host del proxy
+    msg.includes('ehostunreach')  ||  // host inalcanzable (proxy caído)
+    msg === 'fetch failed'        ||  // undici: fallo de transporte exacto
+    msg.includes('socket hang up')    // node http: conexión cortada por el proxy
+    // ELIMINADOS: 'network', 'timeout', 'socket' — demasiado genéricos,
+    // capturaban errores de WhatsApp ("Session timeout", "network error") y
+    // disparaban rotación de proxy por causas no atribuibles a la red.
+  )
 }
 
 // ── getEligibleLines ───────────────────────────────────────────────────────────
@@ -169,13 +206,31 @@ export async function getEligibleLines(): Promise<EligibleLine[]> {
 // ── selectLine ─────────────────────────────────────────────────────────────────
 
 /**
- * Deterministically selects the best line from the eligible set.
- * Lines are already sorted by getEligibleLines(); return the first.
+ * Selecciona una línea usando muestreo ponderado por remaining_day.
  *
- * Call getEligibleLines() before each send (or each batch) to get fresh counters.
+ * Por qué no simplemente "la primera":
+ *   getEligibleLines() ordena por remaining_day DESC. Elegir siempre la primera
+ *   concentra todos los envíos en una sola línea hasta agotarla, luego en la
+ *   siguiente, etc. Desde el punto de vista de WhatsApp, ese patrón es imposible
+ *   para un humano con múltiples números.
+ *
+ * Muestreo ponderado:
+ *   - Líneas con más remaining_day tienen mayor probabilidad de ser elegidas.
+ *   - Pero no el 100% — todas las líneas activas participan en cada mensaje.
+ *   - Mínimo de peso 1 para que líneas con remaining_day=0 (edge case de refresh
+ *     tardío) no tengan peso cero y queden excluidas silenciosamente.
  */
 export function selectLine(lines: EligibleLine[]): EligibleLine | null {
-  return lines[0] ?? null
+  if (lines.length === 0) return null
+  if (lines.length === 1) return lines[0]
+
+  const totalWeight = lines.reduce((sum, l) => sum + Math.max(1, l.remaining_day), 0)
+  let pick = Math.random() * totalWeight
+  for (const line of lines) {
+    pick -= Math.max(1, line.remaining_day)
+    if (pick <= 0) return line
+  }
+  return lines[lines.length - 1]  // fallback numérico por precisión de float
 }
 
 // ── createDispatchUnits ────────────────────────────────────────────────────────
@@ -438,43 +493,43 @@ async function handleSuccess(
   messageId: string | null,
   personalizedMsg: string,
 ): Promise<void> {
-  // 1. Update whatsapp_messages queued → sent (only if still queued)
-  await query(
-    `UPDATE whatsapp_messages
-     SET status               = 'sent',
-         evolution_message_id = $1,
-         sent_at              = NOW(),
-         updated_at           = NOW()
-     WHERE campaign_recipient_id = $2
-       AND status = 'queued'`,
-    [messageId, unit.id]
-  )
+  // Queries 1 + 2: críticas, independientes entre sí → paralelo
+  await Promise.all([
+    query(
+      `UPDATE whatsapp_messages
+       SET status               = 'sent',
+           evolution_message_id = $1,
+           sent_at              = NOW(),
+           updated_at           = NOW()
+       WHERE campaign_recipient_id = $2
+         AND status = 'queued'`,
+      [messageId, unit.id]
+    ),
+    query(
+      `UPDATE campaign_recipients
+       SET status               = 'sent',
+           sent_at              = NOW(),
+           locked_at            = NULL,
+           message_body         = $1,
+           evolution_message_id = $2,
+           updated_at           = NOW()
+       WHERE id = $3`,
+      [personalizedMsg, messageId, unit.id]
+    ),
+  ])
 
-  // 2. Mark recipient as sent
-  await query(
-    `UPDATE campaign_recipients
-     SET status               = 'sent',
-         sent_at              = NOW(),
-         locked_at            = NULL,
-         message_body         = $1,
-         evolution_message_id = $2,
-         updated_at           = NOW()
-     WHERE id = $3`,
-    [personalizedMsg, messageId, unit.id]
-  )
-
-  // 3. Increment line send counters (atomic; uses existing DB function)
-  await query(`SELECT increment_line_counters($1)`, [line.id]).catch(e =>
-    console.error('[distributor] increment_line_counters error:',
-      e instanceof Error ? e.message : e)
-  )
-
-  // 4. Write usage log (non-critical — never blocks the send path)
-  await query(
-    `INSERT INTO line_usage_log (line_id, campaign_id, recipient_id, status)
-     VALUES ($1, $2, $3, 'sent')`,
-    [line.id, campaignId, unit.id]
-  ).catch(() => { /* non-critical observability record */ })
+  // Queries 3 + 4: no críticas, independientes entre sí → paralelo, swallow errors
+  await Promise.all([
+    query(`SELECT increment_line_counters($1)`, [line.id]).catch(e =>
+      console.error('[distributor] increment_line_counters error:',
+        e instanceof Error ? e.message : e)
+    ),
+    query(
+      `INSERT INTO line_usage_log (line_id, campaign_id, recipient_id, status)
+       VALUES ($1, $2, $3, 'sent')`,
+      [line.id, campaignId, unit.id]
+    ).catch(() => {}),
+  ])
 }
 
 // ── handleFailure ──────────────────────────────────────────────────────────────
@@ -579,6 +634,85 @@ async function syncCounters(
   return { sent, failed, pending }
 }
 
+// ── sendOneUnit ────────────────────────────────────────────────────────────────
+
+/**
+ * Reclama y envía una unidad pendiente para una línea específica.
+ *
+ * Encapsula: claim atómico → pre-insert → send Evolution → handleSuccess/Failure.
+ * Diseñado para ser llamado en paralelo desde Promise.allSettled sobre
+ * múltiples líneas activas, una unidad por línea por ciclo.
+ *
+ * Retorna:
+ *   'sent'    — mensaje enviado y confirmado en DB
+ *   'failed'  — envío fallido (registrado en handleFailure)
+ *   'no-unit' — no había unidades pendientes para esta línea
+ */
+async function sendOneUnit(
+  campaignId:  string,
+  line:        EligibleLine,
+  campaign:    CampaignForDispatch,
+  maxRetries:  number,
+): Promise<'sent' | 'failed' | 'no-unit'> {
+  const unit = await claimNextUnit(campaignId, line.id)
+  if (!unit) return 'no-unit'
+
+  const personalizedMsg = personalize(pickMessage(campaign), unit.first_name, campaign)
+
+  // Pre-insert idempotency fence
+  await query(
+    `INSERT INTO whatsapp_messages
+       (contact_id, campaign_id, phone_number, message_body, direction, status,
+        campaign_recipient_id, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, 'outbound', 'queued', $5, NOW(), NOW())
+     ON CONFLICT (campaign_recipient_id)
+       WHERE campaign_recipient_id IS NOT NULL
+     DO UPDATE SET
+       status       = 'queued',
+       message_body = EXCLUDED.message_body,
+       updated_at   = NOW()
+     WHERE whatsapp_messages.status NOT IN ('sent', 'delivered', 'read')`,
+    [unit.contact_id, campaignId, unit.phone_number, personalizedMsg, unit.id]
+  ).catch(e =>
+    console.error(`[distributor ${campaignId}] pre-insert error (${line.evolution_instance}):`,
+      e instanceof Error ? e.message : e)
+  )
+
+  const proxy = await getProxyForLine(line.id).catch(() => null)
+
+  if (proxy) {
+    console.log(
+      `[distributor ${campaignId}] enviando via ${line.evolution_instance} ` +
+      `→ proxy: ${proxy.label} (${proxy.proxyType}, ${proxy.country ?? 'unknown'}, ${proxy.health}/cached)`
+    )
+  } else {
+    console.warn(
+      `[distributor ${campaignId}] enviando via ${line.evolution_instance} → SIN PROXY ` +
+      `(línea ${line.id} no tiene proxy asignado o está unhealthy)`
+    )
+  }
+
+  try {
+    const { messageId } = await sendViaEvolution(
+      line, unit.phone_number, personalizedMsg, campaign.media_url
+    )
+    await handleSuccess(campaignId, unit, line, messageId, personalizedMsg)
+    updateLastActiveAt(line.id)
+    return 'sent'
+  } catch (err) {
+    const errMsg = err instanceof Error ? err.message : String(err)
+    console.error(
+      `[distributor ${campaignId}] send failed ${unit.phone_number} ` +
+      `via ${line.evolution_instance}:`, errMsg
+    )
+    if (proxy && isNetworkError(err)) {
+      await reportProxySendFailure(proxy.id, line.id, errMsg).catch(() => {})
+    }
+    await handleFailure(campaignId, unit, line, errMsg, maxRetries)
+    return 'failed'
+  }
+}
+
 // ── processMultiLineInBackground ───────────────────────────────────────────────
 
 /**
@@ -605,19 +739,78 @@ export async function processMultiLineInBackground(
   const id = campaign.id
   let sendCount = 0
 
+  // AbortController para cancelar delays en curso cuando la campaña se pausa/cancela.
+  // Se pasa a humanLikeDelay — permite interrumpir pausas burst de hasta 90 min.
+  const delayController = new AbortController()
+
   try {
     await recoverStaleUnits(id)
+
+    // ── Hydratar personalidades desde DB (evita reset a 'normal' en cada restart) ──
+    try {
+      const linesToHydrate = await getEligibleLines()
+      if (linesToHydrate.length > 0) {
+        const personalityRows = await query<{ id: string; personality_config: unknown }>(
+          `SELECT id, personality_config FROM whatsapp_lines WHERE id = ANY($1::uuid[])`,
+          [linesToHydrate.map(l => l.id)],
+        )
+        for (const row of personalityRows) {
+          loadPersonalityFromDB(row.id, row.personality_config as Partial<LinePersonality> | null)
+        }
+        console.log(`[distributor ${id}] personalidades hidratadas para ${personalityRows.length} líneas`)
+
+        // Evictar personalidades de líneas que ya no son elegibles.
+        // Previene crecimiento indefinido del store en procesos de larga vida.
+        const eligibleIds = new Set(linesToHydrate.map(l => l.id))
+        let evicted = 0
+        for (const lineId of getLoadedLineIds()) {
+          if (!eligibleIds.has(lineId)) {
+            evictPersonality(lineId)
+            evicted++
+          }
+        }
+        if (evicted > 0) {
+          console.log(`[distributor ${id}] personalidades evictadas para ${evicted} líneas inactivas`)
+        }
+      }
+    } catch (e) {
+      console.warn(
+        `[distributor ${id}] hydratación de personalidades fallida (continuando):`,
+        e instanceof Error ? e.message : e,
+      )
+    }
+
+    // Limpiar blacklist temporal de proxies expirados al inicio de cada campaña
+    const flushed = flushExpiredBlacklist()
+    if (flushed > 0) {
+      console.log(`[distributor ${id}] proxy blacklist: ${flushed} entradas expiradas limpiadas`)
+    }
+
+    // Cache de líneas elegibles: evita una query a whatsapp_lines por cada mensaje.
+    // Se refresca cada ELIGIBLE_TTL_MS o cuando el array queda vacío.
+    let cachedEligibleLines: EligibleLine[] = []
+    let eligibleLinesFetchedAt = 0
+    const ELIGIBLE_TTL_MS = 10_000  // 10 segundos
 
     while (true) {
       // ── 1. Status gate ──────────────────────────────────────────────────────
       const [current] = await query<{ status: string }>(
         'SELECT status FROM campaigns WHERE id = $1', [id]
       )
-      if (!current || current.status === 'paused' || current.status === 'cancelled') break
+      if (!current || current.status === 'paused' || current.status === 'cancelled') {
+        delayController.abort()  // cancelar cualquier delay en curso
+        break
+      }
 
-      // ── 2. Refresh eligible lines ───────────────────────────────────────────
-      // Re-query on every iteration so counter changes (increments) are reflected.
-      const eligibleLines = await getEligibleLines()
+      // ── 2. Refresh eligible lines (con cache TTL) ───────────────────────────
+      // Sin cache: 1 query a whatsapp_lines por mensaje enviado.
+      // Con TTL 10s: ~1 query cada 10 mensajes en campañas de ritmo normal.
+      const nowMs = Date.now()
+      if (cachedEligibleLines.length === 0 || nowMs - eligibleLinesFetchedAt > ELIGIBLE_TTL_MS) {
+        cachedEligibleLines = await getEligibleLines()
+        eligibleLinesFetchedAt = nowMs
+      }
+      const eligibleLines = cachedEligibleLines
       if (eligibleLines.length === 0) {
         console.warn(`[distributor ${id}] no eligible lines — auto-pausing campaign`)
         await query(
@@ -627,59 +820,82 @@ export async function processMultiLineInBackground(
         break
       }
 
-      const line = selectLine(eligibleLines)!
-
-      // ── 3. Atomic claim ─────────────────────────────────────────────────────
-      const unit = await claimNextUnit(id, line.id)
-      if (!unit) break  // no more pending rows
-
-      // ── 4. Pre-insert queued row (idempotency fence before Evolution call) ──
-      const personalizedMsg = personalize(pickMessage(campaign), unit.first_name, campaign)
-      await query(
-        `INSERT INTO whatsapp_messages
-           (contact_id, campaign_id, phone_number, message_body, direction, status,
-            campaign_recipient_id, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, 'outbound', 'queued', $5, NOW(), NOW())
-         ON CONFLICT (campaign_recipient_id)
-           WHERE campaign_recipient_id IS NOT NULL
-         DO UPDATE SET
-           status       = 'queued',
-           message_body = EXCLUDED.message_body,
-           updated_at   = NOW()
-         WHERE whatsapp_messages.status NOT IN ('sent', 'delivered', 'read')`,
-        [unit.contact_id, id, unit.phone_number, personalizedMsg, unit.id]
-      ).catch(e =>
-        console.error(`[distributor ${id}] pre-insert error:`,
-          e instanceof Error ? e.message : e)
+      // ── 2.5. Personality gate — filtrar líneas activas según horario ──────────
+      // Cada línea tiene su propia ventana de actividad con jitter ±30-90 min.
+      // Solo las líneas dentro de su ventana participan en este ciclo.
+      const activeLines = eligibleLines.filter(
+        l => shouldLineBeActiveNow(getLinePersonality(l.id))
       )
 
-      // ── 5. Send via Evolution API ───────────────────────────────────────────
-      try {
-        const { messageId } = await sendViaEvolution(
-          line, unit.phone_number, personalizedMsg, campaign.media_url
+      if (activeLines.length === 0) {
+        console.warn(
+          `[distributor ${id}] todas las líneas elegibles (${eligibleLines.length}) ` +
+          `están fuera de horario — auto-pausing campaña`
         )
-        await handleSuccess(id, unit, line, messageId, personalizedMsg)
-        sendCount++
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err)
-        console.error(`[distributor ${id}] send failed ${unit.phone_number}:`, errMsg)
-        await handleFailure(id, unit, line, errMsg, maxRetries)
+        await query(
+          `UPDATE campaigns SET status = 'paused' WHERE id = $1 AND status = 'running'`,
+          [id]
+        )
+        break
       }
 
-      // ── 6. Sync campaign progress counters ──────────────────────────────────
-      const { pending } = await syncCounters(id)
-      if (pending === 0) break
+      // ── 3-5. Claim + send en paralelo: una unidad por línea activa ──────────
+      // claimNextUnit usa FOR UPDATE SKIP LOCKED — seguro para concurrencia.
+      // Cada línea puede reclamar y enviar su propia unidad simultáneamente.
+      // Throughput = N mensajes por ciclo (N = activeLines.length).
+      const results = await Promise.allSettled(
+        activeLines.map(line => sendOneUnit(id, line, campaign, maxRetries))
+      )
 
-      // ── 7. Pacing delay (same as existing processor) ────────────────────────
-      await antiblockDelay(campaign)
+      const sentThisCycle = results.filter(
+        r => r.status === 'fulfilled' && r.value === 'sent'
+      ).length
+      sendCount += sentThisCycle
 
-      // ── 8. Heartbeat: keep lock alive during long campaigns ─────────────────
+      // Si todas las líneas no encontraron unidades → no hay más pendientes
+      const allEmpty = results.every(
+        r => r.status === 'fulfilled' && r.value === 'no-unit'
+      )
+      if (allEmpty) break
+
+      // ── 6. (vacío — syncCounters movido al heartbeat) ───────────────────────
+
+      // ── 7. Pacing delay — personalidad de la línea de mayor capacidad ───────
+      // Un delay por ciclo (no por línea) — el batch completo ya se envió.
+      // Se usa la personalidad de la primera línea activa (mayor capacidad residual).
+      const leadLine        = activeLines[0]
+      const leadPersonality = getLinePersonality(leadLine.id)
+      const adjustedDelay   = getAdjustedDelayConfig(buildDelayConfig(campaign), leadPersonality)
+      await humanLikeDelay(adjustedDelay, delayController.signal)
+
+      // ── 8. Heartbeat: lock + personality persist + counters ─────────────────
       if (sendCount > 0 && sendCount % LOCK_HEARTBEAT_EVERY === 0) {
         await query(
           `UPDATE campaigns SET processor_locked_at = NOW()
            WHERE id = $1 AND processor_lock_token = $2`,
           [id, lockToken]
         ).catch(() => {})
+
+        // Persistir personalidad de todas las líneas activas del ciclo
+        await Promise.allSettled(
+          activeLines.map(async line => {
+            const snapshot = savePersonalityToDB(line.id)
+            if (!snapshot) return
+            await query(
+              `UPDATE whatsapp_lines SET personality_config = $1 WHERE id = $2`,
+              [JSON.stringify(snapshot), line.id]
+            ).catch(e => console.warn(
+              `[distributor ${id}] no se pudo persistir personality para ${line.id}:`,
+              e instanceof Error ? e.message : e,
+            ))
+          })
+        )
+
+        // Sync counters de progreso (movido desde hot path)
+        await syncCounters(id).catch(e =>
+          console.error(`[distributor ${id}] heartbeat syncCounters error:`,
+            e instanceof Error ? e.message : e)
+        )
       }
     }
 
@@ -695,7 +911,18 @@ export async function processMultiLineInBackground(
       )
     }
 
+  } catch (err) {
+    // AbortError: el delay fue cancelado porque la campaña se pausó/canceló.
+    // No es un error fatal — el loop ya salió limpiamente. Dejar que el finally libere el lock.
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      console.log(`[distributor ${id}] delay cancelado por abort — procesador detenido limpiamente`)
+      return
+    }
+    throw err
   } finally {
+    // Asegurar que el signal esté abortado para liberar cualquier listener pendiente
+    delayController.abort()
+
     // Always release the lock — only if still owned by this processor (token match)
     await query(
       `UPDATE campaigns

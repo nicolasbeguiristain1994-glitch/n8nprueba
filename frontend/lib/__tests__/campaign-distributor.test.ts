@@ -45,19 +45,42 @@ describe('selectLine', () => {
     expect(selectLine([])).toBeNull()
   })
 
-  it('returns the first element (already sorted by caller)', () => {
+  it('returns the only element for single-line array', () => {
     const a = makeLine({ id: 'aaa', remaining_day: 400 })
-    const b = makeLine({ id: 'bbb', remaining_day: 300 })
-    expect(selectLine([a, b])?.id).toBe('aaa')
+    expect(selectLine([a])?.id).toBe('aaa')
   })
 
-  it('deterministic — same input always returns same result', () => {
-    const lines = [
-      makeLine({ id: 'x', remaining_day: 200 }),
-      makeLine({ id: 'y', remaining_day: 200 }),
-    ]
-    expect(selectLine(lines)?.id).toBe('x')
-    expect(selectLine(lines)?.id).toBe('x') // no randomisation
+  it('always returns an element from the input set', () => {
+    const a = makeLine({ id: 'aaa', remaining_day: 400 })
+    const b = makeLine({ id: 'bbb', remaining_day: 300 })
+    const result = selectLine([a, b])
+    expect(['aaa', 'bbb']).toContain(result?.id)
+  })
+
+  it('weighted sampling: high-capacity line is selected more often', () => {
+    // Line A has 10x more capacity than B — should win ~90% of the time
+    const a = makeLine({ id: 'high', remaining_day: 900 })
+    const b = makeLine({ id: 'low',  remaining_day: 100 })
+    const counts: Record<string, number> = { high: 0, low: 0 }
+    for (let i = 0; i < 1000; i++) {
+      const picked = selectLine([a, b])!
+      counts[picked.id]++
+    }
+    // high should win between 75% and 97% of the time (3-sigma window around 90%)
+    expect(counts['high']).toBeGreaterThan(750)
+    expect(counts['high']).toBeLessThan(970)
+  })
+
+  it('low-capacity line still gets selected occasionally', () => {
+    const a = makeLine({ id: 'high', remaining_day: 900 })
+    const b = makeLine({ id: 'low',  remaining_day: 100 })
+    const selected = new Set<string>()
+    for (let i = 0; i < 200; i++) {
+      selected.add(selectLine([a, b])!.id)
+    }
+    // Both lines should appear in 200 samples
+    expect(selected.has('high')).toBe(true)
+    expect(selected.has('low')).toBe(true)
   })
 })
 

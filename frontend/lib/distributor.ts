@@ -269,12 +269,13 @@ async function selectBestProxy(params: {
 async function writeProxyAssignment(params: {
   line:           CandidateLine
   newProxyId:     string
+  newProxy?:      ProxyRow | null
   actionKind:     ProxyActionKind
   score:          AssignmentScore
   campaignId:     string | null
   requestedBy:    string | null
 }): Promise<void> {
-  const { line, newProxyId, actionKind, score, campaignId, requestedBy } = params
+  const { line, newProxyId, newProxy, actionKind, score, campaignId, requestedBy } = params
 
   const assignmentType: AssignmentType = actionKind === 'replace' ? 'rotation' : 'auto'
 
@@ -286,6 +287,39 @@ async function writeProxyAssignment(params: {
        WHERE id = $2`,
       [newProxyId, line.id]
     )
+
+    // Fire-and-forget: push new proxy config to the Evolution instance.
+    // Inlined here (not imported from proxy-manager) to avoid circular dependency.
+    const apiKey = process.env.EVOLUTION_API_KEY
+    if (apiKey && line.evolution_url && line.evolution_instance && newProxy) {
+      const proxyBody: Record<string, string> = {
+        proxyHost:     newProxy.host,
+        proxyPort:     String(newProxy.port),
+        proxyProtocol: newProxy.protocol,
+      }
+      if (newProxy.username)     proxyBody.proxyUsername = newProxy.username
+      if (newProxy.password_ref) proxyBody.proxyPassword = newProxy.password_ref
+
+      fetch(`${line.evolution_url}/instance/update/${line.evolution_instance}`, {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json', apikey: apiKey },
+        body:    JSON.stringify(proxyBody),
+        signal:  AbortSignal.timeout(10_000),
+      })
+        .then(r => {
+          if (r.ok) {
+            console.log(`[distributor] proxy synced to Evolution: ${line.evolution_instance} → ${newProxy.host}:${newProxy.port}`)
+          } else {
+            r.text()
+              .then(t => console.warn(`[distributor] Evolution proxy sync failed ${r.status} (${line.evolution_instance}): ${t}`))
+              .catch(() => {})
+          }
+        })
+        .catch(e => console.warn(
+          `[distributor] Evolution proxy sync error (${line.evolution_instance}):`,
+          e instanceof Error ? e.message : e,
+        ))
+    }
   }
 
   // Append to immutable audit log
@@ -402,6 +436,7 @@ export async function intelligentAssign(req: AssignRequest = {}): Promise<Assign
         await writeProxyAssignment({
           line,
           newProxyId:  candidate.id,
+          newProxy:    candidate,
           actionKind:  action,
           score,
           campaignId:  campaignId ?? null,
