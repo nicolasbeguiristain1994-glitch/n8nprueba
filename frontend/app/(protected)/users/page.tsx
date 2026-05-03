@@ -44,7 +44,9 @@ type User = {
 const ALL_AGENTS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal'] as const
 
 const ALL_SECTORS = [
-  'dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup', 'users', 'settings', 'lists', 'send', 'tasks',
+  'dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup',
+  'tasks', 'estadisticas', 'automations', 'blacklist', 'templates',
+  'users', 'settings', 'lists', 'send',
 ] as const
 
 const SECTOR_LABELS: Record<string, string> = {
@@ -54,11 +56,15 @@ const SECTOR_LABELS: Record<string, string> = {
   conversations: 'Conversaciones',
   lines:         'Líneas',
   warmup:        'Calentamiento',
+  tasks:         'Tareas',
+  estadisticas:  'Estadísticas',
+  automations:   'Automatizaciones',
+  blacklist:     'Blacklist',
+  templates:     'Plantillas',
   users:         'Usuarios',
   settings:      'Ajustes',
   lists:         'Listas',
   send:          'Envío',
-  tasks:         'Tareas',
 }
 
 const ROLE_LABELS: Record<Role, string> = {

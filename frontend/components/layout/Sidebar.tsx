@@ -39,23 +39,23 @@ interface NavItem {
 }
 
 const BASE_NAV: NavItem[] = [
-  { href: '/',               label: 'Dashboard',      icon: LayoutDashboard, sector: 'dashboard' },
-  { href: '/contacts',       label: 'Contactos',       icon: Users,           sector: 'contacts' },
-  { href: '/campaigns',      label: 'Campañas',        icon: Megaphone,       sector: 'campaigns' },
-  { href: '/conversations',  label: 'Conversaciones',  icon: MessageSquare,   sector: 'conversations' },
-  { href: '/lines',          label: 'Líneas',          icon: Activity,        sector: 'lines' },
-  { href: '/warmup',         label: 'Calentamiento',   icon: Flame,           sector: 'warmup' },
-  { href: '/mis-tareas',     label: 'Mis Tareas',      icon: CheckSquare,     sector: 'tasks' },
+  { href: '/',               label: 'Dashboard',       icon: LayoutDashboard, sector: 'dashboard' },
+  { href: '/contacts',       label: 'Contactos',        icon: Users,           sector: 'contacts' },
+  { href: '/campaigns',      label: 'Campañas',         icon: Megaphone,       sector: 'campaigns' },
+  { href: '/conversations',  label: 'Conversaciones',   icon: MessageSquare,   sector: 'conversations' },
+  { href: '/lines',          label: 'Líneas',           icon: Activity,        sector: 'lines' },
+  { href: '/warmup',         label: 'Calentamiento',    icon: Flame,           sector: 'warmup' },
+  { href: '/mis-tareas',     label: 'Mis Tareas',       icon: CheckSquare,     sector: 'tasks' },
+  { href: '/estadisticas',   label: 'Estadísticas',     icon: BarChart2,       sector: 'estadisticas' },
+  { href: '/automatizaciones',label: 'Automatizaciones',icon: Bot,             sector: 'automations' },
+  { href: '/blacklist',      label: 'Blacklist',        icon: ShieldOff,       sector: 'blacklist' },
+  { href: '/templates',      label: 'Plantillas',       icon: FileText,        sector: 'templates' },
 ]
 
 const ADMIN_NAV: NavItem[] = [
-  { href: '/estadisticas',     label: 'Estadísticas',     icon: BarChart2,     sector: 'dashboard' },
-  { href: '/automatizaciones', label: 'Automatizaciones', icon: Bot,           sector: 'automations' },
-  { href: '/blacklist',        label: 'Blacklist',        icon: ShieldOff,     sector: 'blacklist' },
-  { href: '/tareas',           label: 'Tareas',           icon: ClipboardList, sector: 'tasks' },
-  { href: '/users',            label: 'Usuarios',         icon: UserCog,       sector: 'users' },
-  { href: '/templates',        label: 'Plantillas',       icon: FileText,      sector: 'templates' },
-  { href: '/settings',         label: 'Ajustes',          icon: Settings,      sector: 'settings' },
+  { href: '/tareas',    label: 'Tareas',    icon: ClipboardList, sector: 'tasks' },
+  { href: '/users',     label: 'Usuarios',  icon: UserCog,       sector: 'users' },
+  { href: '/settings',  label: 'Ajustes',   icon: Settings,      sector: 'settings' },
 ]
 
 // ---------------------------------------------------------------------------
