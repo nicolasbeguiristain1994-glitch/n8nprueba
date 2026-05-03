@@ -44,8 +44,22 @@ type User = {
 const ALL_AGENTS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal'] as const
 
 const ALL_SECTORS = [
-  'dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup', 'users', 'settings', 'lists', 'send',
+  'dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup', 'users', 'settings', 'lists', 'send', 'tasks',
 ] as const
+
+const SECTOR_LABELS: Record<string, string> = {
+  dashboard:     'Dashboard',
+  contacts:      'Contactos',
+  campaigns:     'Campañas',
+  conversations: 'Conversaciones',
+  lines:         'Líneas',
+  warmup:        'Calentamiento',
+  users:         'Usuarios',
+  settings:      'Ajustes',
+  lists:         'Listas',
+  send:          'Envío',
+  tasks:         'Tareas',
+}
 
 const ROLE_LABELS: Record<Role, string> = {
   admin:    'Admin',
@@ -249,7 +263,7 @@ function UserFormModal({
                       : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
                   }`}
                 >
-                  {s}
+                  {SECTOR_LABELS[s] ?? s}
                 </button>
               ))}
             </div>
