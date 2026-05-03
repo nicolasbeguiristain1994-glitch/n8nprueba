@@ -19,6 +19,7 @@ export type Resource =
   | 'settings'
   | 'tickets'
   | 'blacklist'
+  | 'tasks'
 
 export type Action = 'read' | 'create' | 'update' | 'delete' | 'manage' | 'send' | 'assign' | 'transfer'
 
@@ -84,7 +85,7 @@ export function effectivePermissions(
 ): EffectivePermissions {
   const resources: Resource[] = [
     'dashboard', 'contacts', 'campaigns', 'conversations',
-    'lines', 'warmup', 'users', 'lists', 'send', 'audit', 'settings', 'blacklist',
+    'lines', 'warmup', 'users', 'lists', 'send', 'audit', 'settings', 'blacklist', 'tasks',
   ]
   const actions: Action[] = ['read', 'create', 'update', 'delete', 'manage', 'send']
 

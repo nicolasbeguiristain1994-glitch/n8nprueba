@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Users, Megaphone, MessageSquare, Activity, Flame, LogOut, UserCog, Settings, FileText, BarChart2, ShieldOff, Bot } from 'lucide-react'
+import { LayoutDashboard, Users, Megaphone, MessageSquare, Activity, Flame, LogOut, UserCog, Settings, FileText, BarChart2, ShieldOff, Bot, ClipboardList } from 'lucide-react'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
 const BASE_NAV = [
@@ -11,15 +11,17 @@ const BASE_NAV = [
   { href: '/conversations',  label: 'Conversaciones',  icon: MessageSquare,   sector: 'conversations' },
   { href: '/lines',          label: 'Líneas',          icon: Activity,        sector: 'lines' },
   { href: '/warmup',         label: 'Calentamiento',   icon: Flame,           sector: 'warmup' },
+  { href: '/mis-tareas',     label: 'Mis Tareas',      icon: ClipboardList,   sector: 'tasks' },
 ]
 
 const ADMIN_NAV = [
-  { href: '/estadisticas',     label: 'Estadísticas',     icon: BarChart2, sector: 'dashboard' },
-  { href: '/automatizaciones', label: 'Automatizaciones', icon: Bot,       sector: 'automations' },
-  { href: '/blacklist',        label: 'Blacklist',        icon: ShieldOff, sector: 'blacklist' },
-  { href: '/users',            label: 'Usuarios',         icon: UserCog,   sector: 'users' },
-  { href: '/templates',        label: 'Plantillas',       icon: FileText,  sector: 'templates' },
-  { href: '/settings',         label: 'Ajustes',          icon: Settings,  sector: 'settings' },
+  { href: '/estadisticas',     label: 'Estadísticas',     icon: BarChart2,   sector: 'dashboard' },
+  { href: '/tareas',           label: 'Tareas',           icon: ClipboardList, sector: 'tasks' },
+  { href: '/automatizaciones', label: 'Automatizaciones', icon: Bot,         sector: 'automations' },
+  { href: '/blacklist',        label: 'Blacklist',        icon: ShieldOff,   sector: 'blacklist' },
+  { href: '/users',            label: 'Usuarios',         icon: UserCog,     sector: 'users' },
+  { href: '/templates',        label: 'Plantillas',       icon: FileText,    sector: 'templates' },
+  { href: '/settings',         label: 'Ajustes',          icon: Settings,    sector: 'settings' },
 ]
 
 export default function Sidebar() {
