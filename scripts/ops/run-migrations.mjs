@@ -120,6 +120,21 @@ const MIGRATIONS = [
   { file: 'db/migrations/030_cleanup_ghost_agent_players.sql',   label: '030 — delete ghost agent-as-player rows from casino_players + casino_transactions' },
   { file: 'db/migrations/031_casino_transactions_timestamp.sql', label: '031 — casino_transactions.fecha_hora_utc TIMESTAMPTZ for sub-day filtering' },
   { file: 'db/migrations/032_enable_rls.sql',                   label: '032 — Enable RLS on all public tables (blocks anon key access)' },
+  { file: 'db/migrations/033_delete_test_contacts.sql',         label: '033 — Delete test contacts' },
+  { file: 'db/migrations/034_contact_lists_source.sql',         label: '034 — contact_lists.source column' },
+  { file: 'db/migrations/035_operator_contact_visibility.sql',  label: '035 — Operator contact visibility rules' },
+  { file: 'db/migrations/036_users_permissions.sql',            label: '036 — Users granular permissions' },
+  { file: 'db/migrations/037_contacts_linea_100.sql',           label: '037 — contacts.linea up to 100 lines' },
+  { file: 'db/migrations/038_app_settings.sql',                 label: '038 — app_settings table' },
+  { file: 'db/migrations/039_whatsapp_templates.sql',           label: '039 — WhatsApp message templates' },
+  { file: 'db/migrations/040_campaigns_template.sql',           label: '040 — Campaigns template_id FK' },
+  { file: 'db/migrations/041_blacklist.sql',                    label: '041 — Global blacklist table' },
+  { file: 'db/migrations/042_automations.sql',                  label: '042 — Automations / bots module' },
+  { file: 'db/migrations/043_whatsapp_lines_personality.sql',   label: '043 — whatsapp_lines personality columns' },
+  { file: 'db/migrations/044_warmup_display_name.sql',          label: '044 — Warmup display_name column' },
+  { file: 'db/migrations/045_tasks.sql',                        label: '045 — Tasks module (tasks, task_assignees, task_logs)' },
+  { file: 'db/migrations/046_tasks_soft_delete.sql',            label: '046 — Tasks soft delete (deleted_at, deleted_by)' },
+  { file: 'db/migrations/047_tasks_description_trgm.sql',       label: '047 — Tasks trigram indexes (title + description)' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

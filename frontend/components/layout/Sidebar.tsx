@@ -20,6 +20,7 @@ import {
   LayoutDashboard, Users, Megaphone, MessageSquare,
   Activity, Flame, UserCog, Settings, FileText,
   BarChart2, ShieldOff, Bot, ChevronLeft, LogOut, X,
+  ClipboardList, CheckSquare,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useSidebar } from './sidebar-context'
@@ -44,15 +45,17 @@ const BASE_NAV: NavItem[] = [
   { href: '/conversations',  label: 'Conversaciones',  icon: MessageSquare,   sector: 'conversations' },
   { href: '/lines',          label: 'Líneas',          icon: Activity,        sector: 'lines' },
   { href: '/warmup',         label: 'Calentamiento',   icon: Flame,           sector: 'warmup' },
+  { href: '/mis-tareas',     label: 'Mis Tareas',      icon: CheckSquare,     sector: 'tasks' },
 ]
 
 const ADMIN_NAV: NavItem[] = [
-  { href: '/estadisticas',     label: 'Estadísticas',     icon: BarChart2, sector: 'dashboard' },
-  { href: '/automatizaciones', label: 'Automatizaciones', icon: Bot,       sector: 'automations' },
-  { href: '/blacklist',        label: 'Blacklist',        icon: ShieldOff, sector: 'blacklist' },
-  { href: '/users',            label: 'Usuarios',         icon: UserCog,   sector: 'users' },
-  { href: '/templates',        label: 'Plantillas',       icon: FileText,  sector: 'templates' },
-  { href: '/settings',         label: 'Ajustes',          icon: Settings,  sector: 'settings' },
+  { href: '/estadisticas',     label: 'Estadísticas',     icon: BarChart2,     sector: 'dashboard' },
+  { href: '/automatizaciones', label: 'Automatizaciones', icon: Bot,           sector: 'automations' },
+  { href: '/blacklist',        label: 'Blacklist',        icon: ShieldOff,     sector: 'blacklist' },
+  { href: '/tareas',           label: 'Tareas',           icon: ClipboardList, sector: 'tasks' },
+  { href: '/users',            label: 'Usuarios',         icon: UserCog,       sector: 'users' },
+  { href: '/templates',        label: 'Plantillas',       icon: FileText,      sector: 'templates' },
+  { href: '/settings',         label: 'Ajustes',          icon: Settings,      sector: 'settings' },
 ]
 
 // ---------------------------------------------------------------------------
