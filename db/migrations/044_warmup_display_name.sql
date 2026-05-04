@@ -6,15 +6,9 @@
 --
 -- Ambas columnas usan IF NOT EXISTS — seguro ejecutar con tráfico activo.
 
-ALTER TABLE warmup_numbers
-  ADD COLUMN IF NOT EXISTS display_name VARCHAR(100);
-
-ALTER TABLE warmup_numbers
-  ADD COLUMN IF NOT EXISTS evolution_url VARCHAR(255);
-
-COMMENT ON COLUMN warmup_numbers.display_name IS
-  'Nombre legible para mostrar en la UI. Si NULL se usa instance_name.';
-
-COMMENT ON COLUMN warmup_numbers.evolution_url IS
-  'URL base del servidor Evolution para esta instancia (ej: http://evolution:8080).
-   Si NULL el motor de warmup usa la variable de entorno EVOLUTION_URL.';
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'warmup_numbers') THEN
+    ALTER TABLE warmup_numbers ADD COLUMN IF NOT EXISTS display_name VARCHAR(100);
+    ALTER TABLE warmup_numbers ADD COLUMN IF NOT EXISTS evolution_url VARCHAR(255);
+  END IF;
+END $$;

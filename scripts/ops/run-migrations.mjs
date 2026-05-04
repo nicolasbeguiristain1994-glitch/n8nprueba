@@ -136,6 +136,9 @@ const MIGRATIONS = [
   { file: 'db/migrations/046_tasks_soft_delete.sql',            label: '046 — Tasks soft delete (deleted_at, deleted_by)' },
   { file: 'db/migrations/047_tasks_description_trgm.sql',       label: '047 — Tasks trigram indexes (title + description)' },
   { file: 'db/migrations/048_notifications.sql',                label: '048 — Notifications module (notifications + preferences)' },
+  { file: 'db/migrations/049_create_deals.sql',                label: '049 — Deals module' },
+  { file: 'db/migrations/050_contact_frequency_engine.sql',    label: '050 — ContactFrequencyEngine (contact_frequency_rules + contact_send_history)' },
+  { file: 'db/migrations/051_contact_frequency_removed_by.sql', label: '051 — contact_frequency_rules.removed_by column' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

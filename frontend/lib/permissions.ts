@@ -20,6 +20,10 @@ export type Resource =
   | 'tickets'
   | 'blacklist'
   | 'tasks'
+  | 'pipeline'
+  | 'estadisticas'
+  | 'automations'
+  | 'templates'
 
 export type Action = 'read' | 'create' | 'update' | 'delete' | 'manage' | 'send' | 'assign' | 'transfer'
 

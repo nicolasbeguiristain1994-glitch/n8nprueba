@@ -53,6 +53,7 @@ import {
   reportProxySendFailure,
   flushExpiredBlacklist,
 } from '@/lib/proxy-manager'
+import { ContactFrequencyEngine } from '@/lib/contact-frequency/ContactFrequencyEngine'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -647,15 +648,88 @@ async function syncCounters(
  *   'sent'    — mensaje enviado y confirmado en DB
  *   'failed'  — envío fallido (registrado en handleFailure)
  *   'no-unit' — no había unidades pendientes para esta línea
+ *   'skipped' — contacto bloqueado por frecuencia (BLOCK); no se envía
  */
 async function sendOneUnit(
   campaignId:  string,
   line:        EligibleLine,
   campaign:    CampaignForDispatch,
   maxRetries:  number,
-): Promise<'sent' | 'failed' | 'no-unit'> {
+): Promise<'sent' | 'failed' | 'no-unit' | 'skipped'> {
   const unit = await claimNextUnit(campaignId, line.id)
   if (!unit) return 'no-unit'
+
+  // ── Frequency gate ──────────────────────────────────────────────────────────
+  //
+  // Evalúa los límites por contacto (1/día, 2/semana, 48h cooldown) y reserva
+  // el slot atómicamente usando pg_advisory_xact_lock — sin race condition TOCTOU.
+  //
+  // Graceful degradation: si el motor falla (timeout de DB, error transitorio),
+  // el envío CONTINÚA. La disponibilidad de la campaña tiene prioridad sobre el
+  // control de frecuencia estricto ante fallos de infraestructura.
+  //
+  // BLOCK  → el contacto superó sus límites; se marca 'skipped' sin reintentos.
+  // DELAY  → riesgo moderado pero dentro de límites; se continúa (slot ya reservado).
+  // ALLOW  → sin restricciones activas; flujo normal.
+  let freqDecision: 'ALLOW' | 'DELAY' | 'BLOCK' = 'ALLOW'
+  let freqReason   = ''
+  try {
+    const freqResult = await ContactFrequencyEngine.atomicEvaluateAndRecord(
+      {
+        contactId:    unit.contact_id,
+        operatorId:   campaign.owned_by,
+        campaignId,
+        // segMonto / segActividad: null → aplica la regla global DEFAULT.
+        // Para reglas por segmento, extender DispatchUnit con estos campos
+        // y pasarlos aquí desde la query de claimNextUnit.
+        segMonto:     null,
+        segActividad: null,
+      },
+      {
+        contactId:           unit.contact_id,
+        campaignId,
+        operatorId:          campaign.owned_by,
+        phoneNumber:         unit.phone_number,
+        campaignRecipientId: unit.id,
+      },
+    )
+    freqDecision = freqResult.decision
+    freqReason   = freqResult.reason
+    console.log(
+      `[FrequencyEngine] contact=${unit.contact_id} decision=${freqResult.decision} ` +
+      `score=${freqResult.riskScore} reason="${freqResult.reason}"`,
+    )
+  } catch (freqErr) {
+    // El motor falló — loguear y continuar. No bloquear el envío.
+    console.error(
+      `[FrequencyEngine] error evaluating contact=${unit.contact_id} — continuing send:`,
+      freqErr instanceof Error ? freqErr.message : freqErr,
+    )
+  }
+
+  if (freqDecision === 'BLOCK') {
+    // Límite de frecuencia superado: marcar como 'skipped' sin reintentar.
+    // La ventana de frecuencia es rolling (24h/7d), no de calendario.
+    // El contacto puede ser elegible en la siguiente campaña o ventana.
+    await query(
+      `UPDATE campaign_recipients
+       SET status       = 'skipped',
+           error_detail = $1,
+           failed_at    = NOW(),
+           locked_at    = NULL,
+           updated_at   = NOW()
+       WHERE id = $2`,
+      [`[freq-blocked] ${freqReason}`, unit.id],
+    ).catch(e =>
+      console.error(`[distributor ${campaignId}] freq-blocked skip error:`,
+        e instanceof Error ? e.message : e),
+    )
+    return 'skipped'
+  }
+
+  // DELAY: el slot ya fue pre-registrado en contact_send_history dentro de la
+  // transacción atómica. Continuamos el envío — el humanLikeDelay del loop
+  // principal ya introduce separación temporal entre mensajes del mismo ciclo.
 
   const personalizedMsg = personalize(pickMessage(campaign), unit.first_name, campaign)
 
@@ -847,12 +921,16 @@ export async function processMultiLineInBackground(
         activeLines.map(line => sendOneUnit(id, line, campaign, maxRetries))
       )
 
-      const sentThisCycle = results.filter(
-        r => r.status === 'fulfilled' && r.value === 'sent'
-      ).length
+      const sentThisCycle    = results.filter(r => r.status === 'fulfilled' && r.value === 'sent').length
+      const skippedThisCycle = results.filter(r => r.status === 'fulfilled' && r.value === 'skipped').length
       sendCount += sentThisCycle
+      if (skippedThisCycle > 0) {
+        console.log(`[distributor ${id}] freq-blocked this cycle: ${skippedThisCycle}`)
+      }
 
-      // Si todas las líneas no encontraron unidades → no hay más pendientes
+      // Si todas las líneas no encontraron unidades → no hay más pendientes.
+      // 'skipped' no cuenta como 'no-unit': hubo unidades pero fueron bloqueadas
+      // por frecuencia; pueden existir más unidades pendientes no bloqueadas.
       const allEmpty = results.every(
         r => r.status === 'fulfilled' && r.value === 'no-unit'
       )
