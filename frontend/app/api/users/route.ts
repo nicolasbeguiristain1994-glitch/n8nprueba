@@ -4,7 +4,7 @@ import { checkPermission } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 
 const VALID_ROLES    = ['admin', 'operator', 'viewer'] as const
-const VALID_SECTORS  = ['dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup', 'tasks', 'estadisticas', 'automations', 'blacklist', 'templates', 'users', 'settings', 'lists', 'send'] as const
+const VALID_SECTORS  = ['dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup', 'tasks', 'estadisticas', 'automations', 'blacklist', 'templates', 'tickets', 'users', 'settings', 'lists', 'send'] as const
 
 type UserRow = {
   id: string
