@@ -265,7 +265,7 @@ export default function CalendarioPage() {
 
       {/* ── Filters ───────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <Select value={filterType || '__all'} onValueChange={v => setFilterType(v === '__all' ? '' : v)}>
+        <Select value={filterType || '__all'} onValueChange={v => setFilterType((v ?? '') === '__all' ? '' : (v ?? ''))}>
           <SelectTrigger className="w-40 h-8 text-sm">
             <SelectValue placeholder="Tipo" />
           </SelectTrigger>
@@ -277,7 +277,7 @@ export default function CalendarioPage() {
           </SelectContent>
         </Select>
 
-        <Select value={filterPriority || '__all'} onValueChange={v => setFilterPriority(v === '__all' ? '' : v)}>
+        <Select value={filterPriority || '__all'} onValueChange={v => setFilterPriority((v ?? '') === '__all' ? '' : (v ?? ''))}>
           <SelectTrigger className="w-40 h-8 text-sm">
             <SelectValue placeholder="Prioridad" />
           </SelectTrigger>
@@ -290,7 +290,7 @@ export default function CalendarioPage() {
         </Select>
 
         {isAdmin && operators.length > 0 && (
-          <Select value={filterOperator || '__all'} onValueChange={v => setFilterOperator(v === '__all' ? '' : v)}>
+          <Select value={filterOperator || '__all'} onValueChange={v => setFilterOperator((v ?? '') === '__all' ? '' : (v ?? ''))}>
             <SelectTrigger className="w-44 h-8 text-sm">
               <SelectValue placeholder="Operador" />
             </SelectTrigger>
