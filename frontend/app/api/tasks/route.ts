@@ -8,6 +8,7 @@ import {
   type TaskType, type TaskPriority, type TaskStatus,
   validateRelatedData,
 } from '@/lib/task-types'
+import { notifyMany } from '@/lib/notify'
 
 // ── GET /api/tasks — Listar todas las tareas (admin) ──────────────────────────
 
@@ -218,6 +219,18 @@ export async function POST(req: NextRequest) {
 
     void audit({ req, action: 'create', resource: 'tasks', resource_id: taskId,
       metadata: { title, type, priority, assignees_count: assignees.length } })
+
+    // Notificar a los operadores asignados
+    if (assignees.length > 0) {
+      void notifyMany(assignees, {
+        type:        'tarea_asignada',
+        title:       `Tarea asignada: ${title}`,
+        body:        `Prioridad ${priority}${dueDate ? ` · Vence ${new Date(dueDate).toLocaleDateString('es-AR')}` : ''}`,
+        link:        '/mis-tareas',
+        relatedType: 'task',
+        relatedId:   taskId,
+      })
+    }
 
     return NextResponse.json({ id: taskId }, { status: 201 })
   } catch (e) {

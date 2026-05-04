@@ -135,6 +135,7 @@ const MIGRATIONS = [
   { file: 'db/migrations/045_tasks.sql',                        label: '045 — Tasks module (tasks, task_assignees, task_logs)' },
   { file: 'db/migrations/046_tasks_soft_delete.sql',            label: '046 — Tasks soft delete (deleted_at, deleted_by)' },
   { file: 'db/migrations/047_tasks_description_trgm.sql',       label: '047 — Tasks trigram indexes (title + description)' },
+  { file: 'db/migrations/048_notifications.sql',                label: '048 — Notifications module (notifications + preferences)' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

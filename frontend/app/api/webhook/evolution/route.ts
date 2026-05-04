@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { query } from '@/lib/db'
 import { normalizePhone } from '@/lib/validate'
 import { evaluateAutomations } from '@/lib/automation-engine'
+import { notify } from '@/lib/notify'
 
 // ── Palabras clave de opt-out ─────────────────────────────────────────────────
 // Comparación normalizada: sin acentos, minúsculas, trim.
@@ -159,6 +160,38 @@ export async function POST(req: NextRequest) {
             // No bloquear el flujo si falla el blacklisting
             console.error('[webhook/evolution] error al blacklistear opt-out:', blErr instanceof Error ? blErr.message : blErr)
           }
+        }
+      }
+
+      // ── Notificación al operador asignado a la conversación ──────────────────
+      // Si la conversación está escalada y tiene un agente asignado (support_agents),
+      // buscamos el usuario equivalente en `users` por email y le notificamos.
+      if (typeof body_text === 'string' && body_text !== '[media]') {
+        try {
+          const assignedUsers = await query<{ user_id: string; name: string | null }>(
+            `SELECT u.id AS user_id, u.name
+             FROM conversation_state cs
+             JOIN support_agents sa ON sa.id = cs.assigned_agent_id
+             JOIN users u ON u.email = sa.email
+             WHERE cs.phone_number = $1
+               AND cs.resolved_at IS NULL
+               AND cs.is_escalated = TRUE
+             LIMIT 1`,
+            [phone]
+          )
+          if (assignedUsers.length > 0) {
+            void notify({
+              userId:      assignedUsers[0].user_id,
+              type:        'mensaje_nuevo',
+              title:       `Nuevo mensaje de ${phone}`,
+              body:        body_text.length > 100 ? body_text.slice(0, 97) + '…' : body_text,
+              link:        '/conversations',
+              relatedType: 'conversation',
+              relatedId:   phone,
+            })
+          }
+        } catch {
+          // No bloquear el flujo principal si falla la notificación
         }
       }
 

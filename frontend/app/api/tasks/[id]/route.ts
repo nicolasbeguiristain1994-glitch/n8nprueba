@@ -8,6 +8,7 @@ import {
   type TaskType, type TaskPriority,
   validateRelatedData,
 } from '@/lib/task-types'
+import { notifyMany } from '@/lib/notify'
 
 // ── GET /api/tasks/[id] — Detalle con historial ───────────────────────────────
 
@@ -210,10 +211,12 @@ export async function PUT(
         values
       )
 
+      let newAssignees: string[] = []
       if (Array.isArray(body.assignees)) {
         const validIds = body.assignees.filter(
           (a): a is string => typeof a === 'string' && isUUID(a)
         )
+        newAssignees = validIds
         await client.query(`DELETE FROM task_assignees WHERE task_id = $1`, [id])
         for (const uid of validIds) {
           await client.query(
@@ -228,6 +231,19 @@ export async function PUT(
          VALUES ($1, $2, $3, 'editada')`,
         [id, user.user_id, user.name || user.email]
       )
+
+      // Notificar a los nuevos asignados si cambió la asignación
+      if (newAssignees.length > 0) {
+        const taskTitle = body.title ?? existing.type
+        void notifyMany(newAssignees, {
+          type:        'tarea_asignada',
+          title:       `Tarea reasignada: ${taskTitle}`,
+          body:        'Se te asignó o reasignó una tarea',
+          link:        '/mis-tareas',
+          relatedType: 'task',
+          relatedId:   id,
+        })
+      }
     })
 
     void audit({ req, action: 'update', resource: 'tasks', resource_id: id })

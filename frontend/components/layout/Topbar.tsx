@@ -12,11 +12,12 @@
  * z-30 para quedar sobre el contenido scrolleable pero bajo modals/dialogs.
  */
 
-import { Menu, Bell, Search, Moon, Sun } from 'lucide-react'
+import { Menu, Search, Moon, Sun } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useEffect, useState } from 'react'
 import { useSidebar } from './sidebar-context'
 import { useCurrentUser } from '@/lib/useCurrentUser'
+import { NotificationBell } from './NotificationBell'
 
 export function Topbar() {
   const { setMobileOpen } = useSidebar()
@@ -91,14 +92,7 @@ export function Topbar() {
         </button>
 
         {/* Notificaciones */}
-        <button
-          className="flex items-center justify-center w-8 h-8 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors relative"
-          aria-label="Notificaciones"
-        >
-          <Bell size={16} />
-          {/* Badge de notificaciones — descomentar cuando haya lógica real */}
-          {/* <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-destructive" /> */}
-        </button>
+        <NotificationBell />
 
         {/* Toggle dark / light mode */}
         <button
