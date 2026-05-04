@@ -244,6 +244,14 @@ export function Sidebar() {
 
   return (
     <aside
+      /*
+       * suppressHydrationWarning: el ancho depende de localStorage (useLocalStorage).
+       * En SSR se renderiza con el valor inicial (collapsed=false → w-56).
+       * En cliente puede diferir si estaba colapsado. React lo corrige sin flash
+       * visual porque solo afecta una clase de width, no contenido significativo.
+       * Mismo patrón que usa next-themes con el atributo class en <html>.
+       */
+      suppressHydrationWarning
       className={cn(
         'relative hidden md:flex flex-col shrink-0',
         'border-r border-sidebar-border',

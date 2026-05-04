@@ -4,42 +4,30 @@
  * Topbar — barra superior fija de la app.
  *
  * Secciones:
- *   LEFT:   hamburger (mobile only) + logo (mobile only)
- *   CENTER: buscador global con hint Cmd+K (desktop only)
- *   RIGHT:  ícono búsqueda (mobile) + notificaciones + toggle dark/light + avatar
+ *   LEFT:   hamburger (mobile) + logo (mobile)
+ *   CENTER: botón de búsqueda global con hint Cmd+K (desktop)
+ *   RIGHT:  búsqueda mobile | NotificationBell | UserMenu
  *
- * La altura es h-14 (56px), coincide con el skeleton en AppShell y el logo en Sidebar.
- * z-30 para quedar sobre el contenido scrolleable pero bajo modals/dialogs.
+ * El toggle de tema y el logout viven en <UserMenu> para mantener el Topbar
+ * limpio. Esta separación es la misma que usan Attio y Linear.
+ *
+ * Props:
+ *   onSearchClick — callback que dispara el CommandPalette desde AppShell.
+ *                   El shortcut Cmd+K también lo maneja el CommandPalette
+ *                   internamente, pero este botón es el punto de entrada visual.
  */
 
-import { Menu, Search, Moon, Sun } from 'lucide-react'
-import { useTheme } from 'next-themes'
-import { useEffect, useState } from 'react'
+import { Menu, Search } from 'lucide-react'
 import { useSidebar } from './sidebar-context'
-import { useCurrentUser } from '@/lib/useCurrentUser'
 import { NotificationBell } from './NotificationBell'
+import { UserMenu } from './UserMenu'
 
-export function Topbar() {
+interface TopbarProps {
+  onSearchClick?: () => void
+}
+
+export function Topbar({ onSearchClick }: TopbarProps) {
   const { setMobileOpen } = useSidebar()
-  const { resolvedTheme, setTheme } = useTheme()
-  const { user } = useCurrentUser()
-
-  // Evitar hidration mismatch con el ícono del tema (SSR no conoce preferencia)
-  const [themeMounted, setThemeMounted] = useState(false)
-  useEffect(() => setThemeMounted(true), [])
-
-  // Iniciales para el avatar (máx 2 caracteres)
-  const initials = user?.name
-    ? user.name
-        .split(' ')
-        .map(n => n[0])
-        .join('')
-        .slice(0, 2)
-        .toUpperCase()
-    : (user?.email?.slice(0, 2).toUpperCase() ?? '··')
-
-  const toggleTheme = () =>
-    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')
 
   return (
     <header className="h-14 shrink-0 z-30 sticky top-0 flex items-center gap-3 px-4 bg-background/95 backdrop-blur-sm border-b border-border">
@@ -61,13 +49,12 @@ export function Topbar() {
         <span className="font-semibold text-sm">WA Platform</span>
       </div>
 
-      {/* ── Desktop: buscador central ── */}
+      {/* ── Desktop: botón de búsqueda global ── */}
       <div className="hidden md:flex flex-1 max-w-xs">
         <button
+          onClick={onSearchClick}
           className="flex items-center gap-2 w-full h-8 px-3 rounded-md border border-input bg-muted/40 text-sm text-muted-foreground hover:bg-muted transition-colors"
-          aria-label="Búsqueda global"
-          // TODO: conectar con cmdk cuando se instale
-          onClick={() => {}}
+          aria-label="Abrir búsqueda global"
         >
           <Search size={14} className="shrink-0" />
           <span className="flex-1 text-left">Buscar…</span>
@@ -77,7 +64,7 @@ export function Topbar() {
         </button>
       </div>
 
-      {/* Espaciador flexible — empuja los íconos a la derecha en mobile */}
+      {/* Espaciador — empuja las acciones a la derecha en mobile */}
       <div className="flex-1" />
 
       {/* ── Right actions ── */}
@@ -85,35 +72,19 @@ export function Topbar() {
 
         {/* Búsqueda mobile (ícono solo) */}
         <button
+          onClick={onSearchClick}
           className="md:hidden flex items-center justify-center w-8 h-8 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
           aria-label="Buscar"
         >
           <Search size={16} />
         </button>
 
-        {/* Notificaciones */}
+        {/* Notificaciones — componente completo con dropdown */}
         <NotificationBell />
 
-        {/* Toggle dark / light mode */}
-        <button
-          onClick={toggleTheme}
-          className="flex items-center justify-center w-8 h-8 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-          aria-label={resolvedTheme === 'dark' ? 'Modo claro' : 'Modo oscuro'}
-        >
-          {/* Renderizar solo tras montar para evitar mismatch */}
-          {themeMounted ? (
-            resolvedTheme === 'dark' ? <Sun size={16} /> : <Moon size={16} />
-          ) : (
-            <Moon size={16} />
-          )}
-        </button>
-
-        {/* Avatar del usuario */}
-        <div
-          title={user?.name ?? user?.email ?? ''}
-          className="ml-1 w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[11px] font-semibold cursor-pointer select-none shrink-0"
-        >
-          {initials}
+        {/* Usuario — avatar + dropdown (theme toggle + logout) */}
+        <div className="ml-0.5">
+          <UserMenu />
         </div>
       </div>
     </header>

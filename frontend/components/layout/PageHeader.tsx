@@ -2,23 +2,36 @@
  * PageHeader — encabezado estandarizado para cada página.
  *
  * Layout:
- *   ┌───────────────────────────────────────────────┐
- *   │ [título]  [badge count]       [actions slot]  │
- *   │ [description]                                 │
- *   └───────────────────────────────────────────────┘
+ *   ┌────────────────────────────────────────────────────┐
+ *   │ [título]  [badge count]         [actions / children]│
+ *   │ [description]                                      │
+ *   └────────────────────────────────────────────────────┘
  *
- * Uso básico:
+ * Slots de acciones:
+ *   `actions` prop   → ReactNode en el lado derecho (uso JSX clásico)
+ *   `children`       → alias de `actions`; permite el patrón
+ *                       <PageHeader title="X"><Button>Nuevo</Button></PageHeader>
+ *
+ *   Si se pasan los dos, `actions` tiene precedencia.
+ *
+ * Description:
+ *   Acepta `ReactNode` — puede ser texto, un Badge, o cualquier elemento inline.
+ *
+ * Server Component — no requiere 'use client'.
+ *
+ * @example — uso básico
  *   <PageHeader title="Contactos" count={total} />
  *
- * Con acciones:
- *   <PageHeader
- *     title="Campañas"
- *     count={campaigns.length}
- *     description="Gestiona tus envíos masivos"
- *     actions={<Button>Nueva campaña</Button>}
- *   />
+ * @example — con children como acciones (patrón más natural)
+ *   <PageHeader title="Campañas" count={campaigns.length}>
+ *     <Button size="sm">Nueva campaña</Button>
+ *   </PageHeader>
  *
- * Es un Server Component (sin 'use client') — puede recibir ReactNode como actions.
+ * @example — description como nodo (con badge de estado)
+ *   <PageHeader
+ *     title="Líneas"
+ *     description={<span>Estado: <Badge>Activo</Badge></span>}
+ *   />
  */
 
 import { cn } from '@/lib/utils'
@@ -26,12 +39,23 @@ import { cn } from '@/lib/utils'
 interface PageHeaderProps {
   /** Título principal de la página */
   title: string
-  /** Descripción opcional bajo el título */
-  description?: string
-  /** Número que se muestra como badge junto al título (ej: total de registros) */
+  /**
+   * Descripción bajo el título.
+   * Acepta ReactNode para poder incluir badges, links, etc.
+   */
+  description?: React.ReactNode
+  /** Número que se muestra como badge junto al título */
   count?: number
-  /** Slot para botones de acción alineados a la derecha */
+  /**
+   * Slot para botones de acción alineados a la derecha.
+   * Alias de `children` — si se pasan los dos, `actions` tiene precedencia.
+   */
   actions?: React.ReactNode
+  /**
+   * Alternativa a `actions`. Permite el patrón:
+   *   <PageHeader title="X"><Button>Nuevo</Button></PageHeader>
+   */
+  children?: React.ReactNode
   /** Clases adicionales para el wrapper externo */
   className?: string
 }
@@ -41,8 +65,12 @@ export function PageHeader({
   description,
   count,
   actions,
+  children,
   className,
 }: PageHeaderProps) {
+  // `actions` tiene precedencia; `children` es el fallback
+  const actionsSlot = actions ?? children
+
   return (
     <div
       className={cn(
@@ -50,7 +78,7 @@ export function PageHeader({
         className,
       )}
     >
-      {/* Lado izquierdo: título + badge + descripción */}
+      {/* ── Izquierda: título + badge + descripción ── */}
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2.5 flex-wrap">
           <h1 className="text-xl font-semibold text-foreground leading-tight">
@@ -65,16 +93,16 @@ export function PageHeader({
         </div>
 
         {description && (
-          <p className="mt-1 text-sm text-muted-foreground leading-snug">
+          <div className="mt-1 text-sm text-muted-foreground leading-snug">
             {description}
-          </p>
+          </div>
         )}
       </div>
 
-      {/* Lado derecho: acciones */}
-      {actions && (
+      {/* ── Derecha: acciones ── */}
+      {actionsSlot && (
         <div className="flex items-center gap-2 flex-wrap justify-end shrink-0">
-          {actions}
+          {actionsSlot}
         </div>
       )}
     </div>
