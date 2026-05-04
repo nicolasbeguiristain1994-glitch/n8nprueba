@@ -3,6 +3,7 @@ import { query, withTransaction } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { isUUID, clampStr } from '@/lib/validate'
+import { notify } from '@/lib/notify'
 
 // Transiciones de estado permitidas por rol:
 // Admin:    pendiente → en_progreso, en_progreso → completada/cancelada, pendiente → cancelada
@@ -118,6 +119,29 @@ export async function POST(
 
     void audit({ req, action: 'update', resource: 'tasks', resource_id: id,
       metadata: { from: fromStatus, to: newStatus } })
+
+    // Notificar al creador de la tarea si el cambio lo hizo un operador
+    if (!isAdmin) {
+      const [taskDetail] = await query<{ created_by: string | null }>(
+        `SELECT created_by FROM tasks WHERE id = $1`, [id]
+      )
+      if (taskDetail?.created_by) {
+        const statusLabels: Record<string, string> = {
+          en_progreso: 'En progreso',
+          completada:  'Completada',
+          cancelada:   'Cancelada',
+        }
+        void notify({
+          userId:      taskDetail.created_by,
+          type:        'tarea_estado',
+          title:       `Tarea "${task.title}" → ${statusLabels[newStatus] ?? newStatus}`,
+          body:        comment || `El operador marcó la tarea como ${statusLabels[newStatus] ?? newStatus}`,
+          link:        '/tareas',
+          relatedType: 'task',
+          relatedId:   id,
+        })
+      }
+    }
 
     return NextResponse.json({ ok: true })
   } catch (e) {
