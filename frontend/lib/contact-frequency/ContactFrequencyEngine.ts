@@ -62,6 +62,8 @@ import { ContactFrequencyRulesRepository }      from './repositories/ContactFreq
 import { ContactSendHistoryRepository }         from './repositories/ContactSendHistoryRepository'
 import { resolveApplicableRule }                from './rules'
 import { calculateRiskScore }                   from './risk-scorer'
+import { logFrequencyDecision, logFrequencyError } from './logger'
+import { recordDecision, recordError }             from './metrics'
 import type {
   FrequencyEvaluationInput,
   FrequencyEvaluationResult,
@@ -110,7 +112,17 @@ export class ContactFrequencyEngine {
     const applicableRule = resolveApplicableRule(rules, operatorId, segMonto, segActividad)
     const { decision, riskScore, reason } = calculateRiskScore(profile, applicableRule)
 
-    ContactFrequencyEngine.logDecision(decision, riskScore, reason, contactId, campaignId, operatorId, applicableRule.id)
+    logFrequencyDecision({
+      contact_id:  contactId,
+      operator_id: operatorId,
+      campaign_id: campaignId,
+      decision,
+      risk_score:  riskScore,
+      reason,
+      duration_ms: Date.now() - evaluatedAt.getTime(),
+      rule_id:     applicableRule.id,
+      atomic:      false,
+    })
 
     return { decision, riskScore, reason, profile, applicableRule, evaluatedAt }
   }
@@ -149,6 +161,7 @@ export class ContactFrequencyEngine {
   ): Promise<FrequencyEvaluationResult> {
     const { contactId, operatorId, campaignId, segMonto, segActividad } = evalInput
     const evaluatedAt = new Date()
+    const startMs     = Date.now()
 
     const txResult = await withTransaction(async (client) => {
 
@@ -207,13 +220,38 @@ export class ContactFrequencyEngine {
       // ── COMMIT aquí → lock liberado → otros pueden adquirirlo ──────────────
 
       return { decision, riskScore, reason, profile, applicableRule }
+    }).catch((err: unknown) => {
+      // ── Error en la transacción o en el advisory lock ─────────────────────
+      // Loguear con contexto antes de re-lanzar para que el caller pueda
+      // aplicar graceful degradation. Las métricas registran el fallo.
+      const errMsg = err instanceof Error ? err.message : String(err)
+      logFrequencyError({
+        contact_id:  contactId,
+        operator_id: operatorId,
+        campaign_id: campaignId,
+        error:       errMsg,
+        phase:       errMsg.includes('lock') ? 'advisory_lock' : 'transaction',
+      })
+      recordError()
+      throw err  // re-lanzar: el caller (campaign-distributor) aplica graceful degradation
     })
 
-    ContactFrequencyEngine.logDecision(
-      txResult.decision, txResult.riskScore, txResult.reason,
-      contactId, campaignId, operatorId, txResult.applicableRule.id,
-      /* atomic */ true,
-    )
+    // ── Logging estructurado JSON ─────────────────────────────────────────────
+    const durationMs = Date.now() - startMs
+    logFrequencyDecision({
+      contact_id:  contactId,
+      operator_id: operatorId,
+      campaign_id: campaignId,
+      decision:    txResult.decision,
+      risk_score:  txResult.riskScore,
+      reason:      txResult.reason,
+      duration_ms: durationMs,
+      rule_id:     txResult.applicableRule.id,
+      atomic:      true,
+    })
+
+    // ── Métricas en memoria ───────────────────────────────────────────────────
+    recordDecision(txResult.decision, durationMs)
 
     return { ...txResult, evaluatedAt }
   }
@@ -244,35 +282,6 @@ export class ContactFrequencyEngine {
   static get rulesRepository(): ContactFrequencyRulesRepository { return rulesRepo }
   static get historyRepository(): ContactSendHistoryRepository  { return historyRepo }
 
-  // ── Helpers privados ────────────────────────────────────────────────────────
-
-  private static logDecision(
-    decision:   string,
-    riskScore:  number,
-    reason:     string,
-    contactId:  string,
-    campaignId: string | undefined,
-    operatorId: string | null,
-    ruleId:     string,
-    atomic = false,
-  ): void {
-    const suffix = atomic ? ' (atomic)' : ''
-    const ctx = [
-      `contact=${contactId}`,
-      `campaign=${campaignId ?? 'n/a'}`,
-      `operator=${operatorId ?? 'system'}`,
-      `rule=${ruleId}`,
-      `score=${riskScore}`,
-    ].join(' ')
-
-    if (decision === 'BLOCK') {
-      console.warn(`[freq-engine] BLOCK${suffix} ${ctx} reason="${reason}"`)
-    } else if (decision === 'DELAY') {
-      console.log(`[freq-engine] DELAY${suffix} ${ctx} reason="${reason}"`)
-    } else {
-      console.log(`[freq-engine] ALLOW${suffix} ${ctx}`)
-    }
-  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
