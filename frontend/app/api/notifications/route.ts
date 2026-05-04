@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermissionWithUser } from '@/lib/permissions'
+import { getSessionFromRequest } from '@/lib/auth'
 
 // ── GET /api/notifications — Bandeja del usuario autenticado ─────────────────
 //
@@ -10,11 +10,11 @@ import { checkPermissionWithUser } from '@/lib/permissions'
 //   ?offset=0
 //
 // Cada usuario ve SOLO sus propias notificaciones.
+// No requiere sector específico — cualquier usuario autenticado puede ver las suyas.
 
 export async function GET(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'dashboard', 'read')
-  if (!auth.ok) return auth.response
-  const { user } = auth
+  const user = getSessionFromRequest(req)
+  if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   const url        = req.nextUrl
   const unreadOnly = url.searchParams.get('unread_only') === 'true'
@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
         COUNT(*) FILTER (WHERE is_read = FALSE)::text AS unread
       FROM notifications
       WHERE user_id = $1
-    `, [user.user_id])
+    `, [user.user_id])  // user_id viene del token JWT, no de la DB
 
     return NextResponse.json({
       notifications,

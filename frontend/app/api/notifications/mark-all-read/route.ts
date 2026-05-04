@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermissionWithUser } from '@/lib/permissions'
+import { getSessionFromRequest } from '@/lib/auth'
 
 // ── POST /api/notifications/mark-all-read — Marcar todas como leídas ─────────
 
 export async function POST(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'dashboard', 'read')
-  if (!auth.ok) return auth.response
-  const { user } = auth
+  const user = getSessionFromRequest(req)
+  if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   try {
     await query(

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermissionWithUser } from '@/lib/permissions'
+import { getSessionFromRequest } from '@/lib/auth'
 
 // ── POST /api/notifications/mark-read — Marcar una o varias como leídas ──────
 //
@@ -9,9 +9,8 @@ import { checkPermissionWithUser } from '@/lib/permissions'
 // Solo marca notificaciones que pertenecen al usuario autenticado.
 
 export async function POST(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'dashboard', 'read')
-  if (!auth.ok) return auth.response
-  const { user } = auth
+  const user = getSessionFromRequest(req)
+  if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   let body: { ids?: unknown }
   try {

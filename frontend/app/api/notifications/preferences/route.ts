@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermissionWithUser } from '@/lib/permissions'
+import { getSessionFromRequest } from '@/lib/auth'
 
 // ── GET /api/notifications/preferences — Preferencias del usuario ─────────────
 
 export async function GET(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'dashboard', 'read')
-  if (!auth.ok) return auth.response
-  const { user } = auth
+  const user = getSessionFromRequest(req)
+  if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   try {
     const [row] = await query<{
@@ -42,9 +41,8 @@ export async function GET(req: NextRequest) {
 // Body: { notify_tarea_asignada?: bool, notify_tarea_estado?: bool, ... }
 
 export async function PUT(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'dashboard', 'read')
-  if (!auth.ok) return auth.response
-  const { user } = auth
+  const user = getSessionFromRequest(req)
+  if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
 
   let body: Record<string, unknown>
   try {
