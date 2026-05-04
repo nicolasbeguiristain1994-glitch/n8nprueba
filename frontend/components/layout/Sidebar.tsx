@@ -20,7 +20,7 @@ import {
   LayoutDashboard, Users, Megaphone, MessageSquare,
   Activity, Flame, UserCog, Settings, FileText,
   BarChart2, ShieldOff, Bot, ChevronLeft, LogOut, X,
-  ClipboardList, CheckSquare, CalendarDays,
+  ClipboardList, CheckSquare, CalendarDays, HelpCircle,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useSidebar } from './sidebar-context'
@@ -201,6 +201,21 @@ function SidebarContent({
             </p>
           </div>
         )}
+
+        {/* Ayuda — siempre visible sin importar el rol */}
+        <Link
+          href="/ayuda"
+          title={collapsed ? 'Guía de uso' : undefined}
+          className={cn(
+            'flex items-center gap-3 rounded-lg text-sm font-medium',
+            'transition-colors duration-150',
+            'text-sidebar-foreground/60 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
+            collapsed ? 'h-9 w-9 justify-center' : 'h-9 px-3',
+          )}
+        >
+          <HelpCircle size={16} className="shrink-0" />
+          {!collapsed && <span>Guía de uso</span>}
+        </Link>
 
         <button
           onClick={logout}
