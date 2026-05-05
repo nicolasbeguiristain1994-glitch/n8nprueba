@@ -101,8 +101,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ ok: true, id: inserted[0].id })
   } catch (e) {
-    console.error('[/api/lines POST]', e instanceof Error ? e.message : e)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error('[/api/lines POST]', msg)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
 
