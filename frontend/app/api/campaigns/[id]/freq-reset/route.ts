@@ -34,14 +34,17 @@ export async function DELETE(
   if (!campaign) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
 
   try {
-    // 1. Borrar historial de frecuencia de esta campaña
+    // 1. Borrar TODO el historial de frecuencia de los contactos de esta campaña.
+    //    Borra entradas de CUALQUIER campaña anterior para esos contactos,
+    //    no solo las de esta campaña — así se levanta el cooldown de 48h real.
     const [deleted] = await query<{ count: string }>(
       `WITH del AS (
          DELETE FROM contact_send_history
-         WHERE campaign_id = $1
-            OR campaign_recipient_id IN (
-                 SELECT id FROM campaign_recipients WHERE campaign_id = $1
-               )
+         WHERE contact_id IN (
+           SELECT DISTINCT contact_id
+           FROM campaign_recipients
+           WHERE campaign_id = $1
+         )
          RETURNING id
        )
        SELECT COUNT(*)::text AS count FROM del`,

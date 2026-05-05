@@ -152,27 +152,28 @@ async function claimOne(campaignId: string): Promise<RecipientRow | undefined> {
 async function syncCounters(
   campaignId: string
 ): Promise<{ sent: number; failed: number; pending: number }> {
-  try {
-    const [row] = await query<{ sent: string; failed: string; pending: string }>(
-      `SELECT
-         COUNT(*) FILTER (WHERE status = 'sent')               AS sent,
-         COUNT(*) FILTER (WHERE status = 'failed')             AS failed,
-         COUNT(*) FILTER (WHERE status IN ('pending','sending')) AS pending
-       FROM campaign_recipients
-       WHERE campaign_id = $1`,
-      [campaignId]
-    )
-    const sent    = Number(row?.sent    || 0)
-    const failed  = Number(row?.failed  || 0)
-    const pending = Number(row?.pending || 0)
-    await query(
-      `UPDATE campaigns SET total_sent = $1, total_failed = $2 WHERE id = $3`,
-      [sent, failed, campaignId]
-    )
-    return { sent, failed, pending }
-  } catch {
-    return { sent: 0, failed: 0, pending: 0 }
-  }
+  const [row] = await query<{ sent: string; failed: string; pending: string }>(
+    `SELECT
+       COUNT(*) FILTER (WHERE status = 'sent')                 AS sent,
+       COUNT(*) FILTER (WHERE status = 'failed')               AS failed,
+       COUNT(*) FILTER (WHERE status IN ('pending','sending'))  AS pending
+     FROM campaign_recipients
+     WHERE campaign_id = $1`,
+    [campaignId]
+  )
+  const sent    = Number(row?.sent    || 0)
+  const failed  = Number(row?.failed  || 0)
+  const pending = Number(row?.pending || 0)
+  // Non-critical write — swallow errors so a transient DB hiccup doesn't
+  // abort the loop via the caller's `if (pending === 0) break` check.
+  await query(
+    `UPDATE campaigns SET total_sent = $1, total_failed = $2 WHERE id = $3`,
+    [sent, failed, campaignId]
+  ).catch(e =>
+    console.error(`[campaign ${campaignId}] syncCounters update error:`,
+      e instanceof Error ? e.message : e)
+  )
+  return { sent, failed, pending }
 }
 
 // ── Send one contact ───────────────────────────────────────────────────────
