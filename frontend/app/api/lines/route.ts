@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
                AND (allowed_types IS NULL OR allowed_types @> '["campaign"]'::jsonb)
              ) AS eligible
       FROM whatsapp_lines
-      ORDER BY priority ASC
+      ORDER BY priority ASC, evolution_instance ASC
     `)
     return NextResponse.json({ lines })
   } catch (e) {

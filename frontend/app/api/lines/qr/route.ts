@@ -91,10 +91,19 @@ export async function GET(req: NextRequest) {
 
     // Instancia no existe
     if (res.status === 404 || data?.status === 404) {
+      // Marcar como desconectada en DB si existe
+      await query(
+        `UPDATE whatsapp_lines SET is_connected = false, updated_at = NOW() WHERE evolution_instance = $1`,
+        [instance],
+      ).catch(() => {})
       return NextResponse.json({ connected: false, base64: null, notFound: true, canCreate: !!EVO_GLOBAL })
     }
 
-    // Instancia existe pero desconectada → devuelve QR
+    // Instancia existe pero desconectada → marcar en DB y devolver QR
+    await query(
+      `UPDATE whatsapp_lines SET is_connected = false, updated_at = NOW() WHERE evolution_instance = $1`,
+      [instance],
+    ).catch(() => {})
     const base64 = (data?.base64 ?? data?.qrcode?.base64 ?? null) as string | null
     return NextResponse.json({ connected: false, base64 })
   } catch (e) {

@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react'
+import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, Trash2, Plus } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
@@ -43,6 +43,14 @@ export default function Lines() {
   const [deleteTarget, setDeleteTarget]   = useState<Line | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [deleteError, setDeleteError]     = useState<string | null>(null)
+
+  // Add existing line modal
+  const [addOpen, setAddOpen]               = useState(false)
+  const [addInstance, setAddInstance]       = useState('')
+  const [addDisplayName, setAddDisplayName] = useState('')
+  const [addPhone, setAddPhone]             = useState('')
+  const [addLoading, setAddLoading]         = useState(false)
+  const [addError, setAddError]             = useState<string | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -165,6 +173,30 @@ export default function Lines() {
 
   useEffect(() => () => stopPoll(), [])
 
+  const addLine = async () => {
+    if (!addInstance.trim()) return
+    setAddLoading(true); setAddError(null)
+    try {
+      const res = await fetch('/api/lines', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          evolution_instance: addInstance.trim(),
+          display_name:       addDisplayName.trim() || undefined,
+          phone_number:       addPhone.trim() || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setAddError(data.error || 'Error al agregar'); return }
+      setAddOpen(false); setAddInstance(''); setAddDisplayName(''); setAddPhone('')
+      load()
+    } catch {
+      setAddError('Error de conexión')
+    } finally {
+      setAddLoading(false)
+    }
+  }
+
   const connected = lines.filter(l => l.is_connected).length
   const active    = lines.filter(l => l.status === 'active').length
   const eligible  = lines.filter(l => l.eligible).length
@@ -178,9 +210,17 @@ export default function Lines() {
             {connected} conectadas · {active} activas · {eligible} elegibles · {lines.length} total
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={load}>
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-        </Button>
+        <div className="flex gap-2">
+          {isAdmin && (
+            <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              onClick={() => { setAddOpen(true); setAddError(null) }}>
+              <Plus size={14} className="mr-1" /> Agregar línea
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={load}>
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          </Button>
+        </div>
       </div>
 
       {/* Resumen */}
@@ -326,7 +366,7 @@ export default function Lines() {
           <div className="space-y-4 py-2">
             <p className="text-sm text-gray-700">
               ¿Eliminar <span className="font-semibold">{deleteTarget?.display_name || deleteTarget?.line_key}</span>?
-              Esta acción eliminará la línea de la base de datos y su instancia de Evolution. No se puede deshacer.
+              Esto elimina la línea del sistema pero <span className="font-medium">no</span> borra la instancia de Evolution. No se puede deshacer.
             </p>
             {deleteError && (
               <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{deleteError}</p>
@@ -347,6 +387,63 @@ export default function Lines() {
               >
                 {deleteLoading ? <Loader2 size={14} className="animate-spin mr-1" /> : <Trash2 size={14} className="mr-1" />}
                 Eliminar
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Modal agregar línea existente ── */}
+      <Dialog open={addOpen} onOpenChange={open => { if (!open) { setAddOpen(false); setAddError(null) } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus size={16} /> Agregar línea existente
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-xs text-gray-500">
+              Registrá una instancia de Evolution que ya existe como línea de producción.
+            </p>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-gray-700">Nombre de instancia <span className="text-red-500">*</span></label>
+              <Input
+                placeholder="ej: wa-instance-01"
+                value={addInstance}
+                onChange={e => setAddInstance(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addLine()}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-gray-700">Nombre para mostrar</label>
+              <Input
+                placeholder="ej: Línea 01"
+                value={addDisplayName}
+                onChange={e => setAddDisplayName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addLine()}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-gray-700">Teléfono (opcional)</label>
+              <Input
+                placeholder="ej: +5491168618237"
+                value={addPhone}
+                onChange={e => setAddPhone(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && addLine()}
+              />
+            </div>
+            {addError && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{addError}</p>
+            )}
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" disabled={addLoading}
+                onClick={() => { setAddOpen(false); setAddError(null) }}>
+                Cancelar
+              </Button>
+              <Button className="flex-1 bg-indigo-600 hover:bg-indigo-700" disabled={addLoading || !addInstance.trim()}
+                onClick={addLine}>
+                {addLoading ? <Loader2 size={14} className="animate-spin mr-1" /> : <Plus size={14} className="mr-1" />}
+                Agregar
               </Button>
             </div>
           </div>
