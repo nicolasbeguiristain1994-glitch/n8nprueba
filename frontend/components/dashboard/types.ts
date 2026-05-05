@@ -63,9 +63,12 @@ export function formatCustomRange(from: string, to: string): string {
 // ── Widget types ──────────────────────────────────────────────────────────────
 
 export type WidgetId =
-  | 'kpi'
+  | 'casino_kpi'
+  | 'agentes'
+  | 'vips_riesgo'
+  | 'segmentos'
+  | 'mensajeria'
   | 'tasks'
-  | 'recent_activity'
   | 'quick_actions'
 
 export interface WidgetConfig {
@@ -79,23 +82,44 @@ export interface WidgetConfig {
 
 export const WIDGET_REGISTRY: WidgetConfig[] = [
   {
-    id:             'kpi',
-    label:          'Métricas clave',
-    description:    'KPIs principales: deals, valor, contactos y tareas',
+    id:             'casino_kpi',
+    label:          'KPIs Casino',
+    description:    'Nuevos, activos, VIP y reactivación urgente',
     defaultEnabled: true,
     span:           2,
+  },
+  {
+    id:             'agentes',
+    label:          'Por agente',
+    description:    'Totales, VIP, en riesgo y cargas por agente',
+    defaultEnabled: true,
+    span:           2,
+  },
+  {
+    id:             'vips_riesgo',
+    label:          'VIPs en riesgo',
+    description:    'Jugadores VIP/Alto con urgencia de reactivación',
+    defaultEnabled: true,
+    span:           1,
+  },
+  {
+    id:             'segmentos',
+    label:          'Segmentos',
+    description:    'Distribución por actividad y nivel de gasto',
+    defaultEnabled: true,
+    span:           1,
+  },
+  {
+    id:             'mensajeria',
+    label:          'WhatsApp',
+    description:    'Actividad de mensajería del día',
+    defaultEnabled: true,
+    span:           1,
   },
   {
     id:             'tasks',
     label:          'Tareas pendientes',
     description:    'Tareas activas ordenadas por prioridad y fecha',
-    defaultEnabled: true,
-    span:           1,
-  },
-  {
-    id:             'recent_activity',
-    label:          'Actividad reciente',
-    description:    'Últimas acciones registradas en el CRM',
     defaultEnabled: true,
     span:           1,
   },

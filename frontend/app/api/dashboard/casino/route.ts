@@ -40,6 +40,8 @@ export interface CasinoVip {
   fecha_ultima:  string
 }
 
+export interface SegCount { seg: string; cnt: number }
+
 // ── GET /api/dashboard/casino ─────────────────────────────────────────────────
 // "Último mes" = trailing 30 days from today.
 // "Período anterior" = días 31–60 atrás (equal-length comparison window).
@@ -50,7 +52,7 @@ export async function GET(req: Request) {
   if (err) return err
 
   try {
-    const [summary, agentes, vips] = await Promise.all([
+    const [summary, agentes, vips, segActividad, segMonto] = await Promise.all([
 
       // ── Resumen global ──────────────────────────────────────────────────────
       query<CasinoSummary>(`
@@ -130,12 +132,28 @@ export async function GET(req: Request) {
           total_cargas DESC
         LIMIT 100
       `),
+
+      query<{ seg: string; cnt: number }>(`
+        SELECT seg_actividad AS seg, COUNT(*)::int AS cnt
+        FROM casino_players
+        WHERE agente = ANY(${AGENTES_SQL_ARRAY})
+        GROUP BY seg_actividad
+      `),
+
+      query<{ seg: string; cnt: number }>(`
+        SELECT seg_monto AS seg, COUNT(*)::int AS cnt
+        FROM casino_players
+        WHERE agente = ANY(${AGENTES_SQL_ARRAY})
+        GROUP BY seg_monto
+      `),
     ])
 
     return NextResponse.json({
-      summary:  summary[0] ?? null,
+      summary:       summary[0] ?? null,
       agentes,
       vips,
+      seg_actividad: segActividad,
+      seg_monto:     segMonto,
     })
   } catch (e) {
     console.error('[/api/dashboard/casino GET]', e instanceof Error ? e.message : e)

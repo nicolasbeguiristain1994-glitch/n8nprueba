@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { arrayMove } from '@dnd-kit/sortable'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
-import type { CrmDashboardData } from '@/app/api/dashboard/crm/route'
+import type { CasinoSummary, CasinoAgente, CasinoVip, SegCount } from '@/app/api/dashboard/casino/route'
+import type { PendingTask, CrmKPIs } from '@/app/api/dashboard/crm/route'
 import {
   DEFAULT_DATE_RANGE,
   DEFAULT_LAYOUT,
@@ -13,25 +14,53 @@ import {
   type WidgetId,
 } from './types'
 
-const AUTO_REFRESH_INTERVAL = 300_000 // 5 minutos
+// ── Combined dashboard data type ─────────────────────────────────────────────
+
+export interface MsgsStats {
+  total:     number
+  sent:      number
+  failed:    number
+  delivered: number
+  read:      number
+  inbound:   number
+  last_24h:  number
+  read_rate: number
+}
+
+export interface DashboardData {
+  casino: {
+    summary:       CasinoSummary | null
+    agentes:       CasinoAgente[]
+    vips:          CasinoVip[]
+    seg_actividad: SegCount[]
+    seg_monto:     SegCount[]
+  } | null
+  kpis:  CrmKPIs
+  tasks: PendingTask[]
+  msgs:  MsgsStats | null
+}
+
+const FALLBACK_KPIS: CrmKPIs = { contacts: 0, tasks_pending: 0, tasks_overdue: 0 }
+
+const AUTO_REFRESH_INTERVAL = 300_000
 
 interface UseDashboardReturn {
-  layout: DashboardLayout
-  data: CrmDashboardData | null
-  loading: boolean
-  softLoading: boolean
-  error: string | null
-  lastUpdated: Date | null
-  softSuccessCount: number
-  visibleWidgets: WidgetId[]
-  dateRange: DateRange
+  layout:             DashboardLayout
+  data:               DashboardData | null
+  loading:            boolean
+  softLoading:        boolean
+  error:              string | null
+  lastUpdated:        Date | null
+  softSuccessCount:   number
+  visibleWidgets:     WidgetId[]
+  dateRange:          DateRange
   autoRefreshEnabled: boolean
-  moveWidget: (from: number, to: number) => void
-  toggleWidget: (id: WidgetId) => void
-  reorderByIds: (ids: WidgetId[]) => void
-  setDateRange: (range: DateRange) => void
-  toggleAutoRefresh: () => void
-  refresh: () => void
+  moveWidget:         (from: number, to: number) => void
+  toggleWidget:       (id: WidgetId) => void
+  reorderByIds:       (ids: WidgetId[]) => void
+  setDateRange:       (range: DateRange) => void
+  toggleAutoRefresh:  () => void
+  refresh:            () => void
 }
 
 export function useDashboard(): UseDashboardReturn {
@@ -39,35 +68,53 @@ export function useDashboard(): UseDashboardReturn {
   const [dateRange, setDateRangeStored] = useLocalStorage<DateRange>('dashboard:dateRange', DEFAULT_DATE_RANGE)
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useLocalStorage<boolean>('dashboard:autoRefresh', true)
 
-  const [data, setData] = useState<CrmDashboardData | null>(null)
+  const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [softLoading, setSoftLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [softSuccessCount, setSoftSuccessCount] = useState(0)
 
-  // Stable refs — interval and visibility handler read these without needing re-creation
-  const dateRangeRef = useRef(dateRange)
-  const lastUpdatedRef = useRef<Date | null>(null)
+  const dateRangeRef          = useRef(dateRange)
+  const lastUpdatedRef        = useRef<Date | null>(null)
   const autoRefreshEnabledRef = useRef(autoRefreshEnabled)
 
-  useEffect(() => { dateRangeRef.current = dateRange },          [dateRange])
-  useEffect(() => { lastUpdatedRef.current = lastUpdated },      [lastUpdated])
-  useEffect(() => { autoRefreshEnabledRef.current = autoRefreshEnabled }, [autoRefreshEnabled])
+  useEffect(() => { dateRangeRef.current = dateRange },                    [dateRange])
+  useEffect(() => { lastUpdatedRef.current = lastUpdated },                [lastUpdated])
+  useEffect(() => { autoRefreshEnabledRef.current = autoRefreshEnabled },  [autoRefreshEnabled])
 
-  // ── Core fetch ───────────────────────────────────────────────────────────────
-  const fetchData = useCallback(async (range: DateRange, soft = false) => {
+  // ── Core fetch — casino + crm + msgs in parallel ─────────────────────────────
+  const fetchData = useCallback(async (_range: DateRange, soft = false) => {
     if (soft) setSoftLoading(true)
     else setLoading(true)
     setError(null)
     try {
-      const params = new URLSearchParams({ from: range.from, to: range.to })
-      const res = await fetch(`/api/dashboard/crm?${params}`)
-      if (!res.ok) throw new Error('Error al cargar datos del dashboard')
-      const json = await res.json() as CrmDashboardData
-      setData(json)
-      const now = new Date()
-      setLastUpdated(now)
+      const [casinoRes, crmRes, msgsRes] = await Promise.all([
+        fetch('/api/dashboard/casino'),
+        fetch('/api/dashboard/crm'),
+        fetch('/api/dashboard'),
+      ])
+
+      const casinoJson = casinoRes.ok ? await casinoRes.json() : null
+      const crmJson    = crmRes.ok    ? await crmRes.json()    : null
+      const msgsJson   = msgsRes.ok   ? await msgsRes.json()   : null
+
+      setData({
+        casino: casinoJson
+          ? {
+              summary:       casinoJson.summary       ?? null,
+              agentes:       casinoJson.agentes        ?? [],
+              vips:          casinoJson.vips           ?? [],
+              seg_actividad: casinoJson.seg_actividad  ?? [],
+              seg_monto:     casinoJson.seg_monto      ?? [],
+            }
+          : null,
+        kpis:  crmJson?.kpis  ?? FALLBACK_KPIS,
+        tasks: crmJson?.tasks ?? [],
+        msgs:  msgsJson?.stats ?? null,
+      })
+
+      setLastUpdated(new Date())
       if (soft) setSoftSuccessCount(c => c + 1)
     } catch (e) {
       setError(e instanceof Error ? e.message : (soft ? 'Error al refrescar' : 'Error desconocido'))
@@ -77,12 +124,8 @@ export function useDashboard(): UseDashboardReturn {
     }
   }, [])
 
-  // Fetch when dateRange changes (covers initial load too)
-  useEffect(() => {
-    fetchData(dateRange)
-  }, [dateRange, fetchData])
+  useEffect(() => { fetchData(dateRange) }, [dateRange, fetchData])
 
-  // Auto-refresh interval — skips fetch when tab is hidden
   useEffect(() => {
     if (!autoRefreshEnabled) return
     const id = setInterval(() => {
@@ -92,7 +135,6 @@ export function useDashboard(): UseDashboardReturn {
     return () => clearInterval(id)
   }, [autoRefreshEnabled, fetchData])
 
-  // Visibility API — catch "tab came back to foreground" after being hidden
   useEffect(() => {
     function handleVisibilityChange() {
       if (typeof document === 'undefined' || document.hidden) return
@@ -106,9 +148,9 @@ export function useDashboard(): UseDashboardReturn {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
   }, [fetchData])
 
-  // ── Layout helpers ───────────────────────────────────────────────────────────
+  // ── Layout helpers ────────────────────────────────────────────────────────────
   const safeOrder = useCallback((): WidgetId[] => {
-    const known = new Set(WIDGET_REGISTRY.map(w => w.id))
+    const known   = new Set(WIDGET_REGISTRY.map(w => w.id))
     const current = (layout.order ?? []).filter(id => known.has(id))
     for (const w of WIDGET_REGISTRY) {
       if (!current.includes(w.id)) current.push(w.id)
@@ -132,22 +174,14 @@ export function useDashboard(): UseDashboardReturn {
   const toggleWidget = useCallback((id: WidgetId) => {
     setLayout(prev => {
       const hidden = prev.hidden ?? []
-      const next = hidden.includes(id) ? hidden.filter(h => h !== id) : [...hidden, id]
+      const next   = hidden.includes(id) ? hidden.filter(h => h !== id) : [...hidden, id]
       return { ...prev, hidden: next }
     })
   }, [setLayout])
 
-  const setDateRange = useCallback((range: DateRange) => {
-    setDateRangeStored(range)
-  }, [setDateRangeStored])
-
-  const toggleAutoRefresh = useCallback(() => {
-    setAutoRefreshEnabled(prev => !prev)
-  }, [setAutoRefreshEnabled])
-
-  const refresh = useCallback(() => {
-    fetchData(dateRangeRef.current)
-  }, [fetchData])
+  const setDateRange     = useCallback((range: DateRange) => { setDateRangeStored(range) }, [setDateRangeStored])
+  const toggleAutoRefresh = useCallback(() => { setAutoRefreshEnabled(prev => !prev) }, [setAutoRefreshEnabled])
+  const refresh           = useCallback(() => { fetchData(dateRangeRef.current) }, [fetchData])
 
   return {
     layout: { ...layout, order: safeOrder() },

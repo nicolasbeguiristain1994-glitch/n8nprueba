@@ -20,7 +20,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { GripVertical } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { WIDGET_REGISTRY, type WidgetId } from './types'
-import type { CrmDashboardData } from '@/app/api/dashboard/crm/route'
+import type { DashboardData } from './useDashboard'
 
 // ── Individual sortable item ────────────────────────────────────────────────
 interface SortableWidgetProps {
@@ -64,20 +64,20 @@ function SortableWidget({ id, span, children }: SortableWidgetProps) {
 // ── Props ────────────────────────────────────────────────────────────────────
 interface WidgetGridProps {
   visibleWidgets: WidgetId[]
-  data: CrmDashboardData | null
+  data: DashboardData | null
   loading: boolean
   onReorder: (ids: WidgetId[]) => void
   onTaskCompleted?: (id: string) => void
 }
 
-// ── Lazy-loaded widget renderers ─────────────────────────────────────────────
-// (imported at module level to avoid repeated dynamic imports)
-import { KPIWidget } from './widgets/KPIWidget'
+// ── Widget imports ────────────────────────────────────────────────────────────
 import { TasksWidget } from './widgets/TasksWidget'
-import { RecentActivityWidget } from './widgets/RecentActivityWidget'
 import { QuickActionsWidget } from './widgets/QuickActionsWidget'
-
-const FALLBACK_KPI = { contacts: 0, tasks_pending: 0, tasks_overdue: 0 }
+import { CasinoKPIWidget } from './widgets/CasinoKPIWidget'
+import { AgentesTableWidget } from './widgets/AgentesTableWidget'
+import { VipsEnRiesgoWidget } from './widgets/VipsEnRiesgoWidget'
+import { SegmentosWidget } from './widgets/SegmentosWidget'
+import { MensajeriaWidget } from './widgets/MensajeriaWidget'
 
 export const WidgetGrid = memo(function WidgetGrid({
   visibleWidgets,
@@ -108,13 +108,20 @@ export const WidgetGrid = memo(function WidgetGrid({
   )
 
   function renderWidget(id: WidgetId) {
+    const casino = data?.casino ?? null
     switch (id) {
-      case 'kpi':
-        return <KPIWidget kpis={data?.kpis ?? FALLBACK_KPI} loading={loading} />
+      case 'casino_kpi':
+        return <CasinoKPIWidget summary={casino?.summary ?? null} loading={loading} />
+      case 'agentes':
+        return <AgentesTableWidget agentes={casino?.agentes ?? []} loading={loading} />
+      case 'vips_riesgo':
+        return <VipsEnRiesgoWidget vips={casino?.vips ?? []} loading={loading} />
+      case 'segmentos':
+        return <SegmentosWidget segActividad={casino?.seg_actividad ?? []} segMonto={casino?.seg_monto ?? []} loading={loading} />
+      case 'mensajeria':
+        return <MensajeriaWidget msgs={data?.msgs ?? null} loading={loading} />
       case 'tasks':
         return <TasksWidget tasks={data?.tasks ?? []} loading={loading} onCompleted={onTaskCompleted} />
-      case 'recent_activity':
-        return <RecentActivityWidget activities={data?.recent_activity ?? []} loading={loading} />
       case 'quick_actions':
         return <QuickActionsWidget />
       default:
