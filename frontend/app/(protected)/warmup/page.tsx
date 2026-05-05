@@ -443,13 +443,15 @@ export default function WarmupPage() {
             <div>
               <label className="text-xs text-gray-500 mb-1 block">Número de teléfono *</label>
               <Input
-                placeholder="5492235042625"
+                placeholder="+5492235042625"
                 value={addPhone}
                 onChange={e => {
-                  const val = e.target.value.replace(/\D/g, '')
+                  const raw = e.target.value
+                  const val = raw.startsWith('+') ? '+' + raw.slice(1).replace(/\D/g, '') : raw.replace(/\D/g, '')
                   setAddPhone(val)
-                  // Auto-generate instance name
-                  if (val) setAddInstance(`warmup-${val}`)
+                  // Auto-generate instance name using only digits
+                  const digits = val.replace(/\D/g, '')
+                  if (digits) setAddInstance(`warmup-${digits}`)
                   else setAddInstance('')
                 }}
                 className="font-mono text-sm"
