@@ -137,26 +137,10 @@ export async function DELETE(req: NextRequest) {
     })
 
 
-    // Siempre intentar eliminar la instancia de Evolution
-    let evoDeleted = false
-    if (evolution_instance) {
-      const EVO_URL    = process.env.EVOLUTION_URL
-      const EVO_GLOBAL = process.env.EVOLUTION_GLOBAL_API_KEY
-      if (EVO_URL && EVO_GLOBAL) {
-        try {
-          await fetch(`${EVO_URL}/instance/delete/${encodeURIComponent(evolution_instance)}`, {
-            method: 'DELETE',
-            headers: { apikey: EVO_GLOBAL },
-          })
-          evoDeleted = true
-        } catch { /* la línea ya fue borrada de la DB; ignorar errores de Evolution */ }
-      }
-    }
-
     void audit({ req, action: 'manage', resource: 'lines',
-      metadata: { deleted_id: id, evolution_instance, display_name, evo_deleted: evoDeleted } })
+      metadata: { deleted_id: id, evolution_instance, display_name } })
 
-    return NextResponse.json({ ok: true, evoDeleted })
+    return NextResponse.json({ ok: true })
   } catch (e) {
     if (e instanceof Error && (e as NodeJS.ErrnoException & { code?: string }).code === 'NOT_FOUND')
       return NextResponse.json({ error: 'Line not found' }, { status: 404 })
