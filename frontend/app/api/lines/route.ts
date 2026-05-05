@@ -65,6 +65,46 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
+// POST /api/lines — crear una línea de producción directamente desde una instancia Evolution existente
+// Body: { evolution_instance, display_name?, phone_number? }
+export async function POST(req: NextRequest) {
+  const err = await checkPermission(req, 'lines', 'manage')
+  if (err) return err
+
+  let body: { evolution_instance?: string; display_name?: string; phone_number?: string }
+  try { body = await req.json() } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const { evolution_instance, display_name, phone_number } = body
+  if (!evolution_instance || typeof evolution_instance !== 'string')
+    return NextResponse.json({ error: 'evolution_instance is required' }, { status: 400 })
+
+  const line_key = evolution_instance.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+
+  try {
+    const inserted = await query<{ id: string }>(
+      `INSERT INTO whatsapp_lines
+         (line_key, display_name, phone_number, evolution_instance, status, is_connected)
+       VALUES ($1, $2, $3, $4, 'active', true)
+       ON CONFLICT (evolution_instance) DO NOTHING
+       RETURNING id`,
+      [line_key, display_name || evolution_instance, phone_number || null, evolution_instance]
+    )
+
+    if (!inserted.length)
+      return NextResponse.json({ error: 'Esta instancia ya existe como línea' }, { status: 409 })
+
+    void audit({ req, action: 'manage', resource: 'lines',
+      metadata: { evolution_instance, display_name } })
+
+    return NextResponse.json({ ok: true, id: inserted[0].id })
+  } catch (e) {
+    console.error('[/api/lines POST]', e instanceof Error ? e.message : e)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
 // DELETE /api/lines — eliminar una línea de la DB y su instancia de Evolution
 // Body: { id: string }
 export async function DELETE(req: NextRequest) {
