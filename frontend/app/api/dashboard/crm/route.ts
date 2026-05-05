@@ -96,7 +96,6 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
 
-    // Date range — defaults to last 7 days if not provided
     const defaultTo   = new Date()
     const defaultFrom = new Date(defaultTo)
     defaultFrom.setDate(defaultFrom.getDate() - 7)
@@ -104,38 +103,31 @@ export async function GET(req: NextRequest) {
     const dateFrom = parseDate(searchParams.get('from'), () => defaultFrom)
     const dateTo   = parseDate(searchParams.get('to'),   () => defaultTo)
 
-    // Clamp dateTo to end-of-day for inclusive range
     const dateToEOD = new Date(dateTo)
     dateToEOD.setHours(23, 59, 59, 999)
 
     // ── KPIs ────────────────────────────────────────────────────────────────────
-    // total_deals / total_value = current state (no date filter)
-    // won_deals / won_value     = filtered to selected period
+    // deals y contacts no tienen deleted_at — tasks sí lo tiene
     const [dealKpis, periodWon, contactCount, taskStats] = await Promise.all([
-      query<{
-        total_deals: string
-        total_value: string
-      }>(`
+      query<{ total_deals: string; total_value: string }>(`
         SELECT
           COUNT(*)                          AS total_deals,
           COALESCE(SUM(amount), 0)::text    AS total_value
         FROM deals
-        WHERE deleted_at IS NULL
-          AND stage NOT IN ('perdido')
+        WHERE stage NOT IN ('perdido')
       `, []),
 
       query<{ won_deals: string; won_value: string }>(`
         SELECT
-          COUNT(*)                                   AS won_deals,
-          COALESCE(SUM(amount), 0)::text             AS won_value
+          COUNT(*)                          AS won_deals,
+          COALESCE(SUM(amount), 0)::text    AS won_value
         FROM deals
-        WHERE deleted_at IS NULL
-          AND stage = 'ganado'
+        WHERE stage = 'ganado'
           AND updated_at BETWEEN $1 AND $2
       `, [dateFrom, dateToEOD]),
 
       query<{ total: string }>(`
-        SELECT COUNT(*) AS total FROM contacts WHERE deleted_at IS NULL
+        SELECT COUNT(*) AS total FROM contacts
       `, []),
 
       query<{ pending: string; overdue: string }>(`
@@ -161,7 +153,7 @@ export async function GET(req: NextRequest) {
       conversion_rate:   totalDeals > 0 ? Math.round((wonDeals / totalDeals) * 100) : 0,
     }
 
-    // ── Revenue trend (within selected period, grouped by month) ────────────────
+    // ── Revenue trend ────────────────────────────────────────────────────────────
     const trendRows = await query<{ month: string; revenue: string; deals_closed: string }>(`
       SELECT
         TO_CHAR(DATE_TRUNC('month', updated_at), 'Mon YY') AS month,
@@ -169,7 +161,6 @@ export async function GET(req: NextRequest) {
         COUNT(*)::text                                       AS deals_closed
       FROM deals
       WHERE stage = 'ganado'
-        AND deleted_at IS NULL
         AND updated_at BETWEEN $1 AND $2
       GROUP BY DATE_TRUNC('month', updated_at)
       ORDER BY DATE_TRUNC('month', updated_at)
@@ -181,15 +172,14 @@ export async function GET(req: NextRequest) {
       deals_closed: parseInt(r.deals_closed),
     }))
 
-    // ── Pipeline summary (current state — no date filter) ────────────────────────
+    // ── Pipeline summary ─────────────────────────────────────────────────────────
     const pipelineRows = await query<{ stage: string; count: string; value: string }>(`
       SELECT
         stage,
         COUNT(*)::text                 AS count,
         COALESCE(SUM(amount), 0)::text AS value
       FROM deals
-      WHERE deleted_at IS NULL
-        AND stage NOT IN ('ganado','perdido')
+      WHERE stage NOT IN ('ganado','perdido')
       GROUP BY stage
       ORDER BY CASE stage
         WHEN 'calificado'  THEN 1
@@ -207,7 +197,7 @@ export async function GET(req: NextRequest) {
       value: parseFloat(r.value),
     }))
 
-    // ── Deals closing soon (always next 14 days — independent of date range) ────
+    // ── Deals closing soon ───────────────────────────────────────────────────────
     const closingRows = await query<{
       id: number; title: string; amount: string | null
       stage: string; close_date: string
@@ -221,8 +211,7 @@ export async function GET(req: NextRequest) {
       FROM deals d
       LEFT JOIN contacts c ON c.id = d.contact_id
       LEFT JOIN users    u ON u.id = d.owner_id
-      WHERE d.deleted_at IS NULL
-        AND d.close_date IS NOT NULL
+      WHERE d.close_date IS NOT NULL
         AND d.close_date BETWEEN NOW() AND NOW() + INTERVAL '14 days'
         AND d.stage NOT IN ('ganado','perdido')
       ORDER BY d.close_date
@@ -240,7 +229,7 @@ export async function GET(req: NextRequest) {
       days_left:    Math.ceil((new Date(r.close_date).getTime() - Date.now()) / 86400000),
     }))
 
-    // ── Pending tasks (current state — no date filter) ──────────────────────────
+    // ── Pending tasks ────────────────────────────────────────────────────────────
     const taskRows = await query<{
       id: string; title: string; type: string; priority: string
       status: string; due_date: string | null; assignee_name: string | null
@@ -270,19 +259,18 @@ export async function GET(req: NextRequest) {
       assignee_name: r.assignee_name,
     }))
 
-    // ── Top contacts by deal value (all-time) ────────────────────────────────────
+    // ── Top contacts by deal value ────────────────────────────────────────────────
     const contactRows = await query<{
       id: number; name: string; phone: string | null
       deals_count: string; total_value: string; last_deal_date: string | null
     }>(`
       SELECT
         c.id, c.name, c.phone,
-        COUNT(d.id)::text                    AS deals_count,
-        COALESCE(SUM(d.amount), 0)::text     AS total_value,
-        MAX(d.created_at)::text              AS last_deal_date
+        COUNT(d.id)::text                AS deals_count,
+        COALESCE(SUM(d.amount), 0)::text AS total_value,
+        MAX(d.created_at)::text          AS last_deal_date
       FROM contacts c
-      JOIN deals d ON d.contact_id = c.id AND d.deleted_at IS NULL
-      WHERE c.deleted_at IS NULL
+      JOIN deals d ON d.contact_id = c.id
       GROUP BY c.id, c.name, c.phone
       ORDER BY SUM(d.amount) DESC NULLS LAST
       LIMIT 6
@@ -297,7 +285,7 @@ export async function GET(req: NextRequest) {
       last_deal_date: r.last_deal_date,
     }))
 
-    // ── Recent activity (filtered to selected period) ────────────────────────────
+    // ── Recent activity ──────────────────────────────────────────────────────────
     const activityRows = await query<{
       id: string; type: string; title: string; description: string; timestamp: string
     }>(`
@@ -307,7 +295,7 @@ export async function GET(req: NextRequest) {
         COALESCE('Por ' || (SELECT name FROM users WHERE id = owner_id), '') AS description,
         created_at::text AS timestamp
       FROM deals
-      WHERE deleted_at IS NULL AND created_at BETWEEN $1 AND $2
+      WHERE created_at BETWEEN $1 AND $2
       ORDER BY created_at DESC LIMIT 3)
       UNION ALL
       (SELECT
@@ -316,7 +304,7 @@ export async function GET(req: NextRequest) {
         '$' || COALESCE(amount::text, '0') AS description,
         updated_at::text AS timestamp
       FROM deals
-      WHERE stage = 'ganado' AND deleted_at IS NULL AND updated_at BETWEEN $1 AND $2
+      WHERE stage = 'ganado' AND updated_at BETWEEN $1 AND $2
       ORDER BY updated_at DESC LIMIT 3)
       UNION ALL
       (SELECT
@@ -334,7 +322,7 @@ export async function GET(req: NextRequest) {
         COALESCE(phone, '') AS description,
         created_at::text AS timestamp
       FROM contacts
-      WHERE deleted_at IS NULL AND created_at BETWEEN $1 AND $2
+      WHERE created_at BETWEEN $1 AND $2
       ORDER BY created_at DESC LIMIT 3)
       ORDER BY timestamp DESC
       LIMIT 8
@@ -348,7 +336,7 @@ export async function GET(req: NextRequest) {
       timestamp:   r.timestamp,
     }))
 
-    const data: CrmDashboardData = {
+    return NextResponse.json({
       kpis,
       revenue_trend,
       pipeline,
@@ -356,9 +344,8 @@ export async function GET(req: NextRequest) {
       tasks,
       top_contacts,
       recent_activity,
-    }
+    } satisfies CrmDashboardData)
 
-    return NextResponse.json(data)
   } catch (err) {
     console.error('[dashboard/crm]', err)
     return NextResponse.json({ error: 'Error interno' }, { status: 500 })
