@@ -139,6 +139,7 @@ const MIGRATIONS = [
   { file: 'db/migrations/049_create_deals.sql',                label: '049 — Deals module' },
   { file: 'db/migrations/050_contact_frequency_engine.sql',    label: '050 — ContactFrequencyEngine (contact_frequency_rules + contact_send_history)' },
   { file: 'db/migrations/051_contact_frequency_removed_by.sql', label: '051 — contact_frequency_rules.removed_by column' },
+  { file: 'db/migrations/052_whatsapp_lines_delete_cascade.sql', label: '052 — whatsapp_lines FK: campaign_recipients SET NULL, line_usage_log CASCADE' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
