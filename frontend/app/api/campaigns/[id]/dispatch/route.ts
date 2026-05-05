@@ -117,8 +117,11 @@ export async function POST(
     return NextResponse.json({ error: 'No hay contactos elegibles en la lista' }, { status: 400 })
   }
 
-  // All recipients already processed (none pending) but campaign stuck in paused
-  if (unitCounts.queued === 0 && campaign.status === 'paused') {
+  // All recipients already processed (none pending) — covers campaigns stuck in
+  // 'paused' OR 'running' (processor finished but completion step was missed).
+  // This check runs BEFORE lock acquisition so it works even if the lock is
+  // still held by a crashed/killed processor.
+  if (unitCounts.queued === 0) {
     const [processed] = await query<{ count: string }>(
       `SELECT COUNT(*) FILTER (WHERE status IN ('sent','failed','skipped'))::text AS count
        FROM campaign_recipients WHERE campaign_id = $1`,
@@ -126,8 +129,10 @@ export async function POST(
     ).catch(() => [null])
     if (Number(processed?.count || 0) > 0) {
       await query(
-        `UPDATE campaigns SET status = 'completed', completed_at = COALESCE(completed_at, NOW())
-         WHERE id = $1 AND status != 'completed'`,
+        `UPDATE campaigns
+         SET status = 'completed', completed_at = COALESCE(completed_at, NOW()),
+             processor_locked_at = NULL, processor_lock_token = NULL
+         WHERE id = $1 AND status NOT IN ('completed', 'cancelled')`,
         [id]
       ).catch(() => {})
       return NextResponse.json(

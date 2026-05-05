@@ -371,6 +371,17 @@ export default function Campaigns() {
                         </Button>
                       )}
 
+                      {/* Verificar / completar: running con todos los contactos ya enviados */}
+                      {c.status === 'running' && c.total_sent > 0 && c.use_multi_line && (
+                        <Button size="sm" className="bg-green-600 hover:bg-green-700"
+                                onClick={() => resumeProcessor(c.id)}
+                                disabled={resuming === c.id}>
+                          {resuming === c.id
+                            ? <Loader2 size={13} className="animate-spin"/>
+                            : <><CheckCheck size={13} className="mr-1"/>Verificar</>}
+                        </Button>
+                      )}
+
                       {/* Pausar: solo running */}
                       {c.status === 'running' && (
                         <Button size="sm" variant="outline"
@@ -394,7 +405,7 @@ export default function Campaigns() {
                       )}
 
                       {/* Reset completo para re-prueba — en campañas ya procesadas */}
-                      {['completed','paused','cancelled'].includes(c.status) && (c.total_sent > 0 || c.total_skipped > 0 || c.total_failed > 0) && (
+                      {['completed','paused','cancelled','running'].includes(c.status) && (c.total_sent > 0 || c.total_skipped > 0 || c.total_failed > 0) && (
                         <Button size="sm" variant="outline"
                                 className="border-orange-200 text-orange-500 hover:bg-orange-50"
                                 title="Resetear para re-prueba (admin)"
