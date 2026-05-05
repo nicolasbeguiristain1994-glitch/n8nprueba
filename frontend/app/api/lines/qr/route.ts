@@ -13,8 +13,7 @@ function validInstance(name: string): boolean {
 // GET /api/lines/qr?instance=xxx
 // Intenta obtener QR de la instancia. Si no existe y hay EVOLUTION_GLOBAL_API_KEY, la crea.
 export async function GET(req: NextRequest) {
-  // QR read exposes connection state — restrict to lines manage (admin only)
-  const err = await checkPermission(req, 'lines', 'manage')
+  const err = await checkPermission(req, 'lines', 'update')
   if (err) return err
 
   const instance = req.nextUrl.searchParams.get('instance')
