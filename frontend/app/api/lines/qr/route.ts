@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkPermission } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
+import { query } from '@/lib/db'
 
 const EVO_URL = process.env.EVOLUTION_URL!
 
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
       data = {}
     }
 
-    // Ya está conectada — intentar obtener el número de teléfono del ownerJid
+    // Ya está conectada — obtener el número de teléfono del ownerJid y actualizar la DB
     if (data?.instance?.state === 'open' || data?.state === 'open') {
       let phone_number: string | null = null
       try {
@@ -52,6 +53,18 @@ export async function GET(req: NextRequest) {
           if (digits) phone_number = `+${digits}`
         }
       } catch { /* phone_number queda null */ }
+
+      // Persistir estado de conexión en la DB
+      try {
+        await query(
+          `UPDATE whatsapp_lines
+           SET is_connected = true, status = 'active', last_seen_at = NOW(), updated_at = NOW()
+               ${phone_number ? ', phone_number = $2' : ''}
+           WHERE evolution_instance = $1`,
+          phone_number ? [instance, phone_number] : [instance],
+        )
+      } catch { /* no bloquear la respuesta si falla el update */ }
+
       return NextResponse.json({ connected: true, phone_number })
     }
 
