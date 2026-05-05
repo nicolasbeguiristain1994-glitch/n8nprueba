@@ -59,6 +59,13 @@ export default function WarmupPage() {
   const [addLimit, setAddLimit]       = useState('10')
   const [addSaving, setAddSaving]     = useState(false)
   const [addError, setAddError]       = useState('')
+  // QR-first add flow
+  const [addPhase, setAddPhase]       = useState<'form' | 'qr' | 'saving'>('form')
+  const [addQrBase64, setAddQrBase64] = useState<string | null>(null)
+  const [addQrInstance, setAddQrInstance] = useState('')
+  const [addQrError, setAddQrError]   = useState('')
+  const [showManualPhone, setShowManualPhone] = useState(false)
+  const addQrPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Inline name edit
   const [editingId, setEditingId]     = useState<string | null>(null)
@@ -88,12 +95,97 @@ export default function WarmupPage() {
   }, [])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
+  useEffect(() => () => {
+    if (pollRef.current) clearInterval(pollRef.current)
+    if (addQrPollRef.current) clearInterval(addQrPollRef.current)
+  }, [])
+
+  const stopAddPoll = () => {
+    if (addQrPollRef.current) { clearInterval(addQrPollRef.current); addQrPollRef.current = null }
+  }
 
   const openAdd = () => {
-    setShowAdd(true); setAddError('')
+    setShowAdd(true); setAddError(''); setAddPhase('form')
     setAddName(''); setAddPhone(''); setAddInstance('')
     setAddDays('21'); setAddLimit('10')
+    setAddQrBase64(null); setAddQrInstance(''); setAddQrError('')
+    setShowManualPhone(false)
+  }
+
+  const closeAdd = () => {
+    stopAddPoll(); setShowAdd(false); setAddPhase('form')
+    setAddQrBase64(null); setAddQrInstance(''); setAddQrError('')
+    setAddName(''); setAddPhone(''); setAddInstance('')
+    setShowManualPhone(false); setAddError('')
+  }
+
+  const generateAddQr = async () => {
+    const instance = `warmup-${Date.now()}`
+    setAddQrInstance(instance)
+    setAddPhase('qr')
+    setAddQrBase64(null)
+    setAddQrError('')
+    try {
+      const res  = await fetch('/api/lines/qr', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instance }),
+      })
+      const data = await res.json()
+      if (data.base64) {
+        setAddQrBase64(data.base64)
+        stopAddPoll()
+        addQrPollRef.current = setInterval(() => pollAddQr(instance), 5000)
+      } else {
+        setAddQrError(data.error || 'No se pudo crear la instancia en Evolution')
+        setAddPhase('form')
+      }
+    } catch {
+      setAddQrError('Error de conexión con Evolution')
+      setAddPhase('form')
+    }
+  }
+
+  const pollAddQr = async (instance: string) => {
+    try {
+      const res  = await fetch(`/api/lines/qr?instance=${encodeURIComponent(instance)}`)
+      const data = await res.json()
+      if (data.connected) {
+        stopAddPoll()
+        if (data.phone_number) {
+          await saveWarmupEntry(data.phone_number, instance)
+        } else {
+          // No se pudo detectar el número, pedir manualmente
+          setShowManualPhone(true)
+          setAddQrError('Línea conectada. Ingresá el número para registrarla.')
+        }
+      } else if (data.base64) {
+        setAddQrBase64(data.base64)
+      }
+    } catch { /* ignore */ }
+  }
+
+  const saveWarmupEntry = async (phone: string, instance: string) => {
+    setAddPhase('saving')
+    const res = await fetch('/api/warmup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        phone_number:  phone,
+        instance_name: instance,
+        display_name:  addName.trim() || undefined,
+        target_days:   Number(addDays) || 21,
+        daily_limit:   Number(addLimit) || 10,
+      }),
+    })
+    if (res.ok) {
+      stopAddPoll(); setShowAdd(false); setAddPhase('form')
+      await load()
+    } else {
+      const d = await res.json()
+      setAddQrError(d.error || 'Error al guardar')
+      setAddPhase('qr')
+    }
   }
 
   // ── Stats ─────────────────────────────────────────────────
@@ -428,64 +520,153 @@ export default function WarmupPage() {
       </Card>
 
       {/* ── Modal agregar ── */}
-      <Dialog open={showAdd} onOpenChange={open => { if (!open && !addSaving) { setShowAdd(false); setAddName(''); setAddPhone(''); setAddInstance(''); setAddDays('14'); setAddLimit('10'); setAddError('') } }}>
+      <Dialog open={showAdd} onOpenChange={open => { if (!open) closeAdd() }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Flame size={16} className="text-orange-500" /> Agregar línea al calentamiento
             </DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 pt-1">
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">Nombre para mostrar</label>
-              <Input placeholder="Ej: Línea Betcoin 01" value={addName} onChange={e => setAddName(e.target.value)} />
-            </div>
-            <div>
-              <label className="text-xs text-gray-500 mb-1 block">Número de teléfono *</label>
-              <Input
-                placeholder="+5492235042625"
-                value={addPhone}
-                onChange={e => {
-                  const raw = e.target.value
-                  const val = raw.startsWith('+') ? '+' + raw.slice(1).replace(/\D/g, '') : raw.replace(/\D/g, '')
-                  setAddPhone(val)
-                  // Auto-generate instance name using only digits
-                  const digits = val.replace(/\D/g, '')
-                  if (digits) setAddInstance(`warmup-${digits}`)
-                  else setAddInstance('')
-                }}
-                className="font-mono text-sm"
-              />
-              {addInstance && (
-                <p className="text-xs text-gray-400 mt-1">
-                  Instancia: <span className="font-mono text-gray-600">{addInstance}</span>
-                </p>
+
+          {/* ── Fase: formulario ── */}
+          {addPhase === 'form' && (
+            <div className="space-y-4 pt-1">
+              <div>
+                <label className="text-xs text-gray-500 mb-1 block">Nombre para mostrar</label>
+                <Input placeholder="Ej: Línea Betcoin 01" value={addName} onChange={e => setAddName(e.target.value)} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Días objetivo</label>
+                  <Input type="number" min={1} max={60} value={addDays} onChange={e => setAddDays(e.target.value)} />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Límite diario</label>
+                  <Input type="number" min={1} max={100} value={addLimit} onChange={e => setAddLimit(e.target.value)} />
+                </div>
+              </div>
+
+              {/* Opción manual */}
+              {showManualPhone ? (
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">Número de teléfono *</label>
+                  <Input
+                    placeholder="+5492235042625"
+                    value={addPhone}
+                    onChange={e => {
+                      const raw = e.target.value
+                      const val = raw.startsWith('+') ? '+' + raw.slice(1).replace(/\D/g, '') : raw.replace(/\D/g, '')
+                      setAddPhone(val)
+                      const digits = val.replace(/\D/g, '')
+                      if (digits) setAddInstance(`warmup-${digits}`)
+                      else setAddInstance('')
+                    }}
+                    className="font-mono text-sm"
+                  />
+                  {addInstance && (
+                    <p className="text-xs text-gray-400 mt-1">Instancia: <span className="font-mono text-gray-600">{addInstance}</span></p>
+                  )}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="text-xs text-gray-400 hover:text-gray-600 underline"
+                  onClick={() => setShowManualPhone(true)}
+                >
+                  Tengo el número de teléfono (ingreso manual)
+                </button>
               )}
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs text-gray-500 mb-1 block">Días objetivo</label>
-                <Input type="number" min={1} max={60} value={addDays} onChange={e => setAddDays(e.target.value)} />
+
+              {addError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{addError}</p>}
+
+              <div className="flex flex-col gap-2 pt-1">
+                {!showManualPhone ? (
+                  <Button className="w-full bg-orange-500 hover:bg-orange-600" onClick={generateAddQr}>
+                    <QrCode size={14} className="mr-2" /> Generar QR y escanear
+                  </Button>
+                ) : (
+                  <Button className="w-full bg-orange-500 hover:bg-orange-600"
+                    onClick={() => addNumber(true)} disabled={addSaving || !addPhone}>
+                    <QrCode size={14} className="mr-2" />
+                    {addSaving ? 'Guardando…' : 'Agregar y vincular QR'}
+                  </Button>
+                )}
+                <Button variant="ghost" className="w-full text-gray-500" onClick={closeAdd}>Cancelar</Button>
               </div>
-              <div>
-                <label className="text-xs text-gray-500 mb-1 block">Límite diario</label>
-                <Input type="number" min={1} max={100} value={addLimit} onChange={e => setAddLimit(e.target.value)} />
-              </div>
             </div>
-            {addError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{addError}</p>}
-            <div className="flex flex-col gap-2 pt-1">
-              <Button className="w-full bg-orange-500 hover:bg-orange-600"
-                onClick={() => addNumber(true)} disabled={addSaving || !addPhone}>
-                <QrCode size={14} className="mr-2" />
-                {addSaving ? 'Guardando…' : 'Agregar y vincular QR'}
-              </Button>
-              <Button variant="outline" className="w-full"
-                onClick={() => addNumber(false)} disabled={addSaving || !addPhone}>
-                {addSaving ? 'Guardando…' : 'Solo agregar (vincular QR después)'}
-              </Button>
-              <Button variant="ghost" className="w-full text-gray-500" onClick={() => setShowAdd(false)}>Cancelar</Button>
+          )}
+
+          {/* ── Fase: QR ── */}
+          {addPhase === 'qr' && (
+            <div className="flex flex-col items-center gap-4 py-2">
+              {!addQrBase64 && !showManualPhone && (
+                <div className="flex flex-col items-center gap-3 py-8">
+                  <Loader2 size={32} className="animate-spin text-orange-400" />
+                  <p className="text-sm text-gray-500">Generando QR…</p>
+                </div>
+              )}
+
+              {addQrBase64 && !showManualPhone && (
+                <>
+                  <div className="border-4 border-gray-200 rounded-xl p-2 bg-white">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={addQrBase64.startsWith('data:') ? addQrBase64 : `data:image/png;base64,${addQrBase64}`}
+                      alt="QR WhatsApp"
+                      className="w-56 h-56 object-contain"
+                    />
+                  </div>
+                  <div className="text-center space-y-1">
+                    <p className="text-sm font-medium">Escaneá con WhatsApp</p>
+                    <p className="text-xs text-gray-400">WhatsApp → Dispositivos vinculados → Vincular un dispositivo</p>
+                    <p className="text-xs text-orange-500 flex items-center justify-center gap-1 mt-2">
+                      <Loader2 size={11} className="animate-spin" /> Esperando escaneo…
+                    </p>
+                  </div>
+                </>
+              )}
+
+              {/* Fallback manual tras conexión sin número detectado */}
+              {showManualPhone && (
+                <div className="w-full space-y-3">
+                  <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-700 flex items-center gap-2">
+                    <CheckCircle size={16} /> Línea conectada
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Número de teléfono *</label>
+                    <Input
+                      placeholder="+5492235042625"
+                      value={addPhone}
+                      onChange={e => {
+                        const raw = e.target.value
+                        setAddPhone(raw.startsWith('+') ? '+' + raw.slice(1).replace(/\D/g, '') : raw.replace(/\D/g, ''))
+                      }}
+                      className="font-mono text-sm"
+                      autoFocus
+                    />
+                  </div>
+                  <Button
+                    className="w-full bg-orange-500 hover:bg-orange-600"
+                    disabled={!addPhone}
+                    onClick={() => saveWarmupEntry(addPhone, addQrInstance)}
+                  >
+                    Guardar
+                  </Button>
+                </div>
+              )}
+
+              {addQrError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2 w-full">{addQrError}</p>}
+              <Button variant="ghost" className="w-full text-gray-500 text-xs" onClick={closeAdd}>Cancelar</Button>
             </div>
-          </div>
+          )}
+
+          {/* ── Fase: guardando ── */}
+          {addPhase === 'saving' && (
+            <div className="flex flex-col items-center gap-3 py-10">
+              <Loader2 size={32} className="animate-spin text-orange-400" />
+              <p className="text-sm text-gray-600">Registrando línea…</p>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

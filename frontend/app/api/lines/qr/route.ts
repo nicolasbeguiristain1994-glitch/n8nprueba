@@ -36,9 +36,23 @@ export async function GET(req: NextRequest) {
       data = {}
     }
 
-    // Ya está conectada
+    // Ya está conectada — intentar obtener el número de teléfono del ownerJid
     if (data?.instance?.state === 'open' || data?.state === 'open') {
-      return NextResponse.json({ connected: true })
+      let phone_number: string | null = null
+      try {
+        const infoRes = await fetch(
+          `${EVO_URL}/instance/fetchInstances?instanceName=${encodeURIComponent(instance)}`,
+          { headers: { apikey: EVO_KEY ?? '' }, cache: 'no-store' },
+        )
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const infoData: any = await infoRes.json()
+        const ownerJid: string | undefined = infoData?.[0]?.ownerJid ?? infoData?.ownerJid
+        if (ownerJid) {
+          const digits = ownerJid.split('@')[0]
+          if (digits) phone_number = `+${digits}`
+        }
+      } catch { /* phone_number queda null */ }
+      return NextResponse.json({ connected: true, phone_number })
     }
 
     // Instancia no existe
