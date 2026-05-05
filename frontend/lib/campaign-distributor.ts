@@ -76,6 +76,7 @@ export type EligibleLine = {
   last_seen_at:       string | null
   remaining_hour:     number
   remaining_day:      number
+  has_personality:    boolean
 }
 
 export type CampaignForDispatch = {
@@ -189,7 +190,8 @@ export async function getEligibleLines(): Promise<EligibleLine[]> {
       msg_per_hour,   msg_per_day,
       priority,       last_seen_at,
       (msg_per_hour  - msgs_sent_hour)  AS remaining_hour,
-      (msg_per_day   - msgs_sent_today) AS remaining_day
+      (msg_per_day   - msgs_sent_today) AS remaining_day,
+      (personality_config IS NOT NULL)  AS has_personality
     FROM whatsapp_lines
     WHERE  status          = 'active'
       AND  is_connected    = true
@@ -898,7 +900,7 @@ export async function processMultiLineInBackground(
       // Cada línea tiene su propia ventana de actividad con jitter ±30-90 min.
       // Solo las líneas dentro de su ventana participan en este ciclo.
       const activeLines = eligibleLines.filter(
-        l => shouldLineBeActiveNow(getLinePersonality(l.id))
+        l => !l.has_personality || shouldLineBeActiveNow(getLinePersonality(l.id))
       )
 
       if (activeLines.length === 0) {

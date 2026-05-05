@@ -34,6 +34,7 @@ function makeLine(overrides: Partial<EligibleLine> = {}): EligibleLine {
     last_seen_at:       null,
     remaining_hour:     50,
     remaining_day:      500,
+    has_personality:    false,
     ...overrides,
   }
 }
