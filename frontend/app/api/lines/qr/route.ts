@@ -65,6 +65,27 @@ export async function GET(req: NextRequest) {
         )
       } catch { /* no bloquear la respuesta si falla el update */ }
 
+      // Auto-configurar webhook en Evolution para que los estados de entrega/lectura
+      // lleguen a la app automáticamente sin necesidad de configuración manual.
+      const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET
+      if (webhookSecret) {
+        const appOrigin = new URL(req.url).origin
+        fetch(`${EVO_URL}/webhook/set/${encodeURIComponent(instance)}`, {
+          method:  'POST',
+          headers: { apikey: EVO_KEY ?? '', 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            webhook: {
+              enabled:           true,
+              url:               `${appOrigin}/api/webhook/evolution`,
+              webhook_by_events: true,
+              webhook_base64:    false,
+              headers:           { 'x-webhook-secret': webhookSecret },
+              events:            ['MESSAGES_UPSERT', 'MESSAGES_UPDATE'],
+            },
+          }),
+        }).catch(() => {})
+      }
+
       return NextResponse.json({ connected: true, phone_number })
     }
 
