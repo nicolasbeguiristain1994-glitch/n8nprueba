@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query } from '@/lib/db'
+import { query, withTransaction } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
 import { isUUID } from '@/lib/validate'
 import { audit } from '@/lib/audit'
@@ -81,14 +81,21 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'id is required and must be a valid UUID' }, { status: 400 })
 
   try {
-    const rows = await query<{ id: string; evolution_instance: string; display_name: string }>(
-      `DELETE FROM whatsapp_lines WHERE id = $1 RETURNING id, evolution_instance, display_name`,
-      [id]
-    )
-    if (rows.length === 0)
-      return NextResponse.json({ error: 'Line not found' }, { status: 404 })
+    const { evolution_instance, display_name } = await withTransaction(async (client) => {
+      // Nullify FK references before deleting to avoid constraint issues under RLS
+      await client.query(
+        `UPDATE campaign_recipients SET line_id = NULL WHERE line_id = $1`, [id]
+      )
+      await client.query(
+        `DELETE FROM line_usage_log WHERE line_id = $1`, [id]
+      )
+      const res = await client.query<{ id: string; evolution_instance: string; display_name: string }>(
+        `DELETE FROM whatsapp_lines WHERE id = $1 RETURNING id, evolution_instance, display_name`, [id]
+      )
+      if (res.rows.length === 0) throw Object.assign(new Error('Line not found'), { code: 'NOT_FOUND' })
+      return res.rows[0]
+    })
 
-    const { evolution_instance, display_name } = rows[0]
 
     // Siempre intentar eliminar la instancia de Evolution
     let evoDeleted = false
@@ -111,8 +118,10 @@ export async function DELETE(req: NextRequest) {
 
     return NextResponse.json({ ok: true, evoDeleted })
   } catch (e) {
+    if (e instanceof Error && (e as NodeJS.ErrnoException & { code?: string }).code === 'NOT_FOUND')
+      return NextResponse.json({ error: 'Line not found' }, { status: 404 })
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[/api/lines DELETE]', msg)
-    return NextResponse.json({ error: msg }, { status: 500 })
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
