@@ -41,7 +41,6 @@ export default function Lines() {
 
   // Delete modal
   const [deleteTarget, setDeleteTarget]   = useState<Line | null>(null)
-  const [deleteEvo, setDeleteEvo]         = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [deleteError, setDeleteError]     = useState<string | null>(null)
 
@@ -151,12 +150,11 @@ export default function Lines() {
       const res  = await fetch('/api/lines', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: deleteTarget.id, deleteEvolution: deleteEvo }),
+        body: JSON.stringify({ id: deleteTarget.id }),
       })
       const data = await res.json()
       if (!res.ok) { setDeleteError(data.error || 'Error al eliminar'); return }
       setDeleteTarget(null)
-      setDeleteEvo(false)
       load()
     } catch {
       setDeleteError('Error de conexión')
@@ -300,7 +298,7 @@ export default function Lines() {
                         {isAdmin && (
                           <td className="px-4 py-3">
                             <button
-                              onClick={() => { setDeleteTarget(l); setDeleteEvo(false); setDeleteError(null) }}
+                              onClick={() => { setDeleteTarget(l); setDeleteError(null) }}
                               title="Eliminar línea"
                               className="p-1.5 rounded text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
                             >
@@ -318,7 +316,7 @@ export default function Lines() {
       </Card>
 
       {/* ── Modal eliminar línea ── */}
-      <Dialog open={!!deleteTarget} onOpenChange={open => { if (!open) { setDeleteTarget(null); setDeleteEvo(false); setDeleteError(null) } }}>
+      <Dialog open={!!deleteTarget} onOpenChange={open => { if (!open) { setDeleteTarget(null); setDeleteError(null) } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-rose-600">
@@ -328,20 +326,8 @@ export default function Lines() {
           <div className="space-y-4 py-2">
             <p className="text-sm text-gray-700">
               ¿Eliminar <span className="font-semibold">{deleteTarget?.display_name || deleteTarget?.line_key}</span>?
-              Esta acción no se puede deshacer.
+              Esta acción eliminará la línea de la base de datos y su instancia de Evolution. No se puede deshacer.
             </p>
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={deleteEvo}
-                onChange={e => setDeleteEvo(e.target.checked)}
-                className="w-4 h-4 rounded border-gray-300 text-rose-600 focus:ring-rose-500"
-              />
-              <span className="text-sm text-gray-600">
-                También eliminar instancia en Evolution
-                <span className="block text-xs text-gray-400">({deleteTarget?.evolution_instance})</span>
-              </span>
-            </label>
             {deleteError && (
               <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{deleteError}</p>
             )}
@@ -350,7 +336,7 @@ export default function Lines() {
                 variant="outline"
                 className="flex-1"
                 disabled={deleteLoading}
-                onClick={() => { setDeleteTarget(null); setDeleteEvo(false); setDeleteError(null) }}
+                onClick={() => { setDeleteTarget(null); setDeleteError(null) }}
               >
                 Cancelar
               </Button>

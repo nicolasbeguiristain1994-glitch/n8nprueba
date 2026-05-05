@@ -65,18 +65,18 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-// DELETE /api/lines — eliminar una línea de la DB y opcionalmente de Evolution
-// Body: { id: string; deleteEvolution?: boolean }
+// DELETE /api/lines — eliminar una línea de la DB y su instancia de Evolution
+// Body: { id: string }
 export async function DELETE(req: NextRequest) {
   const err = await checkPermission(req, 'lines', 'manage')
   if (err) return err
 
-  let body: { id?: string; deleteEvolution?: boolean }
+  let body: { id?: string }
   try { body = await req.json() } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { id, deleteEvolution } = body
+  const { id } = body
   if (!id || !isUUID(id))
     return NextResponse.json({ error: 'id is required and must be a valid UUID' }, { status: 400 })
 
@@ -90,9 +90,9 @@ export async function DELETE(req: NextRequest) {
 
     const { evolution_instance, display_name } = rows[0]
 
-    // Eliminar instancia en Evolution si se solicitó y hay Global API Key
+    // Siempre intentar eliminar la instancia de Evolution
     let evoDeleted = false
-    if (deleteEvolution && evolution_instance) {
+    if (evolution_instance) {
       const EVO_URL    = process.env.EVOLUTION_URL
       const EVO_GLOBAL = process.env.EVOLUTION_GLOBAL_API_KEY
       if (EVO_URL && EVO_GLOBAL) {
