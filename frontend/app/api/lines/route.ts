@@ -1,9 +1,10 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
 import { isUUID } from '@/lib/validate'
+import { audit } from '@/lib/audit'
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   const err = await checkPermission(req, 'lines', 'read')
   if (err) return err
 
@@ -34,7 +35,7 @@ export async function GET(req: Request) {
 
 // PATCH /api/lines — toggle sending_enabled for a line
 // Body: { id: string; sending_enabled: boolean }
-export async function PATCH(req: Request) {
+export async function PATCH(req: NextRequest) {
   const err = await checkPermission(req, 'lines', 'update')
   if (err) return err
 
@@ -60,6 +61,57 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[/api/lines PATCH]', e instanceof Error ? e.message : e)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+// DELETE /api/lines — eliminar una línea de la DB y opcionalmente de Evolution
+// Body: { id: string; deleteEvolution?: boolean }
+export async function DELETE(req: NextRequest) {
+  const err = await checkPermission(req, 'lines', 'manage')
+  if (err) return err
+
+  let body: { id?: string; deleteEvolution?: boolean }
+  try { body = await req.json() } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const { id, deleteEvolution } = body
+  if (!id || !isUUID(id))
+    return NextResponse.json({ error: 'id is required and must be a valid UUID' }, { status: 400 })
+
+  try {
+    const rows = await query<{ id: string; evolution_instance: string; display_name: string }>(
+      `DELETE FROM whatsapp_lines WHERE id = $1 RETURNING id, evolution_instance, display_name`,
+      [id]
+    )
+    if (rows.length === 0)
+      return NextResponse.json({ error: 'Line not found' }, { status: 404 })
+
+    const { evolution_instance, display_name } = rows[0]
+
+    // Eliminar instancia en Evolution si se solicitó y hay Global API Key
+    let evoDeleted = false
+    if (deleteEvolution && evolution_instance) {
+      const EVO_URL    = process.env.EVOLUTION_URL
+      const EVO_GLOBAL = process.env.EVOLUTION_GLOBAL_API_KEY
+      if (EVO_URL && EVO_GLOBAL) {
+        try {
+          await fetch(`${EVO_URL}/instance/delete/${encodeURIComponent(evolution_instance)}`, {
+            method: 'DELETE',
+            headers: { apikey: EVO_GLOBAL },
+          })
+          evoDeleted = true
+        } catch { /* la línea ya fue borrada de la DB; ignorar errores de Evolution */ }
+      }
+    }
+
+    void audit({ req, action: 'manage', resource: 'lines',
+      metadata: { deleted_id: id, evolution_instance, display_name, evo_deleted: evoDeleted } })
+
+    return NextResponse.json({ ok: true, evoDeleted })
+  } catch (e) {
+    console.error('[/api/lines DELETE]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

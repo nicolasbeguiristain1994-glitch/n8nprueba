@@ -5,8 +5,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff } from 'lucide-react'
+import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, Trash2 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
+import { useCurrentUser } from '@/lib/useCurrentUser'
 
 interface Line {
   id: string; line_key: string; display_name: string; phone_number: string
@@ -23,6 +24,9 @@ type QrState = 'idle' | 'loading' | 'not-found' | 'creating' | 'qr' | 'connected
 const EVO_MANAGER = process.env.NEXT_PUBLIC_EVOLUTION_MANAGER_URL ?? ''
 
 export default function Lines() {
+  const { user } = useCurrentUser()
+  const isAdmin = user?.role === 'admin'
+
   const [lines, setLines]         = useState<Line[]>([])
   const [loading, setLoading]     = useState(false)
   const [toggling, setToggling]   = useState<string | null>(null)
@@ -34,6 +38,12 @@ export default function Lines() {
   const [qrError, setQrError]     = useState<string | null>(null)
   const [canCreate, setCanCreate] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Delete modal
+  const [deleteTarget, setDeleteTarget]   = useState<Line | null>(null)
+  const [deleteEvo, setDeleteEvo]         = useState(false)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [deleteError, setDeleteError]     = useState<string | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -133,6 +143,28 @@ export default function Lines() {
     }
   }
 
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    setDeleteLoading(true)
+    setDeleteError(null)
+    try {
+      const res  = await fetch('/api/lines', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: deleteTarget.id, deleteEvolution: deleteEvo }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setDeleteError(data.error || 'Error al eliminar'); return }
+      setDeleteTarget(null)
+      setDeleteEvo(false)
+      load()
+    } catch {
+      setDeleteError('Error de conexión')
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
   useEffect(() => () => stopPoll(), [])
 
   const connected = lines.filter(l => l.is_connected).length
@@ -188,11 +220,12 @@ export default function Lines() {
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Total enviados</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Envíos</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Acción</th>
+                {isAdmin && <th className="px-4 py-3" />}
               </tr>
             </thead>
             <tbody>
               {lines.length === 0
-                ? <tr><td colSpan={9} className="text-center py-10 text-gray-400">
+                ? <tr><td colSpan={isAdmin ? 10 : 9} className="text-center py-10 text-gray-400">
                     {loading ? 'Cargando…' : 'Sin líneas configuradas'}
                   </td></tr>
                 : lines.map(l => {
@@ -264,6 +297,17 @@ export default function Lines() {
                               </Button>
                           }
                         </td>
+                        {isAdmin && (
+                          <td className="px-4 py-3">
+                            <button
+                              onClick={() => { setDeleteTarget(l); setDeleteEvo(false); setDeleteError(null) }}
+                              title="Eliminar línea"
+                              className="p-1.5 rounded text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     )
                   })
@@ -272,6 +316,56 @@ export default function Lines() {
           </table>
         </CardContent>
       </Card>
+
+      {/* ── Modal eliminar línea ── */}
+      <Dialog open={!!deleteTarget} onOpenChange={open => { if (!open) { setDeleteTarget(null); setDeleteEvo(false); setDeleteError(null) } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-rose-600">
+              <Trash2 size={16} /> Eliminar línea
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-gray-700">
+              ¿Eliminar <span className="font-semibold">{deleteTarget?.display_name || deleteTarget?.line_key}</span>?
+              Esta acción no se puede deshacer.
+            </p>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={deleteEvo}
+                onChange={e => setDeleteEvo(e.target.checked)}
+                className="w-4 h-4 rounded border-gray-300 text-rose-600 focus:ring-rose-500"
+              />
+              <span className="text-sm text-gray-600">
+                También eliminar instancia en Evolution
+                <span className="block text-xs text-gray-400">({deleteTarget?.evolution_instance})</span>
+              </span>
+            </label>
+            {deleteError && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{deleteError}</p>
+            )}
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                disabled={deleteLoading}
+                onClick={() => { setDeleteTarget(null); setDeleteEvo(false); setDeleteError(null) }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                className="flex-1 bg-rose-600 hover:bg-rose-700 text-white"
+                disabled={deleteLoading}
+                onClick={confirmDelete}
+              >
+                {deleteLoading ? <Loader2 size={14} className="animate-spin mr-1" /> : <Trash2 size={14} className="mr-1" />}
+                Eliminar
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Modal QR ── */}
       <Dialog open={!!qrLine} onOpenChange={open => { if (!open) closeQr() }}>
