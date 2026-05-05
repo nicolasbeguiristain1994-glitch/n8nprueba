@@ -5,13 +5,12 @@ import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import {
-  Zap, UserPlus, Send, GitMerge, CheckSquare, BarChart2, MessageSquare,
+  Zap, UserPlus, Send, CheckSquare, BarChart2, MessageSquare,
 } from 'lucide-react'
 
 const ACTIONS = [
   { label: 'Nuevo contacto',   icon: UserPlus,    href: '/contacts',       color: 'text-blue-500'    },
   { label: 'Nueva campaña',    icon: Send,        href: '/campaigns',      color: 'text-violet-500'  },
-  { label: 'Nuevo deal',       icon: GitMerge,    href: '/pipeline',       color: 'text-emerald-500' },
   { label: 'Nueva tarea',      icon: CheckSquare, href: '/tareas',         color: 'text-teal-500'    },
   { label: 'Estadísticas',     icon: BarChart2,   href: '/estadisticas',   color: 'text-amber-500'   },
   { label: 'Conversaciones',   icon: MessageSquare, href: '/conversations', color: 'text-rose-500'   },

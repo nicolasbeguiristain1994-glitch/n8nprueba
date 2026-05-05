@@ -20,7 +20,7 @@ import {
   LayoutDashboard, Users, Megaphone, MessageSquare,
   Activity, Flame, UserCog, Settings, FileText,
   BarChart2, ShieldOff, Bot, ChevronLeft, LogOut, X,
-  ClipboardList, CheckSquare, CalendarDays, HelpCircle, Kanban,
+  ClipboardList, CheckSquare, CalendarDays, HelpCircle,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useSidebar } from './sidebar-context'
@@ -47,7 +47,6 @@ const BASE_NAV: NavItem[] = [
   { href: '/warmup',         label: 'Calentamiento',    icon: Flame,           sector: 'warmup' },
   { href: '/mis-tareas',     label: 'Mis Tareas',       icon: CheckSquare,     sector: 'tasks' },
   { href: '/calendario',     label: 'Calendario',       icon: CalendarDays,    sector: 'tasks' },
-  { href: '/pipeline',        label: 'Pipeline',         icon: Kanban,          sector: 'pipeline'     },
   { href: '/estadisticas',   label: 'Estadísticas',     icon: BarChart2,       sector: 'estadisticas' },
   { href: '/automatizaciones',label: 'Automatizaciones',icon: Bot,             sector: 'automations' },
   { href: '/blacklist',      label: 'Blacklist',        icon: ShieldOff,       sector: 'blacklist' },

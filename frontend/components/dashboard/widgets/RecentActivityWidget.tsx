@@ -2,7 +2,7 @@
 
 import { memo } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Activity, UserPlus, Trophy, CheckSquare, TrendingUp } from 'lucide-react'
+import { Activity, UserPlus, CheckSquare } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { RecentActivity } from '@/app/api/dashboard/crm/route'
 
@@ -11,15 +11,13 @@ interface Props {
   loading?: boolean
 }
 
-const TYPE_CONFIG = {
-  deal_created:    { icon: TrendingUp,  color: 'text-violet-500', bg: 'bg-violet-100 dark:bg-violet-950/40' },
-  deal_won:        { icon: Trophy,      color: 'text-emerald-500', bg: 'bg-emerald-100 dark:bg-emerald-950/40' },
-  task_completed:  { icon: CheckSquare, color: 'text-teal-500',   bg: 'bg-teal-100 dark:bg-teal-950/40' },
-  contact_added:   { icon: UserPlus,   color: 'text-blue-500',   bg: 'bg-blue-100 dark:bg-blue-950/40' },
-} as const
+const TYPE_CONFIG: Record<RecentActivity['type'], { icon: typeof CheckSquare; color: string; bg: string }> = {
+  task_completed: { icon: CheckSquare, color: 'text-teal-500',  bg: 'bg-teal-100 dark:bg-teal-950/40'  },
+  contact_added:  { icon: UserPlus,    color: 'text-blue-500',  bg: 'bg-blue-100 dark:bg-blue-950/40'  },
+}
 
 function relativeTime(ts: string) {
-  const diff = Date.now() - new Date(ts).getTime()
+  const diff  = Date.now() - new Date(ts).getTime()
   const mins  = Math.floor(diff / 60000)
   const hours = Math.floor(diff / 3600000)
   const days  = Math.floor(diff / 86400000)
@@ -60,22 +58,20 @@ export const RecentActivityWidget = memo(function RecentActivityWidget({ activit
           <div className="relative">
             <div className="absolute left-4 top-0 bottom-0 w-px bg-border" />
             <div className="space-y-4">
-              {activities.map((act) => {
-                const cfg = TYPE_CONFIG[act.type] ?? TYPE_CONFIG.deal_created
+              {activities.map((act, i) => {
+                const cfg  = TYPE_CONFIG[act.type]
                 const Icon = cfg.icon
                 return (
-                  <div key={`${act.type}-${act.id}`} className="flex gap-3 relative">
+                  <div key={i} className="flex gap-3 relative">
                     <div className={cn('w-8 h-8 rounded-full flex items-center justify-center shrink-0 z-10', cfg.bg)}>
                       <Icon className={cn('w-3.5 h-3.5', cfg.color)} />
                     </div>
                     <div className="flex-1 min-w-0 pt-1">
                       <p className="text-sm leading-snug truncate">{act.title}</p>
-                      {act.description && (
-                        <p className="text-xs text-muted-foreground truncate">{act.description}</p>
-                      )}
+                      <p className="text-xs text-muted-foreground truncate">{act.sub}</p>
                     </div>
                     <span className="text-[11px] text-muted-foreground shrink-0 pt-1">
-                      {relativeTime(act.timestamp)}
+                      {relativeTime(act.created_at)}
                     </span>
                   </div>
                 )

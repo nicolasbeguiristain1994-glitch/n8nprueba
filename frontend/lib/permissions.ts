@@ -20,7 +20,6 @@ export type Resource =
   | 'tickets'
   | 'blacklist'
   | 'tasks'
-  | 'pipeline'
   | 'estadisticas'
   | 'automations'
   | 'templates'

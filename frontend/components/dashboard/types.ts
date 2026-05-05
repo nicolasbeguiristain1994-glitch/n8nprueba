@@ -64,12 +64,8 @@ export function formatCustomRange(from: string, to: string): string {
 
 export type WidgetId =
   | 'kpi'
-  | 'revenue_chart'
-  | 'pipeline_summary'
-  | 'closing_soon'
   | 'tasks'
   | 'recent_activity'
-  | 'top_contacts'
   | 'quick_actions'
 
 export interface WidgetConfig {
@@ -90,27 +86,6 @@ export const WIDGET_REGISTRY: WidgetConfig[] = [
     span:           2,
   },
   {
-    id:             'revenue_chart',
-    label:          'Ingresos',
-    description:    'Tendencia de ingresos por deals ganados (últimos 8 meses)',
-    defaultEnabled: true,
-    span:           2,
-  },
-  {
-    id:             'pipeline_summary',
-    label:          'Pipeline',
-    description:    'Resumen del pipeline activo por etapa',
-    defaultEnabled: true,
-    span:           1,
-  },
-  {
-    id:             'closing_soon',
-    label:          'Cierres próximos',
-    description:    'Deals con fecha de cierre en los próximos 14 días',
-    defaultEnabled: true,
-    span:           1,
-  },
-  {
     id:             'tasks',
     label:          'Tareas pendientes',
     description:    'Tareas activas ordenadas por prioridad y fecha',
@@ -121,13 +96,6 @@ export const WIDGET_REGISTRY: WidgetConfig[] = [
     id:             'recent_activity',
     label:          'Actividad reciente',
     description:    'Últimas acciones registradas en el CRM',
-    defaultEnabled: true,
-    span:           1,
-  },
-  {
-    id:             'top_contacts',
-    label:          'Top contactos',
-    description:    'Contactos con mayor valor de deals asociados',
     defaultEnabled: true,
     span:           1,
   },

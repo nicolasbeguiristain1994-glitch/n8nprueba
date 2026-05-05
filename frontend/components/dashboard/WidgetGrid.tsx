@@ -73,15 +73,11 @@ interface WidgetGridProps {
 // ── Lazy-loaded widget renderers ─────────────────────────────────────────────
 // (imported at module level to avoid repeated dynamic imports)
 import { KPIWidget } from './widgets/KPIWidget'
-import { RevenueChartWidget } from './widgets/RevenueChartWidget'
-import { PipelineSummaryWidget } from './widgets/PipelineSummaryWidget'
-import { DealsClosingSoonWidget } from './widgets/DealsClosingSoonWidget'
 import { TasksWidget } from './widgets/TasksWidget'
 import { RecentActivityWidget } from './widgets/RecentActivityWidget'
-import { TopAccountsWidget } from './widgets/TopAccountsWidget'
 import { QuickActionsWidget } from './widgets/QuickActionsWidget'
 
-const FALLBACK_KPI = { total_deals: 0, total_deals_value: 0, won_deals: 0, won_deals_value: 0, contacts: 0, tasks_pending: 0, tasks_overdue: 0, conversion_rate: 0 }
+const FALLBACK_KPI = { contacts: 0, tasks_pending: 0, tasks_overdue: 0 }
 
 export const WidgetGrid = memo(function WidgetGrid({
   visibleWidgets,
@@ -115,18 +111,10 @@ export const WidgetGrid = memo(function WidgetGrid({
     switch (id) {
       case 'kpi':
         return <KPIWidget kpis={data?.kpis ?? FALLBACK_KPI} loading={loading} />
-      case 'revenue_chart':
-        return <RevenueChartWidget data={data?.revenue_trend ?? []} loading={loading} />
-      case 'pipeline_summary':
-        return <PipelineSummaryWidget pipeline={data?.pipeline ?? []} loading={loading} />
-      case 'closing_soon':
-        return <DealsClosingSoonWidget deals={data?.closing_soon ?? []} loading={loading} />
       case 'tasks':
         return <TasksWidget tasks={data?.tasks ?? []} loading={loading} onCompleted={onTaskCompleted} />
       case 'recent_activity':
         return <RecentActivityWidget activities={data?.recent_activity ?? []} loading={loading} />
-      case 'top_contacts':
-        return <TopAccountsWidget contacts={data?.top_contacts ?? []} loading={loading} />
       case 'quick_actions':
         return <QuickActionsWidget />
       default:
