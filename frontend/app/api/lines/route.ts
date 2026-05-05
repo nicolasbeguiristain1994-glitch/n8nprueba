@@ -111,7 +111,8 @@ export async function DELETE(req: NextRequest) {
 
     return NextResponse.json({ ok: true, evoDeleted })
   } catch (e) {
-    console.error('[/api/lines DELETE]', e instanceof Error ? e.message : e)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error('[/api/lines DELETE]', msg)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
