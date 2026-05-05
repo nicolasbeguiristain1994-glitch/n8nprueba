@@ -37,19 +37,28 @@ export async function DELETE(
     // 1. Borrar TODO el historial de frecuencia de los contactos de esta campaña.
     //    Borra entradas de CUALQUIER campaña anterior para esos contactos,
     //    no solo las de esta campaña — así se levanta el cooldown de 48h real.
-    const [deleted] = await query<{ count: string }>(
-      `WITH del AS (
-         DELETE FROM contact_send_history
-         WHERE contact_id IN (
-           SELECT DISTINCT contact_id
-           FROM campaign_recipients
-           WHERE campaign_id = $1
+    //    Si la tabla no existe (migración no aplicada) continuamos igual.
+    let deletedCount = 0
+    try {
+      const [deleted] = await query<{ count: string }>(
+        `WITH del AS (
+           DELETE FROM contact_send_history
+           WHERE contact_id IN (
+             SELECT DISTINCT contact_id
+             FROM campaign_recipients
+             WHERE campaign_id = $1
+           )
+           RETURNING id
          )
-         RETURNING id
-       )
-       SELECT COUNT(*)::text AS count FROM del`,
-      [id]
-    )
+         SELECT COUNT(*)::text AS count FROM del`,
+        [id]
+      )
+      deletedCount = Number(deleted?.count || 0)
+    } catch (freqErr) {
+      const msg = freqErr instanceof Error ? freqErr.message : String(freqErr)
+      console.warn('[freq-reset] contact_send_history delete skipped:', msg)
+      // tabla puede no existir en esta instancia — continuamos con el reset de recipients
+    }
 
     // 2. Resetear TODOS los recipients (sent/failed/skipped) → pending para re-envío de prueba
     const [reset] = await query<{ count: string }>(
@@ -86,8 +95,7 @@ export async function DELETE(
       [id]
     )
 
-    const deletedCount = Number(deleted?.count || 0)
-    const resetCount   = Number(reset?.count   || 0)
+    const resetCount = Number(reset?.count || 0)
 
     void audit({
       req,
