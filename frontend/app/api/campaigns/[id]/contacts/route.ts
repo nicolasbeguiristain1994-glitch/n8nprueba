@@ -33,15 +33,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         c.first_name,
         c.last_name,
         c.phone_number,
-        m.status        AS msg_status,
+        COALESCE(m.status, cr.status)             AS msg_status,
         m.sent_at,
         m.delivered_at,
         m.read_at,
         m.failed_at,
-        m.error_detail
+        COALESCE(m.error_detail, cr.error_detail) AS error_detail
       FROM campaigns camp
       JOIN contact_list_members clm ON clm.list_id = camp.list_id
       JOIN contacts c ON c.id = clm.contact_id
+      LEFT JOIN campaign_recipients cr
+        ON cr.contact_id = c.id AND cr.campaign_id = camp.id
       LEFT JOIN LATERAL (
         SELECT status, sent_at, delivered_at, read_at, failed_at, error_detail
         FROM whatsapp_messages
@@ -52,12 +54,15 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       ) m ON true
       WHERE camp.id = $1
       ORDER BY
-        CASE m.status
+        CASE COALESCE(m.status, cr.status)
           WHEN 'read'      THEN 1
           WHEN 'delivered' THEN 2
           WHEN 'sent'      THEN 3
           WHEN 'failed'    THEN 4
-          ELSE 5
+          WHEN 'skipped'   THEN 5
+          WHEN 'sending'   THEN 6
+          WHEN 'pending'   THEN 7
+          ELSE 8
         END,
         c.first_name
     `, [id])

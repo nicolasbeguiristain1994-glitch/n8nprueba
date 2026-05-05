@@ -6,8 +6,9 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Send, Plus, Loader2, Eye, Play, BarChart2, Shield, Clock, Pause, XCircle, CheckCheck, Truck, AlertTriangle, HelpCircle, Trash2, Shuffle, UserCheck, UserX, Zap, GitBranch, RefreshCw } from 'lucide-react'
+import { Send, Plus, Loader2, Eye, Play, BarChart2, Shield, Clock, Pause, XCircle, CheckCheck, Truck, AlertTriangle, HelpCircle, Trash2, Shuffle, UserCheck, UserX, Zap, GitBranch, RefreshCw, Ban } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
+import { useCurrentUser } from '@/lib/useCurrentUser'
 
 interface CampaignList { id: string; name: string; contact_count: number }
 interface CampaignContact {
@@ -20,7 +21,7 @@ interface Campaign {
   id: string; name: string; message: string; messages: string[]; status: string
   scheduled_at: string; completed_at: string
   total_targets: number; total_sent: number; total_delivered: number
-  total_read: number; total_failed: number
+  total_read: number; total_failed: number; total_skipped: number
   read_rate: number; delivery_rate: number
   list_name: string; list_id: string | null
   antiblock_delay_min: number; antiblock_delay_max: number
@@ -43,6 +44,9 @@ const STATUS_BADGE: Record<string, string> = {
 }
 
 export default function Campaigns() {
+  const { user } = useCurrentUser()
+  const isAdmin  = user?.role === 'admin'
+
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [lists, setLists]         = useState<CampaignList[]>([])
   const [showNew, setShowNew]     = useState(false)
@@ -57,6 +61,7 @@ export default function Campaigns() {
   const [dispatch, setDispatch]       = useState<DispatchSummary | null>(null)
   const [loadingDispatch, setLoadingDispatch] = useState(false)
   const [resuming, setResuming]       = useState<string | null>(null)
+  const [freqResetting, setFreqResetting] = useState<string | null>(null)
 
   // Form
   const [form, setForm] = useState({
@@ -151,7 +156,12 @@ export default function Campaigns() {
       const res = await fetch(endpoint, { method: 'POST' })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
-        setSendError(d.error || `Error ${res.status}`)
+        // 409 = campaign auto-completed (all contacts already processed) — just refresh
+        if (res.status === 409) {
+          load()
+        } else {
+          setSendError(d.error || `Error ${res.status}`)
+        }
       } else {
         setTimeout(load, 1000)
       }
@@ -162,14 +172,41 @@ export default function Campaigns() {
     }
   }
 
+  const resetFreq = async (campaign: Campaign) => {
+    if (!confirm(`¿Resetear campaña "${campaign.name}" para re-prueba?\n\nEsto va a:\n• Borrar el historial de frecuencia (levanta el bloqueo de 48h)\n• Volver TODOS los contactos a "pendiente" (incluso los ya enviados)\n• Resetear contadores de la campaña\n\nUsar solo en entornos de prueba.`)) return
+    setFreqResetting(campaign.id)
+    try {
+      const res = await fetch(`/api/campaigns/${campaign.id}/freq-reset`, { method: 'DELETE' })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setSendError(d.error || 'Error al resetear campaña')
+      } else {
+        setSendError(null)
+        // Cerrar el modal si está abierto y recargar la lista
+        if (selected?.id === campaign.id) setSelected(null)
+        load()
+      }
+    } catch {
+      setSendError('Error de red al limpiar frecuencia')
+    } finally {
+      setFreqResetting(null)
+    }
+  }
+
   const resumeProcessor = async (id: string) => {
     setResuming(id)
     setSendError(null)
     try {
-      const res = await fetch(`/api/campaigns/${id}/dispatch/process`, { method: 'POST' })
+      // For multi-line paused campaigns, first try dispatch (seeds + starts processor)
+      const res = await fetch(`/api/campaigns/${id}/dispatch`, { method: 'POST' })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
-        setSendError(d.error || `Error al reanudar`)
+        if (res.status === 409) {
+          // All contacts already processed → campaign auto-completed → just refresh
+          load()
+        } else {
+          setSendError(d.error || `Error al reanudar`)
+        }
       } else {
         setTimeout(load, 1500)
       }
@@ -298,12 +335,13 @@ export default function Campaigns() {
                     </div>
 
                     {/* Métricas inline */}
-                    {c.total_sent > 0 && (
+                    {(c.total_sent > 0 || c.total_skipped > 0 || c.total_failed > 0) && (
                       <div className="flex gap-4 text-center shrink-0">
-                        <MiniStat label="Enviados" value={c.total_sent} color="blue" />
+                        <MiniStat label="Enviados"   value={c.total_sent}      color="blue" />
                         <MiniStat label="Entregados" value={c.total_delivered} color="green" />
-                        <MiniStat label="Leídos" value={c.total_read} pct={c.read_rate} color="purple" />
-                        <MiniStat label="Fallidos" value={c.total_failed} color="red" />
+                        <MiniStat label="Leídos"     value={c.total_read}      pct={c.read_rate} color="purple" />
+                        {c.total_failed  > 0 && <MiniStat label="Fallidos"  value={c.total_failed}  color="red" />}
+                        {c.total_skipped > 0 && <MiniStat label="Omitidos"  value={c.total_skipped} color="orange" />}
                       </div>
                     )}
 
@@ -352,6 +390,19 @@ export default function Campaigns() {
                                 onClick={() => { if (confirm(`¿Cancelar "${c.name}"?`)) updateStatus(c.id, 'cancelled') }}
                                 disabled={actioning === c.id}>
                           <XCircle size={13} />
+                        </Button>
+                      )}
+
+                      {/* Reset completo para re-prueba — en campañas ya procesadas */}
+                      {['completed','paused','cancelled'].includes(c.status) && (c.total_sent > 0 || c.total_skipped > 0 || c.total_failed > 0) && (
+                        <Button size="sm" variant="outline"
+                                className="border-orange-200 text-orange-500 hover:bg-orange-50"
+                                title="Resetear para re-prueba (admin)"
+                                onClick={() => resetFreq(c)}
+                                disabled={freqResetting === c.id}>
+                          {freqResetting === c.id
+                            ? <Loader2 size={13} className="animate-spin"/>
+                            : <RefreshCw size={13} />}
                         </Button>
                       )}
                     </div>
@@ -642,11 +693,14 @@ export default function Campaigns() {
           {selected && (
             <div className="space-y-4">
               {/* Métricas */}
-              <div className="grid grid-cols-4 gap-3 text-center">
+              <div className={`grid gap-3 text-center ${selected.total_skipped > 0 ? 'grid-cols-5' : 'grid-cols-4'}`}>
                 <StatBox label="Enviados"    value={selected.total_sent}      color="blue"   />
                 <StatBox label="Entregados"  value={selected.total_delivered} color="green"  />
                 <StatBox label="Leídos"      value={selected.total_read}      color="purple" pct={selected.read_rate} />
                 <StatBox label="Fallidos"    value={selected.total_failed}    color="red"    />
+                {selected.total_skipped > 0 && (
+                  <StatBox label="Omitidos (freq.)" value={selected.total_skipped} color="orange" />
+                )}
               </div>
 
               {selected.total_targets > 0 && (
@@ -721,15 +775,37 @@ export default function Campaigns() {
                     ? <p className="text-xs text-gray-400 flex items-center gap-1"><Loader2 size={12} className="animate-spin"/> Cargando…</p>
                     : dispatch
                     ? <>
-                        <div className="grid grid-cols-4 gap-2 text-center text-xs">
+                        <div className={`grid gap-2 text-center text-xs ${dispatch.skipped > 0 ? 'grid-cols-5' : 'grid-cols-4'}`}>
                           <div className="bg-gray-50 rounded p-2"><p className="font-bold text-gray-700">{dispatch.total}</p><p className="text-gray-400">Total</p></div>
                           <div className="bg-yellow-50 rounded p-2"><p className="font-bold text-yellow-600">{dispatch.queued + dispatch.processing}</p><p className="text-gray-400">Pendiente</p></div>
                           <div className="bg-green-50 rounded p-2"><p className="font-bold text-green-600">{dispatch.sent}</p><p className="text-gray-400">Enviados</p></div>
                           <div className="bg-red-50 rounded p-2"><p className="font-bold text-red-500">{dispatch.failed}</p><p className="text-gray-400">Fallidos</p></div>
+                          {dispatch.skipped > 0 && (
+                            <div className="bg-orange-50 rounded p-2">
+                              <p className="font-bold text-orange-500">{dispatch.skipped}</p>
+                              <p className="text-gray-400">Omitidos</p>
+                            </div>
+                          )}
                         </div>
+                        {dispatch.skipped > 0 && (
+                          <div className="flex items-center justify-between gap-2 bg-orange-50 border border-orange-100 rounded px-2 py-1.5">
+                            <p className="text-xs text-orange-600 flex items-center gap-1.5">
+                              <Ban size={11}/> {dispatch.skipped} contacto{dispatch.skipped !== 1 ? 's fueron' : ' fue'} omitido{dispatch.skipped !== 1 ? 's' : ''} por límite de frecuencia (48h entre envíos).
+                            </p>
+                            <button
+                              className="text-xs text-orange-600 underline hover:text-orange-800 whitespace-nowrap flex items-center gap-1 disabled:opacity-50"
+                              disabled={freqResetting === selected.id}
+                              onClick={() => resetFreq(selected)}
+                            >
+                              {freqResetting === selected.id
+                                ? <Loader2 size={11} className="animate-spin"/>
+                                : <RefreshCw size={11}/>}
+                              Limpiar (pruebas)
+                            </button>
+                          </div>
+                        )}
                         <div className="text-xs text-gray-500">
                           {dispatch.eligible_lines} línea{dispatch.eligible_lines !== 1 ? 's' : ''} elegible{dispatch.eligible_lines !== 1 ? 's' : ''} ahora
-                          {dispatch.skipped > 0 && <span className="ml-2 text-orange-500">· {dispatch.skipped} omitidos</span>}
                         </div>
                         {dispatch.line_usage.length > 0 && (
                           <div className="space-y-1">
@@ -803,7 +879,7 @@ export default function Campaigns() {
 }
 
 function MiniStat({ label, value, pct, color }: { label: string; value: number; pct?: number; color: string }) {
-  const colors: Record<string, string> = { blue:'text-blue-600', green:'text-green-600', purple:'text-purple-600', red:'text-red-500' }
+  const colors: Record<string, string> = { blue:'text-blue-600', green:'text-green-600', purple:'text-purple-600', red:'text-red-500', orange:'text-orange-500' }
   return (
     <div>
       <p className={`text-lg font-bold ${colors[color]}`}>{value}{pct !== undefined ? <span className="text-xs font-normal ml-0.5">{pct}%</span> : ''}</p>
@@ -813,7 +889,7 @@ function MiniStat({ label, value, pct, color }: { label: string; value: number; 
 }
 
 function StatBox({ label, value, color, pct }: { label: string; value: number; color: string; pct?: number }) {
-  const colors: Record<string, string> = { blue:'text-blue-600 bg-blue-50', green:'text-green-600 bg-green-50', purple:'text-purple-600 bg-purple-50', red:'text-red-500 bg-red-50' }
+  const colors: Record<string, string> = { blue:'text-blue-600 bg-blue-50', green:'text-green-600 bg-green-50', purple:'text-purple-600 bg-purple-50', red:'text-red-500 bg-red-50', orange:'text-orange-500 bg-orange-50' }
   return (
     <div className={`rounded-lg p-3 ${colors[color]}`}>
       <p className="text-xl font-bold">{value}</p>
@@ -846,6 +922,9 @@ function ContactStatusBadge({ status }: { status: string | null }) {
     delivered: { label: 'Entregado',  className: 'text-green-600',  icon: <Truck size={12}/> },
     sent:      { label: 'Enviado',    className: 'text-blue-500',   icon: <Send size={12}/> },
     failed:    { label: 'Fallido',    className: 'text-red-500',    icon: <AlertTriangle size={12}/> },
+    skipped:   { label: 'Omitido (freq.)', className: 'text-orange-500', icon: <Ban size={12}/> },
+    sending:   { label: 'Enviando…',  className: 'text-yellow-600', icon: <Loader2 size={12} className="animate-spin"/> },
+    pending:   { label: 'En cola',    className: 'text-gray-400',   icon: <Clock size={12}/> },
   }
   const s = map[status] || { label: status, className: 'text-gray-500', icon: <HelpCircle size={12}/> }
   return (

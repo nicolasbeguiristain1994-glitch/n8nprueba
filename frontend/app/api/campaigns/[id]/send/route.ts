@@ -501,7 +501,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   if (totalPending === 0 && campaign.status !== 'running') {
-    return NextResponse.json({ error: 'No contacts in list' }, { status: 400 })
+    // Check if there are already-processed recipients — if so, the campaign is
+    // actually done (all sent/failed/skipped) but was left in 'paused' state.
+    const [totals] = await query<{ total: string; sent: string }>(
+      `SELECT COUNT(*)::text AS total,
+              COUNT(*) FILTER (WHERE status IN ('sent','failed','skipped'))::text AS sent
+       FROM campaign_recipients WHERE campaign_id = $1`,
+      [id]
+    ).catch(() => [null])
+
+    const hasProcessed = Number(totals?.sent || 0) > 0
+
+    if (hasProcessed) {
+      // All work is done — auto-complete and tell the caller
+      await query(
+        `UPDATE campaigns SET status = 'completed', completed_at = COALESCE(completed_at, NOW())
+         WHERE id = $1 AND status != 'completed'`,
+        [id]
+      ).catch(() => {})
+      return NextResponse.json(
+        { error: 'La campaña ya envió todos sus contactos. Se marcó como completada.' },
+        { status: 409 }
+      )
+    }
+
+    return NextResponse.json({ error: 'No hay contactos en la lista' }, { status: 400 })
   }
 
   // ── Atomic: acquire processor lock + (if needed) transition status ────────

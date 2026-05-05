@@ -30,6 +30,9 @@ export async function GET(req: NextRequest) {
              COUNT(m.id) FILTER (WHERE m.status = 'delivered')::int               AS total_delivered,
              COUNT(m.id) FILTER (WHERE m.status = 'read')::int                    AS total_read,
              COUNT(m.id) FILTER (WHERE m.status = 'failed')::int                  AS total_failed,
+             -- Contactos saltados por motor de frecuencia (no tienen whatsapp_messages)
+             (SELECT COUNT(*) FROM campaign_recipients cr
+              WHERE cr.campaign_id = c.id AND cr.status = 'skipped')::int         AS total_skipped,
              CASE WHEN COUNT(m.id) FILTER (WHERE m.status IN ('sent','delivered','read')) > 0
                THEN ROUND(COUNT(m.id) FILTER (WHERE m.status = 'read')::numeric /
                           COUNT(m.id) FILTER (WHERE m.status IN ('sent','delivered','read')) * 100, 1)

@@ -114,7 +114,27 @@ export async function POST(
   }
 
   if (unitCounts.total === 0 && campaign.status !== 'running') {
-    return NextResponse.json({ error: 'No eligible contacts in list' }, { status: 400 })
+    return NextResponse.json({ error: 'No hay contactos elegibles en la lista' }, { status: 400 })
+  }
+
+  // All recipients already processed (none pending) but campaign stuck in paused
+  if (unitCounts.queued === 0 && campaign.status === 'paused') {
+    const [processed] = await query<{ count: string }>(
+      `SELECT COUNT(*) FILTER (WHERE status IN ('sent','failed','skipped'))::text AS count
+       FROM campaign_recipients WHERE campaign_id = $1`,
+      [id]
+    ).catch(() => [null])
+    if (Number(processed?.count || 0) > 0) {
+      await query(
+        `UPDATE campaigns SET status = 'completed', completed_at = COALESCE(completed_at, NOW())
+         WHERE id = $1 AND status != 'completed'`,
+        [id]
+      ).catch(() => {})
+      return NextResponse.json(
+        { error: 'La campaña ya envió todos sus contactos. Se marcó como completada.' },
+        { status: 409 }
+      )
+    }
   }
 
   // ── Acquire processor lock ──────────────────────────────────────────────────
