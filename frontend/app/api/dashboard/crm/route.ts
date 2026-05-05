@@ -89,72 +89,87 @@ function parseDate(raw: string | null, fallback: () => Date): Date {
   return isNaN(d.getTime()) ? fallback() : d
 }
 
+async function safeQuery<T>(
+  label: string,
+  fn: () => Promise<T[]>,
+  fallback: T[] = [],
+): Promise<T[]> {
+  try {
+    return await fn()
+  } catch (err) {
+    console.error(`[dashboard/crm] query failed — ${label}:`, err)
+    return fallback
+  }
+}
+
 export async function GET(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'pipeline', 'read')
   if (!auth.ok) return auth.response
 
-  try {
-    const { searchParams } = new URL(req.url)
+  const { searchParams } = new URL(req.url)
 
-    const defaultTo   = new Date()
-    const defaultFrom = new Date(defaultTo)
-    defaultFrom.setDate(defaultFrom.getDate() - 7)
+  const defaultTo   = new Date()
+  const defaultFrom = new Date(defaultTo)
+  defaultFrom.setDate(defaultFrom.getDate() - 7)
 
-    const dateFrom = parseDate(searchParams.get('from'), () => defaultFrom)
-    const dateTo   = parseDate(searchParams.get('to'),   () => defaultTo)
+  const dateFrom  = parseDate(searchParams.get('from'), () => defaultFrom)
+  const dateTo    = parseDate(searchParams.get('to'),   () => defaultTo)
+  const dateToEOD = new Date(dateTo)
+  dateToEOD.setHours(23, 59, 59, 999)
 
-    const dateToEOD = new Date(dateTo)
-    dateToEOD.setHours(23, 59, 59, 999)
+  // ── KPIs — deals ──────────────────────────────────────────────────────────────
+  const dealKpis = await safeQuery('deal_kpis', () =>
+    query<{ total_deals: string; total_value: string }>(`
+      SELECT
+        COUNT(*)                          AS total_deals,
+        COALESCE(SUM(amount), 0)::text    AS total_value
+      FROM deals
+      WHERE stage NOT IN ('perdido')
+    `, []),
+  )
 
-    // ── KPIs ────────────────────────────────────────────────────────────────────
-    // deals y contacts no tienen deleted_at — tasks sí lo tiene
-    const [dealKpis, periodWon, contactCount, taskStats] = await Promise.all([
-      query<{ total_deals: string; total_value: string }>(`
-        SELECT
-          COUNT(*)                          AS total_deals,
-          COALESCE(SUM(amount), 0)::text    AS total_value
-        FROM deals
-        WHERE stage NOT IN ('perdido')
-      `, []),
+  const periodWon = await safeQuery('period_won', () =>
+    query<{ won_deals: string; won_value: string }>(`
+      SELECT
+        COUNT(*)                       AS won_deals,
+        COALESCE(SUM(amount), 0)::text AS won_value
+      FROM deals
+      WHERE stage = 'ganado'
+        AND updated_at BETWEEN $1 AND $2
+    `, [dateFrom, dateToEOD]),
+  )
 
-      query<{ won_deals: string; won_value: string }>(`
-        SELECT
-          COUNT(*)                          AS won_deals,
-          COALESCE(SUM(amount), 0)::text    AS won_value
-        FROM deals
-        WHERE stage = 'ganado'
-          AND updated_at BETWEEN $1 AND $2
-      `, [dateFrom, dateToEOD]),
+  const contactCount = await safeQuery('contact_count', () =>
+    query<{ total: string }>(`SELECT COUNT(*) AS total FROM contacts`, []),
+  )
 
-      query<{ total: string }>(`
-        SELECT COUNT(*) AS total FROM contacts
-      `, []),
+  const taskStats = await safeQuery('task_stats', () =>
+    query<{ pending: string; overdue: string }>(`
+      SELECT
+        COUNT(*) FILTER (WHERE status IN ('pendiente','en_progreso'))                         AS pending,
+        COUNT(*) FILTER (WHERE status IN ('pendiente','en_progreso') AND due_date < NOW())    AS overdue
+      FROM tasks
+      WHERE deleted_at IS NULL
+    `, []),
+  )
 
-      query<{ pending: string; overdue: string }>(`
-        SELECT
-          COUNT(*) FILTER (WHERE status IN ('pendiente','en_progreso'))                         AS pending,
-          COUNT(*) FILTER (WHERE status IN ('pendiente','en_progreso') AND due_date < NOW())    AS overdue
-        FROM tasks
-        WHERE deleted_at IS NULL
-      `, []),
-    ])
+  const totalDeals = parseInt(dealKpis[0]?.total_deals ?? '0')
+  const wonDeals   = parseInt(periodWon[0]?.won_deals  ?? '0')
 
-    const totalDeals = parseInt(dealKpis[0]?.total_deals ?? '0')
-    const wonDeals   = parseInt(periodWon[0]?.won_deals  ?? '0')
+  const kpis: CrmKPIs = {
+    total_deals:       totalDeals,
+    total_deals_value: parseFloat(dealKpis[0]?.total_value ?? '0'),
+    won_deals:         wonDeals,
+    won_deals_value:   parseFloat(periodWon[0]?.won_value  ?? '0'),
+    contacts:          parseInt(contactCount[0]?.total ?? '0'),
+    tasks_pending:     parseInt(taskStats[0]?.pending  ?? '0'),
+    tasks_overdue:     parseInt(taskStats[0]?.overdue  ?? '0'),
+    conversion_rate:   totalDeals > 0 ? Math.round((wonDeals / totalDeals) * 100) : 0,
+  }
 
-    const kpis: CrmKPIs = {
-      total_deals:       totalDeals,
-      total_deals_value: parseFloat(dealKpis[0]?.total_value ?? '0'),
-      won_deals:         wonDeals,
-      won_deals_value:   parseFloat(periodWon[0]?.won_value  ?? '0'),
-      contacts:          parseInt(contactCount[0]?.total ?? '0'),
-      tasks_pending:     parseInt(taskStats[0]?.pending  ?? '0'),
-      tasks_overdue:     parseInt(taskStats[0]?.overdue  ?? '0'),
-      conversion_rate:   totalDeals > 0 ? Math.round((wonDeals / totalDeals) * 100) : 0,
-    }
-
-    // ── Revenue trend ────────────────────────────────────────────────────────────
-    const trendRows = await query<{ month: string; revenue: string; deals_closed: string }>(`
+  // ── Revenue trend ─────────────────────────────────────────────────────────────
+  const trendRows = await safeQuery('revenue_trend', () =>
+    query<{ month: string; revenue: string; deals_closed: string }>(`
       SELECT
         TO_CHAR(DATE_TRUNC('month', updated_at), 'Mon YY') AS month,
         COALESCE(SUM(amount), 0)::text                      AS revenue,
@@ -164,16 +179,18 @@ export async function GET(req: NextRequest) {
         AND updated_at BETWEEN $1 AND $2
       GROUP BY DATE_TRUNC('month', updated_at)
       ORDER BY DATE_TRUNC('month', updated_at)
-    `, [dateFrom, dateToEOD])
+    `, [dateFrom, dateToEOD]),
+  )
 
-    const revenue_trend: RevenueTrendPoint[] = trendRows.map(r => ({
-      month:        r.month,
-      revenue:      parseFloat(r.revenue),
-      deals_closed: parseInt(r.deals_closed),
-    }))
+  const revenue_trend: RevenueTrendPoint[] = trendRows.map(r => ({
+    month:        r.month,
+    revenue:      parseFloat(r.revenue),
+    deals_closed: parseInt(r.deals_closed),
+  }))
 
-    // ── Pipeline summary ─────────────────────────────────────────────────────────
-    const pipelineRows = await query<{ stage: string; count: string; value: string }>(`
+  // ── Pipeline summary ──────────────────────────────────────────────────────────
+  const pipelineRows = await safeQuery('pipeline', () =>
+    query<{ stage: string; count: string; value: string }>(`
       SELECT
         stage,
         COUNT(*)::text                 AS count,
@@ -188,17 +205,19 @@ export async function GET(req: NextRequest) {
         WHEN 'cierre'      THEN 4
         ELSE 5
       END
-    `, [])
+    `, []),
+  )
 
-    const pipeline: PipelineStage[] = pipelineRows.map(r => ({
-      stage: r.stage,
-      label: STAGE_LABELS[r.stage] ?? r.stage,
-      count: parseInt(r.count),
-      value: parseFloat(r.value),
-    }))
+  const pipeline: PipelineStage[] = pipelineRows.map(r => ({
+    stage: r.stage,
+    label: STAGE_LABELS[r.stage] ?? r.stage,
+    count: parseInt(r.count),
+    value: parseFloat(r.value),
+  }))
 
-    // ── Deals closing soon ───────────────────────────────────────────────────────
-    const closingRows = await query<{
+  // ── Deals closing soon ────────────────────────────────────────────────────────
+  const closingRows = await safeQuery('closing_soon', () =>
+    query<{
       id: number; title: string; amount: string | null
       stage: string; close_date: string
       contact_name: string | null; owner_name: string | null
@@ -216,21 +235,23 @@ export async function GET(req: NextRequest) {
         AND d.stage NOT IN ('ganado','perdido')
       ORDER BY d.close_date
       LIMIT 8
-    `, [])
+    `, []),
+  )
 
-    const closing_soon: DealClosingSoon[] = closingRows.map(r => ({
-      id:           r.id,
-      title:        r.title,
-      amount:       r.amount != null ? parseFloat(r.amount) : null,
-      stage:        r.stage,
-      close_date:   r.close_date,
-      contact_name: r.contact_name,
-      owner_name:   r.owner_name,
-      days_left:    Math.ceil((new Date(r.close_date).getTime() - Date.now()) / 86400000),
-    }))
+  const closing_soon: DealClosingSoon[] = closingRows.map(r => ({
+    id:           r.id,
+    title:        r.title,
+    amount:       r.amount != null ? parseFloat(r.amount) : null,
+    stage:        r.stage,
+    close_date:   r.close_date,
+    contact_name: r.contact_name,
+    owner_name:   r.owner_name,
+    days_left:    Math.ceil((new Date(r.close_date).getTime() - Date.now()) / 86400000),
+  }))
 
-    // ── Pending tasks ────────────────────────────────────────────────────────────
-    const taskRows = await query<{
+  // ── Pending tasks ─────────────────────────────────────────────────────────────
+  const taskRows = await safeQuery('tasks', () =>
+    query<{
       id: string; title: string; type: string; priority: string
       status: string; due_date: string | null; assignee_name: string | null
     }>(`
@@ -247,20 +268,22 @@ export async function GET(req: NextRequest) {
         CASE t.priority WHEN 'alta' THEN 1 WHEN 'media' THEN 2 ELSE 3 END,
         t.due_date NULLS LAST
       LIMIT 6
-    `, [])
+    `, []),
+  )
 
-    const tasks: PendingTask[] = taskRows.map(r => ({
-      id:            r.id,
-      title:         r.title,
-      type:          r.type,
-      priority:      r.priority,
-      status:        r.status,
-      due_date:      r.due_date,
-      assignee_name: r.assignee_name,
-    }))
+  const tasks: PendingTask[] = taskRows.map(r => ({
+    id:            r.id,
+    title:         r.title,
+    type:          r.type,
+    priority:      r.priority,
+    status:        r.status,
+    due_date:      r.due_date,
+    assignee_name: r.assignee_name,
+  }))
 
-    // ── Top contacts by deal value ────────────────────────────────────────────────
-    const contactRows = await query<{
+  // ── Top contacts ──────────────────────────────────────────────────────────────
+  const contactRows = await safeQuery('top_contacts', () =>
+    query<{
       id: number; name: string; phone: string | null
       deals_count: string; total_value: string; last_deal_date: string | null
     }>(`
@@ -274,80 +297,94 @@ export async function GET(req: NextRequest) {
       GROUP BY c.id, c.name, c.phone
       ORDER BY SUM(d.amount) DESC NULLS LAST
       LIMIT 6
-    `, [])
+    `, []),
+  )
 
-    const top_contacts: TopContact[] = contactRows.map(r => ({
-      id:             r.id,
-      name:           r.name,
-      phone:          r.phone,
-      deals_count:    parseInt(r.deals_count),
-      total_value:    parseFloat(r.total_value),
-      last_deal_date: r.last_deal_date,
-    }))
+  const top_contacts: TopContact[] = contactRows.map(r => ({
+    id:             r.id,
+    name:           r.name,
+    phone:          r.phone,
+    deals_count:    parseInt(r.deals_count),
+    total_value:    parseFloat(r.total_value),
+    last_deal_date: r.last_deal_date,
+  }))
 
-    // ── Recent activity ──────────────────────────────────────────────────────────
-    const activityRows = await query<{
-      id: string; type: string; title: string; description: string; timestamp: string
-    }>(`
-      (SELECT
-        id::text, 'deal_created' AS type,
-        'Nuevo deal: ' || title AS title,
-        COALESCE('Por ' || (SELECT name FROM users WHERE id = owner_id), '') AS description,
-        created_at::text AS timestamp
-      FROM deals
-      WHERE created_at BETWEEN $1 AND $2
-      ORDER BY created_at DESC LIMIT 3)
-      UNION ALL
-      (SELECT
-        id::text, 'deal_won' AS type,
-        'Deal ganado: ' || title AS title,
-        '$' || COALESCE(amount::text, '0') AS description,
-        updated_at::text AS timestamp
-      FROM deals
-      WHERE stage = 'ganado' AND updated_at BETWEEN $1 AND $2
-      ORDER BY updated_at DESC LIMIT 3)
-      UNION ALL
-      (SELECT
-        id::text, 'task_completed' AS type,
-        'Tarea completada: ' || title AS title,
-        type AS description,
-        updated_at::text AS timestamp
-      FROM tasks
-      WHERE status = 'completada' AND deleted_at IS NULL AND updated_at BETWEEN $1 AND $2
-      ORDER BY updated_at DESC LIMIT 3)
-      UNION ALL
-      (SELECT
-        id::text, 'contact_added' AS type,
-        'Nuevo contacto: ' || name AS title,
-        COALESCE(phone, '') AS description,
-        created_at::text AS timestamp
-      FROM contacts
-      WHERE created_at BETWEEN $1 AND $2
-      ORDER BY created_at DESC LIMIT 3)
-      ORDER BY timestamp DESC
-      LIMIT 8
-    `, [dateFrom, dateToEOD])
+  // ── Recent activity — 4 consultas separadas + merge en JS ────────────────────
+  // (evita UNION ALL con $1/$2 en múltiples ramas, más compatible)
+  const [actDealsCreated, actDealsWon, actTasksDone, actContacts] = await Promise.all([
+    safeQuery('activity_deals_created', () =>
+      query<{ id: string; title: string; description: string; timestamp: string }>(`
+        SELECT
+          id::text,
+          'Nuevo deal: ' || title            AS title,
+          COALESCE('Por ' || (SELECT name FROM users WHERE id = owner_id), '') AS description,
+          created_at::text                   AS timestamp
+        FROM deals
+        WHERE created_at BETWEEN $1 AND $2
+        ORDER BY created_at DESC
+        LIMIT 3
+      `, [dateFrom, dateToEOD]),
+    ),
+    safeQuery('activity_deals_won', () =>
+      query<{ id: string; title: string; description: string; timestamp: string }>(`
+        SELECT
+          id::text,
+          'Deal ganado: ' || title            AS title,
+          '$' || COALESCE(amount::text, '0')  AS description,
+          updated_at::text                    AS timestamp
+        FROM deals
+        WHERE stage = 'ganado'
+          AND updated_at BETWEEN $1 AND $2
+        ORDER BY updated_at DESC
+        LIMIT 3
+      `, [dateFrom, dateToEOD]),
+    ),
+    safeQuery('activity_tasks_done', () =>
+      query<{ id: string; title: string; description: string; timestamp: string }>(`
+        SELECT
+          id::text,
+          'Tarea completada: ' || title AS title,
+          type                          AS description,
+          updated_at::text              AS timestamp
+        FROM tasks
+        WHERE status = 'completada'
+          AND deleted_at IS NULL
+          AND updated_at BETWEEN $1 AND $2
+        ORDER BY updated_at DESC
+        LIMIT 3
+      `, [dateFrom, dateToEOD]),
+    ),
+    safeQuery('activity_contacts', () =>
+      query<{ id: string; title: string; description: string; timestamp: string }>(`
+        SELECT
+          id::text,
+          'Nuevo contacto: ' || name    AS title,
+          COALESCE(phone, '')           AS description,
+          created_at::text              AS timestamp
+        FROM contacts
+        WHERE created_at BETWEEN $1 AND $2
+        ORDER BY created_at DESC
+        LIMIT 3
+      `, [dateFrom, dateToEOD]),
+    ),
+  ])
 
-    const recent_activity: RecentActivity[] = activityRows.map(r => ({
-      id:          r.id,
-      type:        r.type as RecentActivity['type'],
-      title:       r.title,
-      description: r.description,
-      timestamp:   r.timestamp,
-    }))
+  const recent_activity: RecentActivity[] = [
+    ...actDealsCreated.map(r => ({ ...r, id: `dc-${r.id}`, type: 'deal_created' as const })),
+    ...actDealsWon.map(r =>    ({ ...r, id: `dw-${r.id}`, type: 'deal_won'     as const })),
+    ...actTasksDone.map(r =>   ({ ...r, id: `tc-${r.id}`, type: 'task_completed' as const })),
+    ...actContacts.map(r =>    ({ ...r, id: `ca-${r.id}`, type: 'contact_added' as const })),
+  ]
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+    .slice(0, 8)
 
-    return NextResponse.json({
-      kpis,
-      revenue_trend,
-      pipeline,
-      closing_soon,
-      tasks,
-      top_contacts,
-      recent_activity,
-    } satisfies CrmDashboardData)
-
-  } catch (err) {
-    console.error('[dashboard/crm]', err)
-    return NextResponse.json({ error: 'Error interno' }, { status: 500 })
-  }
+  return NextResponse.json({
+    kpis,
+    revenue_trend,
+    pipeline,
+    closing_soon,
+    tasks,
+    top_contacts,
+    recent_activity,
+  } satisfies CrmDashboardData)
 }
