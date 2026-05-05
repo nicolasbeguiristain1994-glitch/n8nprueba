@@ -80,16 +80,17 @@ export async function POST(req: NextRequest) {
   if (!evolution_instance || typeof evolution_instance !== 'string')
     return NextResponse.json({ error: 'evolution_instance is required' }, { status: 400 })
 
-  const line_key = evolution_instance.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+  const line_key    = evolution_instance.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+  const evo_url     = process.env.EVOLUTION_URL ?? 'http://evolution-api:8080'
 
   try {
     const inserted = await query<{ id: string }>(
       `INSERT INTO whatsapp_lines
-         (line_key, display_name, phone_number, evolution_instance, status, is_connected)
-       VALUES ($1, $2, $3, $4, 'active', true)
+         (line_key, display_name, phone_number, evolution_instance, evolution_url, status, is_connected)
+       VALUES ($1, $2, $3, $4, $5, 'active', true)
        ON CONFLICT (evolution_instance) DO NOTHING
        RETURNING id`,
-      [line_key, display_name || evolution_instance, phone_number || null, evolution_instance]
+      [line_key, display_name || evolution_instance, phone_number || null, evolution_instance, evo_url]
     )
 
     if (!inserted.length)
