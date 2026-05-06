@@ -354,10 +354,13 @@ export async function sendViaEvolution(
   const evoUrl = line.evolution_url || process.env.EVOLUTION_URL || ''
   if (!evoUrl) throw new Error(`evolution_url not configured for line ${line.id}`)
 
+  // Evolution v2 rejects numbers with a leading '+' → strip it
+  const formattedPhone = phone.startsWith('+') ? phone.slice(1) : phone
+
   let body: Record<string, unknown>
   if (mediaUrl) {
     body = {
-      number: phone,
+      number: formattedPhone,
       mediaMessage: {
         mediatype: 'image',
         media:     mediaUrl,
@@ -365,7 +368,7 @@ export async function sendViaEvolution(
       },
     }
   } else {
-    body = { number: phone, text: message }
+    body = { number: formattedPhone, text: message }
   }
 
   const url = `${evoUrl}/message/sendText/${line.evolution_instance}`
