@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
              c.processor_locked_at,
              c.created_at, c.owned_by, cl.name AS list_name, cl.id AS list_id,
              COUNT(m.id) FILTER (WHERE m.status IN ('sent','delivered','read'))::int AS total_sent,
-             COUNT(m.id) FILTER (WHERE m.status = 'delivered')::int               AS total_delivered,
+             COUNT(m.id) FILTER (WHERE m.status IN ('delivered','read'))::int       AS total_delivered,
              COUNT(m.id) FILTER (WHERE m.status = 'read')::int                    AS total_read,
              COUNT(m.id) FILTER (WHERE m.status = 'failed')::int                  AS total_failed,
              (SELECT COUNT(*) FROM campaign_recipients cr
