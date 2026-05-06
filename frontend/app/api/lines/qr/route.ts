@@ -124,10 +124,11 @@ export async function GET(req: NextRequest) {
         })
       }
 
-      // Si hay un handshake en curso (connecting), hacer logout primero
-      // para liberar la sesión parcial antes de reiniciar
-      if (currentState === 'connecting') {
-        console.log('[qr/restart] connecting → doing logout first')
+      // Hacer logout en cualquier estado no-open para limpiar el auth state de
+      // Baileys. Sin esto, Evolution reutiliza credenciales expiradas y WhatsApp
+      // rechaza el handshake con "no se pudo vincular el dispositivo".
+      if (currentState !== 'notFound') {
+        console.log('[qr/restart] doing logout to clear stale Baileys session')
         await fetch(
           `${EVO_URL}/instance/logout/${encodeURIComponent(instance)}`,
           { method: 'DELETE', headers: { apikey: EVO_KEY } },

@@ -183,12 +183,14 @@ export default function Lines() {
   }, [load])
 
   // ── openQrModal ─────────────────────────────────────────────────────────────
-  // Genera el QR UNA vez, luego inicia polling de estado (no de QR).
+  // Siempre usa restart=true para limpiar sesiones Baileys previas antes de
+  // generar el QR. Sin esto, Evolution intenta reusar credenciales expiradas
+  // y WhatsApp rechaza el handshake con "no se pudo vincular el dispositivo".
   const openQrModal = async (line: Line) => {
     setQrLine(line); setQrState('loading'); setQrBase64(null)
     setQrError(null); setQrExpiresAt(null)
 
-    const done = await fetchQr(line.evolution_instance)
+    const done = await fetchQr(line.evolution_instance, true)
     if (!done) {
       stopPoll()
       pollRef.current = setInterval(() => pollStatus(line.evolution_instance), STATUS_INTERVAL_MS)
