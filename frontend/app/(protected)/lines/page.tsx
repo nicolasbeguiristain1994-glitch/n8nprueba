@@ -69,12 +69,16 @@ export default function Lines() {
 
   useEffect(() => { load() }, [load])
 
-  // Countdown del QR
+  // Countdown del QR — al llegar a 0 detiene el polling (QR inválido)
   useEffect(() => {
     if (qrState !== 'qr' || !qrExpiresAt) return
     const tick = setInterval(() => {
       const left = Math.max(0, Math.ceil((qrExpiresAt - Date.now()) / 1000))
       setTimeLeft(left)
+      if (left === 0) {
+        stopPoll()  // QR expirado — no tiene sentido seguir consultando estado
+        clearInterval(tick)
+      }
     }, 1000)
     return () => clearInterval(tick)
   }, [qrState, qrExpiresAt])
@@ -112,18 +116,18 @@ export default function Lines() {
       const data = await res.json()
 
       if (data.connected) {
-        setQrState('connected')
-        stopPoll()
-        load()
-        return
+        setQrState('connected'); stopPoll(); load(); return
       }
-      // QR escaneado, handshake en progreso — mostrar estado sin tocar el QR
+      if (data.notFound) {
+        // La instancia desapareció de Evolution durante el polling
+        stopPoll(); setCanCreate(data.canCreate ?? false); setQrState('not-found'); return
+      }
       if (data.state === 'connecting') {
-        setQrState('connecting')
+        setQrState('connecting'); return
       }
-      // state === 'close' → sigue esperando scan, no hacer nada
+      // state === 'close' → esperando scan, no hacer nada
     } catch {
-      // error transitorio — ignorar, seguir polling
+      // error transitorio de red — ignorar, seguir polling
     }
   }, [load])
 
@@ -136,12 +140,18 @@ export default function Lines() {
       const res  = await fetch(url)
       const data = await res.json()
 
-      if (data.connected) {
+      // La instancia ya estaba conectada — no hacía falta regenerar
+      if (data.connected || data.alreadyConnected) {
         setQrState('connected'); stopPoll(); load(); return true
       }
       if (data.notFound) {
         setCanCreate(data.canCreate ?? false)
         setQrState('not-found'); stopPoll(); return false
+      }
+      // Evolution respondió "connecting" sin QR — handshake ya en curso
+      if (data.state === 'connecting') {
+        setQrState('connecting')
+        return false
       }
       if (data.base64) {
         setQrBase64(data.base64)
@@ -591,18 +601,28 @@ export default function Lines() {
                 <div className="text-center space-y-1">
                   <p className="text-sm font-medium">Escaneá con WhatsApp</p>
                   <p className="text-xs text-gray-400">WhatsApp → Dispositivos vinculados → Vincular un dispositivo</p>
-                  {timeLeft > 0
+                  {timeLeft > 10
                     ? <p className="text-xs text-orange-500 flex items-center justify-center gap-1 mt-1">
                         <Loader2 size={11} className="animate-spin" />
-                        Esperando escaneo… expira en {timeLeft}s
+                        Escaneá ahora · expira en {timeLeft}s
+                      </p>
+                    : timeLeft > 0
+                    ? <p className="text-xs text-red-500 font-semibold flex items-center justify-center gap-1 mt-1">
+                        <Loader2 size={11} className="animate-spin" />
+                        Apurate — expira en {timeLeft}s
                       </p>
                     : <p className="text-xs text-red-500 font-medium mt-1">
-                        QR expirado — regenerá para obtener uno nuevo
+                        QR expirado · hacé clic en Regenerar para obtener uno nuevo
                       </p>
                   }
                 </div>
-                <Button variant="outline" size="sm" className="w-full" onClick={handleRegenerate}>
-                  <RefreshCw size={13} className="mr-1" /> Regenerar QR
+                <Button
+                  variant="outline" size="sm" className="w-full"
+                  disabled={timeLeft > 0 && timeLeft <= 3}
+                  onClick={handleRegenerate}
+                >
+                  <RefreshCw size={13} className="mr-1" />
+                  {timeLeft === 0 ? 'Obtener nuevo QR' : 'Regenerar QR'}
                 </Button>
               </>
             )}
@@ -613,7 +633,8 @@ export default function Lines() {
                 <Loader2 size={36} className="animate-spin text-blue-500" />
                 <p className="text-sm font-semibold text-blue-700">Vinculando dispositivo…</p>
                 <p className="text-xs text-gray-500 text-center">
-                  WhatsApp está procesando la vinculación. No cierres esta ventana.
+                  Confirmá en tu teléfono si WhatsApp lo solicita.<br />
+                  No cierres esta ventana ni regeneres el QR.
                 </p>
               </div>
             )}

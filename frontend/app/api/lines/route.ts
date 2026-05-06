@@ -142,6 +142,20 @@ export async function DELETE(req: NextRequest) {
     void audit({ req, action: 'manage', resource: 'lines',
       metadata: { deleted_id: id, evolution_instance, display_name } })
 
+    // Best-effort: desconectar la sesión WhatsApp de la instancia al eliminar la línea.
+    // No hacemos DELETE /instance/delete porque el negocio puede querer
+    // reusar la instancia en Evolution. Solo hacemos logout para liberar
+    // la sesión activa de WhatsApp sin dejar el número vinculado a una línea
+    // que ya no existe en el sistema.
+    const evoUrl = process.env.EVOLUTION_URL
+    const evoKey = process.env.EVOLUTION_GLOBAL_API_KEY ?? process.env.EVOLUTION_API_KEY
+    if (evoUrl && evoKey && evolution_instance) {
+      void fetch(
+        `${evoUrl}/instance/logout/${encodeURIComponent(evolution_instance)}`,
+        { method: 'DELETE', headers: { apikey: evoKey } },
+      ).catch(e => console.warn('[lines/delete] Evolution logout failed (best-effort):', e?.message))
+    }
+
     return NextResponse.json({ ok: true })
   } catch (e) {
     if (e instanceof Error && (e as NodeJS.ErrnoException & { code?: string }).code === 'NOT_FOUND')

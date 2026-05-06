@@ -301,6 +301,40 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── Cambio de estado de conexión ─────────────────────────────────────────
+  // Evolution emite CONNECTION_UPDATE cuando una instancia se conecta o
+  // desconecta. Usamos esto para mantener is_connected sincronizado en DB
+  // sin depender solo del polling del modal QR.
+  if (event === 'connection.update' || event === 'CONNECTION_UPDATE') {
+    try {
+      const instanceName = typeof body.instance === 'string' ? body.instance : null
+      const state        = typeof data.state    === 'string' ? data.state    : null
+
+      if (instanceName && state) {
+        if (state === 'open') {
+          await query(
+            `UPDATE whatsapp_lines
+             SET is_connected = true, status = 'active', last_seen_at = NOW(), updated_at = NOW()
+             WHERE evolution_instance = $1`,
+            [instanceName],
+          ).catch(() => {})
+          console.log('[webhook/evolution] CONNECTION_UPDATE open:', instanceName)
+        } else if (state === 'close') {
+          await query(
+            `UPDATE whatsapp_lines
+             SET is_connected = false, updated_at = NOW()
+             WHERE evolution_instance = $1`,
+            [instanceName],
+          ).catch(() => {})
+          console.log('[webhook/evolution] CONNECTION_UPDATE close:', instanceName)
+        }
+      }
+    } catch (e) {
+      console.error('[webhook/evolution] CONNECTION_UPDATE error:', e instanceof Error ? e.message : e)
+    }
+    return NextResponse.json({ ok: true })
+  }
+
   // Otros eventos ignorados
   return NextResponse.json({ ok: true })
 }
