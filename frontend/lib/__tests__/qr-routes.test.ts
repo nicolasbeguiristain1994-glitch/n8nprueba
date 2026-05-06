@@ -127,7 +127,7 @@ describe('GET /api/lines/qr/status', () => {
     mockQuery.mockResolvedValue([])
   })
 
-  it('devuelve notFound cuando fetchInstances retorna 404', async () => {
+  it('devuelve notFound cuando connectionState retorna 404', async () => {
     mockFetch.mockResolvedValueOnce(evoRes({}, 404))
     const { GET } = await import('@/app/api/lines/qr/status/route')
     const res  = await GET(makeReq('/api/lines/qr/status', { instance: 'my-instance' }))
@@ -137,17 +137,18 @@ describe('GET /api/lines/qr/status', () => {
     expect(body.connected).toBe(false)
   })
 
-  it('devuelve notFound cuando fetchInstances retorna array vacío', async () => {
-    mockFetch.mockResolvedValueOnce(evoRes([], 200))
+  it('devuelve state close cuando connectionState retorna objeto sin estado reconocido', async () => {
+    mockFetch.mockResolvedValueOnce(evoRes({}, 200))
     const { GET } = await import('@/app/api/lines/qr/status/route')
     const res  = await GET(makeReq('/api/lines/qr/status', { instance: 'my-instance' }))
     const body = await res.json()
-    expect(body.state).toBe('notFound')
+    expect(body.state).toBe('close')
+    expect(body.connected).toBe(false)
   })
 
   it('devuelve state connecting', async () => {
     mockFetch.mockResolvedValueOnce(
-      evoRes([{ instance: { instanceName: 'my-instance', state: 'connecting' } }]),
+      evoRes({ instance: { instanceName: 'my-instance', state: 'connecting' } }),
     )
     const { GET } = await import('@/app/api/lines/qr/status/route')
     const body = await (await GET(makeReq('/api/lines/qr/status', { instance: 'my-instance' }))).json()
@@ -156,6 +157,11 @@ describe('GET /api/lines/qr/status', () => {
   })
 
   it('devuelve connected y phone_number cuando state = open', async () => {
+    // 1er fetch: connectionState → state=open
+    mockFetch.mockResolvedValueOnce(
+      evoRes({ instance: { instanceName: 'my-instance', state: 'open' } }),
+    )
+    // 2do fetch: fetchInstances → ownerJid para phone_number
     mockFetch.mockResolvedValueOnce(
       evoRes([{ instance: { state: 'open' }, ownerJid: '5491100000@s.whatsapp.net' }]),
     )
@@ -175,13 +181,15 @@ describe('GET /api/lines/qr/status', () => {
     expect((await GET(makeReq('/api/lines/qr/status'))).status).toBe(400)
   })
 
-  it('NUNCA llama a /instance/connect', async () => {
-    mockFetch.mockResolvedValueOnce(evoRes([{ instance: { state: 'close' } }]))
+  it('NUNCA llama a /instance/connect (solo connectionState)', async () => {
+    mockFetch.mockResolvedValueOnce(evoRes({ instance: { state: 'close' } }))
     const { GET } = await import('@/app/api/lines/qr/status/route')
     await GET(makeReq('/api/lines/qr/status', { instance: 'my-instance' }))
     const calls = mockFetch.mock.calls.map((args: unknown[]) => args[0] as string)
-    expect(calls.every(u => !u.includes('/instance/connect'))).toBe(true)
-    expect(calls.some(u => u.includes('/instance/fetchInstances'))).toBe(true)
+    // /instance/connect/ (con barra final) no debe aparecer — distingue del endpoint
+    // /instance/connectionState que sí es el correcto para polling
+    expect(calls.every(u => !u.includes('/instance/connect/'))).toBe(true)
+    expect(calls.some(u => u.includes('/instance/connectionState'))).toBe(true)
   })
 })
 

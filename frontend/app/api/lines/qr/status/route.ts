@@ -35,23 +35,27 @@ export async function GET(req: NextRequest) {
   const EVO_KEY    = EVO_GLOBAL ?? process.env.EVOLUTION_API_KEY ?? ''
 
   try {
-    const res = await fetch(
-      `${EVO_URL}/instance/fetchInstances?instanceName=${encodeURIComponent(instance)}`,
+    // ── Usar connectionState para estado en tiempo real ───────────────────────
+    // fetchInstances lee de caché/DB de Evolution y puede retornar 'close'
+    // aunque Baileys ya esté conectado. connectionState consulta el WebSocket
+    // de Baileys directamente y refleja el estado real.
+    const csRes = await fetch(
+      `${EVO_URL}/instance/connectionState/${encodeURIComponent(instance)}`,
       { headers: { apikey: EVO_KEY }, cache: 'no-store' },
     )
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let body: any
-    try { body = await res.json() } catch { body = [] }
+    let csBody: any
+    try { csBody = await csRes.json() } catch { csBody = {} }
 
-    const parsed = parseInstancesResponse(res.status, body)
+    const parsed = parseInstancesResponse(csRes.status, csBody)
 
     console.log(JSON.stringify({
       ts: new Date().toISOString(), event: 'qr.status.polled',
       instance, state: parsed.state,
     }))
 
-    if (parsed.state === 'notFound') {
+    if (csRes.status === 404 || parsed.state === 'notFound') {
       await query(
         `UPDATE whatsapp_lines SET is_connected = false, updated_at = NOW() WHERE evolution_instance = $1`,
         [instance],
@@ -65,18 +69,31 @@ export async function GET(req: NextRequest) {
     }
 
     if (parsed.state === 'open') {
+      // Obtener phone_number vía fetchInstances (incluye ownerJid, connectionState no lo tiene)
+      let phone_number: string | null = null
+      try {
+        const fiRes  = await fetch(
+          `${EVO_URL}/instance/fetchInstances?instanceName=${encodeURIComponent(instance)}`,
+          { headers: { apikey: EVO_KEY }, cache: 'no-store' },
+        )
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let fiBody: any
+        try { fiBody = await fiRes.json() } catch { fiBody = [] }
+        phone_number = parseInstancesResponse(fiRes.status, fiBody).phone_number
+      } catch { /* best-effort */ }
+
       await query(
         `UPDATE whatsapp_lines
          SET is_connected = true, status = 'active', last_seen_at = NOW(), updated_at = NOW()
-             ${parsed.phone_number ? ', phone_number = $2' : ''}
+             ${phone_number ? ', phone_number = $2' : ''}
          WHERE evolution_instance = $1`,
-        parsed.phone_number ? [instance, parsed.phone_number] : [instance],
+        phone_number ? [instance, phone_number] : [instance],
       ).catch(e => console.error('[qr/status] db update error:', e?.message))
 
       return NextResponse.json({
         state:        'open',
         connected:    true,
-        phone_number: parsed.phone_number,
+        phone_number,
       })
     }
 
