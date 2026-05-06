@@ -161,7 +161,14 @@ export default function Lines() {
   const fetchQr = useCallback(async (instance: string, restart = false): Promise<boolean> => {
     try {
       const url  = `/api/lines/qr?instance=${encodeURIComponent(instance)}${restart ? '&restart=true' : ''}`
-      const res  = await fetch(url)
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), restart ? 25000 : 10000)
+      let res: Response
+      try {
+        res = await fetch(url, { signal: controller.signal })
+      } finally {
+        clearTimeout(timeout)
+      }
       const data = await res.json()
 
       // La instancia ya estaba conectada — no hacía falta regenerar
@@ -188,8 +195,9 @@ export default function Lines() {
       setQrState('error')
       stopPoll()
       return false
-    } catch {
-      setQrError('Error de conexión')
+    } catch (err) {
+      const isTimeout = err instanceof Error && err.name === 'AbortError'
+      setQrError(isTimeout ? 'Tiempo de espera agotado. Evolution API no respondió a tiempo.' : 'Error de conexión')
       setQrState('error')
       stopPoll()
       return false
@@ -197,14 +205,14 @@ export default function Lines() {
   }, [load])
 
   // ── openQrModal ─────────────────────────────────────────────────────────────
-  // Siempre usa restart=true para limpiar sesiones Baileys previas antes de
-  // generar el QR. Sin esto, Evolution intenta reusar credenciales expiradas
-  // y WhatsApp rechaza el handshake con "no se pudo vincular el dispositivo".
+  // Primera apertura: pide QR normal (sin restart) → respuesta rápida.
+  // Si la instancia está en mal estado, el usuario usa "Regenerar QR" que sí
+  // hace restart=true (delete+recreate en Evolution).
   const openQrModal = async (line: Line) => {
     setQrLine(line); setQrState('loading'); setQrBase64(null)
     setQrError(null); setQrExpiresAt(null)
 
-    const done = await fetchQr(line.evolution_instance, true)
+    const done = await fetchQr(line.evolution_instance, false)
     if (!done) {
       stopPoll()
       pollRef.current = setInterval(() => pollStatus(line.evolution_instance), STATUS_INTERVAL_MS)
