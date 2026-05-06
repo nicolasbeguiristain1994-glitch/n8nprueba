@@ -3,11 +3,14 @@ import { query } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
 import { checkPermissionWithUser, isCampaignOwnerOrAdmin } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
+import { clog } from '@/lib/campaign-logger'
 import {
   createDispatchUnits,
   acquireProcessorLock,
   processMultiLineInBackground,
   getDispatchSummary,
+  getContactEligibilityBreakdown,
+  formatEligibilityError,
   type CampaignForDispatch,
 } from '@/lib/campaign-distributor'
 
@@ -114,7 +117,13 @@ export async function POST(
   }
 
   if (unitCounts.total === 0 && campaign.status !== 'running') {
-    return NextResponse.json({ error: 'No hay contactos elegibles en la lista' }, { status: 400 })
+    const breakdown = await getContactEligibilityBreakdown(campaign.list_id).catch(() => null)
+    const errMsg = breakdown ? formatEligibilityError(breakdown) : 'No hay contactos elegibles en la lista.'
+    console.warn(
+      `[POST /api/campaigns/[id]/dispatch] 0 contactos elegibles campaign=${id}:`,
+      breakdown ?? 'breakdown unavailable',
+    )
+    return NextResponse.json({ error: errMsg, breakdown }, { status: 400 })
   }
 
   // All recipients already processed (none pending) — covers campaigns stuck in
@@ -131,6 +140,7 @@ export async function POST(
       await query(
         `UPDATE campaigns
          SET status = 'completed', completed_at = COALESCE(completed_at, NOW()),
+             pause_reason = NULL,
              processor_locked_at = NULL, processor_lock_token = NULL
          WHERE id = $1 AND status NOT IN ('completed', 'cancelled')`,
         [id]
@@ -157,6 +167,10 @@ export async function POST(
     return NextResponse.json({ started: false, alreadyProcessing: true })
   }
 
+  if (campaign.status === 'paused') {
+    clog.info({ event: 'campaign.resumed', campaignId: id, mode: 'multi-line' })
+  }
+
   // ── Launch background processor ─────────────────────────────────────────────
   const campaignSnapshot = campaign
   const capturedToken = lockToken
@@ -164,7 +178,20 @@ export async function POST(
     try {
       await processMultiLineInBackground(campaignSnapshot, capturedToken)
     } catch (e) {
-      console.error(`[distributor ${id}] uncaught error:`, e instanceof Error ? e.message : e)
+      clog.critical({
+        event: 'processor.crashed', campaignId: id, mode: 'multi-line',
+        error: e instanceof Error ? e.message : String(e),
+        detail: 'processMultiLineInBackground lanzó error no capturado — pausando campaña',
+      })
+      // Lock is released by processMultiLineInBackground's finally block.
+      // Mark as paused so the campaign doesn't stay stuck in 'running' with no processor.
+      await query(
+        `UPDATE campaigns
+         SET status = 'paused', pause_reason = 'systemic_error',
+             processor_locked_at = NULL, processor_lock_token = NULL
+         WHERE id = $1 AND status = 'running'`,
+        [id],
+      ).catch(() => {})
     }
   })()
 

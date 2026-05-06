@@ -24,6 +24,7 @@
  */
 
 import { query } from '@/lib/db'
+import type { PoolClient } from 'pg'
 import type {
   ContactFrequencyProfile,
   ContactSendRecord,
@@ -70,8 +71,11 @@ export class ContactSendHistoryRepository {
    *
    * @param contactId - UUID del contacto a evaluar
    */
-  async getFrequencyProfile(contactId: string): Promise<ContactFrequencyProfile> {
-    const rows = await query<ProfileRow>(`
+  async getFrequencyProfile(
+    contactId: string,
+    client?: PoolClient,
+  ): Promise<ContactFrequencyProfile> {
+    const sql = `
       SELECT
         COUNT(*) FILTER (WHERE sent_at >= NOW() - INTERVAL '24 hours') AS sent_today,
         COUNT(*) FILTER (WHERE sent_at >= NOW() - INTERVAL '7 days')   AS sent_week,
@@ -79,7 +83,10 @@ export class ContactSendHistoryRepository {
       FROM contact_send_history
       WHERE contact_id = $1
         AND sent_at    >= NOW() - INTERVAL '7 days'
-    `, [contactId])
+    `
+    const rows = client
+      ? (await client.query<ProfileRow>(sql, [contactId])).rows
+      : await query<ProfileRow>(sql, [contactId])
 
     // rows[0] SIEMPRE existe (COUNT retorna una fila aunque no haya registros).
     const row = rows[0]

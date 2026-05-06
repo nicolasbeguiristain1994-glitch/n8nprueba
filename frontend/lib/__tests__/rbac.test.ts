@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * RBAC unit tests
  *

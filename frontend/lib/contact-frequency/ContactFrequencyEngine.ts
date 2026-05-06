@@ -181,14 +181,17 @@ export class ContactFrequencyEngine {
         [ADVISORY_LOCK_NAMESPACE, contactId],
       )
 
-      // ── Paso 2: Leer perfil (via pool — seguro mientras el lock está activo) ─
+      // ── Paso 2: Leer perfil usando el mismo client de la transacción ──────────
       //
-      // El lock impide que cualquier otro proceso inserte en contact_send_history
-      // para este contacto, por lo que la lectura es consistente.
-      const profile = await historyRepo.getFrequencyProfile(contactId)
+      // IMPORTANTE: pasamos `client` para que los repositorios reusen esta
+      // conexión en lugar de pedir una nueva al pool compartido.
+      // Sin este parámetro, con N líneas paralelas (N >= pool_max), todos los
+      // withTransaction retienen su conexión y los pool.query() internos no
+      // pueden obtener una conexión libre → deadlock de 10 s por timeout.
+      const profile = await historyRepo.getFrequencyProfile(contactId, client)
 
       // ── Paso 3: Resolver regla y calcular decisión ──────────────────────────
-      const rules          = await rulesRepo.findActiveRulesForContext(operatorId)
+      const rules          = await rulesRepo.findActiveRulesForContext(operatorId, client)
       const applicableRule = resolveApplicableRule(rules, operatorId, segMonto, segActividad)
       const { decision, riskScore, reason } = calculateRiskScore(profile, applicableRule)
 

@@ -27,6 +27,7 @@ import type {
   FrequencyEvaluationInput,
   RecordSendInput,
 } from '../types'
+import type { PoolClient } from 'pg'
 
 // ── Mock de @/lib/db ──────────────────────────────────────────────────────────
 
@@ -301,19 +302,25 @@ describe('ContactFrequencyEngine.atomicEvaluateAndRecord()', () => {
    * Mock de withTransaction: ejecuta el callback con un cliente falso.
    * El cliente fake responde con { rows: [] } por defecto a cualquier query.
    */
-  function setupAtomicMock() {
+  function setupAtomicMock(
+    profile: unknown[] = profileClean,
+    rules: unknown[]   = rulesDefault,
+  ) {
     const mockTxClient = {
-      query: vi.fn().mockResolvedValue({ rows: [] }),
+      query: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })       // advisory_lock
+        .mockResolvedValueOnce({ rows: profile })  // getFrequencyProfile
+        .mockResolvedValueOnce({ rows: rules })    // findActiveRulesForContext
+        .mockResolvedValue({ rows: [] }),           // INSERT + llamadas extra
     }
-    mockWithTransaction.mockImplementation(async (fn: (c: unknown) => Promise<unknown>) =>
-      fn(mockTxClient)
+    mockWithTransaction.mockImplementation(async (fn: (c: PoolClient) => Promise<unknown>) =>
+      fn(mockTxClient as unknown as PoolClient)
     )
     return mockTxClient
   }
 
   it('ALLOW: adquiere advisory lock y pre-registra el envío', async () => {
-    const mockTxClient = setupAtomicMock()
-    mockEvaluateQueries(profileClean, rulesDefault)
+    const mockTxClient = setupAtomicMock(profileClean, rulesDefault)
 
     const result = await ContactFrequencyEngine.atomicEvaluateAndRecord(
       makeInput(),
@@ -337,8 +344,7 @@ describe('ContactFrequencyEngine.atomicEvaluateAndRecord()', () => {
 
   it('DELAY: también pre-registra el envío (no es BLOCK)', async () => {
     // VIP: sentToday=1, sentThisWeek=3, hoursSinceLastSend=14 → DELAY
-    const mockTxClient = setupAtomicMock()
-    mockEvaluateQueries(profileVipDelay, rulesVip)
+    const mockTxClient = setupAtomicMock(profileVipDelay, rulesVip)
 
     const result = await ContactFrequencyEngine.atomicEvaluateAndRecord(
       makeInput({ segMonto: 'vip' }),
@@ -361,8 +367,7 @@ describe('ContactFrequencyEngine.atomicEvaluateAndRecord()', () => {
   })
 
   it('BLOCK: adquiere el lock pero NO inserta registro', async () => {
-    const mockTxClient = setupAtomicMock()
-    mockEvaluateQueries(profileDailyLimit, rulesDefault)
+    const mockTxClient = setupAtomicMock(profileDailyLimit, rulesDefault)
 
     const result = await ContactFrequencyEngine.atomicEvaluateAndRecord(
       makeInput(),
@@ -385,8 +390,7 @@ describe('ContactFrequencyEngine.atomicEvaluateAndRecord()', () => {
   })
 
   it('el lock usa el namespace correcto (50) y el contactId como clave', async () => {
-    const mockTxClient = setupAtomicMock()
-    mockEvaluateQueries(profileClean, rulesDefault)
+    const mockTxClient = setupAtomicMock(profileClean, rulesDefault)
 
     await ContactFrequencyEngine.atomicEvaluateAndRecord(makeInput(), makeRecordInput())
 
@@ -398,8 +402,7 @@ describe('ContactFrequencyEngine.atomicEvaluateAndRecord()', () => {
   })
 
   it('usa ON CONFLICT DO NOTHING para idempotencia (mismo recipientId)', async () => {
-    const mockTxClient = setupAtomicMock()
-    mockEvaluateQueries(profileClean, rulesDefault)
+    const mockTxClient = setupAtomicMock(profileClean, rulesDefault)
 
     await ContactFrequencyEngine.atomicEvaluateAndRecord(makeInput(), makeRecordInput())
 
@@ -411,8 +414,7 @@ describe('ContactFrequencyEngine.atomicEvaluateAndRecord()', () => {
   })
 
   it('retorna FrequencyEvaluationResult completo con evaluatedAt', async () => {
-    setupAtomicMock()
-    mockEvaluateQueries(profileClean, rulesDefault)
+    setupAtomicMock(profileClean, rulesDefault)
 
     const before = Date.now()
     const result = await ContactFrequencyEngine.atomicEvaluateAndRecord(
@@ -438,10 +440,7 @@ describe('ContactFrequencyEngine.atomicEvaluateAndRecord()', () => {
   })
 
   it('usa DEFAULT_GLOBAL_RULE cuando DB no retorna reglas', async () => {
-    setupAtomicMock()
-    mockQuery
-      .mockResolvedValueOnce(profileClean as never)
-      .mockResolvedValueOnce([] as never)
+    setupAtomicMock(profileClean, [])
 
     const result = await ContactFrequencyEngine.atomicEvaluateAndRecord(
       makeInput(), makeRecordInput(),

@@ -3,6 +3,7 @@ import { query } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
 import { checkPermissionWithUser, isCampaignOwnerOrAdmin } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
+import { clog } from '@/lib/campaign-logger'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await checkPermissionWithUser(req, 'campaigns', 'update')
@@ -39,12 +40,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     const updated = await query<{ id: string }>(
       `UPDATE campaigns
-       SET status = $1::campaign_status, updated_at = NOW(), updated_by = $3
+       SET status       = $1::campaign_status,
+           pause_reason = CASE WHEN $1 = 'paused' THEN 'manual' ELSE NULL END,
+           updated_at   = NOW(),
+           updated_by   = $3
        WHERE id = $2
        RETURNING id`,
       [status, id, session.user_id]
     )
     if (!updated[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+    if (status === 'paused') {
+      clog.info({ event: 'campaign.paused', campaignId: id, reason: 'manual' })
+    } else if (status === 'cancelled') {
+      clog.info({ event: 'campaign.cancelled', campaignId: id })
+    }
+
     void audit({ req, action: 'update', resource: 'campaigns', resource_id: id,
       metadata: { status } })
     return NextResponse.json({ ok: true })

@@ -26,6 +26,8 @@ interface Campaign {
   list_name: string; list_id: string | null
   antiblock_delay_min: number; antiblock_delay_max: number
   personalize_name: boolean; use_multi_line: boolean; created_at: string
+  pause_reason: 'manual' | 'no_eligible_lines' | 'all_lines_outside_schedule' | 'systemic_error' | 'config_missing' | 'frequency_exhausted' | 'unknown' | null
+  processor_locked_at: string | null
 }
 interface DispatchSummary {
   total: number; queued: number; processing: number
@@ -41,6 +43,15 @@ const STATUS_BADGE: Record<string, string> = {
   completed:  'bg-green-100 text-green-700',
   paused:     'bg-orange-100 text-orange-700',
   cancelled:  'bg-red-100 text-red-600',
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  draft:     'Borrador',
+  scheduled: 'Programado',
+  running:   'Enviando',
+  completed: 'Completado',
+  paused:    'Pausado',
+  cancelled: 'Cancelado',
 }
 
 export default function Campaigns() {
@@ -60,8 +71,9 @@ export default function Campaigns() {
   const [detailError, setDetailError] = useState<string | null>(null)
   const [dispatch, setDispatch]       = useState<DispatchSummary | null>(null)
   const [loadingDispatch, setLoadingDispatch] = useState(false)
-  const [resuming, setResuming]       = useState<string | null>(null)
+  const [resuming, setResuming]           = useState<string | null>(null)
   const [freqResetting, setFreqResetting] = useState<string | null>(null)
+  const [unlocking, setUnlocking]         = useState<string | null>(null)
 
   // Form
   const [form, setForm] = useState({
@@ -217,6 +229,25 @@ export default function Campaigns() {
     }
   }
 
+  const forceUnlock = async (campaign: Campaign) => {
+    if (!confirm(`¿Liberar el lock de "${campaign.name}"?\n\nEsto pausará la campaña y liberará el procesador bloqueado. Luego podés reanudarla manualmente.`)) return
+    setUnlocking(campaign.id)
+    setSendError(null)
+    try {
+      const res = await fetch(`/api/campaigns/${campaign.id}/force-unlock`, { method: 'POST' })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setSendError(d.error || 'Error al liberar el lock')
+      } else {
+        load()
+      }
+    } catch {
+      setSendError('Error de red al liberar el lock')
+    } finally {
+      setUnlocking(null)
+    }
+  }
+
   const openDetail = async (c: Campaign) => {
     setSelected(c)
     setCampContacts([])
@@ -301,7 +332,7 @@ export default function Campaigns() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_BADGE[c.status] || ''}`}>
-                          {c.status}
+                          {STATUS_LABEL[c.status] ?? c.status}
                         </span>
                         {c.use_multi_line && (
                           <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full flex items-center gap-1">
@@ -340,8 +371,8 @@ export default function Campaigns() {
                         <MiniStat label="Enviados"   value={c.total_sent}      color="blue" />
                         <MiniStat label="Entregados" value={c.total_delivered} color="green" />
                         <MiniStat label="Leídos"     value={c.total_read}      pct={c.read_rate} color="purple" />
-                        {c.total_failed  > 0 && <MiniStat label="Fallidos"  value={c.total_failed}  color="red" />}
-                        {c.total_skipped > 0 && <MiniStat label="Omitidos"  value={c.total_skipped} color="orange" />}
+                        {c.total_failed  > 0 && <MiniStat label="Fallidos"       value={c.total_failed}  color="red" />}
+                        {c.total_skipped > 0 && <MiniStat label="Omitidos (freq.)" value={c.total_skipped} color="orange" />}
                       </div>
                     )}
 
@@ -419,16 +450,81 @@ export default function Campaigns() {
                     </div>
                   </div>
 
+                  {/* Aviso de pausa */}
+                  {c.status === 'paused' && (
+                    <div className="mt-2 flex items-start gap-1.5 text-xs text-orange-600">
+                      <AlertTriangle size={11} className="shrink-0 mt-0.5" />
+                      <span>
+                        {c.pause_reason === 'manual' && (
+                          <>Pausado manualmente. <span className="text-gray-500">Presioná Reanudar para continuar.</span></>
+                        )}
+                        {c.pause_reason === 'no_eligible_lines' && (() => {
+                          const pending = c.total_targets - c.total_sent - c.total_failed - c.total_skipped
+                          return <>{pending} destinatarios pendientes — sin líneas activas o con cuota agotada. <span className="text-gray-500">Reconectá líneas o esperá que se reinicien los contadores, luego reanudar.</span></>
+                        })()}
+                        {c.pause_reason === 'all_lines_outside_schedule' && (() => {
+                          const pending = c.total_targets - c.total_sent - c.total_failed - c.total_skipped
+                          return <>{pending} destinatarios pendientes — todas las líneas fuera de su ventana de horario. <span className="text-gray-500">Se retomarán automáticamente al reanudar cuando las líneas entren en horario.</span></>
+                        })()}
+                        {c.pause_reason === 'systemic_error' && (() => {
+                          const pending = c.total_targets - c.total_sent - c.total_failed - c.total_skipped
+                          return <>{pending} destinatarios pendientes — error sistémico del procesador. <span className="text-gray-500">Revisá los logs antes de reanudar. Si el problema persiste, contactá soporte.</span></>
+                        })()}
+                        {c.pause_reason === 'config_missing' && (
+                          <>Configuración incompleta: falta <code className="bg-orange-100 px-0.5 rounded">EVOLUTION_API_KEY</code>. <span className="text-gray-500">Configurar la variable de entorno y reanudar.</span></>
+                        )}
+                        {c.pause_reason === 'frequency_exhausted' && (
+                          <>Todos los contactos bloqueados por límite de frecuencia. <span className="text-gray-500">Los contactos podrán recibir mensajes en la siguiente ventana (24h/7d).</span></>
+                        )}
+                        {(c.pause_reason === 'unknown' || !c.pause_reason) && (() => {
+                          const pending = c.total_targets - c.total_sent - c.total_failed - c.total_skipped
+                          return pending > 0
+                            ? <>{pending} destinatarios pendientes — pausado automáticamente. <span className="text-gray-500">Reanudar para continuar.</span></>
+                            : <>Pausado.</>
+                        })()}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Force-unlock para admin: campaña en running con lock activo */}
+                  {isAdmin && c.status === 'running' && c.processor_locked_at && (() => {
+                    const lockedMs = Date.now() - new Date(c.processor_locked_at).getTime()
+                    const lockedMin = Math.floor(lockedMs / 60_000)
+                    if (lockedMin < 20) return null  // lock reciente, no mostramos
+                    return (
+                      <div className="mt-2 flex items-center gap-2 text-xs text-red-500">
+                        <AlertTriangle size={11} className="shrink-0" />
+                        <span>Procesador bloqueado hace {lockedMin} min sin progreso evidente.</span>
+                        <button
+                          className="underline hover:text-red-700 disabled:opacity-50 whitespace-nowrap"
+                          disabled={unlocking === c.id}
+                          onClick={() => forceUnlock(c)}
+                        >
+                          {unlocking === c.id ? <Loader2 size={11} className="inline animate-spin"/> : 'Liberar lock (admin)'}
+                        </button>
+                      </div>
+                    )
+                  })()}
+
+                  {/* Aviso de campaign all-skipped completada */}
+                  {c.status === 'completed' && c.total_skipped > 0 &&
+                   c.total_sent === 0 && c.total_failed === 0 && (
+                    <div className="mt-2 flex items-center gap-1.5 text-xs text-orange-500">
+                      <Ban size={11} />
+                      <span>Todos los contactos omitidos por límite de frecuencia</span>
+                    </div>
+                  )}
+
                   {/* Barra de progreso */}
                   {c.status === 'running' && c.total_targets > 0 && (
                     <div className="mt-3">
                       <div className="flex justify-between text-xs text-gray-400 mb-1">
                         <span>Enviando…</span>
-                        <span>{c.total_sent}/{c.total_targets}</span>
+                        <span>{c.total_sent + c.total_failed + c.total_skipped}/{c.total_targets}</span>
                       </div>
                       <div className="w-full bg-gray-100 rounded-full h-1.5">
                         <div className="bg-green-500 h-1.5 rounded-full transition-all"
-                             style={{ width: `${(c.total_sent/c.total_targets)*100}%` }} />
+                             style={{ width: `${((c.total_sent + c.total_failed + c.total_skipped)/c.total_targets)*100}%` }} />
                       </div>
                     </div>
                   )}
@@ -697,7 +793,7 @@ export default function Campaigns() {
             <DialogTitle className="flex items-center gap-2">
               {selected?.name}
               <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_BADGE[selected?.status || ''] || 'bg-gray-100 text-gray-600'}`}>
-                {selected?.status}
+                {STATUS_LABEL[selected?.status ?? ''] ?? selected?.status}
               </span>
             </DialogTitle>
           </DialogHeader>
@@ -713,6 +809,16 @@ export default function Campaigns() {
                   <StatBox label="Omitidos (freq.)" value={selected.total_skipped} color="orange" />
                 )}
               </div>
+
+              {selected.total_skipped > 0 && (
+                <div className="flex items-start gap-2 text-xs text-orange-600 bg-orange-50 border border-orange-100 rounded-lg px-3 py-2">
+                  <Ban size={12} className="shrink-0 mt-0.5" />
+                  <span>
+                    {selected.total_skipped} contacto{selected.total_skipped !== 1 ? 's' : ''} omitido{selected.total_skipped !== 1 ? 's' : ''} por
+                    límite de frecuencia (máx. 1/día, 2/semana, cooldown 48h). Podrán recibir mensajes en la siguiente campaña o ventana de tiempo.
+                  </span>
+                </div>
+              )}
 
               {selected.total_targets > 0 && (
                 <div className="space-y-2">

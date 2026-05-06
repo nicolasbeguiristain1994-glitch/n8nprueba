@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
              c.started_at, c.completed_at,
              c.total_targets, c.personalize_name,
              c.antiblock_delay_min, c.antiblock_delay_max,
-             c.use_multi_line,
+             c.use_multi_line, c.pause_reason, c.processor_locked_at,
              c.created_at, c.owned_by, cl.name AS list_name, cl.id AS list_id,
              -- Contar directamente desde whatsapp_messages para precisión en tiempo real
              COUNT(m.id) FILTER (WHERE m.status IN ('sent','delivered','read'))::int AS total_sent,

@@ -31,6 +31,34 @@ export type CrmDashboardData = {
   recent_activity: RecentActivity[]
 }
 
+export type DealClosingSoon = {
+  id:           string
+  title:        string
+  days_left:    number
+  contact_name: string | null
+  stage:        string
+  amount:       number | null
+}
+
+export type PipelineStage = {
+  stage: string
+  label: string
+  count: number
+  value: number
+}
+
+export type RevenueTrendPoint = {
+  month:   string
+  revenue: number
+}
+
+export type TopContact = {
+  id:          string
+  name:        string
+  deals_count: number
+  total_value: number
+}
+
 // ── GET /api/dashboard/crm ────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {

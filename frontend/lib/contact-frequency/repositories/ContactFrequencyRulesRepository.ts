@@ -12,6 +12,7 @@
  */
 
 import { query } from '@/lib/db'
+import type { PoolClient } from 'pg'
 import type { ContactFrequencyRule, SegMonto, SegActividad } from '../types'
 
 // ── Tipo de fila DB ───────────────────────────────────────────────────────────
@@ -66,8 +67,11 @@ export class ContactFrequencyRulesRepository {
    *
    * @param operatorId - UUID del operador. NULL: carga solo reglas globales.
    */
-  async findActiveRulesForContext(operatorId: string | null): Promise<ContactFrequencyRule[]> {
-    const rows = await query<RuleRow>(`
+  async findActiveRulesForContext(
+    operatorId: string | null,
+    client?: PoolClient,
+  ): Promise<ContactFrequencyRule[]> {
+    const sql = `
       SELECT
         id,
         operator_id,
@@ -83,15 +87,16 @@ export class ContactFrequencyRulesRepository {
       WHERE is_active = true
         AND (operator_id = $1 OR operator_id IS NULL)
       ORDER BY
-        -- Preordenar por especificidad para facilitar debugging.
-        -- La resolución final la hace resolveApplicableRule() en rules.ts.
         (
           CASE WHEN operator_id   IS NOT NULL THEN 4 ELSE 0 END +
           CASE WHEN seg_monto     IS NOT NULL THEN 2 ELSE 0 END +
           CASE WHEN seg_actividad IS NOT NULL THEN 1 ELSE 0 END
         ) DESC,
         created_at DESC
-    `, [operatorId])
+    `
+    const rows = client
+      ? (await client.query<RuleRow>(sql, [operatorId])).rows
+      : await query<RuleRow>(sql, [operatorId])
 
     return rows.map(rowToRule)
   }

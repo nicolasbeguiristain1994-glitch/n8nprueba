@@ -10,7 +10,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { selectLine, type EligibleLine } from '@/lib/campaign-distributor'
+import {
+  selectLine,
+  formatEligibilityError,
+  type EligibleLine,
+  type ContactEligibilityBreakdown,
+} from '@/lib/campaign-distributor'
 
 // ── Mock DB ────────────────────────────────────────────────────────────────────
 vi.mock('@/lib/db', () => ({
@@ -234,5 +239,103 @@ describe('getDispatchSummary', () => {
     expect(summary.eligible_lines).toBe(1)
     expect(summary.line_usage).toHaveLength(1)
     expect(summary.line_usage[0].sent).toBe(45)
+  })
+})
+
+// ── formatEligibilityError ─────────────────────────────────────────────────────
+
+describe('formatEligibilityError', () => {
+  function makeBreakdown(overrides: Partial<ContactEligibilityBreakdown> = {}): ContactEligibilityBreakdown {
+    return {
+      total_in_list:  0,
+      eligible:       0,
+      opted_out:      0,
+      do_not_contact: 0,
+      inactive:       0,
+      blacklisted:    0,
+      ...overrides,
+    }
+  }
+
+  it('vacía lista → mensaje específico', () => {
+    const msg = formatEligibilityError(makeBreakdown({ total_in_list: 0 }))
+    expect(msg).toBe('La lista no tiene contactos.')
+  })
+
+  it('todos excluidos por opt-in', () => {
+    const msg = formatEligibilityError(makeBreakdown({ total_in_list: 50, opted_out: 50 }))
+    expect(msg).toContain('50 en lista')
+    expect(msg).toContain('50 sin opt-in de marketing')
+  })
+
+  it('excluidos por múltiples motivos', () => {
+    const msg = formatEligibilityError(makeBreakdown({
+      total_in_list:  100,
+      opted_out:      40,
+      do_not_contact: 20,
+      inactive:       10,
+      blacklisted:     5,
+    }))
+    expect(msg).toContain('100 en lista')
+    expect(msg).toContain('40 sin opt-in de marketing')
+    expect(msg).toContain('20 con do_not_contact')
+    expect(msg).toContain('10 inactivos')
+    expect(msg).toContain('5 en blacklist')
+  })
+
+  it('sin motivos explícitos (todos excluidos por razón desconocida)', () => {
+    const msg = formatEligibilityError(makeBreakdown({ total_in_list: 10, eligible: 0 }))
+    expect(msg).toContain('10 en lista')
+    expect(msg).not.toContain('Excluidos')
+  })
+
+  it('lista parcialmente elegible no genera error de exclusión completa', () => {
+    const msg = formatEligibilityError(makeBreakdown({
+      total_in_list: 10,
+      eligible:       3,
+      opted_out:      7,
+    }))
+    expect(msg).toContain('7 sin opt-in de marketing')
+  })
+})
+
+// ── getContactEligibilityBreakdown ─────────────────────────────────────────────
+
+describe('getContactEligibilityBreakdown', () => {
+  beforeEach(() => { vi.resetAllMocks() })
+
+  it('mapea correctamente las columnas numéricas de la DB', async () => {
+    const { getContactEligibilityBreakdown } = await import('@/lib/campaign-distributor')
+    vi.mocked(db.query).mockResolvedValueOnce([{
+      total_in_list:  '100',
+      eligible:       '30',
+      opted_out:      '40',
+      do_not_contact: '15',
+      inactive:       '10',
+      blacklisted:     '5',
+    }])
+    const result = await getContactEligibilityBreakdown('list-uuid')
+    expect(result.total_in_list).toBe(100)
+    expect(result.eligible).toBe(30)
+    expect(result.opted_out).toBe(40)
+    expect(result.do_not_contact).toBe(15)
+    expect(result.inactive).toBe(10)
+    expect(result.blacklisted).toBe(5)
+  })
+
+  it('devuelve ceros cuando la DB falla (graceful degradation)', async () => {
+    const { getContactEligibilityBreakdown } = await import('@/lib/campaign-distributor')
+    vi.mocked(db.query).mockRejectedValueOnce(new Error('connection lost'))
+    const result = await getContactEligibilityBreakdown('list-uuid')
+    expect(result.total_in_list).toBe(0)
+    expect(result.eligible).toBe(0)
+    expect(result.opted_out).toBe(0)
+  })
+
+  it('devuelve ceros cuando la lista no existe (query retorna vacío)', async () => {
+    const { getContactEligibilityBreakdown } = await import('@/lib/campaign-distributor')
+    vi.mocked(db.query).mockResolvedValueOnce([])
+    const result = await getContactEligibilityBreakdown('nonexistent-list')
+    expect(result.total_in_list).toBe(0)
   })
 })

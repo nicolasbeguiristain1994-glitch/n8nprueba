@@ -140,6 +140,9 @@ const MIGRATIONS = [
   { file: 'db/migrations/050_contact_frequency_engine.sql',    label: '050 — ContactFrequencyEngine (contact_frequency_rules + contact_send_history)' },
   { file: 'db/migrations/051_contact_frequency_removed_by.sql', label: '051 — contact_frequency_rules.removed_by column' },
   { file: 'db/migrations/052_whatsapp_lines_delete_cascade.sql', label: '052 — whatsapp_lines FK: campaign_recipients SET NULL, line_usage_log CASCADE' },
+  { file: 'db/migrations/053_relax_line_key_constraint.sql',     label: '053 — Relax line_key CHECK constraint format' },
+  { file: 'db/migrations/054_campaigns_pause_reason.sql',        label: '054 — campaigns.pause_reason column' },
+  { file: 'db/migrations/055_campaigns_pause_reason_extended.sql', label: '055 — pause_reason CHECK: add all_lines_outside_schedule' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
