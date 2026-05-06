@@ -5,15 +5,14 @@
  * processInBackground is mocked — its behavior is covered by send-processor.test.ts.
  *
  * Covers:
- *  1. Missing N8N_URL env var → 500
- *  2. Invalid UUID → 400
- *  3. Campaign not found → 404
- *  4. Forbidden (not owner) → 403
- *  5. Status not resumable (completed) → 409
- *  6. Campaign has no contacts (new) → 400 with eligibility hint
- *  7. All contacts already processed → 409 "ya completada"
- *  8. Processor lock already held → 200 { alreadyProcessing: true }
- *  9. Happy path → 200 { started: true }
+ *  1. Invalid UUID → 400
+ *  2. Campaign not found → 404
+ *  3. Forbidden (not owner) → 403
+ *  4. Status not resumable (completed) → 409
+ *  5. Campaign has no contacts (new) → 400 with eligibility hint
+ *  6. All contacts already processed → 409 "ya completada"
+ *  7. Processor lock already held → 200 { alreadyProcessing: true }
+ *  8. Happy path → 200 { started: true }
  */
 
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest'
@@ -85,28 +84,10 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.resetAllMocks()
-  process.env.N8N_URL = 'http://n8n:5678'
   vi.mocked(validate.isUUID).mockReturnValue(true)
 })
 
-afterEach(() => {
-  delete process.env.N8N_URL
-})
-
-// ── 1. Missing N8N_URL ────────────────────────────────────────────────────────
-
-describe('missing N8N_URL', () => {
-  it('returns 500 when N8N_URL is not set', async () => {
-    delete process.env.N8N_URL
-    allowAuth()
-    const res = await POST(makeReq(), makeParams())
-    expect(res.status).toBe(500)
-    const body = await res.json()
-    expect(body.error).toContain('N8N_URL')
-  })
-})
-
-// ── 2. Invalid UUID ───────────────────────────────────────────────────────────
+// ── 1. Invalid UUID ───────────────────────────────────────────────────────────
 
 describe('invalid UUID', () => {
   it('returns 400 for non-UUID id', async () => {

@@ -3,6 +3,7 @@ import { query } from '@/lib/db'
 import { isE164, isUUID, clampStr } from '@/lib/validate'
 import { checkPermissionWithUser, isOwnerOrAdmin } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
+import { getEligibleLines, selectLine, sendViaEvolution } from '@/lib/campaign-distributor'
 
 type LogEntry = {
   phone_number:         string
@@ -18,9 +19,6 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response
   const session = auth.user
 
-  const N8N_URL = process.env.N8N_URL
-  if (!N8N_URL) return NextResponse.json({ error: 'N8N_URL not configured' }, { status: 500 })
-
   let body: { phones?: string[]; message?: string; campaign_id?: string; media_url?: string; media_type?: string }
   try {
     body = await req.json()
@@ -28,15 +26,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { phones, message, campaign_id, media_url, media_type } = body
+  const { phones, message, campaign_id, media_url } = body
 
   if (!Array.isArray(phones) || phones.length === 0 || phones.length > 100) {
     return NextResponse.json({ error: 'phones debe ser un array de 1 a 100 números' }, { status: 400 })
   }
-  // Normalize: strip spaces, dashes, parentheses before E.164 validation
-  const normalizedPhones = phones.map((p: unknown) =>
-    typeof p === 'string' ? p.replace(/[\s\-().]/g, '') : p
-  )
+
+  // Normalize: strip spaces, dashes, parentheses then ensure + prefix for E.164.
+  // Conversations stores phone from WhatsApp JID (no + prefix) — add it automatically.
+  const normalizedPhones = phones.map((p: unknown) => {
+    if (typeof p !== 'string') return p
+    const stripped = p.replace(/[\s\-().]/g, '')
+    return stripped.startsWith('+') ? stripped : '+' + stripped
+  })
   const invalidPhone = normalizedPhones.find((p: unknown) => typeof p !== 'string' || !isE164(p))
   if (invalidPhone !== undefined) {
     return NextResponse.json({ error: `Teléfono inválido (debe ser E.164): ${invalidPhone}` }, { status: 400 })
@@ -60,52 +62,31 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
+  // Fetch eligible lines once — reuse across all phones in this request
+  const eligibleLines = await getEligibleLines()
+  if (eligibleLines.length === 0) {
+    return NextResponse.json({ error: 'No hay líneas de WhatsApp disponibles' }, { status: 503 })
+  }
+
   const results = []
   const logs: LogEntry[] = []
 
   // Send sequentially (antiblock) — collect results in memory
   for (const phone of uniquePhones) {
+    // Pick a line using weighted selection (spreads load across available lines)
+    const line = selectLine(eligibleLines) ?? eligibleLines[0]
     try {
-      const res = await fetch(`${N8N_URL}/webhook/send-whatsapp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, message: messageStr, campaign_id, media_url, media_type, source: 'dashboard' }),
+      const { messageId } = await sendViaEvolution(line, phone, messageStr, media_url || null)
+
+      logs.push({
+        phone_number:         phone,
+        message_body:         messageStr,
+        status:               'sent',
+        evolution_message_id: messageId ?? '',
+        campaign_id:          campaign_id ?? '',
+        error_detail:         '',
       })
-
-      if (res.ok) {
-        let evolutionMsgId: string | null = null
-        let data: Record<string, unknown> = {}
-        try {
-          data = await res.json()
-          evolutionMsgId = (data?.key as Record<string, unknown>)?.id as string
-            || data?.id as string
-            || null
-        } catch { /* empty body */ }
-
-        logs.push({
-          phone_number:         phone,
-          message_body:         messageStr,
-          status:               'sent',
-          evolution_message_id: evolutionMsgId ?? '',
-          campaign_id:          campaign_id   ?? '',
-          error_detail:         '',
-        })
-        results.push({ phone, ...data })
-      } else {
-        let errData: Record<string, unknown> = {}
-        try { errData = await res.json() } catch { /* ignore */ }
-        const errDetail = String(errData?.message || res.status)
-
-        logs.push({
-          phone_number:         phone,
-          message_body:         messageStr,
-          status:               'failed',
-          evolution_message_id: '',
-          campaign_id:          campaign_id ?? '',
-          error_detail:         errDetail,
-        })
-        results.push({ phone, status: 'error', error: errDetail })
-      }
+      results.push({ phone, status: 'sent', id: messageId })
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e)
       logs.push({
