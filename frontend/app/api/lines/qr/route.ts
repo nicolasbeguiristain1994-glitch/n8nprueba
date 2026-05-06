@@ -62,6 +62,13 @@ async function setupWebhook(
       },
     }),
   }).catch(e => console.warn('[qr/webhook] setup failed (best-effort):', e?.message))
+
+  // Enable readStatus so Evolution fires MESSAGES_UPDATE for delivery/read receipts
+  await fetch(`${evoUrl}/settings/set/${encodeURIComponent(instance)}`, {
+    method:  'POST',
+    headers: { apikey: evoKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ readStatus: true }),
+  }).catch(e => console.warn('[qr/settings] readStatus setup failed (best-effort):', e?.message))
 }
 
 /**
