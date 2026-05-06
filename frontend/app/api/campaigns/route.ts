@@ -18,19 +18,19 @@ export async function GET(req: NextRequest) {
     const ownerClause = isAdmin ? '' : 'WHERE c.owned_by = $1'
     const params      = isAdmin ? [] : [session.user_id]
 
-    const campaigns = await query(`
+    const campaignSql = (includePauseReason: boolean) => `
       SELECT c.id, c.name, c.message, c.messages, c.status, c.scheduled_at,
              c.started_at, c.completed_at,
              c.total_targets, c.personalize_name,
              c.antiblock_delay_min, c.antiblock_delay_max,
-             c.use_multi_line, c.pause_reason, c.processor_locked_at,
+             c.use_multi_line,
+             ${includePauseReason ? 'c.pause_reason,' : 'NULL::text AS pause_reason,'}
+             c.processor_locked_at,
              c.created_at, c.owned_by, cl.name AS list_name, cl.id AS list_id,
-             -- Contar directamente desde whatsapp_messages para precisión en tiempo real
              COUNT(m.id) FILTER (WHERE m.status IN ('sent','delivered','read'))::int AS total_sent,
              COUNT(m.id) FILTER (WHERE m.status = 'delivered')::int               AS total_delivered,
              COUNT(m.id) FILTER (WHERE m.status = 'read')::int                    AS total_read,
              COUNT(m.id) FILTER (WHERE m.status = 'failed')::int                  AS total_failed,
-             -- Contactos saltados por motor de frecuencia (no tienen whatsapp_messages)
              (SELECT COUNT(*) FROM campaign_recipients cr
               WHERE cr.campaign_id = c.id AND cr.status = 'skipped')::int         AS total_skipped,
              CASE WHEN COUNT(m.id) FILTER (WHERE m.status IN ('sent','delivered','read')) > 0
@@ -47,7 +47,22 @@ export async function GET(req: NextRequest) {
       ${ownerClause}
       GROUP BY c.id, cl.id
       ORDER BY c.created_at DESC
-    `, params)
+    `
+
+    let campaigns
+    try {
+      campaigns = await query(campaignSql(true), params)
+    } catch (e) {
+      // Fallback: migración 054 (pause_reason) no aplicada aún en producción
+      const msg = e instanceof Error ? e.message : ''
+      if (msg.includes('pause_reason') || msg.includes('column')) {
+        console.warn('[/api/campaigns GET] pause_reason column missing — running without it. Apply migration 054.')
+        campaigns = await query(campaignSql(false), params)
+      } else {
+        throw e
+      }
+    }
+
     return NextResponse.json({ campaigns })
   } catch (e) {
     console.error('[/api/campaigns GET]', e instanceof Error ? e.message : e)
