@@ -11,9 +11,20 @@ function validInstance(name: string): boolean {
   return INSTANCE_RE.test(name)
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function extractBase64(data: any): string | null {
+  return (
+    data?.base64 ??
+    data?.qrcode?.base64 ??
+    data?.qr?.base64 ??
+    data?.code ??          // algunas versiones de Evolution devuelven 'code'
+    null
+  ) as string | null
+}
+
 // GET /api/lines/qr?instance=xxx[&restart=true]
-// Intenta obtener QR de la instancia. Si no existe y hay EVOLUTION_GLOBAL_API_KEY, la crea.
-// Con ?restart=true reinicia la instancia antes de pedir el QR (fuerza sesión QR nueva).
+// Con ?restart=true hace POST /instance/restart antes de pedir el QR
+// para forzar una sesión nueva (útil si el QR anterior quedó inválido).
 export async function GET(req: NextRequest) {
   const err = await checkPermission(req, 'lines', 'update')
   if (err) return err
@@ -22,27 +33,27 @@ export async function GET(req: NextRequest) {
   if (!instance) return NextResponse.json({ error: 'instance required' }, { status: 400 })
   if (!validInstance(instance)) return NextResponse.json({ error: 'Invalid instance name' }, { status: 400 })
 
-  const EVO_GLOBAL = process.env.EVOLUTION_GLOBAL_API_KEY
-  const EVO_KEY    = EVO_GLOBAL || process.env.EVOLUTION_API_KEY
+  const EVO_GLOBAL   = process.env.EVOLUTION_GLOBAL_API_KEY
+  const EVO_KEY      = EVO_GLOBAL || process.env.EVOLUTION_API_KEY
   const forceRestart = req.nextUrl.searchParams.get('restart') === 'true'
 
   try {
-    // Reiniciar la instancia para forzar una sesión QR completamente nueva.
-    // Necesario cuando el QR anterior fue intentado usar o la instancia quedó
-    // en un estado intermedio ("connecting" sin completar el handshake).
     if (forceRestart) {
-      await fetch(`${EVO_URL}/instance/restart/${encodeURIComponent(instance)}`, {
-        method: 'PUT',
-        headers: { apikey: EVO_KEY ?? '' },
-      }).catch(() => {})
-      await new Promise(r => setTimeout(r, 2500))
+      const restartRes = await fetch(
+        `${EVO_URL}/instance/restart/${encodeURIComponent(instance)}`,
+        { method: 'POST', headers: { apikey: EVO_KEY ?? '' } },
+      ).catch(e => { console.warn('[qr/restart] fetch error:', e?.message); return null })
+
+      console.log('[qr/restart] status:', restartRes?.status)
+      await new Promise(r => setTimeout(r, 3000))
     }
 
     const res = await fetch(`${EVO_URL}/instance/connect/${encodeURIComponent(instance)}`, {
       headers: { apikey: EVO_KEY ?? '' },
       cache: 'no-store',
     })
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let data: any
     try {
       data = await res.json()
@@ -50,7 +61,10 @@ export async function GET(req: NextRequest) {
       data = {}
     }
 
-    // Ya está conectada — obtener el número de teléfono del ownerJid y actualizar la DB
+    // Log completo para diagnóstico — visible en Railway logs
+    console.log('[qr/connect] instance:', instance, '| status:', res.status, '| data:', JSON.stringify(data))
+
+    // Ya conectada
     if (data?.instance?.state === 'open' || data?.state === 'open') {
       let phone_number: string | null = null
       try {
@@ -67,7 +81,6 @@ export async function GET(req: NextRequest) {
         }
       } catch { /* phone_number queda null */ }
 
-      // Persistir estado de conexión en la DB
       try {
         await query(
           `UPDATE whatsapp_lines
@@ -76,10 +89,8 @@ export async function GET(req: NextRequest) {
            WHERE evolution_instance = $1`,
           phone_number ? [instance, phone_number] : [instance],
         )
-      } catch { /* no bloquear la respuesta si falla el update */ }
+      } catch { /* no bloquear */ }
 
-      // Auto-configurar webhook en Evolution para que los estados de entrega/lectura
-      // lleguen a la app automáticamente sin necesidad de configuración manual.
       const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET
       if (webhookSecret) {
         const appOrigin = new URL(req.url).origin
@@ -104,7 +115,6 @@ export async function GET(req: NextRequest) {
 
     // Instancia no existe
     if (res.status === 404 || data?.status === 404) {
-      // Marcar como desconectada en DB si existe
       await query(
         `UPDATE whatsapp_lines SET is_connected = false, updated_at = NOW() WHERE evolution_instance = $1`,
         [instance],
@@ -112,21 +122,28 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ connected: false, base64: null, notFound: true, canCreate: !!EVO_GLOBAL })
     }
 
-    // Instancia existe pero desconectada → marcar en DB y devolver QR
+    // Desconectada → devolver QR
     await query(
       `UPDATE whatsapp_lines SET is_connected = false, updated_at = NOW() WHERE evolution_instance = $1`,
       [instance],
     ).catch(() => {})
-    const base64 = (data?.base64 ?? data?.qrcode?.base64 ?? null) as string | null
-    return NextResponse.json({ connected: false, base64 })
+
+    const base64 = extractBase64(data)
+
+    if (!base64) {
+      // Log extra si no encontramos el QR para saber por qué
+      console.warn('[qr/connect] no base64 found — full response:', JSON.stringify(data))
+    }
+
+    return NextResponse.json({ connected: false, base64, _state: data?.instance?.state ?? data?.state ?? null })
   } catch (e) {
+    console.error('[qr/connect] unexpected error:', e)
     return NextResponse.json({ error: String(e) }, { status: 500 })
   }
 }
 
 // POST /api/lines/qr  → crea la instancia usando el EVOLUTION_GLOBAL_API_KEY del servidor
 export async function POST(req: NextRequest) {
-  // Creates Evolution instances — admin only
   const err = await checkPermission(req, 'lines', 'manage')
   if (err) return err
 
@@ -168,16 +185,16 @@ export async function POST(req: NextRequest) {
       data = {}
     }
 
+    console.log('[qr/create] instance:', instance, '| status:', res.status, '| data:', JSON.stringify(data))
+
     if (res.status === 401 || data?.status === 401) {
       return NextResponse.json({ error: 'unauthorized', managerUrl: `${EVO_URL}/manager` }, { status: 401 })
     }
 
-    // Extraer base64 del QR de la respuesta de create
-    const base64 = (data?.qrcode?.base64 ?? data?.base64 ?? null) as string | null
+    const base64 = extractBase64(data)
 
-    // Si no vino QR en create, hacer un connect para pedirlo
     if (!base64) {
-      await new Promise(r => setTimeout(r, 2000)) // esperar que la instancia arranque
+      await new Promise(r => setTimeout(r, 2000))
       const EVO_KEY = EVO_GLOBAL || process.env.EVOLUTION_API_KEY
       const qrRes = await fetch(`${EVO_URL}/instance/connect/${encodeURIComponent(instance)}`, {
         headers: { apikey: EVO_KEY ?? '' },
@@ -190,16 +207,16 @@ export async function POST(req: NextRequest) {
       } catch {
         qrData = {}
       }
-      const qrBase64 = (qrData?.base64 ?? qrData?.qrcode?.base64 ?? null) as string | null
-      void audit({ req, action: 'manage', resource: 'lines',
-        metadata: { instance: String(instance) } })
+      console.log('[qr/create→connect] status:', qrRes.status, '| data:', JSON.stringify(qrData))
+      const qrBase64 = extractBase64(qrData)
+      void audit({ req, action: 'manage', resource: 'lines', metadata: { instance: String(instance) } })
       return NextResponse.json({ created: true, base64: qrBase64 })
     }
 
-    void audit({ req, action: 'manage', resource: 'lines',
-      metadata: { instance: String(instance) } })
+    void audit({ req, action: 'manage', resource: 'lines', metadata: { instance: String(instance) } })
     return NextResponse.json({ created: true, base64 })
   } catch (e) {
+    console.error('[qr/create] unexpected error:', e)
     return NextResponse.json({ error: String(e) }, { status: 500 })
   }
 }
