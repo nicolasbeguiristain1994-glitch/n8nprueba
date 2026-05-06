@@ -38,7 +38,7 @@ export const PipelineSummaryWidget = memo(function PipelineSummaryWidget({ pipel
     <Card className="h-full">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <GitMerge className="w-4 h-4 text-violet-500" />
+          <GitMerge className="w-4 h-4 text-primary" />
           Pipeline activo
         </CardTitle>
       </CardHeader>
@@ -65,8 +65,8 @@ export const PipelineSummaryWidget = memo(function PipelineSummaryWidget({ pipel
                       <span className="text-sm font-medium">{stage.label}</span>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="text-xs text-muted-foreground">{stage.count} deals</span>
-                      <span className="text-xs font-medium w-16 text-right">{fmt(stage.value)}</span>
+                      <span className="text-xs text-muted-foreground tabular-nums">{stage.count} deals</span>
+                      <span className="text-xs font-medium w-16 text-right tabular-nums">{fmt(stage.value)}</span>
                     </div>
                   </div>
                   <div className="h-1.5 bg-muted rounded-full overflow-hidden">
@@ -81,7 +81,7 @@ export const PipelineSummaryWidget = memo(function PipelineSummaryWidget({ pipel
             <div className="pt-2 border-t mt-4">
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>Total en pipeline</span>
-                <span className="font-medium text-foreground">
+                <span className="font-medium text-foreground tabular-nums">
                   {fmt(pipeline.reduce((s, p) => s + p.value, 0))}
                 </span>
               </div>

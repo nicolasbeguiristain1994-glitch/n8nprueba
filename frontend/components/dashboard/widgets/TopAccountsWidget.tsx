@@ -75,7 +75,7 @@ export const TopAccountsWidget = memo(function TopAccountsWidget({ contacts, loa
                   <p className="text-sm font-medium truncate">{contact.name}</p>
                   <p className="text-xs text-muted-foreground">{contact.deals_count} deal{contact.deals_count !== 1 ? 's' : ''}</p>
                 </div>
-                <span className="text-sm font-semibold text-muted-foreground shrink-0">{fmt(contact.total_value)}</span>
+                <span className="text-sm font-semibold text-muted-foreground shrink-0 tabular-nums">{fmt(contact.total_value)}</span>
               </button>
             ))}
           </div>

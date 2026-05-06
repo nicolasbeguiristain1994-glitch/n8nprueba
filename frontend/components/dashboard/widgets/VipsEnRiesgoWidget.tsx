@@ -18,9 +18,10 @@ const ACT_STYLE: Record<string, string> = {
   ocasional: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
 }
 
+/* VIP badge usa el token semántico --vip */
 const MONTO_STYLE: Record<string, string> = {
-  vip:  'bg-amber-100 text-amber-700 border border-amber-300',
-  alto: 'bg-slate-100 text-slate-600 border border-slate-300',
+  vip:  'bg-vip/15 text-vip border border-vip/30',
+  alto: 'bg-slate-100 text-slate-600 border border-slate-300 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
 }
 
 function fmt(n: number) {
@@ -44,7 +45,7 @@ export const VipsEnRiesgoWidget = memo(function VipsEnRiesgoWidget({ vips, loadi
     <Card className="h-full flex flex-col">
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-sm">
-          <Crown className="w-4 h-4 text-amber-500" />
+          <Crown className="w-4 h-4 text-vip" />
           VIPs en riesgo
           {!loading && vips.length > 0 && (
             <span className="ml-auto text-xs font-normal text-muted-foreground">{vips.length} jugadores</span>
@@ -60,15 +61,15 @@ export const VipsEnRiesgoWidget = memo(function VipsEnRiesgoWidget({ vips, loadi
             <p className="text-sm">Sin VIPs en riesgo</p>
           </div>
         ) : (
-          <div className="space-y-1.5">
+          <div className="space-y-1">
             {vips.slice(0, 20).map(v => (
               <div
                 key={v.username}
-                className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-muted/50 transition-colors"
+                className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-muted/50 transition-colors duration-200"
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <span className="text-xs font-medium truncate">{v.username}</span>
+                    <span className="text-xs font-semibold truncate">{v.username}</span>
                     <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full font-medium', MONTO_STYLE[v.seg_monto] ?? 'bg-slate-100 text-slate-600')}>
                       {v.seg_monto.toUpperCase()}
                     </span>
@@ -79,12 +80,12 @@ export const VipsEnRiesgoWidget = memo(function VipsEnRiesgoWidget({ vips, loadi
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className="text-[10px] text-muted-foreground">{v.agente}</span>
                     <span className="text-[10px] text-muted-foreground">·</span>
-                    <span className="text-[10px] text-muted-foreground">{fmt(v.total_cargas)}</span>
+                    <span className="text-[10px] text-muted-foreground tabular-nums">{fmt(v.total_cargas)}</span>
                   </div>
                 </div>
                 <div className="text-right shrink-0">
                   <span className={cn(
-                    'text-xs font-medium',
+                    'text-xs font-semibold tabular-nums',
                     v.dias_ultimo > 60 ? 'text-rose-600' : v.dias_ultimo > 30 ? 'text-orange-500' : 'text-yellow-600',
                   )}>
                     {v.dias_ultimo}d

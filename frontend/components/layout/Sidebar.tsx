@@ -110,12 +110,17 @@ function NavLink({
       title={collapsed ? item.label : undefined}
       className={cn(
         'flex items-center gap-3 rounded-lg text-sm font-medium',
-        'transition-colors duration-150',
-        // Ancho y padding según estado collapsed
-        collapsed ? 'h-9 w-9 justify-center' : 'h-9 px-3',
+        'transition-all duration-200',
+        // Dimensiones según estado
+        collapsed ? 'h-9 w-9 justify-center' : 'h-9',
+        // Padding no-collapsed: activo compensa los 3px del borde izquierdo
+        !collapsed && (isActive ? 'pl-[9px] pr-3' : 'px-3'),
+        // Estilos activo / hover
         isActive
-          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-          : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
+          ? collapsed
+            ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+            : 'bg-gradient-to-r from-primary/10 to-primary/[.03] text-primary border-l-[3px] border-primary/70 font-semibold'
+          : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground',
       )}
     >
       <Icon size={16} className="shrink-0" />

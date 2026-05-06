@@ -1,6 +1,13 @@
 import type { Metadata } from 'next'
+import { Inter } from 'next/font/google'
 import { ThemeProvider } from '@/components/layout/ThemeProvider'
 import './globals.css'
+
+const inter = Inter({
+  subsets: ['latin'],
+  variable: '--font-inter',
+  display: 'swap',
+})
 
 export const metadata: Metadata = {
   title: 'WA Platform',
@@ -18,7 +25,7 @@ export const metadata: Metadata = {
  */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="es" className="h-full" suppressHydrationWarning>
+    <html lang="es" className={`h-full ${inter.variable}`} suppressHydrationWarning>
       <body className="h-full antialiased">
         <ThemeProvider
           attribute="class"

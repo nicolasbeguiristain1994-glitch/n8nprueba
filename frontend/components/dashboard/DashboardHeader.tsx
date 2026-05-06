@@ -169,8 +169,8 @@ export const DashboardHeader = memo(function DashboardHeader({
       {/* Row 1: title + last-updated */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2.5 min-w-0">
-          <LayoutDashboard className="w-5 h-5 text-violet-500 shrink-0" />
-          <h1 className="text-xl font-semibold text-foreground leading-tight">Dashboard</h1>
+          <LayoutDashboard className="w-5 h-5 text-primary shrink-0" />
+          <h1 className="text-xl font-semibold text-foreground leading-tight tracking-tight">Dashboard</h1>
         </div>
         {minutesAgo && (
           <span className="text-xs text-muted-foreground shrink-0 hidden sm:block">

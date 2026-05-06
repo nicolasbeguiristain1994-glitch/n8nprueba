@@ -10,7 +10,7 @@ import {
 
 const ACTIONS = [
   { label: 'Nuevo contacto',   icon: UserPlus,    href: '/contacts',       color: 'text-blue-500'    },
-  { label: 'Nueva campaña',    icon: Send,        href: '/campaigns',      color: 'text-violet-500'  },
+  { label: 'Nueva campaña',    icon: Send,        href: '/campaigns',      color: 'text-primary'     },
   { label: 'Nueva tarea',      icon: CheckSquare, href: '/tareas',         color: 'text-teal-500'    },
   { label: 'Estadísticas',     icon: BarChart2,   href: '/estadisticas',   color: 'text-amber-500'   },
   { label: 'Conversaciones',   icon: MessageSquare, href: '/conversations', color: 'text-rose-500'   },

@@ -29,7 +29,7 @@ function Skeleton() {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
       {Array.from({ length: 5 }).map((_, i) => (
-        <div key={i} className="h-24 rounded-xl bg-muted animate-pulse" />
+        <div key={i} className="h-28 rounded-[20px] bg-muted animate-pulse" />
       ))}
     </div>
   )
@@ -66,8 +66,8 @@ export const CasinoKPIWidget = memo(function CasinoKPIWidget({ summary, loading 
       value: s.total_vip.toLocaleString('es-AR'),
       sub:   <span className="text-xs text-muted-foreground">seg_monto = vip</span>,
       icon:  Crown,
-      color: 'text-amber-500',
-      bg:    'bg-amber-50 dark:bg-amber-950/30',
+      color: 'text-vip',
+      bg:    'bg-vip/10 dark:bg-vip/[.07]',
     },
     {
       label: 'Reactivación urgente',
@@ -82,8 +82,8 @@ export const CasinoKPIWidget = memo(function CasinoKPIWidget({ summary, loading 
       value: s.total_jugadores.toLocaleString('es-AR'),
       sub:   <span className="text-xs text-muted-foreground">en base</span>,
       icon:  Users,
-      color: 'text-violet-500',
-      bg:    'bg-violet-50 dark:bg-violet-950/30',
+      color: 'text-primary',
+      bg:    'bg-primary/10 dark:bg-primary/[.07]',
     },
   ]
 
@@ -92,14 +92,18 @@ export const CasinoKPIWidget = memo(function CasinoKPIWidget({ summary, loading 
       {cards.map(card => {
         const Icon = card.icon
         return (
-          <Card key={card.label} size="sm" className="gap-0 py-4">
+          <Card
+            key={card.label}
+            size="sm"
+            className="gap-0 py-4 rounded-[20px] shadow-xl hover:-translate-y-0.5 hover:shadow-2xl transition-all duration-200 cursor-default"
+          >
             <CardContent className="flex flex-col gap-2">
-              <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center', card.bg)}>
-                <Icon className={cn('w-4 h-4', card.color)} />
+              <div className={cn('w-10 h-10 rounded-full flex items-center justify-center', card.bg)}>
+                <Icon className={cn('w-5 h-5', card.color)} />
               </div>
               <div>
-                <p className="text-2xl font-bold tracking-tight">{card.value}</p>
-                <p className="text-xs text-muted-foreground mt-0.5">{card.label}</p>
+                <p className="text-[34px] font-semibold tracking-tighter leading-none">{card.value}</p>
+                <p className="text-xs text-muted-foreground mt-1.5">{card.label}</p>
                 <div className="mt-0.5">{card.sub}</div>
               </div>
             </CardContent>

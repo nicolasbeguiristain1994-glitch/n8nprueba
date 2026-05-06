@@ -21,18 +21,20 @@ function Skeleton() {
   return (
     <div className="space-y-2 pt-1">
       {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="h-9 rounded-lg bg-muted animate-pulse" />
+        <div key={i} className="h-11 rounded-lg bg-muted animate-pulse" />
       ))}
     </div>
   )
 }
+
+const HEADERS = ['Agente','Total','Nuevos','Activos','VIP','En riesgo','Σ Cargas','Σ Retiros','Avg carga']
 
 export const AgentesTableWidget = memo(function AgentesTableWidget({ agentes, loading }: Props) {
   return (
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-sm">
-          <Users className="w-4 h-4 text-violet-500" />
+          <Users className="w-4 h-4 text-primary" />
           Rendimiento por agente
         </CardTitle>
       </CardHeader>
@@ -45,9 +47,11 @@ export const AgentesTableWidget = memo(function AgentesTableWidget({ agentes, lo
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-border bg-muted/40">
-                  {['Agente','Total','Nuevos','Activos','VIP','En riesgo','Σ Cargas','Σ Retiros','Avg carga'].map(h => (
-                    <th key={h} className="px-3 py-2 text-left font-medium text-muted-foreground whitespace-nowrap">{h}</th>
+                <tr className="border-b border-border bg-muted">
+                  {HEADERS.map(h => (
+                    <th key={h} className="px-3 py-3 text-left font-semibold text-muted-foreground whitespace-nowrap">
+                      {h}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -58,22 +62,22 @@ export const AgentesTableWidget = memo(function AgentesTableWidget({ agentes, lo
                     <tr
                       key={a.agente}
                       className={cn(
-                        'border-b border-border/50 hover:bg-muted/30 transition-colors',
+                        'border-b border-border/50 hover:bg-muted/50 transition-colors duration-200',
                         highRisk && 'bg-rose-50/50 dark:bg-rose-950/10',
                       )}
                     >
-                      <td className="px-3 py-2 font-medium capitalize">{a.agente}</td>
-                      <td className="px-3 py-2 text-right">{a.total.toLocaleString('es-AR')}</td>
-                      <td className="px-3 py-2 text-right text-emerald-600">{a.nuevos_mes}</td>
-                      <td className="px-3 py-2 text-right text-blue-600">{a.activos_mes}</td>
-                      <td className="px-3 py-2 text-right text-amber-600 font-medium">{a.vip}</td>
-                      <td className={cn('px-3 py-2 text-right font-medium', highRisk ? 'text-rose-600' : 'text-muted-foreground')}>
+                      <td className="px-3 py-3 font-medium capitalize">{a.agente}</td>
+                      <td className="px-3 py-3 text-right tabular-nums">{a.total.toLocaleString('es-AR')}</td>
+                      <td className="px-3 py-3 text-right tabular-nums text-emerald-600">{a.nuevos_mes}</td>
+                      <td className="px-3 py-3 text-right tabular-nums text-blue-600">{a.activos_mes}</td>
+                      <td className="px-3 py-3 text-right tabular-nums text-vip font-medium">{a.vip}</td>
+                      <td className={cn('px-3 py-3 text-right tabular-nums font-medium', highRisk ? 'text-rose-600' : 'text-muted-foreground')}>
                         {a.en_riesgo}
                         {highRisk && <span className="ml-1 text-[10px]">⚠</span>}
                       </td>
-                      <td className="px-3 py-2 text-right">{fmt(Number(a.sum_cargas))}</td>
-                      <td className="px-3 py-2 text-right">{fmt(Number(a.sum_retiros))}</td>
-                      <td className="px-3 py-2 text-right text-muted-foreground">{fmt(Number(a.avg_cargas))}</td>
+                      <td className="px-3 py-3 text-right tabular-nums">{fmt(Number(a.sum_cargas))}</td>
+                      <td className="px-3 py-3 text-right tabular-nums">{fmt(Number(a.sum_retiros))}</td>
+                      <td className="px-3 py-3 text-right tabular-nums text-muted-foreground">{fmt(Number(a.avg_cargas))}</td>
                     </tr>
                   )
                 })}

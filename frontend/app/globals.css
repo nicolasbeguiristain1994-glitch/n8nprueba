@@ -39,6 +39,10 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
+  /* Semantic brand tokens */
+  --color-vip: var(--vip);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -49,93 +53,108 @@
 }
 
 :root {
+  /* ── Tipografía ── */
+  --font-sans: var(--font-inter, 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
+
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
+  --card: oklch(0.99 0 0);
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
 
-  /* ── Brand / Primary: purple-600 ──
-   * oklch(0.558 0.282 301) ≈ Tailwind purple-600 (#9333ea).
-   * Para cambiar el accent de toda la app, modifica solo estos 2 tokens.
-   * El resto del sistema (ring, sidebar-primary) los hereda automáticamente.  */
-  --primary: oklch(0.558 0.282 301);
-  --primary-foreground: oklch(0.985 0 0);
+  /* ── Brand / Primary: Indigo rico ──
+   * oklch(0.52 0.26 265) ≈ Tailwind indigo-600 (#4f46e5 ish).
+   * Moderno, rico en chroma, ideal para UI SaaS 2026.  */
+  --primary: oklch(0.52 0.26 265);
+  --primary-foreground: oklch(0.98 0.01 265);
 
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
+  --muted: oklch(0.965 0 0);
+  --muted-foreground: oklch(0.50 0 0);
 
-  /* Ring hereda el color primary para focus states coherentes */
-  --ring: oklch(0.558 0.282 301);
+  /* ── Accent: Teal vibrante ── */
+  --accent: oklch(0.62 0.20 175);
+  --accent-foreground: oklch(0.98 0 0);
 
-  --chart-1: oklch(0.558 0.282 301);
-  --chart-2: oklch(0.627 0.265 303);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  --destructive: oklch(0.60 0.25 25);
+  --border: oklch(0.910 0 0);
+  --input: oklch(0.910 0 0);
+  --ring: oklch(0.52 0.26 265);
+
+  /* ── Semantic tokens ── */
+  --vip: oklch(0.55 0.29 305);
+  --success: oklch(0.65 0.22 155);
+  --warning: oklch(0.72 0.20 85);
+
+  /* ── Charts: paleta completa de marca ── */
+  --chart-1: oklch(0.52 0.26 265);
+  --chart-2: oklch(0.62 0.20 175);
+  --chart-3: oklch(0.55 0.29 305);
+  --chart-4: oklch(0.65 0.22 155);
+  --chart-5: oklch(0.72 0.20 85);
+
   --radius: 0.625rem;
 
-  /* ── Sidebar con acento purple ──
-   * sidebar-accent: fondo del ítem activo (tint muy sutil del primary).
-   * sidebar-accent-foreground: texto del ítem activo (primary completo).  */
+  /* ── Sidebar con acento indigo ── */
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.558 0.282 301);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.962 0.018 301);
-  --sidebar-accent-foreground: oklch(0.558 0.282 301);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.558 0.282 301);
+  --sidebar-primary: oklch(0.52 0.26 265);
+  --sidebar-primary-foreground: oklch(0.98 0.01 265);
+  --sidebar-accent: oklch(0.955 0.016 265);
+  --sidebar-accent-foreground: oklch(0.52 0.26 265);
+  --sidebar-border: oklch(0.910 0 0);
+  --sidebar-ring: oklch(0.52 0.26 265);
 }
 
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
+  --card: oklch(0.200 0 0);
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
 
-  /* ── Brand / Primary dark: purple-400 ──
-   * oklch(0.714 0.203 305) ≈ Tailwind purple-400 (#c084fc).
-   * Más claro que el primary de light para mantener contraste sobre fondos oscuros. */
-  --primary: oklch(0.714 0.203 305);
-  --primary-foreground: oklch(0.145 0 0);
+  /* ── Brand / Primary dark: Indigo claro ── */
+  --primary: oklch(0.62 0.24 265);
+  --primary-foreground: oklch(0.12 0 0);
 
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.245 0 0);
+  --muted-foreground: oklch(0.68 0 0);
+
+  /* ── Accent dark: Teal más suave ── */
+  --accent: oklch(0.68 0.18 175);
+  --accent-foreground: oklch(0.98 0 0);
+
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.714 0.203 305);
+  --ring: oklch(0.62 0.24 265);
 
-  --chart-1: oklch(0.714 0.203 305);
-  --chart-2: oklch(0.627 0.265 303);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
+  /* ── Semantic tokens dark ── */
+  --vip: oklch(0.62 0.26 305);
+  --success: oklch(0.70 0.20 155);
+  --warning: oklch(0.76 0.18 85);
 
-  /* ── Sidebar dark con acento purple ── */
-  --sidebar: oklch(0.195 0 0);
+  /* ── Charts dark ── */
+  --chart-1: oklch(0.62 0.24 265);
+  --chart-2: oklch(0.68 0.18 175);
+  --chart-3: oklch(0.62 0.26 305);
+  --chart-4: oklch(0.70 0.20 155);
+  --chart-5: oklch(0.76 0.18 85);
+
+  /* ── Sidebar dark con acento indigo ── */
+  --sidebar: oklch(0.170 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.714 0.203 305);
-  --sidebar-primary-foreground: oklch(0.145 0 0);
-  --sidebar-accent: oklch(0.25 0.035 305);
-  --sidebar-accent-foreground: oklch(0.714 0.203 305);
+  --sidebar-primary: oklch(0.62 0.24 265);
+  --sidebar-primary-foreground: oklch(0.12 0 0);
+  --sidebar-accent: oklch(0.245 0.030 265);
+  --sidebar-accent-foreground: oklch(0.62 0.24 265);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.714 0.203 305);
+  --sidebar-ring: oklch(0.62 0.24 265);
 }
 
 @layer base {
@@ -147,5 +166,6 @@
   }
   html {
     @apply font-sans;
+    font-size: 17px;
   }
 }

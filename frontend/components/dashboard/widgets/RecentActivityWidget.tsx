@@ -70,7 +70,7 @@ export const RecentActivityWidget = memo(function RecentActivityWidget({ activit
                       <p className="text-sm leading-snug truncate">{act.title}</p>
                       <p className="text-xs text-muted-foreground truncate">{act.sub}</p>
                     </div>
-                    <span className="text-[11px] text-muted-foreground shrink-0 pt-1">
+                    <span className="text-[11px] text-muted-foreground shrink-0 pt-1 tabular-nums">
                       {relativeTime(act.created_at)}
                     </span>
                   </div>

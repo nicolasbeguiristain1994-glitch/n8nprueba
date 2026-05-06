@@ -50,8 +50,8 @@ export const MensajeriaWidget = memo(function MensajeriaWidget({ msgs, loading }
       label: 'Respuestas',
       value: Number(m.inbound).toLocaleString('es-AR'),
       icon:  MessageCircle,
-      color: 'text-violet-500',
-      bg:    'bg-violet-50 dark:bg-violet-950/30',
+      color: 'text-primary',
+      bg:    'bg-primary/10',
     },
   ]
 
@@ -71,10 +71,10 @@ export const MensajeriaWidget = memo(function MensajeriaWidget({ msgs, loading }
             {cards.map(card => {
               const Icon = card.icon
               return (
-                <div key={card.label} className={cn('rounded-xl p-3 flex flex-col gap-2', card.bg)}>
-                  <Icon className={cn('w-4 h-4', card.color)} />
+                <div key={card.label} className={cn('rounded-2xl p-4 flex flex-col gap-2.5', card.bg)}>
+                  <Icon className={cn('w-5 h-5', card.color)} />
                   <div>
-                    <p className="text-xl font-bold tracking-tight">{card.value}</p>
+                    <p className="text-2xl font-semibold tracking-tighter tabular-nums">{card.value}</p>
                     <p className="text-xs text-muted-foreground mt-0.5">{card.label}</p>
                   </div>
                 </div>

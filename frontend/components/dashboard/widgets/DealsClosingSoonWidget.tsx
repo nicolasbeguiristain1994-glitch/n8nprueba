@@ -59,7 +59,7 @@ export const DealsClosingSoonWidget = memo(function DealsClosingSoonWidget({ dea
                 className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-muted/50 transition-colors"
               >
                 <div className={cn('text-center px-2 py-1 rounded-lg min-w-[44px]', urgencyClass(deal.days_left))}>
-                  <p className="text-xs font-bold leading-none">{deal.days_left}</p>
+                  <p className="text-xs font-bold leading-none tabular-nums">{deal.days_left}</p>
                   <p className="text-[10px] leading-none mt-0.5">días</p>
                 </div>
                 <div className="flex-1 min-w-0">
@@ -68,7 +68,7 @@ export const DealsClosingSoonWidget = memo(function DealsClosingSoonWidget({ dea
                     {deal.contact_name ?? 'Sin contacto'} · {STAGE_LABELS[deal.stage] ?? deal.stage}
                   </p>
                 </div>
-                <span className="text-sm font-semibold shrink-0">{fmt(deal.amount)}</span>
+                <span className="text-sm font-semibold shrink-0 tabular-nums">{fmt(deal.amount)}</span>
               </div>
             ))}
           </div>

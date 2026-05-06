@@ -26,9 +26,9 @@ interface CustomTooltipProps { active?: boolean; payload?: TooltipPayloadItem[];
 function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
   if (!active || !payload?.length) return null
   return (
-    <div className="rounded-lg border bg-popover p-2.5 text-xs shadow-md">
-      <p className="font-medium mb-1">{label}</p>
-      <p className="text-violet-500">{fmtMoney(payload[0]?.value ?? 0)}</p>
+    <div className="rounded-xl border border-border/50 bg-background/80 backdrop-blur-md p-2.5 text-xs shadow-xl">
+      <p className="font-semibold mb-1">{label}</p>
+      <p className="text-primary tabular-nums">{fmtMoney(payload[0]?.value ?? 0)}</p>
     </div>
   )
 }
@@ -47,7 +47,7 @@ export const RevenueChartWidget = memo(function RevenueChartWidget({ data, loadi
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <TrendingUp className="w-4 h-4 text-violet-500" />
+          <TrendingUp className="w-4 h-4 text-primary" />
           Ingresos — últimos 8 meses
         </CardTitle>
       </CardHeader>
@@ -61,8 +61,8 @@ export const RevenueChartWidget = memo(function RevenueChartWidget({ data, loadi
             <AreaChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%"  stopColor="oklch(0.558 0.282 301)" stopOpacity={0.25} />
-                  <stop offset="95%" stopColor="oklch(0.558 0.282 301)" stopOpacity={0} />
+                  <stop offset="5%"  stopColor="oklch(0.52 0.26 265)" stopOpacity={0.25} />
+                  <stop offset="95%" stopColor="oklch(0.52 0.26 265)" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
@@ -85,10 +85,10 @@ export const RevenueChartWidget = memo(function RevenueChartWidget({ data, loadi
               <Area
                 type="monotone"
                 dataKey="revenue"
-                stroke="oklch(0.558 0.282 301)"
+                stroke="oklch(0.52 0.26 265)"
                 strokeWidth={2}
                 fill="url(#revGrad)"
-                dot={{ r: 3, fill: 'oklch(0.558 0.282 301)', strokeWidth: 0 }}
+                dot={{ r: 3, fill: 'oklch(0.52 0.26 265)', strokeWidth: 0 }}
                 activeDot={{ r: 5, strokeWidth: 0 }}
               />
             </AreaChart>

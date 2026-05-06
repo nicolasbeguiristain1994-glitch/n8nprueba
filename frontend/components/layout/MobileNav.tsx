@@ -84,10 +84,10 @@ export function MobileNav({ items = DEFAULT_ITEMS }: MobileNavProps) {
               href={href}
               className={cn(
                 'flex flex-col items-center gap-1 px-3 py-2 rounded-lg',
-                'transition-colors duration-150 min-w-[56px]',
+                'transition-all duration-200 min-w-[56px]',
                 isActive
-                  ? 'text-primary'
-                  : 'text-muted-foreground hover:text-foreground',
+                  ? 'text-primary font-semibold bg-gradient-to-b from-primary/10 to-primary/[.03] border-b-[3px] border-primary/70'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
               )}
             >
               <Icon
@@ -95,12 +95,7 @@ export function MobileNav({ items = DEFAULT_ITEMS }: MobileNavProps) {
                 strokeWidth={isActive ? 2.5 : 2}
                 aria-hidden="true"
               />
-              <span
-                className={cn(
-                  'text-[10px] font-medium',
-                  isActive && 'font-semibold',
-                )}
-              >
+              <span className="text-[10px] font-medium">
                 {label}
               </span>
             </Link>
