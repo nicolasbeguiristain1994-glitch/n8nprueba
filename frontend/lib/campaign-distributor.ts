@@ -56,6 +56,7 @@ import {
   flushExpiredBlacklist,
 } from '@/lib/proxy-manager'
 import { ContactFrequencyEngine } from '@/lib/contact-frequency/ContactFrequencyEngine'
+import { lineEligibleExpr } from '@/lib/line-eligibility'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -195,12 +196,7 @@ export async function getEligibleLines(): Promise<EligibleLine[]> {
       (msg_per_day   - msgs_sent_today) AS remaining_day,
       (personality_config IS NOT NULL)  AS has_personality
     FROM whatsapp_lines
-    WHERE  status          = 'active'
-      AND  is_connected    = true
-      AND  sending_enabled = true
-      AND  msgs_sent_hour  < msg_per_hour
-      AND  msgs_sent_today < msg_per_day
-      AND  (allowed_types IS NULL OR allowed_types @> '["campaign"]'::jsonb)
+    WHERE  ${lineEligibleExpr()}
     ORDER BY
       (msg_per_day - msgs_sent_today) DESC,  -- most remaining capacity first
       priority ASC,                           -- lower number = higher priority

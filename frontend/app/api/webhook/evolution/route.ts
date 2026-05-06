@@ -4,6 +4,7 @@ import { query } from '@/lib/db'
 import { normalizePhone } from '@/lib/validate'
 import { evaluateAutomations } from '@/lib/automation-engine'
 import { notify } from '@/lib/notify'
+import { parseInstancesResponse } from '@/lib/evolution-utils'
 
 // ── Palabras clave de opt-out ─────────────────────────────────────────────────
 // Comparación normalizada: sin acentos, minúsculas, trim.
@@ -27,6 +28,36 @@ function normalizeText(text: string): string {
 function isOptOut(text: string): boolean {
   const normalized = normalizeText(text)
   return OPT_OUT_KEYWORDS.has(normalized)
+}
+
+// ── syncLinePhoneNumber ───────────────────────────────────────────────────────
+// Best-effort: fetch phone from Evolution and persist to DB when a line connects.
+// Called fire-and-forget (void) — errors are logged, never thrown.
+async function syncLinePhoneNumber(instanceName: string): Promise<void> {
+  try {
+    const apiKey = process.env.EVOLUTION_GLOBAL_API_KEY || process.env.EVOLUTION_API_KEY
+    const evoUrl = process.env.EVOLUTION_URL || ''
+    if (!apiKey || !evoUrl) return
+
+    const res  = await fetch(
+      `${evoUrl}/instance/fetchInstances?instanceName=${encodeURIComponent(instanceName)}`,
+      { headers: { apikey: apiKey } },
+    )
+    const body = await res.json().catch(() => null)
+    const { phone_number } = parseInstancesResponse(res.status, body)
+    if (!phone_number) return
+
+    await query(
+      `UPDATE whatsapp_lines
+       SET phone_number = $1, updated_at = NOW()
+       WHERE evolution_instance = $2
+         AND phone_number IS DISTINCT FROM $1`,
+      [phone_number, instanceName],
+    )
+    console.log(JSON.stringify({ ts: new Date().toISOString(), event: 'line.phone_synced', instance: instanceName, phone_number }))
+  } catch (e) {
+    console.error('[webhook/evolution] syncLinePhoneNumber failed:', instanceName, e instanceof Error ? e.message : e)
+  }
 }
 
 // Evolution API v2 webhook handler
@@ -319,6 +350,7 @@ export async function POST(req: NextRequest) {
             [instanceName],
           ).catch(e => console.error('[webhook/evolution] CONNECTION_UPDATE open db update failed:', e?.message))
           console.log(JSON.stringify({ ts: new Date().toISOString(), event: 'line.connected', instance: instanceName }))
+          void syncLinePhoneNumber(instanceName)
         } else if (state === 'close') {
           await query(
             `UPDATE whatsapp_lines

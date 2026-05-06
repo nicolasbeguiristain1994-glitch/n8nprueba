@@ -3,6 +3,7 @@ import { query, withTransaction } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
 import { isUUID } from '@/lib/validate'
 import { audit } from '@/lib/audit'
+import { lineEligibleExpr } from '@/lib/line-eligibility'
 
 export async function GET(req: NextRequest) {
   const err = await checkPermission(req, 'lines', 'read')
@@ -15,14 +16,7 @@ export async function GET(req: NextRequest) {
              msgs_sent_today, msgs_sent_hour,
              msg_per_day, msg_per_hour, total_sent, total_failed,
              priority, last_seen_at,
-             (
-               status = 'active'
-               AND is_connected    = true
-               AND sending_enabled = true
-               AND msgs_sent_hour  < msg_per_hour
-               AND msgs_sent_today < msg_per_day
-               AND (allowed_types IS NULL OR allowed_types @> '["campaign"]'::jsonb)
-             ) AS eligible
+             ${lineEligibleExpr()} AS eligible
       FROM whatsapp_lines
       ORDER BY priority ASC, evolution_instance ASC
     `)

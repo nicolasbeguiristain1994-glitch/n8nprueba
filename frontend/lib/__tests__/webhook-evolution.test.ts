@@ -11,6 +11,7 @@
  *  4. messages.upsert — mensajes de grupos ignorados
  *  5. messages.update — eventos sin key.id ignorados
  *  6. Eventos desconocidos → ok silencioso
+ *  7. syncLinePhoneNumber — sincroniza phone_number al conectar
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -23,6 +24,9 @@ vi.mock('@/lib/db', () => ({ query: mockQuery }))
 vi.mock('@/lib/notify',           () => ({ notify: vi.fn() }))
 vi.mock('@/lib/automation-engine', () => ({ evaluateAutomations: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('@/lib/validate',          () => ({ normalizePhone: vi.fn().mockReturnValue(null) }))
+
+const mockFetch = vi.fn()
+vi.stubGlobal('fetch', mockFetch)
 
 // ── Constantes de prueba ───────────────────────────────────────────────────────
 
@@ -220,5 +224,104 @@ describe('webhook/evolution — eventos desconocidos', () => {
     expect(res.status).toBe(200)
     expect((await res.json()).ok).toBe(true)
     expect(mockQuery.mock.calls).toHaveLength(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. syncLinePhoneNumber — sincroniza phone_number al conectar
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('webhook/evolution — syncLinePhoneNumber', () => {
+  beforeEach(() => {
+    process.env.EVOLUTION_WEBHOOK_SECRET = SECRET
+    process.env.EVOLUTION_URL            = 'http://evo.test'
+    process.env.EVOLUTION_API_KEY        = 'test-api-key'
+    mockQuery.mockReset()
+    mockQuery.mockResolvedValue([])
+    mockFetch.mockReset()
+  })
+
+  it('state=open con phone disponible → UPDATE phone_number en DB', async () => {
+    // fetchInstances devuelve phone_number en ownerJid
+    mockFetch.mockResolvedValueOnce({
+      ok:     true,
+      status: 200,
+      json:   async () => [{ instance: { instanceName: 'wa-prod-01', state: 'open' }, ownerJid: '549123456789@s.whatsapp.net' }],
+    })
+
+    const { POST } = await import('@/app/api/webhook/evolution/route')
+    await POST(makeReq({
+      event:    'CONNECTION_UPDATE',
+      instance: 'wa-prod-01',
+      data:     { state: 'open' },
+    }))
+
+    // Dar tiempo al fire-and-forget
+    await new Promise(r => setTimeout(r, 0))
+
+    const phoneUpdateCall = mockQuery.mock.calls.find(args =>
+      typeof args[0] === 'string' && args[0].includes('phone_number = $1')
+    )
+    expect(phoneUpdateCall).toBeTruthy()
+    expect(phoneUpdateCall![1]).toContain('+549123456789')
+    expect(phoneUpdateCall![1]).toContain('wa-prod-01')
+  })
+
+  it('state=open pero Evolution no devuelve phone → sin UPDATE de phone', async () => {
+    // fetchInstances devuelve estado open sin ownerJid
+    mockFetch.mockResolvedValueOnce({
+      ok:     true,
+      status: 200,
+      json:   async () => [{ instance: { instanceName: 'wa-prod-02', state: 'open' } }],
+    })
+
+    const { POST } = await import('@/app/api/webhook/evolution/route')
+    await POST(makeReq({
+      event:    'CONNECTION_UPDATE',
+      instance: 'wa-prod-02',
+      data:     { state: 'open' },
+    }))
+
+    await new Promise(r => setTimeout(r, 0))
+
+    const phoneUpdateCall = mockQuery.mock.calls.find(args =>
+      typeof args[0] === 'string' && args[0].includes('phone_number = $1')
+    )
+    expect(phoneUpdateCall).toBeUndefined()
+  })
+
+  it('EVOLUTION_URL ausente → syncLinePhoneNumber no llama fetch', async () => {
+    delete process.env.EVOLUTION_URL
+
+    const { POST } = await import('@/app/api/webhook/evolution/route')
+    await POST(makeReq({
+      event:    'CONNECTION_UPDATE',
+      instance: 'wa-prod-03',
+      data:     { state: 'open' },
+    }))
+
+    await new Promise(r => setTimeout(r, 0))
+
+    // fetch solo fue llamado para el UPDATE de is_connected (no para syncLinePhoneNumber)
+    expect(mockFetch.mock.calls.filter(args =>
+      typeof args[0] === 'string' && (args[0] as string).includes('fetchInstances')
+    )).toHaveLength(0)
+
+    process.env.EVOLUTION_URL = 'http://evo.test'
+  })
+
+  it('state=close → no llama syncLinePhoneNumber', async () => {
+    const { POST } = await import('@/app/api/webhook/evolution/route')
+    await POST(makeReq({
+      event:    'CONNECTION_UPDATE',
+      instance: 'wa-prod-04',
+      data:     { state: 'close' },
+    }))
+
+    await new Promise(r => setTimeout(r, 0))
+
+    expect(mockFetch.mock.calls.filter(args =>
+      typeof args[0] === 'string' && (args[0] as string).includes('fetchInstances')
+    )).toHaveLength(0)
   })
 })

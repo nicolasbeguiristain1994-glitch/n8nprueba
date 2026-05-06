@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
+import { lineEligibleExpr } from '@/lib/line-eligibility'
 
 type LineHealthRow = {
   id:                 string
@@ -70,14 +71,7 @@ export async function GET(req: Request) {
         COALESCE(lu.sent_24h,   0) AS recent_sent,
         COALESCE(lu.failed_24h, 0) AS recent_failed,
         -- Eligible = all conditions met for campaign dispatch
-        (
-          l.status          = 'active'
-          AND l.is_connected    = true
-          AND l.sending_enabled = true
-          AND l.msgs_sent_hour  < l.msg_per_hour
-          AND l.msgs_sent_today < l.msg_per_day
-          AND (l.allowed_types IS NULL OR l.allowed_types @> '["campaign"]'::jsonb)
-        ) AS eligible
+        ${lineEligibleExpr('l')} AS eligible
       FROM whatsapp_lines l
       LEFT JOIN LATERAL (
         SELECT
