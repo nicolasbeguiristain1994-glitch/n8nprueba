@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, LogOut, Plus } from 'lucide-react'
+import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, LogOut, Plus, RotateCcw } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
@@ -43,6 +43,7 @@ export default function Lines() {
   const [lines, setLines]         = useState<Line[]>([])
   const [loading, setLoading]     = useState(false)
   const [toggling, setToggling]   = useState<string | null>(null)
+  const [syncing, setSyncing]     = useState<string | null>(null)
 
   // QR modal
   const [qrLine, setQrLine]           = useState<Line | null>(null)
@@ -79,16 +80,15 @@ export default function Lines() {
 
   useEffect(() => { load() }, [load])
 
-  // Countdown del QR — al llegar a 0 detiene el polling (QR inválido)
+  // Countdown del QR — al llegar a 0 solo actualiza la UI.
+  // NO detiene el poll: el usuario puede haber escaneado en los últimos segundos
+  // y el handshake (connecting→open) puede tardar unos segundos más.
   useEffect(() => {
     if (qrState !== 'qr' || !qrExpiresAt) return
     const tick = setInterval(() => {
       const left = Math.max(0, Math.ceil((qrExpiresAt - Date.now()) / 1000))
       setTimeLeft(left)
-      if (left === 0) {
-        stopPoll()  // QR expirado — no tiene sentido seguir consultando estado
-        clearInterval(tick)
-      }
+      if (left === 0) clearInterval(tick)
     }, 1000)
     return () => clearInterval(tick)
   }, [qrState, qrExpiresAt])
@@ -104,6 +104,20 @@ export default function Lines() {
       load()
     } catch { /* ignore */ } finally {
       setToggling(null)
+    }
+  }
+
+  // Consulta el estado real de Evolution para una línea y actualiza la DB si está conectada.
+  // Útil cuando el QR fue escaneado pero el sistema no lo detectó (race condition o webhook fallido).
+  const syncStatus = async (line: Line) => {
+    setSyncing(line.id)
+    try {
+      const res  = await fetch(`/api/lines/qr/status?instance=${encodeURIComponent(line.evolution_instance)}`)
+      const data = await res.json()
+      if (data.connected || data.state === 'open') load()
+      else load() // reload anyway to show current state
+    } catch { /* ignore */ } finally {
+      setSyncing(null)
     }
   }
 
@@ -431,11 +445,21 @@ export default function Lines() {
                             ? <span className="text-xs text-green-600 flex items-center gap-1">
                                 <CheckCircle size={12}/> Conectada
                               </span>
-                            : <Button size="sm" variant="outline"
-                                className="text-xs border-orange-200 text-orange-700 hover:bg-orange-50"
-                                onClick={() => openQrModal(l)}>
-                                <QrCode size={13} className="mr-1" /> Vincular QR
-                              </Button>
+                            : <div className="flex items-center gap-1.5">
+                                <Button size="sm" variant="outline"
+                                  className="text-xs border-orange-200 text-orange-700 hover:bg-orange-50"
+                                  onClick={() => openQrModal(l)}>
+                                  <QrCode size={13} className="mr-1" /> Vincular QR
+                                </Button>
+                                <button
+                                  onClick={() => syncStatus(l)}
+                                  disabled={syncing === l.id}
+                                  title="Verificar estado de conexión en Evolution"
+                                  className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50"
+                                >
+                                  <RotateCcw size={13} className={syncing === l.id ? 'animate-spin' : ''} />
+                                </button>
+                              </div>
                           }
                         </td>
                         {isAdmin && (

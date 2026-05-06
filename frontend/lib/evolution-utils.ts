@@ -42,12 +42,16 @@ function extractState(inst: any): InstanceState {
   const inner   = asObj(inst?.instance)
   const connSt  = asObj(inst?.connectionStatus)
 
+  // Evolution v2 usa distintos nombres de campo según la versión del build:
+  //   state, status, connectionStatus (string o anidado como objeto)
   const raw: string = (
-    inner?.state   ??
-    inner?.status  ??
-    connSt?.state  ??
-    inst?.state    ??
-    inst?.status   ??
+    inner?.state             ??
+    inner?.status            ??
+    inner?.connectionStatus  ??
+    connSt?.state            ??
+    inst?.state              ??
+    inst?.status             ??
+    inst?.connectionStatus   ??
     'close'
   ) as string
 
