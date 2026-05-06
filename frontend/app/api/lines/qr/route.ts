@@ -11,8 +11,9 @@ function validInstance(name: string): boolean {
   return INSTANCE_RE.test(name)
 }
 
-// GET /api/lines/qr?instance=xxx
+// GET /api/lines/qr?instance=xxx[&restart=true]
 // Intenta obtener QR de la instancia. Si no existe y hay EVOLUTION_GLOBAL_API_KEY, la crea.
+// Con ?restart=true reinicia la instancia antes de pedir el QR (fuerza sesión QR nueva).
 export async function GET(req: NextRequest) {
   const err = await checkPermission(req, 'lines', 'update')
   if (err) return err
@@ -23,8 +24,20 @@ export async function GET(req: NextRequest) {
 
   const EVO_GLOBAL = process.env.EVOLUTION_GLOBAL_API_KEY
   const EVO_KEY    = EVO_GLOBAL || process.env.EVOLUTION_API_KEY
+  const forceRestart = req.nextUrl.searchParams.get('restart') === 'true'
 
   try {
+    // Reiniciar la instancia para forzar una sesión QR completamente nueva.
+    // Necesario cuando el QR anterior fue intentado usar o la instancia quedó
+    // en un estado intermedio ("connecting" sin completar el handshake).
+    if (forceRestart) {
+      await fetch(`${EVO_URL}/instance/restart/${encodeURIComponent(instance)}`, {
+        method: 'PUT',
+        headers: { apikey: EVO_KEY ?? '' },
+      }).catch(() => {})
+      await new Promise(r => setTimeout(r, 2500))
+    }
+
     const res = await fetch(`${EVO_URL}/instance/connect/${encodeURIComponent(instance)}`, {
       headers: { apikey: EVO_KEY ?? '' },
       cache: 'no-store',

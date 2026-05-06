@@ -86,9 +86,10 @@ export default function Lines() {
     setQrError(null); setCanCreate(false)
   }
 
-  const fetchQr = useCallback(async (instance: string): Promise<boolean> => {
+  const fetchQr = useCallback(async (instance: string, restart = false): Promise<boolean> => {
     try {
-      const res  = await fetch(`/api/lines/qr?instance=${encodeURIComponent(instance)}`)
+      const url  = `/api/lines/qr?instance=${encodeURIComponent(instance)}${restart ? '&restart=true' : ''}`
+      const res  = await fetch(url)
       const data = await res.json()
 
       if (data.connected) {
@@ -547,7 +548,7 @@ export default function Lines() {
                   </p>
                 </div>
                 <Button variant="outline" size="sm" className="w-full"
-                  onClick={() => { setQrState('loading'); fetchQr(qrLine!.evolution_instance) }}>
+                  onClick={() => { setQrState('loading'); fetchQr(qrLine!.evolution_instance, true) }}>
                   <RefreshCw size={13} className="mr-1" /> Regenerar QR
                 </Button>
               </>
