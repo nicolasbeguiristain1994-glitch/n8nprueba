@@ -281,20 +281,22 @@ export async function POST(req: NextRequest) {
           else if (n === 2) status = 'sent'
         } else {
           const s = String(raw).toUpperCase()
-          if (s === 'READ') status = 'read'
-          else if (s === 'DELIVERED') status = 'delivered'
-          else if (s === 'SENT') status = 'sent'
+          if (s === 'READ' || s === 'PLAYED') status = 'read'
+          else if (s === 'DELIVERY_ACK' || s === 'DELIVERED') status = 'delivered'
+          else if (s === 'SERVER_ACK' || s === 'SENT') status = 'sent'
           else if (s === 'FAILED' || s === 'ERROR') status = 'failed'
         }
 
         // Intentar actualizar por evolution_message_id exacto primero
+        // $1::message_status cast needed — PostgreSQL can't infer consistent type when $1
+        // appears both in SET status=$1 and in CASE WHEN $1='delivered' comparisons.
         const res1 = await query<{ id: string }>(
           `UPDATE whatsapp_messages
-           SET status       = $1,
+           SET status       = $1::message_status,
                evolution_message_id = COALESCE(evolution_message_id, $2),
-               delivered_at = CASE WHEN $1 = 'delivered' THEN NOW() ELSE delivered_at END,
-               read_at      = CASE WHEN $1 = 'read'      THEN NOW() ELSE read_at END,
-               failed_at    = CASE WHEN $1 = 'failed'    THEN NOW() ELSE failed_at END,
+               delivered_at = CASE WHEN $1::message_status = 'delivered' THEN NOW() ELSE delivered_at END,
+               read_at      = CASE WHEN $1::message_status = 'read'      THEN NOW() ELSE read_at END,
+               failed_at    = CASE WHEN $1::message_status = 'failed'    THEN NOW() ELSE failed_at END,
                updated_at   = NOW()
            WHERE evolution_message_id = $2
            RETURNING id`,
@@ -305,11 +307,11 @@ export async function POST(req: NextRequest) {
         if (res1.length === 0 && phone) {
           await query(
             `UPDATE whatsapp_messages
-             SET status       = $1,
+             SET status       = $1::message_status,
                  evolution_message_id = $2,
-                 delivered_at = CASE WHEN $1 = 'delivered' THEN NOW() ELSE delivered_at END,
-                 read_at      = CASE WHEN $1 = 'read'      THEN NOW() ELSE read_at END,
-                 failed_at    = CASE WHEN $1 = 'failed'    THEN NOW() ELSE failed_at END,
+                 delivered_at = CASE WHEN $1::message_status = 'delivered' THEN NOW() ELSE delivered_at END,
+                 read_at      = CASE WHEN $1::message_status = 'read'      THEN NOW() ELSE read_at END,
+                 failed_at    = CASE WHEN $1::message_status = 'failed'    THEN NOW() ELSE failed_at END,
                  updated_at   = NOW()
              WHERE id = (
                SELECT id FROM whatsapp_messages
