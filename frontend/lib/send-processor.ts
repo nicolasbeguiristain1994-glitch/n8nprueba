@@ -1,6 +1,7 @@
 import { query } from '@/lib/db'
 import { ContactFrequencyEngine } from '@/lib/contact-frequency/ContactFrequencyEngine'
 import { clog } from '@/lib/campaign-logger'
+import { getEligibleLines, sendViaEvolution } from '@/lib/campaign-distributor'
 
 // Política de fail-open del motor de frecuencia (ver comentario en el catch del freq gate):
 // Si el motor lanza, el envío continúa. Esta constante controla cuántos fail-opens
@@ -204,11 +205,24 @@ export async function sendOne(
   campaignId: string,
   campaign: CampaignRow,
   recipient: RecipientRow,
-  n8nUrl: string
 ): Promise<'sent' | 'failed'> {
   const personalizedMsg = personalize(pickMessage(campaign), recipient.first_name, campaign)
 
-  // Pre-insert 'queued' row before n8n call — stale recovery can detect in-flight messages
+  // Pick the best eligible line — same logic as multi-line distributor
+  const eligibleLines = await getEligibleLines()
+  if (eligibleLines.length === 0) {
+    await recordFailure(campaignId, recipient, personalizedMsg, 'no-eligible-lines')
+    clog.warn({
+      event: 'recipient.failed', campaignId, mode: 'single-line',
+      recipientId: recipient.id, contactId: recipient.contact_id,
+      attempt: recipient.attempts, provider: 'evolution',
+      error: 'no-eligible-lines',
+    })
+    return 'failed'
+  }
+  const line = eligibleLines[0]
+
+  // Pre-insert 'queued' row — stale recovery can detect in-flight messages
   await query(
     `INSERT INTO whatsapp_messages
        (contact_id, campaign_id, phone_number, message_body, direction, status,
@@ -228,82 +242,56 @@ export async function sendOne(
   )
 
   try {
-    const res = await fetch(`${n8nUrl}/webhook/send-whatsapp`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal:  AbortSignal.timeout(30_000),
-      body: JSON.stringify({
-        phone:                 recipient.phone_number,
-        message:               personalizedMsg,
-        campaign_id:           campaignId,
-        campaign_name:         campaign.name,
-        contact_id:            recipient.contact_id,
-        campaign_recipient_id: recipient.id,
-        dedup_key:             recipient.id,
-        media_url:             campaign.media_url || undefined,
-        source:                'campaign',
-        antiblock_delay_min:   campaign.antiblock_delay_min,
-        antiblock_delay_max:   campaign.antiblock_delay_max,
-      }),
-    })
+    const { messageId } = await sendViaEvolution(
+      line,
+      recipient.phone_number,
+      personalizedMsg,
+      campaign.media_url || null,
+    )
 
-    if (res.ok) {
-      let evolutionMsgId: string | null = null
-      try {
-        const data = await res.json()
-        evolutionMsgId = data?.key?.id || data?.id || null
-      } catch { /* n8n returned empty body */ }
+    // Increment line counters (same as multi-line distributor)
+    await query(
+      `UPDATE whatsapp_lines
+       SET msgs_sent_hour  = msgs_sent_hour  + 1,
+           msgs_sent_today = msgs_sent_today + 1,
+           updated_at      = NOW()
+       WHERE id = $1`,
+      [line.id],
+    ).catch(() => {})
 
-      await query(
-        `UPDATE whatsapp_messages
-         SET status               = 'sent',
-             evolution_message_id = $1,
-             sent_at              = NOW(),
-             updated_at           = NOW()
-         WHERE campaign_recipient_id = $2
-           AND status = 'queued'`,
-        [evolutionMsgId, recipient.id]
-      )
-      await query(
-        `UPDATE campaign_recipients
-         SET status = 'sent', sent_at = NOW(), locked_at = NULL,
-             message_body = $1, evolution_message_id = $2,
-             updated_at = NOW()
-         WHERE id = $3`,
-        [personalizedMsg, evolutionMsgId, recipient.id]
-      )
-      clog.info({
-        event:       'recipient.sent',
-        campaignId,
-        mode:        'single-line',
-        recipientId: recipient.id,
-        contactId:   recipient.contact_id,
-        phone:       recipient.phone_number.slice(-4).padStart(recipient.phone_number.length, '*'),
-        attempt:     recipient.attempts,
-        provider:    'n8n',
-      })
-      return 'sent'
-    }
-
-    let errDetail: string
-    try { const d = await res.json(); errDetail = d?.message || String(res.status) }
-    catch { errDetail = String(res.status) }
-
-    await recordFailure(campaignId, recipient, personalizedMsg, errDetail)
-    clog.warn({
-      event:       'recipient.failed',
+    await query(
+      `UPDATE whatsapp_messages
+       SET status               = 'sent',
+           evolution_message_id = $1,
+           sent_at              = NOW(),
+           updated_at           = NOW()
+       WHERE campaign_recipient_id = $2
+         AND status = 'queued'`,
+      [messageId, recipient.id]
+    )
+    await query(
+      `UPDATE campaign_recipients
+       SET status = 'sent', sent_at = NOW(), locked_at = NULL,
+           message_body = $1, evolution_message_id = $2,
+           updated_at = NOW()
+       WHERE id = $3`,
+      [personalizedMsg, messageId, recipient.id]
+    )
+    clog.info({
+      event:       'recipient.sent',
       campaignId,
       mode:        'single-line',
       recipientId: recipient.id,
       contactId:   recipient.contact_id,
+      phone:       recipient.phone_number.slice(-4).padStart(recipient.phone_number.length, '*'),
       attempt:     recipient.attempts,
-      provider:    'n8n',
-      error:       `HTTP ${errDetail}`,
+      provider:    'evolution',
+      lineInstance: line.evolution_instance,
     })
-    return 'failed'
+    return 'sent'
 
   } catch (e) {
-    const errMsg = e instanceof Error ? e.message : 'network error'
+    const errMsg = e instanceof Error ? e.message : 'evolution error'
     await recordFailure(campaignId, recipient, personalizedMsg, errMsg)
     clog.warn({
       event:       'recipient.failed',
@@ -312,7 +300,7 @@ export async function sendOne(
       recipientId: recipient.id,
       contactId:   recipient.contact_id,
       attempt:     recipient.attempts,
-      provider:    'n8n',
+      provider:    'evolution',
       error:       errMsg,
     })
     return 'failed'
@@ -323,7 +311,6 @@ export async function sendOne(
 
 export async function processInBackground(
   campaign: CampaignRow,
-  n8nUrl: string,
   lockToken: string,
 ): Promise<void> {
   const id = campaign.id
@@ -428,7 +415,7 @@ export async function processInBackground(
       }
 
       // ── 4. Send ─────────────────────────────────────────────────────────
-      await sendOne(id, campaign, recipient, n8nUrl)
+      await sendOne(id, campaign, recipient)
       sendCount++
 
       // ── 5. Sync counters ────────────────────────────────────────────────

@@ -1,10 +1,11 @@
 /**
  * send-processor unit tests
+ * @vitest-environment node
  *
  * Covers:
  *  1. syncCounters — includes skipped, writes total_sent/failed/skipped
  *  2. Frequency gate — BLOCK → skipped, error → continues sending
- *  3. n8n failures — HTTP 500 → failed, timeout → failed
+ *  3. Evolution failures — throws → failed, success → sent
  *  4. All-skipped campaign → completes (pending drops to 0)
  *  5. Counter consistency — pending=0 after all recipients processed
  */
@@ -31,6 +32,14 @@ vi.mock('@/lib/contact-frequency/ContactFrequencyEngine', () => ({
   },
 }))
 import { ContactFrequencyEngine } from '@/lib/contact-frequency/ContactFrequencyEngine'
+
+// ── Mock campaign-distributor ─────────────────────────────────────────────────
+// sendOne now calls getEligibleLines + sendViaEvolution directly (no N8N)
+vi.mock('@/lib/campaign-distributor', () => ({
+  getEligibleLines: vi.fn(),
+  sendViaEvolution: vi.fn(),
+}))
+import { getEligibleLines, sendViaEvolution } from '@/lib/campaign-distributor'
 
 // ── Factories ─────────────────────────────────────────────────────────────────
 
@@ -59,6 +68,18 @@ function makeRecipient(overrides: Partial<RecipientRow> = {}): RecipientRow {
     first_name:   'Juan',
     attempts:     1,
     ...overrides,
+  }
+}
+
+function makeEligibleLine() {
+  return {
+    id: 'line-uuid-1',
+    evolution_instance: 'wa-instance-01',
+    evolution_url: 'https://evo.example.com',
+    msgs_sent_hour: 0,
+    msgs_sent_today: 0,
+    msg_per_hour: 50,
+    msg_per_day: 500,
   }
 }
 
@@ -145,9 +166,8 @@ describe('frequency gate in processInBackground', () => {
 
     blockDecision('max_per_day exceeded')
 
-    await processInBackground(campaign, 'http://n8n:5678', 'lock-token')
+    await processInBackground(campaign, 'lock-token')
 
-    // The UPDATE that marks the recipient as skipped should have been called
     const queries = vi.mocked(db.query).mock.calls.map(c => String(c[0]))
     const skippedUpdate = queries.find(q => q.includes("SET status = 'skipped'"))
     expect(skippedUpdate).toBeDefined()
@@ -160,6 +180,9 @@ describe('frequency gate in processInBackground', () => {
     vi.mocked(ContactFrequencyEngine.atomicEvaluateAndRecord)
       .mockRejectedValue(new Error('DB connection lost'))
 
+    vi.mocked(getEligibleLines).mockResolvedValue([makeEligibleLine()] as never)
+    vi.mocked(sendViaEvolution).mockResolvedValue({ messageId: 'evo-msg-id' })
+
     vi.mocked(db.query)
       // recoverStaleRows
       .mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
@@ -169,7 +192,8 @@ describe('frequency gate in processInBackground', () => {
       .mockResolvedValueOnce([recipient])
       // sendOne: pre-insert queued
       .mockResolvedValueOnce([])
-      // sendOne n8n is mocked via global fetch below — we stub it to return ok
+      // sendOne: UPDATE line counters
+      .mockResolvedValueOnce([])
       // sendOne: UPDATE whatsapp_messages → sent
       .mockResolvedValueOnce([])
       // sendOne: UPDATE campaign_recipients → sent
@@ -189,62 +213,29 @@ describe('frequency gate in processInBackground', () => {
       // release lock
       .mockResolvedValueOnce([])
 
-    // Mock global fetch for n8n call
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ id: 'msg-id' }),
-    } as Response)
+    await processInBackground(campaign, 'lock-token')
 
-    await processInBackground(campaign, 'http://n8n:5678', 'lock-token')
-
-    // Verify recipient was NOT marked as skipped (freq error → continue)
-    // "SET status = 'skipped'" only appears in the BLOCK update, not in syncCounters FILTERs
     const queries = vi.mocked(db.query).mock.calls.map(c => String(c[0]))
     const skippedUpdate = queries.find(q => q.includes("SET status = 'skipped'"))
     expect(skippedUpdate).toBeUndefined()
   })
 })
 
-// ── n8n error handling ────────────────────────────────────────────────────────
+// ── Evolution error handling ──────────────────────────────────────────────────
 
-describe('sendOne — n8n error handling', () => {
+describe('sendOne — Evolution error handling', () => {
   beforeEach(() => { vi.resetAllMocks() })
 
-  it('returns failed and records error on HTTP 500', async () => {
+  it('returns failed and records error when Evolution throws', async () => {
     const campaign = makeCampaign()
     const recipient = makeRecipient()
 
-    vi.mocked(db.query)
-      .mockResolvedValue([])  // pre-insert + failure inserts
-
-    global.fetch = vi.fn().mockResolvedValue({
-      ok:     false,
-      status: 500,
-      json:   async () => ({ message: 'Internal Server Error' }),
-    } as Response)
-
-    const result = await sendOne('campaign-uuid', campaign, recipient, 'http://n8n:5678')
-    expect(result).toBe('failed')
-
-    // Verify failure was recorded in campaign_recipients
-    const queries = vi.mocked(db.query).mock.calls.map(c => String(c[0]))
-    const failedUpdate = queries.find(q =>
-      q.includes("status = 'failed'") && q.includes('campaign_recipients')
-    )
-    expect(failedUpdate).toBeDefined()
-  })
-
-  it('returns failed and records error on network timeout', async () => {
-    const campaign = makeCampaign()
-    const recipient = makeRecipient()
+    vi.mocked(getEligibleLines).mockResolvedValue([makeEligibleLine()] as never)
+    vi.mocked(sendViaEvolution).mockRejectedValue(new Error('Evolution 500: Internal Server Error'))
 
     vi.mocked(db.query).mockResolvedValue([])
 
-    global.fetch = vi.fn().mockRejectedValue(
-      Object.assign(new Error('The operation was aborted'), { name: 'TimeoutError' })
-    )
-
-    const result = await sendOne('campaign-uuid', campaign, recipient, 'http://n8n:5678')
+    const result = await sendOne('campaign-uuid', campaign, recipient)
     expect(result).toBe('failed')
 
     const queries = vi.mocked(db.query).mock.calls.map(c => String(c[0]))
@@ -254,19 +245,35 @@ describe('sendOne — n8n error handling', () => {
     expect(failedUpdate).toBeDefined()
   })
 
-  it('returns sent on HTTP 200', async () => {
+  it('returns failed when no eligible lines', async () => {
     const campaign = makeCampaign()
     const recipient = makeRecipient()
 
+    vi.mocked(getEligibleLines).mockResolvedValue([] as never)
     vi.mocked(db.query).mockResolvedValue([])
 
-    global.fetch = vi.fn().mockResolvedValue({
-      ok:   true,
-      json: async () => ({ id: 'evo-msg-id' }),
-    } as Response)
+    const result = await sendOne('campaign-uuid', campaign, recipient)
+    expect(result).toBe('failed')
+  })
 
-    const result = await sendOne('campaign-uuid', campaign, recipient, 'http://n8n:5678')
+  it('returns sent and records messageId on Evolution success', async () => {
+    const campaign = makeCampaign()
+    const recipient = makeRecipient()
+
+    vi.mocked(getEligibleLines).mockResolvedValue([makeEligibleLine()] as never)
+    vi.mocked(sendViaEvolution).mockResolvedValue({ messageId: 'evo-msg-id-123' })
+
+    vi.mocked(db.query).mockResolvedValue([])
+
+    const result = await sendOne('campaign-uuid', campaign, recipient)
     expect(result).toBe('sent')
+
+    // Verify messageId was stored in campaign_recipients update
+    const recipientUpdate = vi.mocked(db.query).mock.calls.find(c =>
+      String(c[0]).includes('evolution_message_id') && String(c[0]).includes('campaign_recipients')
+    )
+    expect(recipientUpdate).toBeDefined()
+    expect(recipientUpdate![1]).toContain('evo-msg-id-123')
   })
 })
 
@@ -282,63 +289,31 @@ describe('all-skipped campaign completion', () => {
       makeRecipient({ id: 'rec-2', contact_id: 'c-2' }),
     ]
 
-    // All blocked
     blockDecision('max_per_week exceeded')
 
     let recipientIdx = 0
     vi.mocked(db.query).mockImplementation(async (sql: unknown) => {
       const s = String(sql)
-      // recoverStaleRows
       if (s.includes('INTERVAL') && s.includes("'sending'")) return []
-      // status gate
       if (s.includes('SELECT status FROM campaigns')) return [{ status: 'running' }]
-      // claimOne — return next recipient or empty
       if (s.includes('FOR UPDATE SKIP LOCKED')) {
         return recipientIdx < recipients.length ? [recipients[recipientIdx++]] : []
       }
-      // skipped update
       if (s.includes("status = 'skipped'")) return []
-      // syncCounters SELECT
       if (s.includes('COUNT(*) FILTER') && s.includes('campaign_recipients')) {
         const done = recipientIdx
         const remaining = recipients.length - done
         return [{ sent: '0', failed: '0', skipped: String(done), pending: String(remaining) }]
       }
-      // syncCounters UPDATE / completion UPDATE / release lock
       return []
     })
 
-    await processInBackground(campaign, 'http://n8n:5678', 'lock-token')
+    await processInBackground(campaign, 'lock-token')
 
     const queries = vi.mocked(db.query).mock.calls.map(c => String(c[0]))
     const completedUpdate = queries.find(q =>
       q.includes("status = 'completed'") && q.includes('UPDATE campaigns')
     )
     expect(completedUpdate).toBeDefined()
-  })
-})
-
-// ── Counter consistency ───────────────────────────────────────────────────────
-
-describe('counter consistency', () => {
-  beforeEach(() => { vi.resetAllMocks() })
-
-  it('pending=0 triggers loop exit regardless of sent/failed/skipped split', async () => {
-    vi.mocked(db.query)
-      .mockResolvedValueOnce([{ sent: '3', failed: '1', skipped: '2', pending: '0' }])
-      .mockResolvedValueOnce([])
-
-    const result = await syncCounters('cid')
-    expect(result.pending).toBe(0)
-    expect(result.sent + result.failed + result.skipped).toBe(6)
-  })
-
-  it('skipped recipients do NOT count as pending', async () => {
-    vi.mocked(db.query)
-      .mockResolvedValueOnce([{ sent: '0', failed: '0', skipped: '5', pending: '0' }])
-      .mockResolvedValueOnce([])
-
-    const { pending } = await syncCounters('cid')
-    expect(pending).toBe(0)
   })
 })

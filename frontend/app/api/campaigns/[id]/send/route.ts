@@ -18,8 +18,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params
   if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
-  const N8N_URL = process.env.N8N_URL
-  if (!N8N_URL) return NextResponse.json({ error: 'N8N_URL not configured' }, { status: 500 })
+  // N8N_URL ya no es necesario — el processor llama a Evolution directamente
 
   // ── Fetch campaign ─────────────────────────────────────────────────────────
   let campaign: CampaignRow | undefined
@@ -218,7 +217,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const capturedToken = lockToken
   ;(async () => {
     try {
-      await processInBackground(campaignSnapshot, N8N_URL, capturedToken)
+      await processInBackground(campaignSnapshot, capturedToken)
     } catch (e) {
       clog.critical({
         event: 'processor.crashed', campaignId: id, mode: 'single-line',
