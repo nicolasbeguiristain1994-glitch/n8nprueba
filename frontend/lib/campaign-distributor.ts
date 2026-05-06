@@ -348,8 +348,15 @@ export async function sendViaEvolution(
   message: string,
   mediaUrl?: string | null,
 ): Promise<{ messageId: string | null }> {
-  const apiKey = process.env.EVOLUTION_API_KEY
-  if (!apiKey) throw new Error('EVOLUTION_API_KEY not configured')
+  // Prefer EVOLUTION_GLOBAL_API_KEY (shared admin key) over per-instance key.
+  // QR routes use this same fallback pattern — keep them in sync.
+  // Use || (not ??) so an empty-string env var is treated as unset.
+  const apiKey = process.env.EVOLUTION_GLOBAL_API_KEY || process.env.EVOLUTION_API_KEY
+  if (!apiKey) throw new Error('EVOLUTION_API_KEY (or EVOLUTION_GLOBAL_API_KEY) not configured')
+
+  // evolution_url may be NULL in old DB rows — fall back to env var
+  const evoUrl = line.evolution_url || process.env.EVOLUTION_URL || ''
+  if (!evoUrl) throw new Error(`evolution_url not configured for line ${line.id}`)
 
   let body: Record<string, unknown>
   if (mediaUrl) {
@@ -365,7 +372,7 @@ export async function sendViaEvolution(
     body = { number: phone, text: message }
   }
 
-  const url = `${line.evolution_url}/message/sendText/${line.evolution_instance}`
+  const url = `${evoUrl}/message/sendText/${line.evolution_instance}`
   const res = await fetch(url, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json', apikey: apiKey },
@@ -879,15 +886,16 @@ export async function processMultiLineInBackground(
   const delayController = new AbortController()
 
   try {
-    // ── Guard temprano de EVOLUTION_API_KEY ───────────────────────────────────
+    // ── Guard temprano de API key ─────────────────────────────────────────────
     // Detectar configuración faltante antes de iniciar el procesador.
-    // Sin esta clave ningún envío puede completarse — mejor fallar explícitamente
-    // que dejar la campaña en 'running' con todos los recipients marcados 'failed'.
-    const evolutionApiKey = process.env.EVOLUTION_API_KEY
+    // Acepta EVOLUTION_GLOBAL_API_KEY o EVOLUTION_API_KEY (igual que QR routes).
+    // Sin una de estas claves ningún envío puede completarse — mejor pausar
+    // explícitamente que dejar la campaña en 'running' con recipients 'failed'.
+    const evolutionApiKey = process.env.EVOLUTION_GLOBAL_API_KEY || process.env.EVOLUTION_API_KEY
     if (!evolutionApiKey) {
       clog.critical({
         event: 'config.missing', campaignId: id, mode: 'multi-line',
-        detail: 'EVOLUTION_API_KEY not set — pausing campaign to avoid mass failures',
+        detail: 'EVOLUTION_API_KEY (or EVOLUTION_GLOBAL_API_KEY) not set — pausing campaign to avoid mass failures',
       })
       await query(
         `UPDATE campaigns

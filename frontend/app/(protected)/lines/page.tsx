@@ -23,6 +23,16 @@ interface Line {
 type QrState = 'idle' | 'loading' | 'not-found' | 'creating' | 'qr' | 'connecting' | 'connected' | 'error'
 
 const EVO_MANAGER  = process.env.NEXT_PUBLIC_EVOLUTION_MANAGER_URL ?? ''
+
+function ineligibilityReason(l: Line): string | null {
+  if (l.eligible) return null
+  if (l.status !== 'active')    return 'Línea inactiva'
+  if (!l.is_connected)          return 'Desconectada'
+  if (!l.sending_enabled)       return 'Envíos desactivados'
+  if (l.msgs_sent_hour >= l.msg_per_hour) return 'Límite horario agotado'
+  if (l.msgs_sent_today >= l.msg_per_day) return 'Límite diario agotado'
+  return 'No elegible'
+}
 const QR_TTL_MS    = 60_000   // WhatsApp QR expira en ~60s
 const STATUS_INTERVAL_MS = 3_000  // polling de estado post-scan
 
@@ -379,7 +389,12 @@ export default function Lines() {
                         <td className="px-4 py-3">
                           {l.eligible
                             ? <span className="flex items-center gap-1 text-xs text-green-600"><ShieldCheck size={13}/> Sí</span>
-                            : <span className="flex items-center gap-1 text-xs text-gray-400"><ShieldOff size={13}/> No</span>
+                            : <span
+                                className="flex items-center gap-1 text-xs text-red-400"
+                                title={ineligibilityReason(l) ?? 'No elegible'}
+                              >
+                                <ShieldOff size={13}/> {ineligibilityReason(l) ?? 'No'}
+                              </span>
                           }
                         </td>
                         <td className="px-4 py-3">

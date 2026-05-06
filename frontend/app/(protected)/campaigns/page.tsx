@@ -471,7 +471,7 @@ export default function Campaigns() {
                           return <>{pending} destinatarios pendientes — error sistémico del procesador. <span className="text-gray-500">Revisá los logs antes de reanudar. Si el problema persiste, contactá soporte.</span></>
                         })()}
                         {c.pause_reason === 'config_missing' && (
-                          <>Configuración incompleta: falta <code className="bg-orange-100 px-0.5 rounded">EVOLUTION_API_KEY</code>. <span className="text-gray-500">Configurar la variable de entorno y reanudar.</span></>
+                          <>Configuración incompleta: falta <code className="bg-orange-100 px-0.5 rounded">EVOLUTION_API_KEY</code> o <code className="bg-orange-100 px-0.5 rounded">EVOLUTION_GLOBAL_API_KEY</code>. <span className="text-gray-500">Configurar la variable de entorno y reanudar.</span></>
                         )}
                         {c.pause_reason === 'frequency_exhausted' && (
                           <>Todos los contactos bloqueados por límite de frecuencia. <span className="text-gray-500">Los contactos podrán recibir mensajes en la siguiente ventana (24h/7d).</span></>

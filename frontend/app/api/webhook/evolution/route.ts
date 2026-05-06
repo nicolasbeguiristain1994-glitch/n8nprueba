@@ -317,16 +317,16 @@ export async function POST(req: NextRequest) {
              SET is_connected = true, status = 'active', last_seen_at = NOW(), updated_at = NOW()
              WHERE evolution_instance = $1`,
             [instanceName],
-          ).catch(() => {})
-          console.log('[webhook/evolution] CONNECTION_UPDATE open:', instanceName)
+          ).catch(e => console.error('[webhook/evolution] CONNECTION_UPDATE open db update failed:', e?.message))
+          console.log(JSON.stringify({ ts: new Date().toISOString(), event: 'line.connected', instance: instanceName }))
         } else if (state === 'close') {
           await query(
             `UPDATE whatsapp_lines
              SET is_connected = false, updated_at = NOW()
              WHERE evolution_instance = $1`,
             [instanceName],
-          ).catch(() => {})
-          console.log('[webhook/evolution] CONNECTION_UPDATE close:', instanceName)
+          ).catch(e => console.error('[webhook/evolution] CONNECTION_UPDATE close db update failed:', e?.message))
+          console.log(JSON.stringify({ ts: new Date().toISOString(), event: 'line.disconnected', instance: instanceName }))
         }
       }
     } catch (e) {

@@ -1,5 +1,6 @@
 /**
  * campaign-distributor unit tests
+ * @vitest-environment node
  *
  * Tests are focused on:
  *  1. selectLine — deterministic line selection
@@ -7,12 +8,15 @@
  *  3. getEligibleLines query — correct SQL filtering (via mock)
  *  4. createDispatchUnits — idempotent seed behaviour
  *  5. Double-send prevention — sent unit cannot be claimed again
+ *  6. sendViaEvolution — EVOLUTION_GLOBAL_API_KEY fallback
+ *  7. sendViaEvolution — evolution_url fallback
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   selectLine,
   formatEligibilityError,
+  sendViaEvolution,
   type EligibleLine,
   type ContactEligibilityBreakdown,
 } from '@/lib/campaign-distributor'
@@ -23,6 +27,10 @@ vi.mock('@/lib/db', () => ({
   withTransaction: vi.fn(),
 }))
 import * as db from '@/lib/db'
+
+// ── Mock fetch (para sendViaEvolution) ────────────────────────────────────────
+const mockFetch = vi.fn()
+vi.stubGlobal('fetch', mockFetch)
 
 // ── Factories ──────────────────────────────────────────────────────────────────
 
@@ -337,5 +345,89 @@ describe('getContactEligibilityBreakdown', () => {
     vi.mocked(db.query).mockResolvedValueOnce([])
     const result = await getContactEligibilityBreakdown('nonexistent-list')
     expect(result.total_in_list).toBe(0)
+  })
+})
+
+// ── sendViaEvolution — API key fallback ────────────────────────────────────────
+
+describe('sendViaEvolution — API key fallback', () => {
+  const evoLine = makeLine({ evolution_url: 'http://evo:8080', evolution_instance: 'wa-01' })
+
+  beforeEach(() => {
+    mockFetch.mockReset()
+    mockFetch.mockResolvedValue({
+      ok:   true,
+      json: async () => ({ key: { id: 'msg-evo-123' } }),
+    })
+  })
+
+  afterEach(() => {
+    delete process.env.EVOLUTION_API_KEY
+    delete process.env.EVOLUTION_GLOBAL_API_KEY
+  })
+
+  it('usa EVOLUTION_API_KEY cuando EVOLUTION_GLOBAL_API_KEY no está seteado', async () => {
+    process.env.EVOLUTION_API_KEY = 'regular-key'
+    delete process.env.EVOLUTION_GLOBAL_API_KEY
+    const result = await sendViaEvolution(evoLine, '+5491100000', 'hola')
+    expect(result.messageId).toBe('msg-evo-123')
+    const [, opts] = mockFetch.mock.calls[0] as [string, RequestInit]
+    expect((opts.headers as Record<string, string>)['apikey']).toBe('regular-key')
+  })
+
+  it('usa EVOLUTION_GLOBAL_API_KEY cuando EVOLUTION_API_KEY está ausente', async () => {
+    delete process.env.EVOLUTION_API_KEY
+    process.env.EVOLUTION_GLOBAL_API_KEY = 'global-key-xyz'
+    const result = await sendViaEvolution(evoLine, '+5491100000', 'hola')
+    expect(result.messageId).toBe('msg-evo-123')
+    const [, opts] = mockFetch.mock.calls[0] as [string, RequestInit]
+    expect((opts.headers as Record<string, string>)['apikey']).toBe('global-key-xyz')
+  })
+
+  it('lanza cuando ninguna API key está configurada', async () => {
+    delete process.env.EVOLUTION_API_KEY
+    delete process.env.EVOLUTION_GLOBAL_API_KEY
+    await expect(sendViaEvolution(evoLine, '+5491100000', 'hola'))
+      .rejects.toThrow('not configured')
+  })
+
+  it('usa EVOLUTION_URL como fallback cuando evolution_url está vacío en la línea', async () => {
+    process.env.EVOLUTION_API_KEY = 'regular-key'
+    process.env.EVOLUTION_URL     = 'http://fallback-evo:9090'
+    const lineWithoutUrl = makeLine({ evolution_url: '', evolution_instance: 'wa-01' })
+    const result = await sendViaEvolution(lineWithoutUrl, '+5491100000', 'hola')
+    expect(result.messageId).toBe('msg-evo-123')
+    const [url] = mockFetch.mock.calls[0] as [string, RequestInit]
+    expect(url).toContain('http://fallback-evo:9090')
+    delete process.env.EVOLUTION_URL
+  })
+
+  it('lanza cuando evolution_url está vacío y EVOLUTION_URL tampoco está', async () => {
+    process.env.EVOLUTION_API_KEY = 'regular-key'
+    delete process.env.EVOLUTION_URL
+    const lineWithoutUrl = makeLine({ evolution_url: '', evolution_instance: 'wa-01' })
+    await expect(sendViaEvolution(lineWithoutUrl, '+5491100000', 'hola'))
+      .rejects.toThrow('evolution_url not configured')
+  })
+
+  it('lanza en HTTP error de Evolution', async () => {
+    process.env.EVOLUTION_API_KEY = 'regular-key'
+    mockFetch.mockResolvedValueOnce({
+      ok:     false,
+      status: 429,
+      json:   async () => ({ message: 'Too Many Requests' }),
+    })
+    await expect(sendViaEvolution(evoLine, '+5491100000', 'hola'))
+      .rejects.toThrow('Evolution 429')
+  })
+
+  it('retorna messageId null cuando Evolution responde sin body parseable', async () => {
+    process.env.EVOLUTION_API_KEY = 'regular-key'
+    mockFetch.mockResolvedValueOnce({
+      ok:   true,
+      json: async () => { throw new Error('empty body') },
+    })
+    const result = await sendViaEvolution(evoLine, '+5491100000', 'hola')
+    expect(result.messageId).toBeNull()
   })
 })

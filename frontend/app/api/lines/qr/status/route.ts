@@ -46,7 +46,10 @@ export async function GET(req: NextRequest) {
 
     const parsed = parseInstancesResponse(res.status, body)
 
-    console.log('[qr/status]', instance, '→', parsed.state)
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(), event: 'qr.status.polled',
+      instance, state: parsed.state,
+    }))
 
     if (parsed.state === 'notFound') {
       await query(
