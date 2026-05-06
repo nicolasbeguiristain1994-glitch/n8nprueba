@@ -294,6 +294,46 @@ export async function GET(req: NextRequest) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DELETE /api/lines/qr?instance=xxx — desvincula la instancia (logout)
+//
+// Llama a DELETE /instance/logout en Evolution (cierra la sesión WhatsApp)
+// y actualiza la DB: is_connected = false, status = 'inactive'.
+// NO elimina la línea ni la instancia de Evolution.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function DELETE(req: NextRequest) {
+  const err = await checkPermission(req, 'lines', 'update')
+  if (err) return err
+
+  const instance = req.nextUrl.searchParams.get('instance')
+  if (!instance || !INSTANCE_RE.test(instance)) {
+    return NextResponse.json({ error: 'instance required' }, { status: 400 })
+  }
+
+  const EVO_KEY = process.env.EVOLUTION_GLOBAL_API_KEY ?? process.env.EVOLUTION_API_KEY ?? ''
+
+  try {
+    await fetch(`${EVO_URL}/instance/logout/${encodeURIComponent(instance)}`, {
+      method: 'DELETE',
+      headers: { apikey: EVO_KEY },
+    }).catch(e => console.warn('[qr/unlink] logout error (best-effort):', e?.message))
+
+    await query(
+      `UPDATE whatsapp_lines
+       SET is_connected = false, status = 'inactive', updated_at = NOW()
+       WHERE evolution_instance = $1`,
+      [instance],
+    )
+
+    void audit({ req, action: 'update', resource: 'lines', metadata: { instance, action: 'unlink' } })
+
+    return NextResponse.json({ unlinked: true })
+  } catch (e) {
+    console.error('[qr/unlink] error:', e)
+    return NextResponse.json({ error: String(e) }, { status: 500 })
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/lines/qr — crea instancia con EVOLUTION_GLOBAL_API_KEY
 // ─────────────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {

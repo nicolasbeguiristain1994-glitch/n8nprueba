@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, Trash2, Plus } from 'lucide-react'
+import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, LogOut, Plus } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
@@ -56,10 +56,10 @@ export default function Lines() {
   // pollRef apunta siempre al polling de ESTADO (/qr/status), nunca al de generación
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // Delete modal
-  const [deleteTarget, setDeleteTarget]   = useState<Line | null>(null)
-  const [deleteLoading, setDeleteLoading] = useState(false)
-  const [deleteError, setDeleteError]     = useState<string | null>(null)
+  // Unlink modal
+  const [unlinkTarget, setUnlinkTarget]   = useState<Line | null>(null)
+  const [unlinkLoading, setUnlinkLoading] = useState(false)
+  const [unlinkError, setUnlinkError]     = useState<string | null>(null)
 
   // Add existing line modal
   const [addOpen, setAddOpen]               = useState(false)
@@ -250,24 +250,22 @@ export default function Lines() {
     }
   }
 
-  const confirmDelete = async () => {
-    if (!deleteTarget) return
-    setDeleteLoading(true)
-    setDeleteError(null)
+  const confirmUnlink = async () => {
+    if (!unlinkTarget) return
+    setUnlinkLoading(true)
+    setUnlinkError(null)
     try {
-      const res  = await fetch('/api/lines', {
+      const res  = await fetch(`/api/lines/qr?instance=${encodeURIComponent(unlinkTarget.evolution_instance)}`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: deleteTarget.id }),
       })
       const data = await res.json()
-      if (!res.ok) { setDeleteError(data.error || 'Error al eliminar'); return }
-      setDeleteTarget(null)
+      if (!res.ok) { setUnlinkError(data.error || 'Error al desvincular'); return }
+      setUnlinkTarget(null)
       load()
     } catch {
-      setDeleteError('Error de conexión')
+      setUnlinkError('Error de conexión')
     } finally {
-      setDeleteLoading(false)
+      setUnlinkLoading(false)
     }
   }
 
@@ -442,13 +440,15 @@ export default function Lines() {
                         </td>
                         {isAdmin && (
                           <td className="px-4 py-3">
-                            <button
-                              onClick={() => { setDeleteTarget(l); setDeleteError(null) }}
-                              title="Eliminar línea"
-                              className="p-1.5 rounded text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
-                            >
-                              <Trash2 size={14} />
-                            </button>
+                            {l.is_connected && (
+                              <button
+                                onClick={() => { setUnlinkTarget(l); setUnlinkError(null) }}
+                                title="Desvincular línea"
+                                className="p-1.5 rounded text-gray-400 hover:text-orange-600 hover:bg-orange-50 transition-colors"
+                              >
+                                <LogOut size={14} />
+                              </button>
+                            )}
                           </td>
                         )}
                       </tr>
@@ -460,31 +460,31 @@ export default function Lines() {
         </CardContent>
       </Card>
 
-      {/* ── Modal eliminar línea ── */}
-      <Dialog open={!!deleteTarget} onOpenChange={open => { if (!open) { setDeleteTarget(null); setDeleteError(null) } }}>
+      {/* ── Modal desvincular línea ── */}
+      <Dialog open={!!unlinkTarget} onOpenChange={open => { if (!open) { setUnlinkTarget(null); setUnlinkError(null) } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-rose-600">
-              <Trash2 size={16} /> Eliminar línea
+            <DialogTitle className="flex items-center gap-2 text-orange-600">
+              <LogOut size={16} /> Desvincular línea
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <p className="text-sm text-gray-700">
-              ¿Eliminar <span className="font-semibold">{deleteTarget?.display_name || deleteTarget?.line_key}</span>?
-              Esto elimina la línea del sistema pero <span className="font-medium">no</span> borra la instancia de Evolution. No se puede deshacer.
+              ¿Desvincular <span className="font-semibold">{unlinkTarget?.display_name || unlinkTarget?.line_key}</span>?
+              Esto cierra la sesión de WhatsApp pero <span className="font-medium">mantiene</span> la línea en el sistema. Podés volver a vincularla con QR.
             </p>
-            {deleteError && (
-              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{deleteError}</p>
+            {unlinkError && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{unlinkError}</p>
             )}
             <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" disabled={deleteLoading}
-                onClick={() => { setDeleteTarget(null); setDeleteError(null) }}>
+              <Button variant="outline" className="flex-1" disabled={unlinkLoading}
+                onClick={() => { setUnlinkTarget(null); setUnlinkError(null) }}>
                 Cancelar
               </Button>
-              <Button className="flex-1 bg-rose-600 hover:bg-rose-700 text-white" disabled={deleteLoading}
-                onClick={confirmDelete}>
-                {deleteLoading ? <Loader2 size={14} className="animate-spin mr-1" /> : <Trash2 size={14} className="mr-1" />}
-                Eliminar
+              <Button className="flex-1 bg-orange-600 hover:bg-orange-700 text-white" disabled={unlinkLoading}
+                onClick={confirmUnlink}>
+                {unlinkLoading ? <Loader2 size={14} className="animate-spin mr-1" /> : <LogOut size={14} className="mr-1" />}
+                Desvincular
               </Button>
             </div>
           </div>
