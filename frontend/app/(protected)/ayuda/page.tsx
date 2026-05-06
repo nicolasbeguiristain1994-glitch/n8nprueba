@@ -7,7 +7,7 @@ import {
   ClipboardList, CheckSquare, CalendarDays, BarChart2, Bot, ShieldOff,
   FileText, UserCog, Settings, ChevronRight, ChevronDown,
   Lightbulb, AlertTriangle, Info, Star, ArrowRight,
-  HelpCircle, BookOpen,
+  HelpCircle, BookOpen, Tag,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -129,6 +129,62 @@ const MODULES: ModuleSection[] = [
       {
         type: 'tip',
         text: 'Usá etiquetas (tags) para clasificar contactos por interés, estado de compra o cualquier criterio de tu negocio. Las etiquetas facilitan los filtros después.',
+      },
+    ],
+  },
+
+  {
+    id: 'segmentacion',
+    label: 'Segmentación de Jugadores',
+    icon: Tag,
+    role: 'admin',
+    color: 'text-pink-600',
+    subtitle: 'Cómo se clasifican automáticamente los jugadores del casino',
+    description:
+      'Cada jugador importado desde el panel del casino recibe automáticamente tres clasificaciones: Nivel de monto (cuánto cargó en total), Actividad (qué tan activo está) y Antigüedad (hace cuánto es cliente). Estas etiquetas permiten filtrar contactos y crear listas ultra-segmentadas para campañas precisas.',
+    steps: [
+      {
+        title: 'Nivel de monto (seg_monto) — 4 categorías',
+        detail:
+          'Se calcula sobre el total histórico de cargas de cada jugador usando percentiles del dataset completo. Los umbrales se recalculan automáticamente cada vez que se re-segmenta:\n• Bajo → percentil 0 a 33 del total de cargas (los de menor volumen histórico)\n• Medio → percentil 33 a 66\n• VIP → percentil 66 a 90\n• Super VIP → percentil 90 en adelante (top 10% del dataset)',
+      },
+      {
+        title: 'Actividad (seg_actividad) — 7 estados',
+        detail:
+          'Se calcula combinando los días transcurridos desde la última carga y la frecuencia semanal promedio:\n• Nuevo → primera carga hace ≤ 30 días\n• Frecuente → activo + promedio de ≥ 3 cargas por semana\n• Regular → activo + promedio de ≥ 1 carga por semana\n• Ocasional → activo + promedio de < 1 carga por semana\n• En riesgo → última carga hace 31–60 días (sin actividad reciente)\n• Inactivo → última carga hace 61–180 días\n• Perdido → última carga hace más de 180 días (o sin historial)',
+      },
+      {
+        title: 'Antigüedad — 5 niveles',
+        detail:
+          'Se calcula desde la fecha de la primera carga registrada:\n• Nuevo → cliente desde hace menos de 30 días\n• Reciente → 30–89 días como cliente\n• Establecido → 90–364 días (menos de 1 año)\n• Veterano → 1–3 años como cliente\n• Leal → más de 3 años (1.095+ días)',
+      },
+      {
+        title: 'Valor en riesgo (combinación monto + actividad)',
+        detail:
+          'Cuando un jugador de alto valor deja de estar activo, se genera automáticamente una etiqueta adicional de alerta:\n• Riesgo crítico → (Perdido / Inactivo / En riesgo) + (Super VIP o VIP)\n• Riesgo medio → (Perdido / Inactivo / En riesgo) + Medio\n• Riesgo bajo → (Perdido / Inactivo / En riesgo) + Bajo\nEstas etiquetas son ideales para campañas de reactivación priorizadas.',
+      },
+      {
+        title: 'Dónde ver y usar la segmentación',
+        detail:
+          'En el módulo de Contactos podés filtrar por cualquiera de estas dimensiones usando los selectores de "Nivel", "Actividad" y "Antigüedad". Al crear una lista dinámica, podés combinar varios filtros (ej: Nivel = Super VIP + Actividad = En riesgo) para construir audiencias muy específicas para tus campañas.',
+      },
+    ],
+    tips: [
+      {
+        type: 'info',
+        text: 'Los umbrales de Nivel (Bajo / Medio / VIP / Super VIP) son dinámicos: se calculan sobre el percentil del dataset completo cada vez que se corre la segmentación. No son valores fijos en pesos.',
+      },
+      {
+        type: 'example',
+        text: 'Ejemplo de campaña de reactivación: filtrás Nivel = VIP o Super VIP + Actividad = En riesgo o Inactivo. Obtenés la lista de tus mejores clientes que dejaron de jugar en los últimos 1–6 meses. Les mandás una oferta exclusiva de bienvenida de vuelta.',
+      },
+      {
+        type: 'example',
+        text: 'Ejemplo de campaña de fidelización: filtrás Actividad = Frecuente + Antigüedad = Veterano o Leal. Son tus clientes más fieles y activos. Usá esta lista para recompensas exclusivas o comunicaciones VIP.',
+      },
+      {
+        type: 'warning',
+        text: 'La segmentación se actualiza solo cuando se corre el script de importación o re-segmentación. Si un jugador cargó ayer, su estado de actividad no cambia automáticamente hasta la próxima actualización.',
       },
     ],
   },
