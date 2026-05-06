@@ -146,7 +146,7 @@ const MODULES: ModuleSection[] = [
       {
         title: 'Nivel de monto (seg_monto) — 4 categorías',
         detail:
-          'Se calcula sobre el total histórico de cargas de cada jugador usando percentiles del dataset completo. Los umbrales se recalculan automáticamente cada vez que se re-segmenta:\n• Bajo → percentil 0 a 33 del total de cargas (los de menor volumen histórico)\n• Medio → percentil 33 a 66\n• VIP → percentil 66 a 90\n• Super VIP → percentil 90 en adelante (top 10% del dataset)',
+          'Se calcula sobre el total histórico de cargas de cada jugador usando umbrales fijos:\n• Bajo → menos de $250.000 en cargas históricas\n• Medio → entre $250.000 y $499.999\n• VIP → entre $500.000 y $999.999\n• Super VIP → $1.000.000 o más',
       },
       {
         title: 'Actividad (seg_actividad) — 7 estados',

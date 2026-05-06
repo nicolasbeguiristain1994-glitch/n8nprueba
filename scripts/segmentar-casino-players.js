@@ -4,9 +4,11 @@
  *
  * Calcula y aplica seg_monto + seg_actividad en casino_players.
  *
- * Lógica idéntica a scripts/analizar-historial.js:
- *   seg_monto:     percentiles p33/p66/p90 de total_cargas sobre el dataset actual
- *   seg_actividad: reglas de días de inactividad + frecuencia semanal
+ * Umbrales fijos de seg_monto (sobre total_cargas):
+ *   bajo       → < 250.000
+ *   medio      → 250.000 a 499.999
+ *   alto (Vip) → 500.000 a 999.999
+ *   vip (Super VIP) → >= 1.000.000
  *
  * Reglas de seg_actividad:
  *   perdido    → fecha_ultima > 180 días atrás (o NULL)
@@ -59,41 +61,28 @@ const pool = new Pool({
   idleTimeoutMillis:       60_000,
 })
 
-const AGENTES = '{bigwin,ofizeus,betcoin,royal,farabet}'
+const AGENTES = ['bigwin','ofizeus','betcoin','royal','farabet']
+
+// Umbrales fijos de monto (en pesos)
+const THRESHOLD_MEDIO     = 250_000   // bajo  → < 250k
+const THRESHOLD_ALTO      = 500_000   // medio → 250k–500k
+const THRESHOLD_VIP       = 1_000_000 // alto  → 500k–1M  /  vip → >= 1M
 
 async function main() {
   console.log('')
   console.log('═══════════════════════════════════════════════════════════════')
-  console.log('  casino_players — segmentación dinámica (p33/p66/p90)')
+  console.log('  casino_players — segmentación por umbrales fijos de monto')
   if (DRY_RUN) console.log('  *** DRY RUN — no se modificará nada ***')
   console.log('═══════════════════════════════════════════════════════════════')
   console.log('')
-
-  // ── 1. Calcular thresholds percentiles ──────────────────────────────────────
-  const thRes = await pool.query(`
-    SELECT
-      PERCENTILE_CONT(0.33) WITHIN GROUP (ORDER BY total_cargas)::bigint AS p33,
-      PERCENTILE_CONT(0.66) WITHIN GROUP (ORDER BY total_cargas)::bigint AS p66,
-      PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY total_cargas)::bigint AS p90,
-      COUNT(*)::int AS total
-    FROM casino_players
-    WHERE agente = ANY($1::text[])
-      AND total_cargas > 0
-  `, [['bigwin','ofizeus','betcoin','royal','farabet']])
-
-  const { p33, p66, p90, total } = thRes.rows[0]
-
-  console.log(`  Jugadores con cargas > 0: ${Number(total).toLocaleString('es-AR')}`)
-  console.log('')
-  console.log('  Umbrales calculados del dataset actual:')
-  console.log(`    bajo   →       $0  a  $${Number(p33).toLocaleString('es-AR')}`)
-  console.log(`    medio  → $${Number(p33).toLocaleString('es-AR')}  a  $${Number(p66).toLocaleString('es-AR')}`)
-  console.log(`    alto   → $${Number(p66).toLocaleString('es-AR')}  a  $${Number(p90).toLocaleString('es-AR')}`)
-  console.log(`    vip    → $${Number(p90).toLocaleString('es-AR')}+`)
+  console.log('  Umbrales de seg_monto:')
+  console.log(`    bajo       →       $0  a  $${Number(THRESHOLD_MEDIO - 1).toLocaleString('es-AR')}`)
+  console.log(`    medio      → $${Number(THRESHOLD_MEDIO).toLocaleString('es-AR')}  a  $${Number(THRESHOLD_ALTO - 1).toLocaleString('es-AR')}`)
+  console.log(`    alto (Vip) → $${Number(THRESHOLD_ALTO).toLocaleString('es-AR')}  a  $${Number(THRESHOLD_VIP - 1).toLocaleString('es-AR')}`)
+  console.log(`    vip (Super VIP) → $${Number(THRESHOLD_VIP).toLocaleString('es-AR')}+`)
   console.log('')
 
   if (DRY_RUN) {
-    // Preview: cuántos caerían en cada bucket sin modificar nada
     const previewRes = await pool.query(`
       SELECT
         CASE
@@ -106,7 +95,7 @@ async function main() {
       FROM casino_players
       WHERE agente = ANY($4::text[])
       GROUP BY 1 ORDER BY 1
-    `, [p90, p66, p33, ['bigwin','ofizeus','betcoin','royal','farabet']])
+    `, [THRESHOLD_VIP, THRESHOLD_ALTO, THRESHOLD_MEDIO, AGENTES])
 
     console.log('  DRY RUN — distribución estimada de seg_monto:')
     for (const r of previewRes.rows) {
@@ -118,22 +107,12 @@ async function main() {
     return
   }
 
-  // ── 2. Aplicar segmentación en un solo UPDATE ────────────────────────────────
+  // ── Aplicar segmentación en un solo UPDATE ──────────────────────────────────
   //
-  // seg_monto:    percentiles p33/p66/p90 de total_cargas del dataset completo
-  // seg_actividad: reglas de días de inactividad + freq_semanal calculado en el mismo UPDATE
-  //   perdido    → fecha_ultima IS NULL o > 180 días
-  //   inactivo   → 61–180 días
-  //   en_riesgo  → 31–60 días
-  //   nuevo      → activo + fecha_primera ≤ 30 días
-  //   frecuente  → activo + freq_semanal ≥ 3
-  //   regular    → activo + freq_semanal ≥ 1
-  //   ocasional  → activo + freq_semanal < 1
+  // seg_monto:    umbrales fijos (ver constantes arriba)
+  // seg_actividad: reglas de días de inactividad + freq_semanal
 
   const updateRes = await pool.query(`
-    WITH thresholds AS (
-      SELECT $1::bigint AS p33, $2::bigint AS p66, $3::bigint AS p90
-    )
     UPDATE casino_players cp
     SET
       freq_semanal = CASE
@@ -152,10 +131,10 @@ async function main() {
       END,
 
       seg_monto = CASE
-        WHEN cp.total_cargas >= t.p90 THEN 'vip'
-        WHEN cp.total_cargas >= t.p66 THEN 'alto'
-        WHEN cp.total_cargas >= t.p33 THEN 'medio'
-        ELSE                               'bajo'
+        WHEN cp.total_cargas >= $1 THEN 'vip'
+        WHEN cp.total_cargas >= $2 THEN 'alto'
+        WHEN cp.total_cargas >= $3 THEN 'medio'
+        ELSE                            'bajo'
       END,
 
       seg_actividad = CASE
@@ -177,13 +156,12 @@ async function main() {
       END,
 
       updated_at = NOW()
-    FROM thresholds t
     WHERE cp.agente = ANY($4::text[])
-  `, [p33, p66, p90, ['bigwin','ofizeus','betcoin','royal','farabet']])
+  `, [THRESHOLD_VIP, THRESHOLD_ALTO, THRESHOLD_MEDIO, AGENTES])
 
   const updated = updateRes.rowCount ?? 0
 
-  // ── 3. Resultado ─────────────────────────────────────────────────────────────
+  // ── Resultado ─────────────────────────────────────────────────────────────────
   const resultRes = await pool.query(`
     SELECT
       seg_monto,
@@ -193,9 +171,8 @@ async function main() {
     WHERE agente = ANY($1::text[])
     GROUP BY seg_monto, seg_actividad
     ORDER BY seg_monto, seg_actividad
-  `, [['bigwin','ofizeus','betcoin','royal','farabet']])
+  `, [AGENTES])
 
-  // Agrupar por seg_monto para resumen
   const byMonto = {}
   const byAct   = {}
   for (const r of resultRes.rows) {
