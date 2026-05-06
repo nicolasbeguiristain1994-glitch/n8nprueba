@@ -93,10 +93,16 @@ async function getCurrentState(
 // Genera el QR de la instancia. Llamar SOLO para obtener un QR nuevo.
 // Para polling de estado usar GET /api/lines/qr/status.
 //
-// ?restart=true: fuerza una sesión QR nueva.
-//   - Si la instancia está `open` → rechaza (ya conectada, no tiene sentido).
-//   - Si está `connecting` → hace logout primero para limpiar la sesión parcial.
-//   - En cualquier otro caso → hace restart y espera 3s.
+// ?restart=true: fuerza una sesión QR limpia.
+//   - Si la instancia está `open` → rechaza (ya conectada).
+//   - Si EVOLUTION_GLOBAL_API_KEY está configurado:
+//       DELETE + CREATE → sesión Baileys completamente nueva (más confiable).
+//   - Fallback sin global key: logout + restart.
+//
+// Por qué delete+create y no logout+restart:
+//   POST /instance/restart devuelve 200 pero puede ser no-op en algunas versiones
+//   de Evolution. El estado queda en `close` y el QR devuelto es del caché → inválido.
+//   DELETE + CREATE garantiza una sesión Baileys nueva con WebSocket fresco.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   const err = await checkPermission(req, 'lines', 'update')
@@ -115,7 +121,6 @@ export async function GET(req: NextRequest) {
       const currentState = await getCurrentState(EVO_URL, EVO_KEY, instance)
       console.log('[qr/restart] current state:', currentState)
 
-      // No reiniciar una instancia ya conectada — sería destructivo
       if (currentState === 'open') {
         return NextResponse.json({
           connected: true,
@@ -124,24 +129,72 @@ export async function GET(req: NextRequest) {
         })
       }
 
-      // Hacer logout en cualquier estado no-open para limpiar el auth state de
-      // Baileys. Sin esto, Evolution reutiliza credenciales expiradas y WhatsApp
-      // rechaza el handshake con "no se pudo vincular el dispositivo".
-      if (currentState !== 'notFound') {
-        console.log('[qr/restart] doing logout to clear stale Baileys session')
+      if (EVO_GLOBAL) {
+        // ── Delete + recreate (sesión Baileys garantizada fresca) ─────────────
+        console.log('[qr/restart] delete+recreate for fresh Baileys session')
         await fetch(
-          `${EVO_URL}/instance/logout/${encodeURIComponent(instance)}`,
-          { method: 'DELETE', headers: { apikey: EVO_KEY } },
-        ).catch(e => console.warn('[qr/restart] logout error (best-effort):', e?.message))
-        await new Promise(r => setTimeout(r, 1000))
-      }
+          `${EVO_URL}/instance/delete/${encodeURIComponent(instance)}`,
+          { method: 'DELETE', headers: { apikey: EVO_GLOBAL } },
+        ).catch(e => console.warn('[qr/restart] delete error (best-effort):', e?.message))
+        await new Promise(r => setTimeout(r, 1500))
 
-      const restartRes = await fetch(
-        `${EVO_URL}/instance/restart/${encodeURIComponent(instance)}`,
-        { method: 'POST', headers: { apikey: EVO_KEY } },
-      ).catch(e => { console.warn('[qr/restart] restart error:', e?.message); return null })
-      console.log('[qr/restart] status:', restartRes?.status ?? 'error')
-      await new Promise(r => setTimeout(r, 3000))
+        const createRes = await fetch(`${EVO_URL}/instance/create`, {
+          method:  'POST',
+          headers: { apikey: EVO_GLOBAL, 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            instanceName: instance,
+            qrcode:       true,
+            integration:  'WHATSAPP-BAILEYS',
+          }),
+        }).catch(e => { console.error('[qr/restart] create failed:', e?.message); return null })
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let createData: any = {}
+        if (createRes) {
+          try { createData = await createRes.json() } catch { createData = {} }
+          console.log('[qr/restart] create http:', createRes.status, '| hasBase64:', !!extractBase64(createData))
+        }
+
+        const createdBase64 = extractBase64(createData)
+        if (createdBase64) {
+          // Webhook setup best-effort (instance just created, not yet connected)
+          const webhookSecret = process.env.EVOLUTION_WEBHOOK_SECRET
+          if (webhookSecret) {
+            void setupWebhook(EVO_URL, EVO_GLOBAL, instance, new URL(req.url).origin, webhookSecret)
+          }
+          await query(
+            `UPDATE whatsapp_lines SET is_connected = false, updated_at = NOW() WHERE evolution_instance = $1`,
+            [instance],
+          ).catch(() => {})
+
+          // Verify Baileys is actually connecting (diagnóstico)
+          await new Promise(r => setTimeout(r, 1000))
+          const stateAfter = await getCurrentState(EVO_URL, EVO_GLOBAL, instance)
+          console.log('[qr/restart] state after recreate:', stateAfter)
+
+          return NextResponse.json({ connected: false, base64: createdBase64 })
+        }
+
+        // QR no vino en create → esperar y pedir vía /connect
+        console.log('[qr/restart] no QR in create response, waiting for Baileys to connect...')
+        await new Promise(r => setTimeout(r, 3000))
+
+      } else {
+        // ── Fallback sin global key: logout + restart ─────────────────────────
+        if (currentState !== 'notFound') {
+          console.log('[qr/restart] logout (no global key, using fallback)')
+          await fetch(
+            `${EVO_URL}/instance/logout/${encodeURIComponent(instance)}`,
+            { method: 'DELETE', headers: { apikey: EVO_KEY } },
+          ).catch(e => console.warn('[qr/restart] logout error:', e?.message))
+          await new Promise(r => setTimeout(r, 1000))
+        }
+        await fetch(
+          `${EVO_URL}/instance/restart/${encodeURIComponent(instance)}`,
+          { method: 'POST', headers: { apikey: EVO_KEY } },
+        ).catch(e => console.warn('[qr/restart] restart error:', e?.message))
+        await new Promise(r => setTimeout(r, 3000))
+      }
     }
 
     const res = await fetch(`${EVO_URL}/instance/connect/${encodeURIComponent(instance)}`, {
@@ -153,12 +206,21 @@ export async function GET(req: NextRequest) {
     let data: any
     try { data = await res.json() } catch { data = {} }
 
+    // Verify state after connect (diagnostic — helps identify cached-QR issues)
+    const stateAfterConnect = data?.instance?.state ?? data?.state ?? '?'
     console.log(
       '[qr/connect] instance:', instance,
       '| http:', res.status,
-      '| state:', data?.instance?.state ?? data?.state ?? '?',
+      '| state:', stateAfterConnect,
       '| hasBase64:', !!extractBase64(data),
     )
+    if (stateAfterConnect === '?' || stateAfterConnect === 'close') {
+      const liveState = await getCurrentState(EVO_URL, EVO_KEY, instance)
+      console.log('[qr/connect] live state check via fetchInstances:', liveState)
+      if (liveState === 'close') {
+        console.warn('[qr/connect] WARNING: state=close after connect — QR may be stale/invalid')
+      }
+    }
 
     // Instancia ya conectada
     if (data?.instance?.state === 'open' || data?.state === 'open') {
