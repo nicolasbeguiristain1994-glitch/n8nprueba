@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Search, Upload, RefreshCw, List, CheckSquare, X, Users, UserPlus,
-  Trash2, Download, DatabaseZap,
+  Trash2, Download, DatabaseZap, Pencil,
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
@@ -134,6 +134,17 @@ export default function Contacts() {
   const [criteriaSegment, setCriteriaSegment] = useState('')
   const [criteriaActividad, setCriteriaActividad]   = useState('')
   const [criteriaAntiguedad, setCriteriaAntiguedad] = useState('')
+
+  // ── Edit contact modal ────────────────────────────────────────────────────
+  const [editContact, setEditContact]   = useState<Contact | null>(null)
+  const [editFirstName, setEditFirstName] = useState('')
+  const [editLastName, setEditLastName]   = useState('')
+  const [editPanel, setEditPanel]         = useState('')
+  const [editLinea, setEditLinea]         = useState('')
+  const [editSegment, setEditSegment]     = useState('')
+  const [editGaming, setEditGaming]       = useState('')
+  const [editSaving, setEditSaving]       = useState(false)
+  const [editError, setEditError]         = useState<string | null>(null)
 
   // ── Misc ──────────────────────────────────────────────────────────────────
   const [updateError, setUpdateError]           = useState<string | null>(null)
@@ -405,6 +416,44 @@ export default function Contacts() {
     finally { setRepopulating(false) }
   }
 
+  const openEdit = useCallback((c: Contact) => {
+    setEditContact(c)
+    setEditFirstName(c.first_name || '')
+    setEditLastName(c.last_name || '')
+    setEditPanel(c.panel || '')
+    setEditLinea(c.linea != null ? String(c.linea) : '')
+    setEditSegment(c.segment || '')
+    setEditGaming(c.gaming || '')
+    setEditError(null)
+  }, [])
+
+  const saveEdit = async () => {
+    if (!editContact) return
+    setEditSaving(true); setEditError(null)
+    const body: Record<string, unknown> = {
+      first_name: editFirstName.trim() || null,
+      last_name:  editLastName.trim()  || null,
+      panel:      editPanel  || null,
+      linea:      editLinea  ? Number(editLinea) : null,
+      segment:    editSegment || null,
+      gaming:     editGaming  || null,
+    }
+    try {
+      const res = await fetch(`/api/contacts/${editContact.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { setEditError(data.error || 'Error al guardar'); return }
+      setEditContact(null)
+      load()
+    } catch {
+      setEditError('Error de conexión')
+    } finally {
+      setEditSaving(false)
+    }
+  }
+
   // ── Columnas del DataTable ────────────────────────────────────────────────
 
   const columns = useMemo<ColumnDef<Contact, unknown>[]>(() => [
@@ -568,6 +617,11 @@ export default function Contacts() {
       size: 40,
       cell: ({ row }) => (
         <DataTableRowActions>
+          <DataTableActionButton
+            onClick={() => openEdit(row.original)}
+            icon={Pencil}
+            label="Editar contacto"
+          />
           <DataTableActionButton
             onClick={() => deleteContact(row.original.id)}
             icon={Trash2}
@@ -1000,6 +1054,58 @@ export default function Contacts() {
               <Button variant="outline" className="flex-1" onClick={() => setShowAdd(false)}><X size={14} /> Cancelar</Button>
               <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={addContact} disabled={addSaving}>
                 {addSaving ? 'Guardando…' : 'Guardar contacto'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* ── Modal editar contacto ── */}
+      <Dialog open={!!editContact} onOpenChange={v => { if (!v) setEditContact(null) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Pencil size={16} /> Editar contacto</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Teléfono</label>
+              <Input value={editContact?.phone_number || ''} disabled className="font-mono text-sm bg-muted/50" />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Nombre</label>
+                <Input placeholder="Nombre" value={editFirstName} onChange={e => setEditFirstName(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Apellido</label>
+                <Input placeholder="Apellido" value={editLastName} onChange={e => setEditLastName(e.target.value)} />
+              </div>
+            </div>
+            <div className="grid grid-cols-4 gap-2">
+              {[
+                { label: 'Panel',  value: editPanel,   set: setEditPanel,   items: PANEL_OPTIONS.map(p => ({ v: p, l: p })),                                                                                          ph: 'Panel'  },
+                { label: 'Línea',  value: editLinea,   set: setEditLinea,   items: Array.from({ length: 100 }, (_, i) => ({ v: String(i + 1), l: `Línea ${i + 1}` })),                                               ph: 'Línea'  },
+                { label: 'Juego',  value: editGaming,  set: setEditGaming,  items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }],                         ph: 'Juego'  },
+                { label: 'Nivel',  value: editSegment, set: setEditSegment, items: [{ v: 'vip', l: 'Super Vip' }, { v: 'alto', l: 'Vip' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }],                   ph: 'Nivel'  },
+              ].map(({ label, value, set, items, ph }) => (
+                <div key={label}>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">{label}</label>
+                  <Select value={value} onValueChange={v => set(v ?? '')}>
+                    <SelectTrigger><SelectValue placeholder={ph} /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">Sin {label.toLowerCase()}</SelectItem>
+                      {items.map(i => <SelectItem key={i.v} value={i.v}>{i.l}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ))}
+            </div>
+            {editError && <p className="text-xs text-destructive">{editError}</p>}
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => setEditContact(null)} disabled={editSaving}>
+                <X size={14} className="mr-1" /> Cancelar
+              </Button>
+              <Button className="flex-1" onClick={saveEdit} disabled={editSaving}>
+                {editSaving ? 'Guardando…' : 'Guardar cambios'}
               </Button>
             </div>
           </div>

@@ -18,14 +18,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  let body: { segment?: string | null; gaming?: string | null; panel?: string | null; linea?: number | null }
+  let body: { segment?: string | null; gaming?: string | null; panel?: string | null; linea?: number | null; first_name?: string | null; last_name?: string | null }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { segment, gaming, panel, linea } = body
+  const { segment, gaming, panel, linea, first_name, last_name } = body
 
   const allowedSegments = ['bajo', 'medio', 'alto', 'vip']
   const allowedGaming   = ['slots', 'deportivas', 'ambas']
@@ -64,6 +64,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         return NextResponse.json({ error: 'Línea inválida (1-100)' }, { status: 400 })
       await query(`UPDATE contacts SET linea = $1, updated_at = NOW() WHERE id = $2`, [lineaNum, id])
       changedFields.push('linea')
+    }
+
+    if (first_name !== undefined) {
+      await query(`UPDATE contacts SET first_name = $1, updated_at = NOW() WHERE id = $2`, [first_name || null, id])
+      changedFields.push('first_name')
+    }
+
+    if (last_name !== undefined) {
+      await query(`UPDATE contacts SET last_name = $1, updated_at = NOW() WHERE id = $2`, [last_name || null, id])
+      changedFields.push('last_name')
     }
 
     void audit({ req, action: 'update', resource: 'contacts', resource_id: id,
