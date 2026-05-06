@@ -74,6 +74,7 @@ export default function Campaigns() {
   const [resuming, setResuming]           = useState<string | null>(null)
   const [freqResetting, setFreqResetting] = useState<string | null>(null)
   const [unlocking, setUnlocking]         = useState<string | null>(null)
+  const [syncing, setSyncing]             = useState<string | null>(null)
 
   // Form
   const [form, setForm] = useState({
@@ -245,6 +246,16 @@ export default function Campaigns() {
       setSendError('Error de red al liberar el lock')
     } finally {
       setUnlocking(null)
+    }
+  }
+
+  const syncStatus = async (campaign: Campaign) => {
+    setSyncing(campaign.id)
+    try {
+      await fetch(`/api/campaigns/${campaign.id}/sync-status`, { method: 'POST' })
+      load()
+    } catch { /* best effort */ } finally {
+      setSyncing(null)
     }
   }
 
@@ -432,6 +443,19 @@ export default function Campaigns() {
                                 onClick={() => { if (confirm(`¿Cancelar "${c.name}"?`)) updateStatus(c.id, 'cancelled') }}
                                 disabled={actioning === c.id}>
                           <XCircle size={13} />
+                        </Button>
+                      )}
+
+                      {/* Sync estados entregado/leído desde Evolution */}
+                      {['completed','running'].includes(c.status) && c.total_sent > 0 && (
+                        <Button size="sm" variant="outline"
+                                className="border-blue-200 text-blue-500 hover:bg-blue-50"
+                                title="Sincronizar estados de entrega y lectura"
+                                onClick={() => syncStatus(c)}
+                                disabled={syncing === c.id}>
+                          {syncing === c.id
+                            ? <Loader2 size={13} className="animate-spin"/>
+                            : <Truck size={13} />}
                         </Button>
                       )}
 
