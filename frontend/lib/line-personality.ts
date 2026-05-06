@@ -1,5 +1,5 @@
 /**
- * line-personality.ts (v2)
+ * line-personality.ts (v3)
  *
  * Sistema de Personalidad por Línea para WhatsApp Marketing anti-ban.
  *
@@ -19,17 +19,37 @@
  *   - NEW: getAdjustedDelayConfig escala también burstMinSeconds/burstMaxSeconds
  *   - FIX: evictPersonality limpia también el sleepDecisionCache
  *
+ * Cambios v3 respecto a v2:
+ *   - NEW: applyJitterToActiveHours() expuesto como función pública (útil para re-jitter
+ *          periódico y para tests)
+ *   - NEW: loadPersonalityFromDB(lineId) — async real que consulta whatsapp_lines.personality_config
+ *   - NEW: savePersonalityToDB(personality) — async real que persiste en DB
+ *   - CHANGE: createLinePersonality() ahora es async — intenta cargar desde DB antes de
+ *             crear una nueva, garantizando que el jitter de activeHours sea estable entre
+ *             deploys y reinicios del proceso
+ *   - CHANGE: getLinePersonality() ahora es async — cadena: store → DB → crear nueva
+ *   - CHANGE: updateLastActiveAt() escribe en DB fire-and-forget tras actualizar en memoria
+ *   - DOC: evictPersonality() documenta intencionalmente que NO borra de DB
+ *
  * Diseño de persistencia:
- *   El store es un Map en memoria (zero-latency, sin round-trip a DB).
- *   loadPersonalityFromDB / savePersonalityToDB sincronizan con whatsapp_lines
- *   (columna personality_config JSONB sugerida) sin cambiar la API pública.
+ *   El store en memoria es el camino rápido (O(1), zero-latency).
+ *   La DB actúa como fuente de verdad duradera: garantiza que el jitter de activeHours
+ *   de cada número sea idéntico entre deploys. Sin persistencia, cada reinicio
+ *   regeneraría ventanas distintas → la "firma temporal" del número cambiaría, lo que
+ *   WhatsApp puede detectar como comportamiento anómalo.
  */
 
+import { query } from '@/lib/db'
 import {
   HumanDelayConfig,
   DEFAULT_HUMAN_DELAY_CONFIG,
   HUMAN_DELAY_PRESETS,
 } from '@/lib/anti-ban-delays'
+
+// ── Versión del esquema de personality_config ─────────────────────────────────
+// Incrementar al cambiar la forma del objeto JSONB. hydrateFromRecord puede
+// usar este valor para aplicar migraciones de estructura en el futuro.
+const PERSONALITY_VERSION = 1
 
 // ── Tipos ──────────────────────────────────────────────────────────────────────
 
@@ -199,6 +219,8 @@ const sleepDecisionCache = new Map<string, { hourBucket: number; decision: boole
 /**
  * Aplica jitter aleatorio de ±30–90 minutos a un límite horario.
  * El resultado se envuelve en [0, 24) para mantenerlo en rango válido.
+ *
+ * Interno: la API pública es applyJitterToActiveHours().
  */
 function applyHourJitter(hour: number): number {
   const jitterHours = (0.5 + Math.random() * 1.0) * (Math.random() < 0.5 ? 1 : -1)
@@ -226,6 +248,27 @@ function enforceMinWindow(
   // Ampliar el cierre manteniendo el inicio fijo
   const newEnd = ((start + minWindowHours) % 24 + 24) % 24
   return [start, newEnd]
+}
+
+/**
+ * Aplica jitter aleatorio de ±30–90 minutos a ambos límites de activeHours.
+ *
+ * Diseñado para llamarse UNA SOLA VEZ al crear la personalidad. El jitter debe
+ * ser estable en el tiempo: si cada deploy generara ventanas distintas, WhatsApp
+ * podría detectar que la "firma horaria" del número cambia sistemáticamente.
+ *
+ * Uso externo: útil para re-jitterear una personalidad después de un período
+ * largo de operación continua (ej: cada 30 días) o en tests unitarios.
+ *
+ * @param personality Personalidad cuyas activeHours se van a jitterear.
+ * @returns Nuevo par [start, end] en [0, 24) con ventana mínima garantizada de 2h.
+ */
+export function applyJitterToActiveHours(personality: LinePersonality): [number, number] {
+  const [rawStart, rawEnd] = personality.activeHours
+  return enforceMinWindow(
+    applyHourJitter(rawStart),
+    applyHourJitter(rawEnd),
+  )
 }
 
 /**
@@ -295,26 +338,189 @@ function getStableSleepDecision(
   return decision
 }
 
+// ── Persistencia DB ────────────────────────────────────────────────────────────
+
+/**
+ * Valida que activeHours sea un array de exactamente 2 números finitos en [0, 24).
+ * Rechaza null, arrays de distinto largo, o valores fuera de rango.
+ */
+function isValidActiveHours(val: unknown): val is [number, number] {
+  return (
+    Array.isArray(val) &&
+    val.length === 2 &&
+    typeof val[0] === 'number' && Number.isFinite(val[0]) && val[0] >= 0 && val[0] < 24 &&
+    typeof val[1] === 'number' && Number.isFinite(val[1]) && val[1] >= 0 && val[1] < 24
+  )
+}
+
+/**
+ * Hidrata un LinePersonality desde un objeto parcial (registro JSONB de la DB).
+ * Rellena campos faltantes con los defaults del profileType correspondiente.
+ * Devuelve null si los campos críticos (activeHours, aggressiveness) son inválidos.
+ *
+ * Solo para uso interno — los callers externos usan loadPersonalityFromDB().
+ */
+function hydrateFromRecord(
+  lineId: string,
+  rec:    Partial<LinePersonality>,
+): LinePersonality | null {
+  if (
+    !isValidActiveHours(rec.activeHours) ||
+    typeof rec.aggressiveness !== 'number' ||
+    !Number.isFinite(rec.aggressiveness)
+  ) {
+    return null
+  }
+
+  const profileType    = (rec.profileType as ProfileType | undefined) ?? 'normal'
+  const profileDefault = DEFAULT_PROFILES[profileType] ?? DEFAULT_PROFILES.normal
+
+  const personality: LinePersonality = {
+    id:                  lineId,
+    activeHours:         rec.activeHours as [number, number],
+    aggressiveness:      rec.aggressiveness,
+    burstiness:          typeof rec.burstiness      === 'number' ? rec.burstiness      : profileDefault.burstiness,
+    preferredDelayPreset: rec.preferredDelayPreset                                      ?? profileDefault.preferredDelayPreset,
+    sleepProbability:    typeof rec.sleepProbability === 'number' ? rec.sleepProbability : profileDefault.sleepProbability,
+    lastActiveAt:        typeof rec.lastActiveAt === 'string'
+                           ? new Date(rec.lastActiveAt as unknown as string)
+                           : rec.lastActiveAt instanceof Date ? rec.lastActiveAt : new Date(),
+    profileType,
+    timezoneOffsetHours: typeof rec.timezoneOffsetHours === 'number'
+                           ? rec.timezoneOffsetHours
+                           : profileDefault.timezoneOffsetHours,
+  }
+
+  personalityStore.set(lineId, personality)
+  return personality
+}
+
+/**
+ * Carga la personalidad de una línea desde whatsapp_lines.personality_config (JSONB).
+ *
+ * Flujo:
+ *   1. Consulta la fila de la línea en la DB.
+ *   2. Si personality_config no existe o es inválido → devuelve null.
+ *   3. Si es válido → hidrata, guarda en el store en memoria y devuelve.
+ *
+ * Por qué es crítico para la estrategia anti-ban:
+ *   El jitter de activeHours se genera UNA SOLA VEZ al crear la personalidad.
+ *   Sin persistencia, cada reinicio del proceso generaría ventanas distintas.
+ *   Un número cuyo horario activo cambia sistemáticamente en cada deploy es
+ *   una firma detectable por WhatsApp como comportamiento automatizado.
+ *
+ * @param lineId ID de la línea en whatsapp_lines.
+ * @returns LinePersonality si existe registro válido, null si no.
+ */
+export async function loadPersonalityFromDB(lineId: string): Promise<LinePersonality | null> {
+  try {
+    const rows = await query<{ personality_config: unknown }>(
+      'SELECT personality_config FROM whatsapp_lines WHERE id = $1',
+      [lineId],
+    )
+    const row = rows[0]
+    if (!row || row.personality_config === null || row.personality_config === undefined) {
+      return null
+    }
+
+    const rec = row.personality_config
+    if (typeof rec !== 'object' || Array.isArray(rec)) return null
+
+    return hydrateFromRecord(lineId, rec as Partial<LinePersonality>)
+  } catch (e) {
+    console.warn(
+      `[personality] loadPersonalityFromDB error (${lineId}):`,
+      e instanceof Error ? e.message : e,
+    )
+    return null
+  }
+}
+
+/**
+ * Persiste la personalidad de una línea en whatsapp_lines.personality_config.
+ *
+ * Incluye lastActiveAt (como ISO string) para que tras un reinicio el
+ * cálculo de inercia sea correcto desde el primer mensaje.
+ *
+ * Errores son silenciados como warnings: un fallo de escritura no debe
+ * interrumpir el flujo de envío. El estado en memoria sigue siendo correcto.
+ *
+ * @param personality Personalidad a persistir.
+ */
+export async function savePersonalityToDB(personality: LinePersonality): Promise<void> {
+  try {
+    await query(
+      `UPDATE whatsapp_lines
+       SET personality_config = $1, updated_at = NOW()
+       WHERE id = $2`,
+      [
+        JSON.stringify({
+          version:              PERSONALITY_VERSION,
+          activeHours:          personality.activeHours,
+          aggressiveness:       personality.aggressiveness,
+          burstiness:           personality.burstiness,
+          preferredDelayPreset: personality.preferredDelayPreset,
+          sleepProbability:     personality.sleepProbability,
+          lastActiveAt:         personality.lastActiveAt.toISOString(),
+          profileType:          personality.profileType,
+          timezoneOffsetHours:  personality.timezoneOffsetHours,
+        }),
+        personality.id,
+      ],
+    )
+  } catch (e) {
+    console.warn(
+      `⚠️ Failed to persist personality for line ${personality.id}:`,
+      e instanceof Error ? e.message : e,
+    )
+    // Non-critical: el estado en memoria sigue siendo correcto.
+    // La próxima llamada a savePersonalityToDB (ej: siguiente createLinePersonality)
+    // reintentará la escritura.
+  }
+}
+
 // ── createLinePersonality ──────────────────────────────────────────────────────
 
 /**
- * Crea una personalidad única para una línea a partir de un perfil base.
+ * Crea (o restaura) una personalidad única para una línea.
  *
- * Aplica:
- *   - Jitter en activeHours (±30–90 min) con validación de ventana mínima
- *   - Variación de ±8% en aggressiveness
- *   - Variación de ±0.02 en burstiness
+ * Flujo v3:
+ *   1. Intenta cargar la personalidad desde DB (loadPersonalityFromDB).
+ *      Si existe → la devuelve directamente, preservando el jitter original.
+ *   2. Si no existe → genera nueva con jitter, guarda en DB, devuelve.
+ *
+ * Por qué cargar de DB antes de crear:
+ *   La personalidad incluye activeHours jitteadas que deben ser ESTABLES entre
+ *   deploys. Si se regenerara en cada reinicio, el número mostraría horarios
+ *   distintos en cada ejecución — firma detectable.
+ *
+ * Jitter aplicado al crear:
+ *   - activeHours: ±30–90 min en cada límite + ventana mínima 2h
+ *   - aggressiveness: ±8%
+ *   - burstiness: ±0.02
  *
  * @param lineId             ID de la línea (whatsapp_lines.id)
  * @param profileType        Perfil base. Default: 'normal'
- * @param timezoneOverride   Si se pasa, sobrescribe el timezoneOffsetHours del perfil.
- *                           Útil para operar en múltiples mercados desde el mismo código.
+ * @param timezoneOverride   Sobrescribe timezoneOffsetHours del perfil base.
+ *                           Útil para operar en múltiples mercados.
  */
-export function createLinePersonality(
+export async function createLinePersonality(
   lineId:            string,
   profileType:       ProfileType = 'normal',
   timezoneOverride?: number,
-): LinePersonality {
+): Promise<LinePersonality> {
+  // ── 1. Intentar restaurar desde DB ────────────────────────────────────────
+  const fromDB = await loadPersonalityFromDB(lineId)
+  if (fromDB) {
+    console.log(
+      `[personality] línea ${lineId} restaurada desde DB ` +
+      `(perfil: ${fromDB.profileType}, ` +
+      `ventana: ${fromDB.activeHours[0].toFixed(1)}–${fromDB.activeHours[1].toFixed(1)}h)`,
+    )
+    return fromDB
+  }
+
+  // ── 2. Crear nueva personalidad ───────────────────────────────────────────
   const base = DEFAULT_PROFILES[profileType]
 
   // Jitter en los límites del horario activo (±30–90 min) + ventana mínima 2h
@@ -323,7 +529,6 @@ export function createLinePersonality(
     applyHourJitter(rawStart),
     applyHourJitter(rawEnd),
   )
-  const activeHours: [number, number] = [jitteredStart, jitteredEnd]
 
   // Variación en aggressiveness (±8%)
   const aggJitter      = 1 + (Math.random() * 0.16 - 0.08)
@@ -334,35 +539,96 @@ export function createLinePersonality(
   const burstiness  = Math.min(0.28, Math.max(0.12, base.burstiness + burstJitter))
 
   const personality: LinePersonality = {
-    id:                  lineId,
-    activeHours,
+    id:                   lineId,
+    activeHours:          [jitteredStart, jitteredEnd],
     aggressiveness,
     burstiness,
     preferredDelayPreset: base.preferredDelayPreset,
-    sleepProbability:    base.sleepProbability,
-    lastActiveAt:        new Date(),
+    sleepProbability:     base.sleepProbability,
+    lastActiveAt:         new Date(),
     profileType,
-    timezoneOffsetHours: timezoneOverride ?? base.timezoneOffsetHours,
+    timezoneOffsetHours:  timezoneOverride ?? base.timezoneOffsetHours,
   }
 
   personalityStore.set(lineId, personality)
+
+  // ── 3. Persistir en DB (first-write-wins) ────────────────────────────────
+  // Usamos WHERE personality_config IS NULL para que solo el primer proceso
+  // en llegar escriba su jitter. Si otro proceso ganó la carrera entre nuestro
+  // loadPersonalityFromDB y este punto, RETURNING devuelve 0 filas → cargamos
+  // la personalidad del ganador en lugar de sobreescribir.
+  // Esto garantiza que todos los procesadores concurrentes usen exactamente
+  // el mismo jitter para esta línea durante toda su vida útil.
+  let savedRows: Array<{ id: string }> = []
+  try {
+    savedRows = await query<{ id: string }>(
+      `UPDATE whatsapp_lines
+       SET personality_config = $1, updated_at = NOW()
+       WHERE id = $2 AND personality_config IS NULL
+       RETURNING id`,
+      [
+        JSON.stringify({
+          version:              PERSONALITY_VERSION,
+          activeHours:          personality.activeHours,
+          aggressiveness:       personality.aggressiveness,
+          burstiness:           personality.burstiness,
+          preferredDelayPreset: personality.preferredDelayPreset,
+          sleepProbability:     personality.sleepProbability,
+          lastActiveAt:         personality.lastActiveAt.toISOString(),
+          profileType:          personality.profileType,
+          timezoneOffsetHours:  personality.timezoneOffsetHours,
+        }),
+        lineId,
+      ],
+    )
+  } catch (e) {
+    console.warn(
+      `⚠️ Failed to persist personality for line ${lineId}:`,
+      e instanceof Error ? e.message : e,
+    )
+    // Error de DB: asumir que ganamos para no hacer una carga extra innecesaria.
+  }
+
+  if (savedRows.length === 0) {
+    // 0 filas actualizadas → otro proceso ganó la carrera. Usar su personalidad
+    // para que todos los procesos concurrentes queden sincronizados.
+    const winner = await loadPersonalityFromDB(lineId)
+    if (winner) {
+      console.log(
+        `[personality] línea ${lineId} race condition detectada — ` +
+        `adoptando personalidad de proceso concurrente (ventana: ` +
+        `${winner.activeHours[0].toFixed(1)}–${winner.activeHours[1].toFixed(1)}h)`,
+      )
+      return winner
+    }
+    // Extremadamente raro: el ganador escribió y luego borró personality_config.
+    // Mantener la nuestra — el estado en memoria es válido.
+  }
+
   return personality
 }
 
 // ── getLinePersonality ─────────────────────────────────────────────────────────
 
 /**
- * Devuelve la personalidad de una línea desde el store.
- * Si no existe, crea una nueva con el perfil 'normal' (fallback de emergencia).
+ * Devuelve la personalidad de una línea.
  *
- * En producción: llamar loadPersonalityFromDB() al iniciar el procesador
- * para hidratar el store antes de que este fallback se active.
+ * Cadena de resolución (en orden de prioridad):
+ *   1. Store en memoria → O(1), camino normal durante una campaña activa.
+ *   2. createLinePersonality() → intenta DB primero, luego genera nueva.
+ *
+ * El store se hidrata al primer acceso y queda en memoria para los siguientes.
+ * En producción, las personalidades se cargan al iniciar el procesador de campañas
+ * mediante llamadas explícitas a createLinePersonality() por cada línea elegible.
  */
-export function getLinePersonality(lineId: string): LinePersonality {
+export async function getLinePersonality(lineId: string): Promise<LinePersonality> {
   const existing = personalityStore.get(lineId)
   if (existing) return existing
 
-  console.warn(`[personality] línea ${lineId} sin personalidad registrada — asignando 'normal'`)
+  console.warn(
+    `[personality] línea ${lineId} no encontrada en memoria — ` +
+    `intentando cargar desde DB o crear nueva con perfil 'normal'`,
+  )
   return createLinePersonality(lineId, 'normal')
 }
 
@@ -402,7 +668,7 @@ export function shouldLineBeActiveNow(personality: LinePersonality): boolean {
     console.log(
       `[personality] línea ${personality.id} (${personality.profileType}) ` +
       `fuera de horario — hora local: ${nowHour.toFixed(1)}, ` +
-      `ventana: ${start.toFixed(1)}–${end.toFixed(1)}`
+      `ventana: ${start.toFixed(1)}–${end.toFixed(1)}`,
     )
     return false
   }
@@ -447,7 +713,7 @@ export function shouldLineBeActiveNow(personality: LinePersonality): boolean {
       `[personality] línea ${personality.id} (${personality.profileType}) ` +
       `durmiendo en zona marginal ` +
       `(sleepProb=${personality.sleepProbability} + inercia=${inertiaBoost.toFixed(2)}, ` +
-      `inactiva ${hoursInactive}h)`
+      `inactiva ${hoursInactive}h)`,
     )
     return false
   }
@@ -465,7 +731,7 @@ export function shouldLineBeActiveNow(personality: LinePersonality): boolean {
  *   - burstMinSeconds / burstMaxSeconds  ÷ aggressiveness  (NEW v2: pausas largas también escalan)
  *   - logNormalMu se ajusta logarítmicamente para que la mediana escale con los límites
  *   - burstProbability ← personality.burstiness  (personalidad individual)
- *   - logNormalSigma y gaussianNoiseSigma ← del preset preferido de la línea
+ *   - logNormalSigma, gaussianNoiseSigma y microJitterMs ← del preset preferido de la línea
  */
 export function getAdjustedDelayConfig(
   baseConfig:  HumanDelayConfig,
@@ -498,6 +764,7 @@ export function getAdjustedDelayConfig(
     burstMinSeconds:    scaledBurstMin,
     burstMaxSeconds:    scaledBurstMax,
     gaussianNoiseSigma: presetBase.gaussianNoiseSigma,
+    microJitterMs:      presetBase.microJitterMs,
   }
 }
 
@@ -506,10 +773,17 @@ export function getAdjustedDelayConfig(
 /**
  * Registra actividad exitosa en la línea.
  *
- * Efectos:
- *   1. Actualiza lastActiveAt → el inertiaBoost vuelve a 0 en la próxima evaluación
+ * Efectos en memoria (síncronos):
+ *   1. Actualiza lastActiveAt → el inertiaBoost vuelve a 0 en la próxima evaluación.
  *   2. Limpia la entrada del sleepDecisionCache → la próxima evaluación recalcula
- *      la decisión de sueño con el lastActiveAt actualizado (la línea "despertó")
+ *      la decisión de sueño con el lastActiveAt actualizado (la línea "despertó").
+ *
+ * Efecto en DB (fire-and-forget):
+ *   Persiste el nuevo lastActiveAt en personality_config sin bloquear el hot path
+ *   de envío. Si el proceso muere entre dos updates, se pierde el lastActiveAt
+ *   exacto pero la personalidad estructural (activeHours, aggressiveness, etc.)
+ *   queda intacta. El cálculo de inercia al reiniciar partirá del último valor
+ *   persistido exitosamente, que es aceptablemente cercano al real.
  *
  * Llamar después de cada sendViaEvolution exitoso.
  */
@@ -517,106 +791,72 @@ export function updateLastActiveAt(lineId: string): void {
   const p = personalityStore.get(lineId)
   if (!p) return
 
-  personalityStore.set(lineId, { ...p, lastActiveAt: new Date() })
-
-  // Limpiar la decisión de sueño cacheada: el envío exitoso demuestra que
-  // la línea está activa → la próxima evaluación debe recalcular sin el
-  // cache previo que pudo haber sido tomado con alta inercia.
+  const updated: LinePersonality = { ...p, lastActiveAt: new Date() }
+  personalityStore.set(lineId, updated)
   sleepDecisionCache.delete(lineId)
-}
 
-// ── Persistencia DB ────────────────────────────────────────────────────────────
-
-/**
- * Carga la personalidad de una línea desde un registro JSONB de la DB.
- *
- * Si el registro no existe o está incompleto, crea una nueva personalidad
- * con el defaultProfile especificado.
- *
- * Columna DB sugerida: whatsapp_lines.personality_config JSONB
- *
- * @param lineId         ID de la línea
- * @param dbRecord       Valor de personality_config, o null/undefined si no existe
- * @param defaultProfile Perfil a usar si no hay registro en DB
- */
-/**
- * Valida que activeHours sea un array de exactamente 2 enteros en [0, 24).
- * Rechaza valores como null, [null, null], [99, -5] que pasarían la guardia anterior.
- */
-function isValidActiveHours(val: unknown): val is [number, number] {
-  return (
-    Array.isArray(val) &&
-    val.length === 2 &&
-    typeof val[0] === 'number' && Number.isFinite(val[0]) && val[0] >= 0 && val[0] < 24 &&
-    typeof val[1] === 'number' && Number.isFinite(val[1]) && val[1] >= 0 && val[1] < 24
+  void savePersonalityToDB(updated).catch(e =>
+    console.warn(
+      `[personality] updateLastActiveAt DB write failed (${lineId}):`,
+      e instanceof Error ? e.message : e,
+    )
   )
 }
 
-export function loadPersonalityFromDB(
-  lineId:         string,
-  dbRecord:       Partial<LinePersonality> | null | undefined,
-  defaultProfile: ProfileType = 'normal',
-): LinePersonality {
-  if (
-    dbRecord &&
-    isValidActiveHours(dbRecord.activeHours) &&
-    typeof dbRecord.aggressiveness === 'number' &&
-    Number.isFinite(dbRecord.aggressiveness)
-  ) {
-    const hydrated: LinePersonality = {
-      id:                  lineId,
-      activeHours:         dbRecord.activeHours as [number, number],
-      aggressiveness:      dbRecord.aggressiveness,
-      burstiness:          dbRecord.burstiness          ?? DEFAULT_PROFILES[defaultProfile].burstiness,
-      preferredDelayPreset: dbRecord.preferredDelayPreset ?? DEFAULT_PROFILES[defaultProfile].preferredDelayPreset,
-      sleepProbability:    dbRecord.sleepProbability    ?? DEFAULT_PROFILES[defaultProfile].sleepProbability,
-      lastActiveAt:        dbRecord.lastActiveAt ? new Date(dbRecord.lastActiveAt as unknown as string) : new Date(),
-      profileType:         dbRecord.profileType         ?? defaultProfile,
-      timezoneOffsetHours: dbRecord.timezoneOffsetHours ?? DEFAULT_PROFILES[defaultProfile].timezoneOffsetHours,
-    }
-    personalityStore.set(lineId, hydrated)
-    return hydrated
-  }
-
-  console.log(`[personality] línea ${lineId} sin registro en DB — creando perfil '${defaultProfile}'`)
-  return createLinePersonality(lineId, defaultProfile)
-}
+// ── Gestión del store ──────────────────────────────────────────────────────────
 
 /**
- * Serializa la personalidad de una línea para almacenar en columna JSONB.
- *
- * Ejemplo de uso:
- *   await query(
- *     'UPDATE whatsapp_lines SET personality_config = $1 WHERE id = $2',
- *     [JSON.stringify(savePersonalityToDB(lineId)), lineId]
- *   )
- */
-export function savePersonalityToDB(lineId: string): Partial<LinePersonality> | null {
-  const p = personalityStore.get(lineId)
-  if (!p) return null
-  return {
-    activeHours:          p.activeHours,
-    aggressiveness:       p.aggressiveness,
-    burstiness:           p.burstiness,
-    preferredDelayPreset: p.preferredDelayPreset,
-    sleepProbability:     p.sleepProbability,
-    lastActiveAt:         p.lastActiveAt,
-    profileType:          p.profileType,
-    timezoneOffsetHours:  p.timezoneOffsetHours,
-  }
-}
-
-/**
- * Elimina la personalidad de una línea del store y del cache de decisión.
+ * Elimina la personalidad de una línea del store en memoria y del caché de sueño.
  * Llamar cuando la línea se desconecta o se elimina del sistema.
+ *
+ * Intencionalmente NO borra de DB:
+ *   La fila personality_config en whatsapp_lines persiste para que la próxima
+ *   carga de la línea (ej: reconexión) recupere la misma personalidad — con el
+ *   mismo jitter de activeHours — en lugar de generar una nueva.
+ *   Esto garantiza consistencia temporal entre sesiones y evita que cambios de
+ *   horario visibles para WhatsApp coincidan con eventos de reconexión.
+ *
+ *   Para forzar una personalidad completamente nueva, actualizar directamente
+ *   la columna personality_config a NULL en whatsapp_lines y luego llamar
+ *   createLinePersonality().
  */
 export function evictPersonality(lineId: string): void {
   personalityStore.delete(lineId)
-  // FIX v2: limpiar también el sleep cache para no dejar entradas huérfanas
   sleepDecisionCache.delete(lineId)
 }
 
-/** Cuántas personalidades hay cargadas. Útil para monitoreo. */
+/**
+ * Devuelve una personalidad del store en memoria sin ir a DB.
+ * Útil en el hot path (ej: filtros síncronos) después de que todas las
+ * personalidades ya fueron cargadas en una fase de hidratación previa.
+ *
+ * Devuelve undefined si la línea no está en memoria — en ese caso usar
+ * getLinePersonality() para el fallback completo (DB → crear nueva).
+ */
+export function getLoadedPersonality(lineId: string): LinePersonality | undefined {
+  return personalityStore.get(lineId)
+}
+
+/**
+ * Hidrata una personalidad desde un registro ya obtenido (ej: batch query).
+ * No realiza ninguna consulta a la DB — solo procesa el objeto recibido.
+ *
+ * Usar cuando el caller ya tiene los datos de personality_config y quiere
+ * evitar un round-trip individual por línea (eficiencia en hidratación masiva).
+ *
+ * @param lineId ID de la línea.
+ * @param record Valor de personality_config (puede ser null/undefined si la línea no tiene personalidad).
+ * @returns LinePersonality si el record es válido, null si está vacío o mal formado.
+ */
+export function hydratePersonalityFromRecord(
+  lineId: string,
+  record: unknown,
+): LinePersonality | null {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return null
+  return hydrateFromRecord(lineId, record as Partial<LinePersonality>)
+}
+
+/** Cuántas personalidades hay cargadas en memoria. Útil para monitoreo. */
 export function getStoreSize(): number {
   return personalityStore.size
 }

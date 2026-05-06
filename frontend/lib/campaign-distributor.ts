@@ -40,10 +40,11 @@ import { humanLikeDelay, buildDelayConfig } from '@/lib/anti-ban-delays'
 import { clog, isAlertablePauseReason } from '@/lib/campaign-logger'
 import {
   getLinePersonality,
+  getLoadedPersonality,
+  hydratePersonalityFromRecord,
   shouldLineBeActiveNow,
   getAdjustedDelayConfig,
   updateLastActiveAt,
-  loadPersonalityFromDB,
   savePersonalityToDB,
   evictPersonality,
   getLoadedLineIds,
@@ -924,7 +925,7 @@ export async function processMultiLineInBackground(
           [linesToHydrate.map(l => l.id)],
         )
         for (const row of personalityRows) {
-          loadPersonalityFromDB(row.id, row.personality_config as Partial<LinePersonality> | null)
+          hydratePersonalityFromRecord(row.id, row.personality_config)
         }
         clog.info({
           event: 'personality.hydrated', campaignId: id, mode: 'multi-line',
@@ -1039,9 +1040,13 @@ export async function processMultiLineInBackground(
       // ── 2.5. Personality gate — filtrar líneas activas según horario ──────────
       // Cada línea tiene su propia ventana de actividad con jitter ±30-90 min.
       // Solo las líneas dentro de su ventana participan en este ciclo.
-      const activeLines = eligibleLines.filter(
-        l => !l.has_personality || shouldLineBeActiveNow(getLinePersonality(l.id))
-      )
+      // getLoadedPersonality() es O(1) — todas las personalidades ya están en memoria
+      // desde la fase de hidratación del inicio del ciclo (hydratePersonalityFromRecord).
+      const activeLines = eligibleLines.filter(l => {
+        if (!l.has_personality) return true
+        const personality = getLoadedPersonality(l.id)
+        return !personality || shouldLineBeActiveNow(personality)
+      })
 
       if (activeLines.length === 0) {
         // Caso distinto de no_eligible_lines: hay líneas con cuota, pero todas
@@ -1130,7 +1135,7 @@ export async function processMultiLineInBackground(
       // Un delay por ciclo (no por línea) — el batch completo ya se envió.
       // Se usa la personalidad de la primera línea activa (mayor capacidad residual).
       const leadLine        = activeLines[0]
-      const leadPersonality = getLinePersonality(leadLine.id)
+      const leadPersonality = getLoadedPersonality(leadLine.id) ?? await getLinePersonality(leadLine.id)
       const adjustedDelay   = getAdjustedDelayConfig(buildDelayConfig(campaign), leadPersonality)
       await humanLikeDelay(adjustedDelay, delayController.signal)
 
@@ -1145,18 +1150,13 @@ export async function processMultiLineInBackground(
           error: e instanceof Error ? e.message : String(e),
         }))
 
-        // Persistir personalidad de todas las líneas activas del ciclo
+        // Persistir personalidad de todas las líneas activas del ciclo.
+        // savePersonalityToDB() escribe directamente en whatsapp_lines.personality_config.
         await Promise.allSettled(
           activeLines.map(async line => {
-            const snapshot = savePersonalityToDB(line.id)
-            if (!snapshot) return
-            await query(
-              `UPDATE whatsapp_lines SET personality_config = $1 WHERE id = $2`,
-              [JSON.stringify(snapshot), line.id]
-            ).catch(e => clog.warn({
-              event: 'personality.persist.error', campaignId: id, mode: 'multi-line',
-              lineId: line.id, error: e instanceof Error ? e.message : String(e),
-            }))
+            const personality = getLoadedPersonality(line.id)
+            if (!personality) return
+            await savePersonalityToDB(personality)
           })
         )
 
