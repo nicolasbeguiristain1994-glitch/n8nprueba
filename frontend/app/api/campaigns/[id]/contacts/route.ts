@@ -33,12 +33,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         c.first_name,
         c.last_name,
         c.phone_number,
-        COALESCE(m.status, cr.status)             AS msg_status,
+        -- Priorizar m.status para delivered/read (más detallado)
+        -- pero si cr dice 'failed' o 'skipped', eso gana sobre 'queued'/'sending' de m
+        COALESCE(
+          CASE WHEN m.status IN ('delivered', 'read') THEN m.status END,
+          CASE WHEN cr.status IN ('failed', 'skipped') THEN cr.status END,
+          m.status,
+          cr.status
+        )                                          AS msg_status,
         m.sent_at,
         m.delivered_at,
         m.read_at,
-        m.failed_at,
-        COALESCE(m.error_detail, cr.error_detail) AS error_detail
+        COALESCE(m.failed_at, cr.failed_at)        AS failed_at,
+        -- cr.error_detail se setea en handleFailure antes del UPDATE en whatsapp_messages
+        COALESCE(cr.error_detail, m.error_detail)  AS error_detail
       FROM campaigns camp
       JOIN contact_list_members clm ON clm.list_id = camp.list_id
       JOIN contacts c ON c.id = clm.contact_id
