@@ -72,8 +72,9 @@ export default function Campaigns() {
   const [detailError, setDetailError] = useState<string | null>(null)
   const [dispatch, setDispatch]       = useState<DispatchSummary | null>(null)
   const [loadingDispatch, setLoadingDispatch] = useState(false)
-  const [resuming, setResuming]           = useState<string | null>(null)
-  const [freqResetting, setFreqResetting] = useState<string | null>(null)
+  const [resuming, setResuming]               = useState<string | null>(null)
+  const [freqResetting, setFreqResetting]     = useState<string | null>(null)
+  const [retryingFailed, setRetryingFailed]   = useState<string | null>(null)
   const [unlocking, setUnlocking]         = useState<string | null>(null)
   const [syncing, setSyncing]             = useState<string | null>(null)
 
@@ -204,6 +205,28 @@ export default function Campaigns() {
       setSendError('Error de red al limpiar frecuencia')
     } finally {
       setFreqResetting(null)
+    }
+  }
+
+  const retryFailed = async (campaign: Campaign) => {
+    if (!confirm(`¿Reintentar los ${campaign.total_failed} contactos fallidos de "${campaign.name}"?\n\nLos ${campaign.total_sent} ya enviados NO se re-enviarán.`)) return
+    setRetryingFailed(campaign.id)
+    setSendError(null)
+    try {
+      const res = await fetch(`/api/campaigns/${campaign.id}/retry-failed`, { method: 'POST' })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setSendError(d.error || 'Error al preparar reintento')
+      } else {
+        setSendError(null)
+        load()
+        // Reanudar el procesador automáticamente
+        await resumeProcessor(campaign.id)
+      }
+    } catch {
+      setSendError('Error de red')
+    } finally {
+      setRetryingFailed(null)
     }
   }
 
@@ -457,6 +480,19 @@ export default function Campaigns() {
                           {syncing === c.id
                             ? <Loader2 size={13} className="animate-spin"/>
                             : <Truck size={13} />}
+                        </Button>
+                      )}
+
+                      {/* Reintentar solo fallidos — sin re-enviar a los ya enviados */}
+                      {['completed','paused','cancelled','running'].includes(c.status) && c.total_failed > 0 && (
+                        <Button size="sm" variant="outline"
+                                className="border-red-200 text-red-600 hover:bg-red-50"
+                                title={`Reintentar ${c.total_failed} fallidos (sin re-enviar a los ${c.total_sent} ya enviados)`}
+                                onClick={() => retryFailed(c)}
+                                disabled={retryingFailed === c.id || resuming === c.id}>
+                          {retryingFailed === c.id
+                            ? <Loader2 size={13} className="animate-spin"/>
+                            : <span className="text-xs font-bold">↺F</span>}
                         </Button>
                       )}
 
