@@ -72,10 +72,10 @@ const VR_HIST: Record<string, string> = {
 }
 const ANT_HIST: Record<string, string> = {
   nuevo:       `(fecha_primera IS NOT NULL AND (CURRENT_DATE - fecha_primera) <   30)`,
-  reciente:    `(fecha_primera IS NOT NULL AND (CURRENT_DATE - fecha_primera) >=  30 AND (CURRENT_DATE - fecha_primera) <   90)`,
-  establecido: `(fecha_primera IS NOT NULL AND (CURRENT_DATE - fecha_primera) >=  90 AND (CURRENT_DATE - fecha_primera) <  365)`,
-  veterano:    `(fecha_primera IS NOT NULL AND (CURRENT_DATE - fecha_primera) >= 365 AND (CURRENT_DATE - fecha_primera) < 1095)`,
-  leal:        `(fecha_primera IS NOT NULL AND (CURRENT_DATE - fecha_primera) >= 1095)`,
+  reciente:    `(fecha_primera IS NOT NULL AND (CURRENT_DATE - fecha_primera) >=  30 AND (CURRENT_DATE - fecha_primera) <  90)`,
+  establecido: `(fecha_primera IS NOT NULL AND (CURRENT_DATE - fecha_primera) >=  90 AND (CURRENT_DATE - fecha_primera) < 150)`,
+  veterano:    `(fecha_primera IS NOT NULL AND (CURRENT_DATE - fecha_primera) >= 150 AND (CURRENT_DATE - fecha_primera) < 270)`,
+  leal:        `(fecha_primera IS NOT NULL AND (CURRENT_DATE - fecha_primera) >= 270)`,
 }
 
 // Period mode (casino_players is LEFT JOINed as alias 'cp')
@@ -86,10 +86,10 @@ const VR_PERIOD: Record<string, string> = {
 }
 const ANT_PERIOD: Record<string, string> = {
   nuevo:       `(cp.fecha_primera IS NOT NULL AND (CURRENT_DATE - cp.fecha_primera) <   30)`,
-  reciente:    `(cp.fecha_primera IS NOT NULL AND (CURRENT_DATE - cp.fecha_primera) >=  30 AND (CURRENT_DATE - cp.fecha_primera) <   90)`,
-  establecido: `(cp.fecha_primera IS NOT NULL AND (CURRENT_DATE - cp.fecha_primera) >=  90 AND (CURRENT_DATE - cp.fecha_primera) <  365)`,
-  veterano:    `(cp.fecha_primera IS NOT NULL AND (CURRENT_DATE - cp.fecha_primera) >= 365 AND (CURRENT_DATE - cp.fecha_primera) < 1095)`,
-  leal:        `(cp.fecha_primera IS NOT NULL AND (CURRENT_DATE - cp.fecha_primera) >= 1095)`,
+  reciente:    `(cp.fecha_primera IS NOT NULL AND (CURRENT_DATE - cp.fecha_primera) >=  30 AND (CURRENT_DATE - cp.fecha_primera) <  90)`,
+  establecido: `(cp.fecha_primera IS NOT NULL AND (CURRENT_DATE - cp.fecha_primera) >=  90 AND (CURRENT_DATE - cp.fecha_primera) < 150)`,
+  veterano:    `(cp.fecha_primera IS NOT NULL AND (CURRENT_DATE - cp.fecha_primera) >= 150 AND (CURRENT_DATE - cp.fecha_primera) < 270)`,
+  leal:        `(cp.fecha_primera IS NOT NULL AND (CURRENT_DATE - cp.fecha_primera) >= 270)`,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -481,8 +481,8 @@ export async function GET(req: Request) {
                WHEN cp.fecha_primera IS NULL                                 THEN NULL
                WHEN (CURRENT_DATE - cp.fecha_primera) <   30                THEN 'nuevo'
                WHEN (CURRENT_DATE - cp.fecha_primera) <   90                THEN 'reciente'
-               WHEN (CURRENT_DATE - cp.fecha_primera) <  365                THEN 'establecido'
-               WHEN (CURRENT_DATE - cp.fecha_primera) < 1095                THEN 'veterano'
+               WHEN (CURRENT_DATE - cp.fecha_primera) <  150                THEN 'establecido'
+               WHEN (CURRENT_DATE - cp.fecha_primera) <  270                THEN 'veterano'
                ELSE                                                               'leal'
              END AS antiguedad
            ${joinAndWhere}
@@ -568,8 +568,8 @@ export async function GET(req: Request) {
                WHEN fecha_primera IS NULL                               THEN NULL
                WHEN (CURRENT_DATE - fecha_primera) <   30              THEN 'nuevo'
                WHEN (CURRENT_DATE - fecha_primera) <   90              THEN 'reciente'
-               WHEN (CURRENT_DATE - fecha_primera) <  365              THEN 'establecido'
-               WHEN (CURRENT_DATE - fecha_primera) < 1095              THEN 'veterano'
+               WHEN (CURRENT_DATE - fecha_primera) <  150              THEN 'establecido'
+               WHEN (CURRENT_DATE - fecha_primera) <  270              THEN 'veterano'
                ELSE                                                          'leal'
              END AS antiguedad
            FROM casino_players

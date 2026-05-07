@@ -162,10 +162,10 @@ async function main() {
           -- antiguedad: derived from fecha_primera; NULL when fecha_primera is missing
           CASE
             WHEN fecha_primera IS NULL                             THEN NULL
-            WHEN (CURRENT_DATE - fecha_primera) < 30              THEN 'casino:antiguedad:nuevo'
-            WHEN (CURRENT_DATE - fecha_primera) < 90              THEN 'casino:antiguedad:reciente'
-            WHEN (CURRENT_DATE - fecha_primera) < 365             THEN 'casino:antiguedad:establecido'
-            WHEN (CURRENT_DATE - fecha_primera) < 1095            THEN 'casino:antiguedad:veterano'
+            WHEN (CURRENT_DATE - fecha_primera) <  30             THEN 'casino:antiguedad:nuevo'
+            WHEN (CURRENT_DATE - fecha_primera) <  90             THEN 'casino:antiguedad:reciente'
+            WHEN (CURRENT_DATE - fecha_primera) < 150             THEN 'casino:antiguedad:establecido'
+            WHEN (CURRENT_DATE - fecha_primera) < 270             THEN 'casino:antiguedad:veterano'
             ELSE                                                        'casino:antiguedad:leal'
           END
         ], NULL)),
