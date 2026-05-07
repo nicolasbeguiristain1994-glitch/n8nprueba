@@ -146,6 +146,7 @@ const MIGRATIONS = [
   { file: 'db/migrations/056_conversation_notes.sql',              label: '056 — conversation_notes table (notas internas por conversación)' },
   { file: 'db/migrations/057_warmup_delay_preset.sql',             label: '057 — warmup_numbers.delay_preset column' },
   { file: 'db/migrations/058_warmup_anti_ban.sql',                 label: '058 — warmup_numbers anti-ban columns (8 campos)' },
+  { file: 'db/migrations/059_warmup_missing_columns.sql',          label: '059 — warmup_numbers display_name + evolution_url (fix 044)' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
