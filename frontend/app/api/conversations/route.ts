@@ -40,6 +40,11 @@ export async function GET(req: NextRequest) {
           WHERE bl.phone_number_normalized = REPLACE(wm.phone_number, '+', '')
           AND   bl.removed_at IS NULL
         )                                        AS is_blacklisted,
+        EXISTS (
+          SELECT 1 FROM conversation_notes cn
+          WHERE cn.phone = REPLACE(wm.phone_number, '+', '')
+          AND   cn.content LIKE '%Seguimiento programado%'
+        )                                        AS has_follow_up,
         c.id                                     AS contact_id,
         c.first_name,
         c.last_name,

@@ -1,11 +1,9 @@
 'use client'
 import { useState } from 'react'
-import { Crown, Clock, UserCheck, Ban, Loader2, Check } from 'lucide-react'
+import { Crown, Clock, UserCheck, CheckCircle2, Ban, Loader2, Check } from 'lucide-react'
 import type { Conv } from '@/lib/scoring/conversation-scoring'
 
-type ActionKey = 'vip' | 'process' | 'schedule' | 'blacklist'
-
-// ── Shared button ─────────────────────────────────────────────────────────────
+type ActionKey = 'vip' | 'process' | 'resolve' | 'schedule' | 'blacklist'
 
 function ActionButton({
   label, icon, onClick, loading, done, disabled,
@@ -30,8 +28,6 @@ function ActionButton({
   )
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
-
 interface Props { phone: string; conv: Conv | undefined; onRefresh?: () => void }
 
 export function QuickActions({ phone, conv, onRefresh }: Props) {
@@ -46,7 +42,6 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
     setLoading(key); try { await fn() } finally { setLoading(null) }
   }
 
-  // Marcar VIP ─────────────────────────────────────────────────────────────────
   const markVip = () => run('vip', async () => {
     if (!conv?.contact_id) return
     const res = await fetch(`/api/contacts/${conv.contact_id}`, {
@@ -56,7 +51,6 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
     if (res.ok) { flash('vip'); onRefresh?.() }
   })
 
-  // Marcar En Proceso ───────────────────────────────────────────────────────────
   const markProcess = () => run('process', async () => {
     const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/status`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -65,7 +59,14 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
     if (res.ok) { flash('process'); onRefresh?.() }
   })
 
-  // Programar seguimiento ───────────────────────────────────────────────────────
+  const resolveProcess = () => run('resolve', async () => {
+    const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/status`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flow: null }),
+    })
+    if (res.ok) { flash('resolve'); onRefresh?.() }
+  })
+
   const saveFollowUp = () => run('schedule', async () => {
     if (!fuDate) return
     const label = new Date(fuDate + 'T00:00').toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' })
@@ -77,7 +78,6 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
     if (res.ok) { flash('schedule'); setShowFU(false); setFuDate(''); setFuNote(''); onRefresh?.() }
   })
 
-  // Agregar a Blacklist ─────────────────────────────────────────────────────────
   const addToBlacklist = () => {
     if (!confirm('¿Agregar este contacto a la blacklist? No recibirá más mensajes automáticos.')) return
     run('blacklist', async () => {
@@ -89,8 +89,8 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
     })
   }
 
-  const alreadyProcess    = conv?.conv_flow === 'en_proceso'
-  const alreadyBlacklisted = conv?.is_blacklisted === true
+  const inProcess      = conv?.conv_flow === 'en_proceso'
+  const isBlacklisted  = conv?.is_blacklisted === true
 
   return (
     <div className="px-3 py-2.5 border-b border-gray-100">
@@ -100,30 +100,38 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
       <div className="space-y-1">
 
         <ActionButton
-          key="vip" label="Marcar como VIP"
+          label="Marcar como VIP"
           icon={<Crown size={13} className="text-yellow-600 shrink-0" />}
           onClick={markVip}
           loading={loading === 'vip'} done={done === 'vip'}
           disabled={!conv?.contact_id}
         />
 
-        <ActionButton
-          key="process" label={alreadyProcess ? 'En Proceso ✓' : 'Marcar En Proceso'}
-          icon={<UserCheck size={13} className="text-blue-600 shrink-0" />}
-          onClick={markProcess}
-          loading={loading === 'process'} done={done === 'process'}
-          disabled={alreadyProcess}
-        />
+        {inProcess ? (
+          <ActionButton
+            label="Resolver (quitar En Proceso)"
+            icon={<CheckCircle2 size={13} className="text-gray-500 shrink-0" />}
+            onClick={resolveProcess}
+            loading={loading === 'resolve'} done={done === 'resolve'}
+          />
+        ) : (
+          <ActionButton
+            label="Marcar En Proceso"
+            icon={<UserCheck size={13} className="text-blue-600 shrink-0" />}
+            onClick={markProcess}
+            loading={loading === 'process'} done={done === 'process'}
+          />
+        )}
 
         <ActionButton
-          key="schedule" label="Programar seguimiento"
+          label="Programar seguimiento"
           icon={<Clock size={13} className="text-indigo-600 shrink-0" />}
           onClick={() => setShowFU(v => !v)}
           loading={loading === 'schedule'} done={done === 'schedule'}
         />
 
         {showFU && (
-          <div className="mt-1 p-2 bg-indigo-50 border border-indigo-100 rounded space-y-1.5">
+          <div className="p-2 bg-indigo-50 border border-indigo-100 rounded space-y-1.5">
             <input
               type="date"
               value={fuDate}
@@ -148,11 +156,11 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
         )}
 
         <ActionButton
-          key="blacklist" label={alreadyBlacklisted ? 'Ya en blacklist' : 'Agregar a blacklist'}
+          label={isBlacklisted ? 'Ya en blacklist' : 'Agregar a blacklist'}
           icon={<Ban size={13} className="text-red-500 shrink-0" />}
           onClick={addToBlacklist}
           loading={loading === 'blacklist'} done={done === 'blacklist'}
-          disabled={alreadyBlacklisted}
+          disabled={isBlacklisted}
         />
 
       </div>

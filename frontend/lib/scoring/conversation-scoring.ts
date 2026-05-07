@@ -22,6 +22,7 @@ export interface Conv {
   valor_riesgo?:      string | null
   conv_flow?:         string | null
   is_blacklisted?:    boolean
+  has_follow_up?:     boolean
 }
 
 export interface Message {

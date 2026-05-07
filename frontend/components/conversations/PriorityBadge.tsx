@@ -46,6 +46,16 @@ export function ProcessBadge() {
   )
 }
 
+// ── Follow-up ─────────────────────────────────────────────────────────────────
+
+export function FollowUpBadge() {
+  return (
+    <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-sky-50 text-sky-700 border-sky-200">
+      📅 Seguimiento
+    </span>
+  )
+}
+
 // ── Escalated ──────────────────────────────────────────────────────────────────
 
 export function EscalatedBadge() {
