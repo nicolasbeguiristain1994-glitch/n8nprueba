@@ -8,6 +8,7 @@ import {
   FileText, UserCog, Settings, ChevronRight, ChevronDown,
   Lightbulb, AlertTriangle, Info, Star, ArrowRight,
   HelpCircle, BookOpen, Tag,
+  QrCode, TrendingUp, Pause, Trash2,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -17,9 +18,17 @@ import { cn } from '@/lib/utils'
 
 type Role = 'admin' | 'operator' | 'both'
 
+interface ActionItem {
+  icon: React.ElementType
+  label: string
+  desc: string
+  color?: string
+}
+
 interface Step {
   title: string
   detail: string
+  actions?: ActionItem[]
 }
 
 interface Tip {
@@ -373,8 +382,33 @@ const MODULES: ModuleSection[] = [
       },
       {
         title: 'Acciones disponibles en cada línea',
-        detail:
-          'En la columna "Acciones" de cada fila hay cuatro botones. QR: abre el modal para escanear el código QR y vincular (o re-vincular) el número de WhatsApp a la instancia — útil si la sesión expiró o cambió el dispositivo. Ver actividad (ícono de gráfico): abre el detalle de la línea en la pestaña de actividad, donde podés ver el historial de mensajes enviados, errores y métricas por día. Pausar / Reanudar (ícono de pausa o play): detiene temporalmente el calentamiento sin perder el progreso — usá pausa cuando necesitás frenar envíos por unos días y reanudar después. Eliminar (ícono de papelera): elimina la línea del módulo de calentamiento de forma permanente; los mensajes ya enviados quedan registrados en el historial pero la línea deja de aparecer en el panel.',
+        detail: '',
+        actions: [
+          {
+            icon: QrCode,
+            label: 'QR — Vincular línea',
+            desc: 'Abre el modal para escanear el código QR y conectar (o reconectar) el número. Usalo si la sesión de WhatsApp expiró o cambiaste de dispositivo.',
+            color: 'bg-orange-100 text-orange-600',
+          },
+          {
+            icon: TrendingUp,
+            label: 'Ver actividad',
+            desc: 'Abre el historial de mensajes enviados, errores y métricas por día para esa línea.',
+            color: 'bg-blue-100 text-blue-600',
+          },
+          {
+            icon: Pause,
+            label: 'Pausar / Reanudar',
+            desc: 'Detiene el calentamiento temporalmente sin perder el progreso. Al reanudar, continúa desde el mismo día.',
+            color: 'bg-yellow-100 text-yellow-600',
+          },
+          {
+            icon: Trash2,
+            label: 'Eliminar',
+            desc: 'Quita la línea del módulo de calentamiento de forma permanente. Los mensajes ya enviados quedan en el historial.',
+            color: 'bg-red-100 text-red-500',
+          },
+        ],
       },
     ],
     tips: [
@@ -900,9 +934,28 @@ function ModuleSection({ mod, defaultOpen }: { mod: ModuleSection; defaultOpen: 
                 <span className="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center mt-0.5">
                   {i + 1}
                 </span>
-                <div>
+                <div className="flex-1">
                   <p className="text-sm font-semibold text-gray-800">{step.title}</p>
-                  <p className="text-sm text-gray-600 mt-0.5 leading-relaxed">{step.detail}</p>
+                  {step.actions ? (
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                      {step.actions.map((a, j) => {
+                        const Icon = a.icon
+                        return (
+                          <div key={j} className="flex items-start gap-2.5 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2.5">
+                            <div className={`shrink-0 w-7 h-7 rounded-md flex items-center justify-center ${a.color ?? 'bg-gray-200 text-gray-600'}`}>
+                              <Icon size={14} />
+                            </div>
+                            <div>
+                              <p className="text-xs font-semibold text-gray-700 leading-tight">{a.label}</p>
+                              <p className="text-[11px] text-gray-500 leading-relaxed mt-0.5">{a.desc}</p>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-600 mt-0.5 leading-relaxed">{step.detail}</p>
+                  )}
                 </div>
               </li>
             ))}
