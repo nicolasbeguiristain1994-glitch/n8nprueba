@@ -103,7 +103,9 @@ export async function POST(req: NextRequest) {
     emitWarmupChange()
     return NextResponse.json({ id: newId })
   } catch (e) {
-    console.error('[/api/warmup POST]', e instanceof Error ? e.message : e)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error('[/api/warmup POST]', msg)
+    // Exponemos el mensaje real para diagnóstico — lo quitamos una vez resuelto
+    return NextResponse.json({ error: `DB error: ${msg}` }, { status: 500 })
   }
 }
