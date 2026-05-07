@@ -371,6 +371,11 @@ const MODULES: ModuleSection[] = [
         detail:
           'El panel muestra el progreso del calentamiento: día actual, mensajes enviados, respuestas recibidas y el "score" de salud de la línea. Cuando el score llega a verde, la línea está lista para campañas.',
       },
+      {
+        title: 'Acciones disponibles en cada línea',
+        detail:
+          'En la columna "Acciones" de cada fila hay cuatro botones. QR: abre el modal para escanear el código QR y vincular (o re-vincular) el número de WhatsApp a la instancia — útil si la sesión expiró o cambió el dispositivo. Ver actividad (ícono de gráfico): abre el detalle de la línea en la pestaña de actividad, donde podés ver el historial de mensajes enviados, errores y métricas por día. Pausar / Reanudar (ícono de pausa o play): detiene temporalmente el calentamiento sin perder el progreso — usá pausa cuando necesitás frenar envíos por unos días y reanudar después. Eliminar (ícono de papelera): elimina la línea del módulo de calentamiento de forma permanente; los mensajes ya enviados quedan registrados en el historial pero la línea deja de aparecer en el panel.',
+      },
     ],
     tips: [
       {
@@ -380,6 +385,14 @@ const MODULES: ModuleSection[] = [
       {
         type: 'info',
         text: 'El proceso de calentamiento es automático. Una vez iniciado, no necesitás hacer nada. Solo monitoreá el progreso cada día o dos.',
+      },
+      {
+        type: 'info',
+        text: 'Si la sesión de WhatsApp se desconecta durante el calentamiento (se cierra sesión en el teléfono), usá el botón QR de esa línea para volver a vincularla sin perder el progreso.',
+      },
+      {
+        type: 'warning',
+        text: 'Pausar una línea no reinicia el contador de días. Al reanudar, el calentamiento continúa desde donde quedó. Usá pausa para imprevistos cortos; si la pausa es muy larga el historial de actividad se interrumpe y WhatsApp puede "enfriar" la línea.',
       },
       {
         type: 'example',
