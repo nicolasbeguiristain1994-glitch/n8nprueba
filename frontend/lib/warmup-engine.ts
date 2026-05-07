@@ -415,6 +415,159 @@ export function pickWarmupMessage(
 
 // ── Utilidades de horario ─────────────────────────────────────────────────────
 
+// ── Anti-ban configuration ────────────────────────────────────────────────────
+
+export type RandomnessLevel = 'low' | 'medium' | 'high'
+
+/** Parses "HH:MM" or "HH:MM:SS" into total minutes since midnight. */
+function parseWindowMinutes(hhmm: string): number {
+  const [h, m] = String(hhmm).split(':').map(Number)
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0)
+}
+
+/** Returns current time as minutes since midnight in an IANA timezone. */
+function nowMinutesIn(timezone: string, now: Date): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric', minute: 'numeric', hour12: false, timeZone: timezone,
+  }).formatToParts(now)
+  const h = parseInt(parts.find(p => p.type === 'hour')?.value   ?? '0', 10)
+  const m = parseInt(parts.find(p => p.type === 'minute')?.value ?? '0', 10)
+  return h * 60 + m
+}
+
+/** Returns ISO day of week for `now` in given timezone: 1=Mon … 7=Sun. */
+function nowDayOfWeekIn(timezone: string, now: Date): number {
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    weekday: 'long', timeZone: timezone,
+  }).format(now)
+  const MAP: Record<string, number> = {
+    Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4,
+    Friday: 5, Saturday: 6, Sunday: 7,
+  }
+  return MAP[weekday] ?? 1
+}
+
+/**
+ * Returns true if `now` falls within [windowStart, windowEnd) in `timezone`.
+ * Accepts "HH:MM" or "HH:MM:SS". Falls back to isActiveHour() on parse error.
+ */
+export function isActiveWindow(
+  windowStart: string,
+  windowEnd:   string,
+  timezone:    string,
+  now = new Date(),
+): boolean {
+  try {
+    const current = nowMinutesIn(timezone, now)
+    return current >= parseWindowMinutes(windowStart) && current < parseWindowMinutes(windowEnd)
+  } catch {
+    return isActiveHour(timezone, now)
+  }
+}
+
+/**
+ * Remaining BATCH_INTERVAL_MINUTES slots until windowEnd in `timezone`.
+ * Falls back to remainingActiveSlots() on error.
+ */
+export function remainingWindowSlots(
+  windowStart: string,
+  windowEnd:   string,
+  timezone:    string,
+  now = new Date(),
+): number {
+  try {
+    const minsLeft = Math.max(0, parseWindowMinutes(windowEnd) - nowMinutesIn(timezone, now))
+    return Math.max(1, Math.floor(minsLeft / BATCH_INTERVAL_MINUTES))
+  } catch {
+    return remainingActiveSlots(timezone, now)
+  }
+}
+
+/**
+ * Returns true if today (in `timezone`) is listed in `activeDays`.
+ * Uses ISO convention: 1=Mon … 7=Sun.
+ * An empty/null array is treated as "all days active" for backward compat.
+ */
+export function isActiveDay(
+  activeDays: number[],
+  timezone:   string,
+  now = new Date(),
+): boolean {
+  if (!activeDays || activeDays.length === 0) return true
+  try {
+    return activeDays.includes(nowDayOfWeekIn(timezone, now))
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Computes the required inter-message cooldown in **milliseconds** based on
+ * the line's anti-ban parameters.
+ *
+ * This value is compared against (now − last_message_at) at the start of each
+ * batch run. If the cooldown has not elapsed the line is skipped, naturally
+ * spacing sends without blocking the HTTP handler.
+ *
+ * Randomness levels (all sample within the configured [min, max] window):
+ *   low    → near midpoint ± 10 % of range   (uniform, very predictable)
+ *   medium → uniform in [min, max]
+ *   high   → uniform in [min × 0.7, max × 1.3]  (can exceed configured bounds)
+ *
+ * Natural distribution (active when naturalDist = true):
+ *   Center of the sending window → × 0.6  (shorter cooldown → denser activity)
+ *   Edges  of the sending window → × 1.4  (longer  cooldown → sparser activity)
+ *   Produces a bell-shaped activity curve across the day.
+ *
+ * @returns Cooldown in milliseconds (minimum 1 000 ms).
+ */
+export function getAntiBanDelayMs(
+  delayMin:    number,
+  delayMax:    number,
+  level:       RandomnessLevel,
+  naturalDist: boolean,
+  windowStart: string,
+  windowEnd:   string,
+  timezone:    string,
+  now = new Date(),
+  rng = Math.random,
+): number {
+  let baseSecs: number
+
+  switch (level) {
+    case 'low': {
+      const mid    = (delayMin + delayMax) / 2
+      const jitter = (delayMax - delayMin) * 0.10
+      baseSecs = mid + (rng() * 2 - 1) * jitter
+      break
+    }
+    case 'high':
+      baseSecs = delayMin * 0.7 + rng() * (delayMax * 1.3 - delayMin * 0.7)
+      break
+    default: // medium
+      baseSecs = delayMin + rng() * (delayMax - delayMin)
+  }
+
+  if (naturalDist) {
+    try {
+      const current  = nowMinutesIn(timezone, now)
+      const start    = parseWindowMinutes(windowStart)
+      const end      = parseWindowMinutes(windowEnd)
+      const mid      = (start + end) / 2
+      const halfSpan = Math.max(1, (end - start) / 2)
+      // 0 at window center → 1 at window edges
+      const dist       = Math.min(1, Math.abs(current - mid) / halfSpan)
+      baseSecs *= 0.6 + dist * 0.8   // 0.6 (center) → 1.4 (edges)
+    } catch {
+      // natural distribution skipped on parse error — use raw baseSecs
+    }
+  }
+
+  return Math.max(1_000, Math.round(baseSecs * 1_000))
+}
+
+// ── Utilidades de horario ─────────────────────────────────────────────────────
+
 export function formatDuration(ms: number): string {
   const totalMin = Math.floor(ms / 60_000)
   const hours    = Math.floor(totalMin / 60)

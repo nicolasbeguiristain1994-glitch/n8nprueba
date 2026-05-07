@@ -4,6 +4,7 @@ import { isE164, isInstanceName } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { getAppSetting } from '@/lib/app-settings'
+import { emitWarmupChange } from '@/lib/warmup-sse'
 
 export async function GET(req: Request) {
   const err = await checkPermission(req, 'warmup', 'read')
@@ -11,10 +12,19 @@ export async function GET(req: Request) {
 
   try {
     const numbers = await query(`
-      SELECT id, phone_number, instance_name, display_name, warmup_status, current_day, target_days,
-             messages_sent_today, daily_limit, last_message_at, start_date, notes, timezone
-      FROM warmup_numbers
-      ORDER BY created_at DESC
+      SELECT w.id, w.phone_number, w.instance_name, w.display_name, w.warmup_status,
+             w.current_day, w.target_days, w.messages_sent_today, w.daily_limit,
+             w.last_message_at, w.start_date, w.notes, w.timezone,
+             COALESCE(w.delay_preset, 'normal') AS delay_preset,
+             w.anti_ban_enabled,
+             COALESCE(l.total_sent, 0)::int AS total_messages_sent
+      FROM warmup_numbers w
+      LEFT JOIN (
+        SELECT warmup_number_id, COUNT(*) AS total_sent
+        FROM warmup_activity_log WHERE status = 'sent'
+        GROUP BY warmup_number_id
+      ) l ON l.warmup_number_id = w.id
+      ORDER BY w.created_at DESC
     `)
     return NextResponse.json({ numbers })
   } catch (e) {
@@ -30,6 +40,7 @@ export async function POST(req: NextRequest) {
   let body: {
     phone_number?: string; instance_name?: string; display_name?: string
     target_days?: number; daily_limit?: number; notes?: string; timezone?: string
+    delay_preset?: string
   }
   try {
     body = await req.json()
@@ -37,7 +48,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { phone_number, instance_name, display_name, target_days = 21, daily_limit = 10, notes, timezone } = body
+  const { phone_number, instance_name, display_name, target_days = 21, daily_limit = 10, notes, timezone, delay_preset = 'normal' } = body
+  const validPresets = ['conservadora', 'normal', 'agresiva']
+  const resolvedPreset = validPresets.includes(delay_preset) ? delay_preset : 'normal'
 
   if (!phone_number || !instance_name) {
     return NextResponse.json({ error: 'phone_number e instance_name son requeridos' }, { status: 400 })
@@ -70,8 +83,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const rows = await query(`
-      INSERT INTO warmup_numbers (phone_number, instance_name, display_name, target_days, daily_limit, notes, timezone)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO warmup_numbers (phone_number, instance_name, display_name, target_days, daily_limit, notes, timezone, delay_preset)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING id
     `, [
       phone_number.trim(),
@@ -81,11 +94,13 @@ export async function POST(req: NextRequest) {
       resolvedLimit,
       notes || null,
       timezone || 'America/Argentina/Buenos_Aires',
+      resolvedPreset,
     ])
 
     const newId = (rows[0] as { id: string }).id
     void audit({ req, action: 'create', resource: 'warmup', resource_id: newId,
       metadata: { instance_name: instance_name.trim() } })
+    emitWarmupChange()
     return NextResponse.json({ id: newId })
   } catch (e) {
     console.error('[/api/warmup POST]', e instanceof Error ? e.message : e)

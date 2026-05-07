@@ -4,29 +4,33 @@
  * Motor principal de calentamiento. Debe ser invocado cada 15 minutos por
  * un nodo HTTP de n8n (o cualquier cron externo).
  *
- * Por cada invocación:
- *   1. Obtiene todas las líneas con warmup_status = 'active' que aún tienen
- *      capacidad en el día y están dentro del horario activo (9am–8pm).
- *   2. Para cada línea, decide probabilísticamente cuántos mensajes enviar
- *      en este batch (0, 1 ó 2) usando la función decideBatchSize().
- *   3. Por cada mensaje a enviar:
- *      a. Selecciona el próximo contacto de warmup_contacts (menor uso).
- *      b. Envía via Evolution API.
- *      c. Registra en warmup_activity_log.
- *      d. Incrementa messages_sent_today y actualiza last_message_at.
- *      e. Actualiza message_count y last_used_at del contacto.
- *   4. Devuelve un resumen de lo que se envió.
+ * Flujo por invocación:
+ *   1. Obtiene líneas activas con capacidad restante en el día.
+ *   2. Para cada línea aplica las guardas en orden:
+ *      a. [anti-ban] Día activo  → si el día no está en active_days, pospone.
+ *      b. Ventana horaria        → si anti_ban_enabled usa la ventana configurable,
+ *                                  si no usa el bloque fijo 9-20h.
+ *      c. [anti-ban] Cooldown    → comprueba que haya transcurrido el delay mínimo
+ *                                  desde last_message_at antes de volver a enviar.
+ *      d. Batch size probabilístico → decide cuántos mensajes enviar.
+ *      e. [anti-ban] Cap a 1 msg  → cuando anti-ban está activo, envía máximo
+ *                                   1 mensaje por batch para no bloquear el handler.
+ *   3. Envía via Evolution API, registra en warmup_activity_log y actualiza contadores.
+ *   4. Devuelve resumen estructurado.
+ *
+ * Por qué cooldown en lugar de sleep:
+ *   El endpoint es llamado por n8n, que tiene un timeout HTTP de ~30 s.
+ *   Los delays anti-ban (45–3 600 s) superan ese límite. En cambio, comparar
+ *   now − last_message_at con el delay requerido es instantáneo y permite que
+ *   cada invocación del cron actúe como "tick" de scheduler.
+ *
+ * Compatibilidad:
+ *   Líneas sin los campos anti-ban (columnas NULL) usan el comportamiento
+ *   legacy: ventana 9-20 h, sin cooldown, hasta 2 mensajes por batch.
  *
  * Seguridad:
- *   Requiere header X-Warmup-Secret que debe coincidir con la variable
- *   de entorno WARMUP_PROCESS_SECRET. Si la variable no está configurada
- *   el endpoint acepta todas las llamadas (para facilitar la configuración
- *   inicial), pero logea una advertencia.
- *
- * Límites de tiempo:
- *   Máximo 10 líneas procesadas por invocación para evitar timeouts de
- *   Next.js. Con 15 líneas activas y 15-min de cadencia, todas las líneas
- *   se procesan en cada ciclo.
+ *   Requiere header X-Warmup-Secret == env WARMUP_PROCESS_SECRET.
+ *   Si la variable no está configurada, acepta todas las llamadas (modo dev).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -34,25 +38,42 @@ import { query } from '@/lib/db'
 import {
   getDailyLimitForDay,
   isActiveHour,
+  isActiveWindow,
   remainingActiveSlots,
+  remainingWindowSlots,
+  isActiveDay,
+  getAntiBanDelayMs,
   decideBatchSize,
-  pickWarmupMessage,
+  getNextWarmupMessage,
+  type RandomnessLevel,
 } from '@/lib/warmup-engine'
 
 // ── Constantes ────────────────────────────────────────────────────────────────
 
+/** Máximo de líneas procesadas por invocación (evita timeouts de Next.js). */
 const MAX_LINES_PER_BATCH = 10
 
 // ── Tipos internos ────────────────────────────────────────────────────────────
 
 interface WarmupLine {
-  id:                 string
-  instance_name:      string
-  evolution_url:      string | null
-  messages_sent_today: number
-  current_day:        number
-  target_days:        number
-  timezone:           string
+  id:                   string
+  instance_name:        string
+  evolution_url:        string | null
+  messages_sent_today:  number
+  current_day:          number
+  target_days:          number
+  timezone:             string
+  last_message_at:      string | null
+  delay_preset:         string
+  // Anti-ban fields (nullable → NULL means feature not configured yet)
+  anti_ban_enabled:     boolean | null
+  delay_min_seconds:    number  | null
+  delay_max_seconds:    number  | null
+  sending_window_start: string  | null
+  sending_window_end:   string  | null
+  active_days:          number[]| null
+  randomness_level:     string  | null
+  natural_distribution: boolean | null
 }
 
 interface WarmupContact {
@@ -61,12 +82,13 @@ interface WarmupContact {
 }
 
 interface LineResult {
-  line_id:       string
-  instance:      string
-  sent:          number
-  skipped:       boolean
-  skip_reason?:  string
-  errors:        string[]
+  line_id:      string
+  instance:     string
+  sent:         number
+  skipped:      boolean
+  skip_reason?: string
+  anti_ban:     boolean
+  errors:       string[]
 }
 
 // ── Handler ───────────────────────────────────────────────────────────────────
@@ -75,8 +97,7 @@ export async function POST(req: NextRequest) {
   // ── Autenticación ligera ──────────────────────────────────────────────────
   const secret = process.env.WARMUP_PROCESS_SECRET
   if (secret) {
-    const provided = req.headers.get('x-warmup-secret')
-    if (provided !== secret) {
+    if (req.headers.get('x-warmup-secret') !== secret) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
   } else {
@@ -101,7 +122,13 @@ export async function POST(req: NextRequest) {
     // ── 1. Obtener líneas activas candidatas ──────────────────────────────
     const lines = await query<WarmupLine>(`
       SELECT id, instance_name, evolution_url,
-             messages_sent_today, current_day, target_days, timezone
+             messages_sent_today, current_day, target_days, timezone,
+             last_message_at,
+             COALESCE(delay_preset, 'normal') AS delay_preset,
+             anti_ban_enabled,
+             delay_min_seconds, delay_max_seconds,
+             sending_window_start::text, sending_window_end::text,
+             active_days, randomness_level, natural_distribution
       FROM   warmup_numbers
       WHERE  warmup_status = 'active'
       ORDER  BY messages_sent_today ASC, last_message_at ASC NULLS FIRST
@@ -109,23 +136,72 @@ export async function POST(req: NextRequest) {
     `, [MAX_LINES_PER_BATCH])
 
     for (const line of lines) {
+      const antiBanActive = line.anti_ban_enabled === true
       const result: LineResult = {
         line_id:  line.id,
         instance: line.instance_name,
         sent:     0,
         skipped:  false,
+        anti_ban: antiBanActive,
         errors:   [],
       }
 
-      // ── 2. Verificar horario activo ─────────────────────────────────────
-      if (!isActiveHour(line.timezone, now)) {
+      // ── 2a. [anti-ban] Verificar día activo ───────────────────────────────
+      if (antiBanActive && line.active_days && line.active_days.length > 0) {
+        if (!isActiveDay(line.active_days, line.timezone, now)) {
+          const dow = new Intl.DateTimeFormat('es-AR', { weekday: 'long', timeZone: line.timezone }).format(now)
+          console.info(`[warmup/process] [anti-ban] ${line.instance_name}: día no activo (${dow})`)
+          result.skipped     = true
+          result.skip_reason = 'inactive_day'
+          results.push(result)
+          continue
+        }
+      }
+
+      // ── 2b. Verificar ventana horaria ─────────────────────────────────────
+      const windowStart = line.sending_window_start ?? '09:00'
+      const windowEnd   = line.sending_window_end   ?? '20:00'
+
+      const inWindow = antiBanActive
+        ? isActiveWindow(windowStart, windowEnd, line.timezone, now)
+        : isActiveHour(line.timezone, now)
+
+      if (!inWindow) {
+        console.info(`[warmup/process] ${antiBanActive ? '[anti-ban] ' : ''}${line.instance_name}: fuera de ventana horaria (${windowStart}–${windowEnd})`)
         result.skipped     = true
         result.skip_reason = 'outside_active_hours'
         results.push(result)
         continue
       }
 
-      // ── 3. Calcular límite efectivo del día ─────────────────────────────
+      // ── 2c. [anti-ban] Verificar cooldown desde último mensaje ─────────────
+      if (antiBanActive && line.last_message_at) {
+        const minDelay   = line.delay_min_seconds    ?? 45
+        const maxDelay   = line.delay_max_seconds    ?? 180
+        const level      = (line.randomness_level    ?? 'medium') as RandomnessLevel
+        const naturalDist = line.natural_distribution ?? false
+
+        const requiredDelayMs = getAntiBanDelayMs(
+          minDelay, maxDelay, level, naturalDist,
+          windowStart, windowEnd, line.timezone, now,
+        )
+        const elapsedMs = now.getTime() - new Date(line.last_message_at).getTime()
+
+        if (elapsedMs < requiredDelayMs) {
+          const elapsedS  = Math.round(elapsedMs / 1000)
+          const requiredS = Math.round(requiredDelayMs / 1000)
+          console.info(
+            `[warmup/process] [anti-ban] ${line.instance_name}: cooldown activo ` +
+            `(${elapsedS}s transcurrido < ${requiredS}s requerido, nivel=${level})`
+          )
+          result.skipped     = true
+          result.skip_reason = 'anti_ban_cooldown'
+          results.push(result)
+          continue
+        }
+      }
+
+      // ── 3. Calcular límite efectivo del día ───────────────────────────────
       const effectiveLimit = getDailyLimitForDay(line.current_day, line.target_days)
       const remaining      = effectiveLimit - line.messages_sent_today
 
@@ -136,8 +212,11 @@ export async function POST(req: NextRequest) {
         continue
       }
 
-      // ── 4. Decidir cuántos mensajes enviar en este batch ────────────────
-      const slots    = remainingActiveSlots(line.timezone, now)
+      // ── 4. Decidir cuántos mensajes enviar en este batch ──────────────────
+      const slots = antiBanActive
+        ? remainingWindowSlots(windowStart, windowEnd, line.timezone, now)
+        : remainingActiveSlots(line.timezone, now)
+
       const decision = decideBatchSize(remaining, slots)
 
       if (!decision.shouldSend) {
@@ -147,11 +226,18 @@ export async function POST(req: NextRequest) {
         continue
       }
 
-      // ── 5. Resolver Evolution URL ───────────────────────────────────────
+      // Anti-ban: cap to 1 message per run.
+      // n8n's HTTP node typically times out in ~30 s; sleeping between messages
+      // (to honor delay_min_seconds) would fail for delays > 30 s. Instead, each
+      // cron tick sends at most 1 message and the cooldown guard at the top of
+      // the next tick enforces the required inter-message spacing — no sleep needed.
+      const batchCount = antiBanActive ? Math.min(decision.count, 1) : decision.count
+
+      // ── 5. Resolver Evolution URL ─────────────────────────────────────────
       const evoUrl = line.evolution_url ?? evolutionUrl
 
-      // ── 6. Enviar mensajes del batch ────────────────────────────────────
-      for (let i = 0; i < decision.count; i++) {
+      // ── 6. Enviar mensajes del batch ──────────────────────────────────────
+      for (let i = 0; i < batchCount; i++) {
         // 6a. Seleccionar próximo contacto (menos usado, más antiguo)
         const contacts = await query<WarmupContact>(`
           SELECT id, phone_number
@@ -167,10 +253,10 @@ export async function POST(req: NextRequest) {
         }
 
         const contact = contacts[0]
-        const msgData = pickWarmupMessage(line.current_day, line.messages_sent_today + i)
+        const msgData = getNextWarmupMessage(line.id, line.current_day <= 7 ? 'foundation' : line.current_day <= 14 ? 'growth' : 'maturity')
 
         // 6b. Enviar via Evolution
-        let sendOk    = false
+        let sendOk      = false
         let evolutionErr = ''
         try {
           const evoRes = await fetch(
@@ -221,7 +307,7 @@ export async function POST(req: NextRequest) {
 
         if (!sendOk) {
           result.errors.push(evolutionErr)
-          // No detenemos el batch por un error — intentamos el siguiente mensaje
+          console.warn(`[warmup/process] ${line.instance_name}: fallo de envío — ${evolutionErr}`)
           continue
         }
 
@@ -234,7 +320,7 @@ export async function POST(req: NextRequest) {
           WHERE  id = $1
         `, [line.id])
 
-        // 6e. Actualizar contacto (marcar como usado)
+        // 6e. Actualizar contacto
         await query(`
           UPDATE warmup_contacts
           SET    message_count = message_count + 1,
@@ -244,6 +330,11 @@ export async function POST(req: NextRequest) {
 
         result.sent++
         totalSent++
+
+        console.info(
+          `[warmup/process] ${antiBanActive ? '[anti-ban] ' : ''}${line.instance_name}: ` +
+          `mensaje enviado a ${contact.phone_number} (día ${line.current_day}, msg ${line.messages_sent_today + result.sent}/${effectiveLimit})`
+        )
       }
 
       results.push(result)

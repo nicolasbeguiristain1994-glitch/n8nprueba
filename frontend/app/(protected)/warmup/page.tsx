@@ -1,17 +1,32 @@
 'use client'
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import {
-  RefreshCw, Plus, Flame, Pause, Play, Trash2, FileText,
+  RefreshCw, Plus, Flame, Pause, Play, Trash2,
   QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink,
-  ArrowRight, Pencil, Wifi, WifiOff,
+  ArrowRight, Pencil, Wifi, WifiOff, Shield, ShieldAlert, Zap, TrendingUp,
+  AlertTriangle, Clock, X, Download, Bell,
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { getDailyLimitForDay } from '@/lib/warmup-engine'
+import type { DelayPreset } from '@/lib/warmup-engine'
+import {
+  healthScore, healthColor, healthLabel, fmtPhone, timeAgo,
+  STATUS_CFG, STRATEGIES, PRESET_BADGE, PRESET_LABEL, exportWarmupCSV,
+  banRiskScore, banRiskLabel, banRiskCls,
+} from '@/lib/warmup-ui'
+import { WarmupLineDetail } from '@/components/warmup/WarmupLineDetail'
+import { WarmupStats }      from '@/components/warmup/WarmupStats'
+import { WarmupMetrics }    from '@/components/warmup/WarmupMetrics'
+import { BulkActions }      from '@/components/warmup/BulkActions'
+import { WarmupToastStack, useWarmupToasts } from '@/components/warmup/WarmupToast'
+import { useWarmupRealtime }      from '@/hooks/useWarmupRealtime'
+import { useDesktopNotifications } from '@/hooks/useDesktopNotifications'
 
 interface WarmupNumber {
   id: string
@@ -22,28 +37,23 @@ interface WarmupNumber {
   current_day: number
   target_days: number
   messages_sent_today: number
+  total_messages_sent: number
   daily_limit: number
   last_message_at: string | null
   notes: string | null
-}
-
-interface LogEntry {
-  id: string; recipient: string; message_type: string
-  message_preview: string; status: string; warmup_day: number; sent_at: string
+  delay_preset: DelayPreset
+  anti_ban_enabled: boolean | null
 }
 
 type QrState = 'idle' | 'loading' | 'not-found' | 'creating' | 'qr' | 'connected' | 'error'
 
 const EVO_MANAGER = process.env.NEXT_PUBLIC_EVOLUTION_MANAGER_URL ?? ''
 
-const STATUS_COLORS: Record<string, string> = {
-  active:    'bg-green-100 text-green-700',
-  paused:    'bg-yellow-100 text-yellow-700',
-  completed: 'bg-blue-100 text-blue-700',
-  banned:    'bg-red-100 text-red-700',
-}
-const STATUS_LABELS: Record<string, string> = {
-  active: 'Activo', paused: 'Pausado', completed: 'Completado', banned: 'Baneado',
+// ── SSE status dot ─────────────────────────────────────────────────────────────
+const STATUS_DOT: Record<string, string> = {
+  connected:    'bg-green-400 animate-pulse',
+  connecting:   'bg-amber-400',
+  disconnected: 'bg-gray-400',
 }
 
 export default function WarmupPage() {
@@ -51,41 +61,52 @@ export default function WarmupPage() {
   const [loading, setLoading] = useState(false)
 
   // Add modal
-  const [showAdd, setShowAdd]         = useState(false)
-  const [addName, setAddName]         = useState('')
-  const [addPhone, setAddPhone]       = useState('')
-  const [addInstance, setAddInstance] = useState('')
-  const [addDays, setAddDays]         = useState('21')
-  const [addLimit, setAddLimit]       = useState('10')
-  const [addSaving, setAddSaving]     = useState(false)
-  const [addError, setAddError]       = useState('')
-  // QR-first add flow
-  const [addPhase, setAddPhase]       = useState<'form' | 'qr' | 'saving'>('form')
-  const [addQrBase64, setAddQrBase64] = useState<string | null>(null)
+  const [showAdd, setShowAdd]             = useState(false)
+  const [addName, setAddName]             = useState('')
+  const [addPhone, setAddPhone]           = useState('')
+  const [addInstance, setAddInstance]     = useState('')
+  const [addStrategy, setAddStrategy]     = useState<DelayPreset>('normal')
+  const [addDays, setAddDays]             = useState('21')
+  const [addLimit, setAddLimit]           = useState('10')
+  const [showAdvanced, setShowAdvanced]   = useState(false)
+  const [addSaving, setAddSaving]         = useState(false)
+  const [addError, setAddError]           = useState('')
+  const [addPhase, setAddPhase]           = useState<'form' | 'qr' | 'saving'>('form')
+  const [addQrBase64, setAddQrBase64]     = useState<string | null>(null)
   const [addQrInstance, setAddQrInstance] = useState('')
-  const [addQrError, setAddQrError]   = useState('')
+  const [addQrError, setAddQrError]       = useState('')
   const [showManualPhone, setShowManualPhone] = useState(false)
   const addQrPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Inline name edit
-  const [editingId, setEditingId]     = useState<string | null>(null)
-  const [editingName, setEditingName] = useState('')
+  const [editingId, setEditingId]       = useState<string | null>(null)
+  const [editingName, setEditingName]   = useState('')
+  const [savingNameId, setSavingNameId] = useState<string | null>(null)
+  const [savedNameId, setSavedNameId]   = useState<string | null>(null)
 
-  // Logs modal
-  const [logsFor, setLogsFor]         = useState<WarmupNumber | null>(null)
-  const [logs, setLogs]               = useState<LogEntry[]>([])
-  const [logsLoading, setLogsLoading] = useState(false)
+  // Detail modal
+  const [detailId,  setDetailId]  = useState<string | null>(null)
+  const [detailTab, setDetailTab] = useState<'overview' | 'config' | 'activity'>('overview')
 
   // Migrate confirm
   const [migratingId, setMigratingId]   = useState<string | null>(null)
   const [migrateError, setMigrateError] = useState('')
 
   // QR modal
-  const [qrFor, setQrFor]         = useState<WarmupNumber | null>(null)
-  const [qrState, setQrState]     = useState<QrState>('idle')
-  const [qrBase64, setQrBase64]   = useState<string | null>(null)
-  const [qrError, setQrError]     = useState<string | null>(null)
+  const [qrFor, setQrFor]       = useState<WarmupNumber | null>(null)
+  const [qrState, setQrState]   = useState<QrState>('idle')
+  const [qrBase64, setQrBase64] = useState<string | null>(null)
+  const [qrError, setQrError]   = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // ── Phase 3: bulk selection ────────────────────────────────────────────────
+  const [selected,             setSelected]             = useState<Set<string>>(new Set())
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(new Set())
+  const prevNumbersRef = useRef<WarmupNumber[]>([])
+
+  // ── Phase 3: notifications ─────────────────────────────────────────────────
+  const { toasts, push: pushToast, dismiss: dismissToast } = useWarmupToasts()
+  const { notify: desktopNotify, permission: notifPerm, request: requestNotif } = useDesktopNotifications()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -94,12 +115,140 @@ export default function WarmupPage() {
     setLoading(false)
   }, [])
 
+  // ── Phase 3: SSE handler ───────────────────────────────────────────────────
+  const handleSSENumbers = useCallback((rawNums: unknown[]) => {
+    const nums = rawNums as WarmupNumber[]
+    const prev = prevNumbersRef.current
+
+    if (prev.length > 0) {
+      for (const n of nums) {
+        const p = prev.find(x => x.id === n.id)
+        if (!p) continue
+        const ns = healthScore(n)
+        const ps = healthScore(p)
+        const label = n.display_name || n.instance_name
+
+        if (ps >= 40 && ns < 40 && n.warmup_status !== 'banned') {
+          pushToast('critical', `Salud crítica: ${label}`, `Score ${ns}/100 — considerá pausar`)
+          desktopNotify('Salud crítica en warmup', `${label}: score ${ns}/100`)
+        }
+        if (p.warmup_status !== 'completed' && n.warmup_status === 'completed') {
+          pushToast('success', '¡Calentamiento completado!', label)
+          desktopNotify('Calentamiento completado', label)
+        }
+        if (p.warmup_status !== 'banned' && n.warmup_status === 'banned') {
+          pushToast('critical', `Línea baneada: ${label}`, 'Revisá la instancia en Evolution')
+          desktopNotify('Línea baneada', label)
+        }
+      }
+    }
+
+    prevNumbersRef.current = nums
+    setNumbers(nums)
+  }, [pushToast, desktopNotify])
+
+  const rtStatus = useWarmupRealtime(handleSSENumbers)
+
   useEffect(() => { load() }, [load])
   useEffect(() => () => {
     if (pollRef.current) clearInterval(pollRef.current)
     if (addQrPollRef.current) clearInterval(addQrPollRef.current)
   }, [])
 
+  // ── Phase 3: automation suggestions ───────────────────────────────────────
+  const suggestions = useMemo(() => {
+    const result: { key: string; msg: string; line: WarmupNumber }[] = []
+    for (const n of numbers) {
+      if (n.warmup_status === 'active' && n.last_message_at) {
+        const days = (Date.now() - new Date(n.last_message_at).getTime()) / 86_400_000
+        if (days >= 4)
+          result.push({
+            key: `idle-${n.id}`,
+            msg: `${n.display_name || n.instance_name} lleva ${Math.floor(days)} días sin actividad`,
+            line: n,
+          })
+      }
+      const sc = healthScore(n)
+      if (sc < 30 && n.warmup_status === 'active')
+        result.push({
+          key: `health-${n.id}`,
+          msg: `${n.display_name || n.instance_name} tiene salud muy baja (${sc}/100)`,
+          line: n,
+        })
+      const risk = banRiskScore(n)
+      if (risk >= 70 && !n.anti_ban_enabled && n.warmup_status === 'active')
+        result.push({
+          key: `banrisk-${n.id}`,
+          msg: `${n.display_name || n.instance_name} tiene riesgo de ban alto (${risk}/100) — activá la protección anti-ban`,
+          line: n,
+        })
+    }
+    return result.filter(s => !dismissedSuggestions.has(s.key)).slice(0, 3)
+  }, [numbers, dismissedSuggestions])
+
+  // ── Stats ──────────────────────────────────────────────────────────────────
+  const active    = numbers.filter(n => n.warmup_status === 'active').length
+  const paused    = numbers.filter(n => n.warmup_status === 'paused').length
+  const completed = numbers.filter(n => n.warmup_status === 'completed').length
+  const banned    = numbers.filter(n => n.warmup_status === 'banned').length
+  const totalToday = numbers.reduce((s, n) => s + n.messages_sent_today, 0)
+
+  // ── Strategy helpers ───────────────────────────────────────────────────────
+  const applyStrategy = (key: DelayPreset) => {
+    setAddStrategy(key)
+    const s = STRATEGIES.find(s => s.key === key)!
+    setAddDays(String(s.targetDays))
+    setAddLimit(String(s.dailyLimit))
+  }
+
+  // ── Phase 3: bulk selection helpers ───────────────────────────────────────
+  const toggleSelect = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setSelected(prev => {
+      const s = new Set(prev)
+      s.has(id) ? s.delete(id) : s.add(id)
+      return s
+    })
+  }
+
+  const toggleSelectAll = () => {
+    setSelected(prev =>
+      prev.size === numbers.length ? new Set() : new Set(numbers.map(n => n.id))
+    )
+  }
+
+  // ── Phase 3: bulk action handlers ─────────────────────────────────────────
+  const bulkPatch = async (ids: string[], body: Record<string, unknown>) => {
+    await Promise.all(ids.map(id =>
+      fetch(`/api/warmup/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    ))
+    setSelected(new Set())
+    load()
+  }
+
+  const bulkPause    = (ids: string[]) => bulkPatch(ids, { warmup_status: 'paused' })
+  const bulkResume   = (ids: string[]) => bulkPatch(ids, { warmup_status: 'active' })
+  const bulkStrategy = async (ids: string[], preset: DelayPreset) => {
+    const s = STRATEGIES.find(s => s.key === preset)!
+    await bulkPatch(ids, { delay_preset: preset, target_days: s.targetDays, daily_limit: s.dailyLimit })
+  }
+
+  const bulkReset = async (ids: string[]) => {
+    await Promise.all(ids.map(id => fetch(`/api/warmup/${id}/reset`, { method: 'POST' })))
+    setSelected(new Set())
+    load()
+  }
+
+  const handleExport = (ids: string[]) => {
+    const toExport = ids.length > 0 ? numbers.filter(n => ids.includes(n.id)) : numbers
+    exportWarmupCSV(toExport)
+  }
+
+  // ── Add modal ──────────────────────────────────────────────────────────────
   const stopAddPoll = () => {
     if (addQrPollRef.current) { clearInterval(addQrPollRef.current); addQrPollRef.current = null }
   }
@@ -107,7 +256,8 @@ export default function WarmupPage() {
   const openAdd = () => {
     setShowAdd(true); setAddError(''); setAddPhase('form')
     setAddName(''); setAddPhone(''); setAddInstance('')
-    setAddDays('21'); setAddLimit('10')
+    setAddStrategy('normal'); setAddDays('21'); setAddLimit('10')
+    setShowAdvanced(false)
     setAddQrBase64(null); setAddQrInstance(''); setAddQrError('')
     setShowManualPhone(false)
   }
@@ -155,7 +305,6 @@ export default function WarmupPage() {
         if (data.phone_number) {
           await saveWarmupEntry(data.phone_number, instance)
         } else {
-          // No se pudo detectar el número, pedir manualmente
           setShowManualPhone(true)
           setAddQrError('Línea conectada. Ingresá el número para registrarla.')
         }
@@ -176,6 +325,7 @@ export default function WarmupPage() {
         display_name:  addName.trim() || undefined,
         target_days:   Number(addDays) || 21,
         daily_limit:   Number(addLimit) || 10,
+        delay_preset:  addStrategy,
       }),
     })
     if (res.ok) {
@@ -188,13 +338,7 @@ export default function WarmupPage() {
     }
   }
 
-  // ── Stats ─────────────────────────────────────────────────
-  const active    = numbers.filter(n => n.warmup_status === 'active').length
-  const paused    = numbers.filter(n => n.warmup_status === 'paused').length
-  const completed = numbers.filter(n => n.warmup_status === 'completed').length
-  const banned    = numbers.filter(n => n.warmup_status === 'banned').length
-
-  // ── CRUD ──────────────────────────────────────────────────
+  // ── CRUD ───────────────────────────────────────────────────────────────────
   const addNumber = async (openQrAfter = false) => {
     if (!addPhone.trim() || !addInstance.trim()) { setAddError('Teléfono e instancia son requeridos'); return }
     setAddSaving(true); setAddError('')
@@ -207,6 +351,7 @@ export default function WarmupPage() {
         display_name: addName.trim() || undefined,
         target_days: Number(addDays) || 21,
         daily_limit: Number(addLimit) || 10,
+        delay_preset: addStrategy,
       }),
     })
     setAddSaving(false)
@@ -219,25 +364,31 @@ export default function WarmupPage() {
     await load()
 
     if (openQrAfter) {
-      // Open QR modal for the newly added line
       const newEntry: WarmupNumber = {
         id: '', phone_number: savedPhone, instance_name: savedInstance,
         display_name: savedName || null, warmup_status: 'active',
         current_day: 1, target_days: Number(addDays) || 21,
-        messages_sent_today: 0, daily_limit: Number(addLimit) || 10,
-        last_message_at: null, notes: null,
+        messages_sent_today: 0, total_messages_sent: 0,
+        daily_limit: Number(addLimit) || 10,
+        last_message_at: null, notes: null, delay_preset: addStrategy,
+        anti_ban_enabled: null,
       }
       openQr(newEntry)
     }
   }
 
   const saveName = async (id: string) => {
+    setEditingId(null)
+    setSavingNameId(id)
     await fetch(`/api/warmup/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ display_name: editingName.trim() || null }),
     })
-    setEditingId(null); load()
+    setSavingNameId(null)
+    setSavedNameId(id)
+    setTimeout(() => setSavedNameId(prev => prev === id ? null : prev), 1800)
+    load()
   }
 
   const toggleStatus = async (n: WarmupNumber) => {
@@ -256,10 +407,8 @@ export default function WarmupPage() {
     load()
   }
 
-  const openLogs = async (n: WarmupNumber) => {
-    setLogsFor(n); setLogsLoading(true)
-    const d = await fetchJson<{ logs: LogEntry[] }>(`/api/warmup/${n.id}/logs`).catch(() => ({ logs: [] }))
-    setLogs(d.logs || []); setLogsLoading(false)
+  const openDetail = (n: WarmupNumber, tab: 'overview' | 'config' | 'activity' = 'overview') => {
+    setDetailTab(tab); setDetailId(n.id)
   }
 
   const migrate = async () => {
@@ -270,7 +419,7 @@ export default function WarmupPage() {
     setMigratingId(null); load()
   }
 
-  // ── QR ────────────────────────────────────────────────────
+  // ── QR ─────────────────────────────────────────────────────────────────────
   const stopPoll = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null } }
 
   const closeQr = () => {
@@ -308,7 +457,7 @@ export default function WarmupPage() {
       const data = await res.json()
       if (res.status === 401) { setQrState('not-found'); setQrError('Sin permisos para crear instancias.'); return }
       if (res.status === 500 && data?.error === 'Evolution admin key not configured') {
-        setQrState('not-found'); setQrError('El Global API Key de Evolution no está configurado en el servidor.'); return
+        setQrState('not-found'); setQrError('El Global API Key de Evolution no está configurado.'); return
       }
       if (data.base64) {
         setQrBase64(data.base64); setQrState('qr'); stopPoll()
@@ -321,17 +470,35 @@ export default function WarmupPage() {
 
   return (
     <div className="space-y-5">
-      {/* Header */}
+
+      {/* ── Header ── */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold flex items-center gap-2">
-            <Flame size={20} className="text-orange-500" /> Calentamiento de Líneas
+            <Flame size={20} className="text-orange-500" />
+            Calentamiento de Líneas
+            {/* SSE status dot */}
+            <span
+              className={`w-2 h-2 rounded-full shrink-0 ${STATUS_DOT[rtStatus] ?? 'bg-gray-400'}`}
+              title={rtStatus === 'connected' ? 'En vivo' : rtStatus === 'connecting' ? 'Conectando…' : 'Sin conexión en tiempo real'}
+            />
           </h1>
           <p className="text-sm text-gray-500">
-            {active} activas · {completed} completadas · {numbers.length} total
+            {numbers.length} líneas · {totalToday} mensajes enviados hoy
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {/* Request desktop notifications if not yet granted */}
+          {notifPerm === 'default' && (
+            <Button variant="ghost" size="sm" onClick={requestNotif}
+              className="text-gray-400 hover:text-gray-600 h-8 px-2" title="Activar notificaciones de escritorio">
+              <Bell size={14} />
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={() => handleExport([])}
+            className="text-xs h-8 px-3 text-gray-600">
+            <Download size={13} className="mr-1.5" /> Exportar
+          </Button>
           <Button variant="outline" size="sm" onClick={load}>
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </Button>
@@ -341,172 +508,371 @@ export default function WarmupPage() {
         </div>
       </div>
 
-      {/* Stats */}
+      {/* ── Stats cards ── */}
       <div className="grid grid-cols-4 gap-4">
-        <Card><CardContent className="pt-4">
-          <p className="text-xs text-gray-500 mb-1">Activas</p>
-          <p className="text-2xl font-bold text-green-600">{active}</p>
-        </CardContent></Card>
-        <Card><CardContent className="pt-4">
-          <p className="text-xs text-gray-500 mb-1">Pausadas</p>
-          <p className="text-2xl font-bold text-yellow-500">{paused}</p>
-        </CardContent></Card>
-        <Card><CardContent className="pt-4">
-          <p className="text-xs text-gray-500 mb-1">Completadas</p>
-          <p className="text-2xl font-bold text-blue-600">{completed}</p>
-        </CardContent></Card>
-        <Card><CardContent className="pt-4">
-          <p className="text-xs text-gray-500 mb-1">Baneadas</p>
-          <p className="text-2xl font-bold text-red-500">{banned}</p>
-        </CardContent></Card>
+        <Card>
+          <CardContent className="pt-4 pb-3">
+            <div className="flex items-center gap-2 mb-1">
+              <Flame size={15} className="text-amber-500" />
+              <p className="text-xs text-gray-500 font-medium">Calentando</p>
+            </div>
+            <p className="text-2xl font-bold text-amber-600">{active}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">en proceso activo</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 pb-3">
+            <div className="flex items-center gap-2 mb-1">
+              <ShieldAlert size={15} className="text-orange-500" />
+              <p className="text-xs text-gray-500 font-medium">En Riesgo</p>
+            </div>
+            <p className="text-2xl font-bold text-orange-600">{paused}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">pausadas</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 pb-3">
+            <div className="flex items-center gap-2 mb-1">
+              <CheckCircle size={15} className="text-green-500" />
+              <p className="text-xs text-gray-500 font-medium">Saludables</p>
+            </div>
+            <p className="text-2xl font-bold text-green-600">{completed}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">calentamiento completo</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4 pb-3">
+            <div className="flex items-center gap-2 mb-1">
+              <AlertCircle size={15} className="text-red-500" />
+              <p className="text-xs text-gray-500 font-medium">Baneadas</p>
+            </div>
+            <p className="text-2xl font-bold text-red-500">{banned}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">fuera de servicio</p>
+          </CardContent>
+        </Card>
       </div>
 
-      {/* Tabla */}
+      {/* ── Stats strip ── */}
+      <WarmupStats numbers={numbers} />
+
+      {/* ── Métricas avanzadas (collapsible) ── */}
+      <WarmupMetrics numbers={numbers} />
+
+      {/* ── Automation suggestions ── */}
+      {suggestions.length > 0 && (
+        <div className="space-y-2">
+          {suggestions.map(s => (
+            <div key={s.key}
+              className="flex items-center gap-3 bg-amber-50 border border-amber-200 rounded-lg px-3.5 py-2.5"
+            >
+              <AlertTriangle size={13} className="text-amber-600 shrink-0" />
+              <span className="text-xs text-amber-800 flex-1">{s.msg}</span>
+              {s.key.startsWith('banrisk-') ? (
+                <Button size="sm" variant="outline"
+                  className="h-6 px-2.5 text-[11px] border-amber-300 text-amber-700 hover:bg-amber-100"
+                  onClick={() => {
+                    openDetail(s.line, 'config')
+                    setDismissedSuggestions(prev => new Set([...prev, s.key]))
+                  }}>
+                  Configurar
+                </Button>
+              ) : (
+                <Button size="sm" variant="outline"
+                  className="h-6 px-2.5 text-[11px] border-amber-300 text-amber-700 hover:bg-amber-100"
+                  onClick={async () => {
+                    await toggleStatus(s.line)
+                    setDismissedSuggestions(prev => new Set([...prev, s.key]))
+                  }}>
+                  Pausar
+                </Button>
+              )}
+              <button
+                className="text-amber-400 hover:text-amber-600 transition-colors p-0.5"
+                onClick={() => setDismissedSuggestions(prev => new Set([...prev, s.key]))}
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Tabla ── */}
       <Card>
         <CardContent className="p-0">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
+                {/* Checkbox select-all */}
+                <th className="w-10 pl-4 py-3">
+                  <Checkbox
+                    checked={numbers.length > 0 && selected.size === numbers.length}
+                    onCheckedChange={toggleSelectAll}
+                    aria-label="Seleccionar todas"
+                  />
+                </th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Línea</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Instancia</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Estrategia</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Progreso</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Hoy</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Último envío</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Acción</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Hoy / Total</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Salud</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Última actividad</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {numbers.length === 0
-                ? <tr><td colSpan={7}>
+                ? (
+                  <tr><td colSpan={9}>
                     {loading
                       ? <p className="text-center py-12 text-gray-400">Cargando…</p>
-                      : <div className="flex flex-col items-center gap-4 py-16">
-                          <div className="w-14 h-14 bg-orange-50 rounded-full flex items-center justify-center">
-                            <Flame size={28} className="text-orange-400" />
+                      : (
+                        <div className="flex flex-col items-center gap-5 py-16 px-8">
+                          <div className="w-16 h-16 bg-orange-50 rounded-full flex items-center justify-center">
+                            <Flame size={30} className="text-orange-400" />
                           </div>
-                          <div className="text-center">
-                            <p className="font-medium text-gray-700 mb-1">Sin líneas en calentamiento</p>
-                            <p className="text-sm text-gray-400">Agregá una línea nueva para comenzar el proceso de calentamiento y vincularla por QR.</p>
+                          <div className="text-center max-w-sm">
+                            <p className="font-semibold text-gray-800 text-base mb-1.5">Calentá tus líneas antes de enviar</p>
+                            <p className="text-sm text-gray-400 mb-4">
+                              El calentamiento prepara gradualmente un número nuevo para enviar mensajes masivos sin riesgo de ban.
+                            </p>
+                            <ul className="text-left space-y-2 mb-5">
+                              {[
+                                { icon: '🛡️', text: 'Evita bloqueos y bans de WhatsApp' },
+                                { icon: '📈', text: 'Aumenta el límite diario de forma progresiva y orgánica' },
+                                { icon: '✅', text: 'Líneas listas para campañas en 14–30 días' },
+                              ].map(b => (
+                                <li key={b.text} className="flex items-center gap-2.5 text-sm text-gray-500">
+                                  <span className="text-base leading-none">{b.icon}</span>
+                                  <span>{b.text}</span>
+                                </li>
+                              ))}
+                            </ul>
                           </div>
-                          <Button className="bg-orange-500 hover:bg-orange-600" onClick={openAdd}>
+                          <Button className="bg-orange-500 hover:bg-orange-600 px-5" onClick={openAdd}>
                             <Plus size={14} className="mr-2" /> Agregar primera línea
                           </Button>
                         </div>
+                      )
                     }
                   </td></tr>
+                )
                 : numbers.map(n => {
-                    const dayPct       = n.target_days ? (n.current_day / n.target_days) * 100 : 0
+                    const dayPct         = n.target_days ? Math.min((n.current_day / n.target_days) * 100, 100) : 0
                     const effectiveLimit = getDailyLimitForDay(n.current_day, n.target_days)
-                    const msgPct       = effectiveLimit ? (n.messages_sent_today / effectiveLimit) * 100 : 0
-                    const isComplete   = n.warmup_status === 'completed'
-                    const label        = n.display_name || n.instance_name
-                    const isEditing = editingId === n.id
+                    const score          = healthScore(n)
+                    const isComplete     = n.warmup_status === 'completed'
+                    const label          = n.display_name || n.instance_name
+                    const isEditing      = editingId === n.id
+                    const cfg            = STATUS_CFG[n.warmup_status] ?? STATUS_CFG.active
+                    const isSelected     = selected.has(n.id)
+
+                    const rowAlerts: string[] = []
+                    if (score < 40 && n.warmup_status !== 'banned') rowAlerts.push('Crítico')
+                    if (n.warmup_status === 'active' && n.last_message_at) {
+                      const idle = (Date.now() - new Date(n.last_message_at).getTime()) / 86_400_000
+                      if (idle >= 3) rowAlerts.push('Inactiva')
+                    }
 
                     return (
-                      <tr key={n.id} className={`border-b border-gray-100 hover:bg-gray-50 ${isComplete ? 'bg-blue-50/30' : ''}`}>
-                        {/* Nombre editable */}
+                      <tr
+                        key={n.id}
+                        className={`border-b border-gray-100 hover:bg-amber-50/30 cursor-pointer transition-colors ${
+                          isSelected  ? 'bg-amber-50/60' :
+                          isComplete  ? 'bg-green-50/20' : ''
+                        }`}
+                        onClick={() => openDetail(n)}
+                      >
+                        {/* Checkbox */}
+                        <td className="pl-4 py-3 w-10" onClick={e => e.stopPropagation()}>
+                          <Checkbox
+                            checked={isSelected}
+                            onCheckedChange={() => {
+                              setSelected(prev => {
+                                const s = new Set(prev)
+                                s.has(n.id) ? s.delete(n.id) : s.add(n.id)
+                                return s
+                              })
+                            }}
+                            aria-label={`Seleccionar ${label}`}
+                          />
+                        </td>
+
+                        {/* Línea: nombre + teléfono */}
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             {n.warmup_status === 'active'
-                              ? <Wifi size={14} className="text-orange-400 flex-shrink-0" />
-                              : <WifiOff size={14} className="text-gray-300 flex-shrink-0" />
+                              ? <Wifi size={13} className="text-amber-400 flex-shrink-0" />
+                              : n.warmup_status === 'completed'
+                              ? <Wifi size={13} className="text-green-500 flex-shrink-0" />
+                              : <WifiOff size={13} className="text-gray-300 flex-shrink-0" />
                             }
-                            {isEditing
-                              ? <form onSubmit={e => { e.preventDefault(); saveName(n.id) }} className="flex items-center gap-1">
-                                  <Input
-                                    autoFocus
-                                    value={editingName}
-                                    onChange={e => setEditingName(e.target.value)}
-                                    onBlur={() => saveName(n.id)}
-                                    onKeyDown={e => e.key === 'Escape' && setEditingId(null)}
-                                    className="h-7 text-xs w-36"
-                                  />
-                                </form>
-                              : <div className="flex items-center gap-1 group">
-                                  <span className="font-medium">{label}</span>
-                                  <button
-                                    onClick={() => { setEditingId(n.id); setEditingName(n.display_name || n.instance_name) }}
-                                    className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-gray-600"
-                                  >
-                                    <Pencil size={12} />
-                                  </button>
-                                </div>
-                            }
+                            <div>
+                              {isEditing
+                                ? (
+                                  <form onSubmit={e => { e.preventDefault(); saveName(n.id) }} onClick={e => e.stopPropagation()} className="flex items-center gap-1">
+                                    <Input
+                                      autoFocus
+                                      value={editingName}
+                                      onChange={e => setEditingName(e.target.value)}
+                                      onBlur={() => saveName(n.id)}
+                                      onKeyDown={e => {
+                                        if (e.key === 'Escape') { setEditingId(null); setEditingName('') }
+                                      }}
+                                      className="h-6 text-xs w-32 border-indigo-300 focus-visible:ring-indigo-400"
+                                    />
+                                  </form>
+                                )
+                                : (
+                                  <div className="flex items-center gap-1.5 group">
+                                    <button
+                                      title="Clic para editar nombre"
+                                      onClick={e => { e.stopPropagation(); setEditingId(n.id); setEditingName(n.display_name || n.instance_name) }}
+                                      className="font-medium text-sm text-left hover:text-indigo-600 transition-colors"
+                                    >
+                                      {label}
+                                    </button>
+                                    {savingNameId === n.id && <Loader2 size={11} className="animate-spin text-gray-400 shrink-0" />}
+                                    {savedNameId  === n.id && <CheckCircle size={11} className="text-green-500 shrink-0" />}
+                                    {savingNameId !== n.id && savedNameId !== n.id && (
+                                      <Pencil size={10} className="opacity-0 group-hover:opacity-40 transition-opacity text-gray-400 shrink-0" />
+                                    )}
+                                  </div>
+                                )
+                              }
+                              <p className="text-[11px] text-gray-400 font-mono leading-tight">{fmtPhone(n.phone_number)}</p>
+                            </div>
                           </div>
                         </td>
 
-                        <td className="px-4 py-3 font-mono text-xs text-gray-500">{n.instance_name}</td>
-
+                        {/* Estado */}
                         <td className="px-4 py-3">
-                          <Badge className={`text-xs ${STATUS_COLORS[n.warmup_status] || ''}`}>
-                            {STATUS_LABELS[n.warmup_status] || n.warmup_status}
+                          <div className="flex items-center gap-1.5">
+                            <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dotCls}`} />
+                            <Badge className={`text-[11px] px-1.5 py-0 ${cfg.cls}`}>{cfg.label}</Badge>
+                          </div>
+                          {rowAlerts.map(a => (
+                            <div key={a} className="flex items-center gap-1 mt-0.5">
+                              {a === 'Crítico'  && <AlertTriangle size={9} className="text-red-500 shrink-0" />}
+                              {a === 'Inactiva' && <Clock size={9} className="text-amber-600 shrink-0" />}
+                              <span className={`text-[10px] font-medium ${a === 'Crítico' ? 'text-red-500' : 'text-amber-600'}`}>{a}</span>
+                            </div>
+                          ))}
+                          {(() => {
+                            const risk = banRiskScore(n)
+                            if (risk < 40) return null
+                            const rCls = banRiskCls(risk)
+                            const score = healthScore(n)
+                            return (
+                              <div
+                                title={`Riesgo de ban: ${risk}/100 — Salud: ${score}/100${n.anti_ban_enabled ? ' · Protección anti-ban activa' : ' · Sin protección anti-ban'}`}
+                                className={`flex items-center gap-1 mt-0.5 rounded px-1.5 py-0.5 w-fit cursor-help ${rCls.bg}`}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${rCls.dot}`} />
+                                <span className={`text-[10px] font-medium ${rCls.text}`}>Ban {banRiskLabel(risk)}</span>
+                                {n.anti_ban_enabled && (
+                                  <Shield size={8} className={`${rCls.text} shrink-0 opacity-80`} />
+                                )}
+                              </div>
+                            )
+                          })()}
+                        </td>
+
+                        {/* Estrategia */}
+                        <td className="px-4 py-3">
+                          <Badge className={`text-[11px] px-1.5 py-0 ${PRESET_BADGE[n.delay_preset] || 'bg-gray-100 text-gray-500'}`}>
+                            {PRESET_LABEL[n.delay_preset] || n.delay_preset}
                           </Badge>
                         </td>
 
+                        {/* Progreso día */}
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             <div className="w-20 bg-gray-100 rounded-full h-1.5">
-                              <div className={`h-1.5 rounded-full ${isComplete ? 'bg-blue-400' : 'bg-orange-400'}`}
-                                style={{ width: `${Math.min(dayPct, 100)}%` }} />
+                              <div
+                                className={`h-1.5 rounded-full ${isComplete ? 'bg-green-400' : 'bg-amber-400'}`}
+                                style={{ width: `${dayPct}%` }}
+                              />
                             </div>
-                            <span className="text-xs text-gray-500">Día {n.current_day}/{n.target_days}</span>
+                            <span className="text-[11px] text-gray-500 whitespace-nowrap">Día {n.current_day}/{n.target_days}</span>
                           </div>
+                          <div className="text-[10px] text-gray-400 mt-0.5">{Math.round(dayPct)}% completado</div>
                         </td>
 
+                        {/* Hoy / Total */}
+                        <td className="px-4 py-3">
+                          <div className="text-sm font-medium text-gray-700">
+                            {n.messages_sent_today}
+                            <span className="text-gray-400 font-normal">/{effectiveLimit}</span>
+                          </div>
+                          <div className="text-[11px] text-gray-400">{n.total_messages_sent} total</div>
+                        </td>
+
+                        {/* Salud */}
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            <div className="w-16 bg-gray-100 rounded-full h-1.5">
-                              <div className="bg-green-400 h-1.5 rounded-full" style={{ width: `${Math.min(msgPct, 100)}%` }} />
+                            <div className="w-14 bg-gray-100 rounded-full h-1.5">
+                              <div
+                                className={`h-1.5 rounded-full transition-all ${healthColor(score)}`}
+                                style={{ width: `${score}%` }}
+                              />
                             </div>
-                            <span className="text-xs text-gray-500">{n.messages_sent_today}/{effectiveLimit}</span>
+                            <span className="text-[11px] font-medium text-gray-600">{score}</span>
                           </div>
+                          <div className="text-[10px] text-gray-400 mt-0.5">{healthLabel(score)}</div>
                         </td>
 
-                        <td className="px-4 py-3 text-gray-400 text-xs">
-                          {n.last_message_at
-                            ? new Date(n.last_message_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
-                            : '—'}
-                        </td>
-
+                        {/* Última actividad */}
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5">
-                            {/* QR siempre visible */}
+                          {(() => {
+                            const { relative, abs } = timeAgo(n.last_message_at)
+                            return n.last_message_at ? (
+                              <div>
+                                <span className="text-[11px] text-gray-600">{relative}</span>
+                                <p className="text-[10px] text-gray-400 mt-0.5">{abs}</p>
+                              </div>
+                            ) : (
+                              <span className="text-[11px] text-gray-400 italic">Nunca enviado</span>
+                            )
+                          })()}
+                        </td>
+
+                        {/* Acciones */}
+                        <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                          <div className="flex items-center gap-1">
                             <Button size="sm" variant="outline"
-                              className="text-xs border-orange-200 text-orange-700 hover:bg-orange-50 h-7 px-2"
+                              className="text-[11px] border-orange-200 text-orange-700 hover:bg-orange-50 h-7 px-2"
                               onClick={() => openQr(n)}>
-                              <QrCode size={12} className="mr-1" /> Vincular QR
+                              <QrCode size={11} className="mr-1" /> QR
                             </Button>
 
-                            {/* Logs */}
                             <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-gray-400"
-                              title="Actividad" onClick={() => openLogs(n)}>
-                              <FileText size={13} />
+                              title="Ver actividad"
+                              onClick={() => openDetail(n, 'activity')}>
+                              <TrendingUp size={12} />
                             </Button>
 
-                            {/* Pausa / reanudar */}
                             {(n.warmup_status === 'active' || n.warmup_status === 'paused') && (
                               <Button size="sm" variant="ghost"
                                 className={`h-7 w-7 p-0 ${n.warmup_status === 'active' ? 'text-yellow-500' : 'text-green-600'}`}
                                 title={n.warmup_status === 'active' ? 'Pausar' : 'Reanudar'}
                                 onClick={() => toggleStatus(n)}>
-                                {n.warmup_status === 'active' ? <Pause size={13} /> : <Play size={13} />}
+                                {n.warmup_status === 'active' ? <Pause size={12} /> : <Play size={12} />}
                               </Button>
                             )}
 
-                            {/* Migrar — solo completados */}
                             {isComplete && (
                               <Button size="sm" variant="outline"
-                                className="h-7 px-2 text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
+                                className="h-7 px-2 text-[11px] border-blue-200 text-blue-700 hover:bg-blue-50"
                                 onClick={() => { setMigratingId(n.id); setMigrateError('') }}>
-                                <ArrowRight size={12} className="mr-1" /> Mover a Difusión
+                                <ArrowRight size={11} className="mr-1" /> Mover
                               </Button>
                             )}
 
-                            {/* Eliminar */}
                             <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-400 hover:text-red-600"
                               title="Eliminar" onClick={() => deleteNumber(n.id)}>
-                              <Trash2 size={13} />
+                              <Trash2 size={12} />
                             </Button>
                           </div>
                         </td>
@@ -528,25 +894,52 @@ export default function WarmupPage() {
             </DialogTitle>
           </DialogHeader>
 
-          {/* ── Fase: formulario ── */}
           {addPhase === 'form' && (
             <div className="space-y-4 pt-1">
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Nombre para mostrar</label>
                 <Input placeholder="Ej: Línea Betcoin 01" value={addName} onChange={e => setAddName(e.target.value)} />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Días objetivo</label>
-                  <Input type="number" min={1} max={60} value={addDays} onChange={e => setAddDays(e.target.value)} />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Límite diario</label>
-                  <Input type="number" min={1} max={100} value={addLimit} onChange={e => setAddLimit(e.target.value)} />
+
+              <div>
+                <label className="text-xs text-gray-500 mb-1.5 block flex items-center gap-1">
+                  <TrendingUp size={11} /> Estrategia de calentamiento
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {STRATEGIES.map(s => (
+                    <button key={s.key} type="button" onClick={() => applyStrategy(s.key)}
+                      className={`rounded-lg border-2 px-3 py-2.5 text-left transition-all ${
+                        addStrategy === s.key ? s.cls + ' border-current' : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
+                      }`}>
+                      <div className="flex items-center gap-1 mb-0.5">
+                        {s.key === 'agresiva' && <Zap size={11} />}
+                        <span className="font-semibold text-xs">{s.label}</span>
+                      </div>
+                      <p className="text-[10px] leading-tight opacity-80">{s.desc}</p>
+                      <p className="text-[10px] mt-1 opacity-60">{s.targetDays}d · {s.dailyLimit} msg/día</p>
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Opción manual */}
+              <button type="button" onClick={() => setShowAdvanced(v => !v)}
+                className="text-[11px] text-gray-400 hover:text-gray-600 underline">
+                {showAdvanced ? 'Ocultar' : 'Ajuste fino'} de días y límite diario
+              </button>
+
+              {showAdvanced && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Días objetivo</label>
+                    <Input type="number" min={1} max={60} value={addDays} onChange={e => setAddDays(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 mb-1 block">Límite diario</label>
+                    <Input type="number" min={1} max={100} value={addLimit} onChange={e => setAddLimit(e.target.value)} />
+                  </div>
+                </div>
+              )}
+
               {showManualPhone ? (
                 <div>
                   <label className="text-xs text-gray-500 mb-1 block">Número de teléfono *</label>
@@ -568,11 +961,8 @@ export default function WarmupPage() {
                   )}
                 </div>
               ) : (
-                <button
-                  type="button"
-                  className="text-xs text-gray-400 hover:text-gray-600 underline"
-                  onClick={() => setShowManualPhone(true)}
-                >
+                <button type="button" className="text-xs text-gray-400 hover:text-gray-600 underline"
+                  onClick={() => setShowManualPhone(true)}>
                   Tengo el número de teléfono (ingreso manual)
                 </button>
               )}
@@ -596,7 +986,6 @@ export default function WarmupPage() {
             </div>
           )}
 
-          {/* ── Fase: QR ── */}
           {addPhase === 'qr' && (
             <div className="flex flex-col items-center gap-4 py-2">
               {!addQrBase64 && !showManualPhone && (
@@ -605,16 +994,12 @@ export default function WarmupPage() {
                   <p className="text-sm text-gray-500">Generando QR…</p>
                 </div>
               )}
-
               {addQrBase64 && !showManualPhone && (
                 <>
                   <div className="border-4 border-gray-200 rounded-xl p-2 bg-white">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={addQrBase64.startsWith('data:') ? addQrBase64 : `data:image/png;base64,${addQrBase64}`}
-                      alt="QR WhatsApp"
-                      className="w-56 h-56 object-contain"
-                    />
+                    <img src={addQrBase64.startsWith('data:') ? addQrBase64 : `data:image/png;base64,${addQrBase64}`}
+                      alt="QR WhatsApp" className="w-56 h-56 object-contain" />
                   </div>
                   <div className="text-center space-y-1">
                     <p className="text-sm font-medium">Escaneá con WhatsApp</p>
@@ -625,8 +1010,6 @@ export default function WarmupPage() {
                   </div>
                 </>
               )}
-
-              {/* Fallback manual tras conexión sin número detectado */}
               {showManualPhone && (
                 <div className="w-full space-y-3">
                   <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-700 flex items-center gap-2">
@@ -634,33 +1017,24 @@ export default function WarmupPage() {
                   </div>
                   <div>
                     <label className="text-xs text-gray-500 mb-1 block">Número de teléfono *</label>
-                    <Input
-                      placeholder="+5492235042625"
-                      value={addPhone}
+                    <Input placeholder="+5492235042625" value={addPhone}
                       onChange={e => {
                         const raw = e.target.value
                         setAddPhone(raw.startsWith('+') ? '+' + raw.slice(1).replace(/\D/g, '') : raw.replace(/\D/g, ''))
                       }}
-                      className="font-mono text-sm"
-                      autoFocus
-                    />
+                      className="font-mono text-sm" autoFocus />
                   </div>
-                  <Button
-                    className="w-full bg-orange-500 hover:bg-orange-600"
-                    disabled={!addPhone}
-                    onClick={() => saveWarmupEntry(addPhone, addQrInstance)}
-                  >
+                  <Button className="w-full bg-orange-500 hover:bg-orange-600"
+                    disabled={!addPhone} onClick={() => saveWarmupEntry(addPhone, addQrInstance)}>
                     Guardar
                   </Button>
                 </div>
               )}
-
               {addQrError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2 w-full">{addQrError}</p>}
               <Button variant="ghost" className="w-full text-gray-500 text-xs" onClick={closeAdd}>Cancelar</Button>
             </div>
           )}
 
-          {/* ── Fase: guardando ── */}
           {addPhase === 'saving' && (
             <div className="flex flex-col items-center gap-3 py-10">
               <Loader2 size={32} className="animate-spin text-orange-400" />
@@ -704,21 +1078,18 @@ export default function WarmupPage() {
             </DialogTitle>
           </DialogHeader>
           <div className="flex flex-col items-center gap-4 py-2">
-
             {qrState === 'loading' && (
               <div className="flex flex-col items-center gap-3 py-8">
                 <Loader2 size={32} className="animate-spin text-gray-400" />
                 <p className="text-sm text-gray-500">Verificando instancia…</p>
               </div>
             )}
-
             {qrState === 'creating' && (
               <div className="flex flex-col items-center gap-3 py-8">
                 <Loader2 size={32} className="animate-spin text-orange-500" />
                 <p className="text-sm text-gray-600">Creando instancia en Evolution…</p>
               </div>
             )}
-
             {qrState === 'not-found' && (
               <div className="w-full space-y-4">
                 <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 text-sm">
@@ -730,8 +1101,7 @@ export default function WarmupPage() {
                 {qrError && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-3">{qrError}</p>}
                 <div className="border rounded-lg p-4 space-y-3">
                   <p className="text-xs font-medium text-gray-700">Crear instancia automáticamente</p>
-                  <Button className="w-full bg-orange-500 hover:bg-orange-600 text-sm"
-                    onClick={createInstance}>
+                  <Button className="w-full bg-orange-500 hover:bg-orange-600 text-sm" onClick={createInstance}>
                     Crear instancia y obtener QR
                   </Button>
                 </div>
@@ -753,7 +1123,6 @@ export default function WarmupPage() {
                 </div>
               </div>
             )}
-
             {qrState === 'qr' && qrBase64 && (
               <>
                 <div className="border-4 border-gray-200 rounded-xl p-2 bg-white">
@@ -774,7 +1143,6 @@ export default function WarmupPage() {
                 </Button>
               </>
             )}
-
             {qrState === 'connected' && (
               <div className="flex flex-col items-center gap-3 py-6">
                 <CheckCircle size={48} className="text-green-500" />
@@ -785,7 +1153,6 @@ export default function WarmupPage() {
                 <Button className="w-full bg-orange-500 hover:bg-orange-600" onClick={closeQr}>Cerrar</Button>
               </div>
             )}
-
             {qrState === 'error' && (
               <div className="flex flex-col items-center gap-3 py-6">
                 <AlertCircle size={40} className="text-red-400" />
@@ -798,53 +1165,28 @@ export default function WarmupPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Modal logs ── */}
-      <Dialog open={!!logsFor} onOpenChange={open => { if (!open) { setLogsFor(null); setLogs([]) } }}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FileText size={16} /> Actividad — {logsFor?.display_name || logsFor?.phone_number}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="max-h-96 overflow-y-auto">
-            {logsLoading
-              ? <p className="text-center text-gray-400 py-8">Cargando…</p>
-              : logs.length === 0
-                ? <p className="text-center text-gray-400 py-8">Sin actividad registrada aún</p>
-                : <table className="w-full text-xs">
-                    <thead>
-                      <tr className="border-b border-gray-100 bg-gray-50">
-                        <th className="text-left px-3 py-2 font-medium text-gray-600">Destinatario</th>
-                        <th className="text-left px-3 py-2 font-medium text-gray-600">Tipo</th>
-                        <th className="text-left px-3 py-2 font-medium text-gray-600">Mensaje</th>
-                        <th className="text-left px-3 py-2 font-medium text-gray-600">Estado</th>
-                        <th className="text-left px-3 py-2 font-medium text-gray-600">Día</th>
-                        <th className="text-left px-3 py-2 font-medium text-gray-600">Hora</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {logs.map(l => (
-                        <tr key={l.id} className="border-b border-gray-100 hover:bg-gray-50">
-                          <td className="px-3 py-2 font-mono">{l.recipient}</td>
-                          <td className="px-3 py-2 text-gray-500">{l.message_type}</td>
-                          <td className="px-3 py-2 text-gray-700 max-w-xs truncate">{l.message_preview}</td>
-                          <td className="px-3 py-2">
-                            <Badge className={`text-xs ${l.status === 'sent' ? 'bg-green-100 text-green-700' : l.status === 'failed' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'}`}>
-                              {l.status}
-                            </Badge>
-                          </td>
-                          <td className="px-3 py-2 text-gray-500">{l.warmup_day}</td>
-                          <td className="px-3 py-2 text-gray-400">
-                            {new Date(l.sent_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-            }
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* ── Modal detalle ── */}
+      <WarmupLineDetail
+        lineId={detailId}
+        defaultTab={detailTab}
+        onClose={() => setDetailId(null)}
+        onRefresh={load}
+      />
+
+      {/* ── Phase 3: Bulk actions floating toolbar ── */}
+      <BulkActions
+        selected={selected}
+        numbers={numbers}
+        onClear={() => setSelected(new Set())}
+        onPause={bulkPause}
+        onResume={bulkResume}
+        onReset={bulkReset}
+        onStrategy={bulkStrategy}
+        onExport={handleExport}
+      />
+
+      {/* ── Phase 3: Toast notifications ── */}
+      <WarmupToastStack toasts={toasts} onDismiss={dismissToast} />
     </div>
   )
 }
