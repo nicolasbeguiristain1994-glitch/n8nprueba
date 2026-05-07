@@ -36,6 +36,16 @@ export function IntentBadge({ intent }: { intent: Intent }) {
   )
 }
 
+// ── En Proceso ────────────────────────────────────────────────────────────────
+
+export function ProcessBadge() {
+  return (
+    <span className="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-blue-50 text-blue-700 border-blue-200">
+      En Proceso
+    </span>
+  )
+}
+
 // ── Escalated ──────────────────────────────────────────────────────────────────
 
 export function EscalatedBadge() {

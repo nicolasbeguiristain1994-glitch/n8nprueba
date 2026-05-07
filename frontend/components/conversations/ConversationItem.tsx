@@ -4,7 +4,7 @@ import {
   detectIntent, displayName, initials, avatarCls, fmtTime,
   type Conv,
 } from '@/lib/scoring/conversation-scoring'
-import { SegmentBadge, IntentBadge, EscalatedBadge } from './PriorityBadge'
+import { SegmentBadge, IntentBadge, EscalatedBadge, ProcessBadge } from './PriorityBadge'
 
 function borderColor(c: Conv, isSelected: boolean): string {
   if (isSelected)                                  return 'border-l-[3px] border-l-green-500'
@@ -24,9 +24,10 @@ interface Props {
 }
 
 export const ConversationItem = memo(function ConversationItem({ conv: c, isSelected, onClick }: Props) {
-  const intent  = detectIntent(c.last_message, c.last_direction)
-  const unread  = c.last_direction === 'inbound'
-  const hasBadge = c.segment === 'vip' || c.segment === 'alto' || intent || c.is_escalated
+  const intent     = detectIntent(c.last_message, c.last_direction)
+  const unread     = c.last_direction === 'inbound'
+  const inProcess  = c.conv_flow === 'en_proceso'
+  const hasBadge   = c.segment === 'vip' || c.segment === 'alto' || intent || c.is_escalated || inProcess
 
   return (
     <button
@@ -50,6 +51,7 @@ export const ConversationItem = memo(function ConversationItem({ conv: c, isSele
           {hasBadge && (
             <div className="flex flex-wrap gap-1 mb-1">
               <SegmentBadge segment={c.segment ?? null} />
+              {inProcess && <ProcessBadge />}
               {c.is_escalated ? <EscalatedBadge /> : <IntentBadge intent={intent} />}
             </div>
           )}

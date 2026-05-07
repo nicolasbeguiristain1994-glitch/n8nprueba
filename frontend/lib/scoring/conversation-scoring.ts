@@ -20,6 +20,8 @@ export interface Conv {
   segment?:           Segment
   actividad?:         string | null
   valor_riesgo?:      string | null
+  conv_flow?:         string | null
+  is_blacklisted?:    boolean
 }
 
 export interface Message {

@@ -34,6 +34,12 @@ export async function GET(req: NextRequest) {
         wm.created_at                            AS last_at,
         COALESCE(cs.is_escalated, false)         AS is_escalated,
         cs.escalation_reason,
+        cs.current_flow                          AS conv_flow,
+        EXISTS (
+          SELECT 1 FROM blacklist bl
+          WHERE bl.phone_number_normalized = REPLACE(wm.phone_number, '+', '')
+          AND   bl.removed_at IS NULL
+        )                                        AS is_blacklisted,
         c.id                                     AS contact_id,
         c.first_name,
         c.last_name,

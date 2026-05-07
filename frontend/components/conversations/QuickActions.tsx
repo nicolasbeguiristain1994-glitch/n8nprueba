@@ -5,76 +5,92 @@ import type { Conv } from '@/lib/scoring/conversation-scoring'
 
 type ActionKey = 'vip' | 'process' | 'schedule' | 'blacklist'
 
-interface Props {
-  phone: string
-  conv:  Conv | undefined
-  onRefresh?: () => void
+// ── Shared button ─────────────────────────────────────────────────────────────
+
+function ActionButton({
+  label, icon, onClick, loading, done, disabled,
+}: {
+  label: string; icon: React.ReactNode
+  onClick: () => void; loading?: boolean; done?: boolean; disabled?: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={loading || disabled}
+      className="flex items-center gap-2 w-full text-xs px-2.5 py-1.5 rounded border border-gray-100 text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+    >
+      {loading
+        ? <Loader2 size={13} className="animate-spin shrink-0" />
+        : done
+        ? <Check size={13} className="text-green-500 shrink-0" />
+        : icon}
+      <span className="truncate">{label}</span>
+      {done && <span className="ml-auto text-[10px] text-green-500 shrink-0">✓</span>}
+    </button>
+  )
 }
 
-export function QuickActions({ conv, onRefresh }: Props) {
+// ── Main component ────────────────────────────────────────────────────────────
+
+interface Props { phone: string; conv: Conv | undefined; onRefresh?: () => void }
+
+export function QuickActions({ phone, conv, onRefresh }: Props) {
   const [loading, setLoading] = useState<ActionKey | null>(null)
   const [done,    setDone]    = useState<ActionKey | null>(null)
+  const [showFU,  setShowFU]  = useState(false)
+  const [fuDate,  setFuDate]  = useState('')
+  const [fuNote,  setFuNote]  = useState('')
 
-  const flash = (key: ActionKey) => {
-    setDone(key)
-    setTimeout(() => setDone(null), 2000)
+  const flash = (key: ActionKey) => { setDone(key); setTimeout(() => setDone(null), 2000) }
+  const run   = async (key: ActionKey, fn: () => Promise<void>) => {
+    setLoading(key); try { await fn() } finally { setLoading(null) }
   }
 
-  const run = async (key: ActionKey, fn: () => Promise<void>) => {
-    setLoading(key)
-    try { await fn() } finally { setLoading(null) }
-  }
-
+  // Marcar VIP ─────────────────────────────────────────────────────────────────
   const markVip = () => run('vip', async () => {
     if (!conv?.contact_id) return
     const res = await fetch(`/api/contacts/${conv.contact_id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ segment: 'vip' }),
     })
     if (res.ok) { flash('vip'); onRefresh?.() }
   })
 
+  // Marcar En Proceso ───────────────────────────────────────────────────────────
   const markProcess = () => run('process', async () => {
-    // Marks locally — backend integration point when conversation_state gets a status field
-    await new Promise(r => setTimeout(r, 400))
-    flash('process')
+    const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/status`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ flow: 'en_proceso' }),
+    })
+    if (res.ok) { flash('process'); onRefresh?.() }
   })
 
-  const scheduleFollowUp = () => {
-    // Backend integration point: POST /api/conversations/[phone]/follow-up
-    flash('schedule')
+  // Programar seguimiento ───────────────────────────────────────────────────────
+  const saveFollowUp = () => run('schedule', async () => {
+    if (!fuDate) return
+    const label = new Date(fuDate + 'T00:00').toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' })
+    const content = `📅 Seguimiento programado: ${label}${fuNote.trim() ? ` — ${fuNote.trim()}` : ''}`
+    const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/notes`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    })
+    if (res.ok) { flash('schedule'); setShowFU(false); setFuDate(''); setFuNote(''); onRefresh?.() }
+  })
+
+  // Agregar a Blacklist ─────────────────────────────────────────────────────────
+  const addToBlacklist = () => {
+    if (!confirm('¿Agregar este contacto a la blacklist? No recibirá más mensajes automáticos.')) return
+    run('blacklist', async () => {
+      const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/blacklist`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Manual desde CRM' }),
+      })
+      if (res.ok) { flash('blacklist'); onRefresh?.() }
+    })
   }
 
-  const addToBlacklist = () => run('blacklist', async () => {
-    if (!confirm('¿Estás seguro de agregar este contacto a la blacklist?')) return
-    // Backend integration point: PATCH /api/contacts/[id] with status field
-    await new Promise(r => setTimeout(r, 500))
-    flash('blacklist')
-  })
-
-  const actions: { key: ActionKey; label: string; icon: React.ReactNode; handler: () => void; disabled?: boolean }[] = [
-    {
-      key: 'vip', label: 'Marcar como VIP',
-      icon: <Crown size={13} className="text-yellow-600 shrink-0" />,
-      handler: markVip, disabled: !conv?.contact_id,
-    },
-    {
-      key: 'process', label: 'Marcar En Proceso',
-      icon: <UserCheck size={13} className="text-blue-600 shrink-0" />,
-      handler: markProcess,
-    },
-    {
-      key: 'schedule', label: 'Programar seguimiento',
-      icon: <Clock size={13} className="text-indigo-600 shrink-0" />,
-      handler: scheduleFollowUp,
-    },
-    {
-      key: 'blacklist', label: 'Agregar a blacklist',
-      icon: <Ban size={13} className="text-red-500 shrink-0" />,
-      handler: addToBlacklist, disabled: !conv?.contact_id,
-    },
-  ]
+  const alreadyProcess    = conv?.conv_flow === 'en_proceso'
+  const alreadyBlacklisted = conv?.is_blacklisted === true
 
   return (
     <div className="px-3 py-2.5 border-b border-gray-100">
@@ -82,23 +98,63 @@ export function QuickActions({ conv, onRefresh }: Props) {
         Acciones rápidas
       </p>
       <div className="space-y-1">
-        {actions.map(({ key, label, icon, handler, disabled }) => (
-          <button
-            key={key}
-            onClick={handler}
-            disabled={loading === key || disabled}
-            className="flex items-center gap-2 w-full text-xs px-2.5 py-1.5 rounded border border-gray-100 text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {loading === key
-              ? <Loader2 size={13} className="animate-spin shrink-0" />
-              : done === key
-              ? <Check size={13} className="text-green-500 shrink-0" />
-              : icon
-            }
-            <span>{label}</span>
-            {done === key && <span className="ml-auto text-[10px] text-green-500">✓</span>}
-          </button>
-        ))}
+
+        <ActionButton
+          key="vip" label="Marcar como VIP"
+          icon={<Crown size={13} className="text-yellow-600 shrink-0" />}
+          onClick={markVip}
+          loading={loading === 'vip'} done={done === 'vip'}
+          disabled={!conv?.contact_id}
+        />
+
+        <ActionButton
+          key="process" label={alreadyProcess ? 'En Proceso ✓' : 'Marcar En Proceso'}
+          icon={<UserCheck size={13} className="text-blue-600 shrink-0" />}
+          onClick={markProcess}
+          loading={loading === 'process'} done={done === 'process'}
+          disabled={alreadyProcess}
+        />
+
+        <ActionButton
+          key="schedule" label="Programar seguimiento"
+          icon={<Clock size={13} className="text-indigo-600 shrink-0" />}
+          onClick={() => setShowFU(v => !v)}
+          loading={loading === 'schedule'} done={done === 'schedule'}
+        />
+
+        {showFU && (
+          <div className="mt-1 p-2 bg-indigo-50 border border-indigo-100 rounded space-y-1.5">
+            <input
+              type="date"
+              value={fuDate}
+              onChange={e => setFuDate(e.target.value)}
+              className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:border-indigo-300"
+            />
+            <input
+              type="text"
+              value={fuNote}
+              onChange={e => setFuNote(e.target.value)}
+              placeholder="Nota (opcional)"
+              className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:border-indigo-300 placeholder:text-gray-300"
+            />
+            <button
+              onClick={saveFollowUp}
+              disabled={!fuDate || loading === 'schedule'}
+              className="w-full text-xs bg-indigo-600 text-white rounded py-1 hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+            >
+              Guardar seguimiento
+            </button>
+          </div>
+        )}
+
+        <ActionButton
+          key="blacklist" label={alreadyBlacklisted ? 'Ya en blacklist' : 'Agregar a blacklist'}
+          icon={<Ban size={13} className="text-red-500 shrink-0" />}
+          onClick={addToBlacklist}
+          loading={loading === 'blacklist'} done={done === 'blacklist'}
+          disabled={alreadyBlacklisted}
+        />
+
       </div>
     </div>
   )
