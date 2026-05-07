@@ -211,6 +211,7 @@ describe('GET dispatch summary', () => {
       total: 100, queued: 20, processing: 2, sent: 70, failed: 5, skipped: 3,
       eligible_lines: 3,
       line_usage: [{ line_id: 'l1', line_key: 'line_01', display_name: 'Línea 01', sent: 70, failed: 5 }],
+      top_errors: [],
     })
 
     const res = await GET(makeReq('GET'), makeParams())

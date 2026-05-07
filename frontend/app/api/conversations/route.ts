@@ -24,27 +24,40 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ messages })
     }
 
-    // Lista de conversaciones — agrupa outbound e inbound del mismo número
-    // Incluye is_escalated de conversation_state para mostrar handoff en UI
+    // Lista de conversaciones — enriquecida con datos del contacto si existe
     const conversations = await query(`
       SELECT DISTINCT ON (REPLACE(wm.phone_number, '+', ''))
-        REPLACE(wm.phone_number, '+', '') AS phone_number,
-        wm.message_body  AS last_message,
-        wm.direction     AS last_direction,
-        wm.status        AS last_status,
-        wm.created_at    AS last_at,
-        COALESCE(cs.is_escalated, false)  AS is_escalated,
-        cs.escalation_reason
+        REPLACE(wm.phone_number, '+', '')        AS phone_number,
+        wm.message_body                          AS last_message,
+        wm.direction                             AS last_direction,
+        wm.status                                AS last_status,
+        wm.created_at                            AS last_at,
+        COALESCE(cs.is_escalated, false)         AS is_escalated,
+        cs.escalation_reason,
+        c.id                                     AS contact_id,
+        c.first_name,
+        c.last_name,
+        c.segment::text                          AS segment,
+        (SELECT REPLACE(tag, 'casino:actividad:', '')
+         FROM contact_tags
+         WHERE contact_id = c.id AND tag LIKE 'casino:actividad:%'
+         LIMIT 1)                                AS actividad,
+        (SELECT REPLACE(tag, 'casino:valor_riesgo:', '')
+         FROM contact_tags
+         WHERE contact_id = c.id AND tag LIKE 'casino:valor_riesgo:%'
+         LIMIT 1)                                AS valor_riesgo
       FROM whatsapp_messages wm
       LEFT JOIN conversation_state cs
         ON cs.phone_number = REPLACE(wm.phone_number, '+', '')
         AND cs.resolved_at IS NULL
+      LEFT JOIN contacts c
+        ON REPLACE(c.phone_number, '+', '') = REPLACE(wm.phone_number, '+', '')
       ORDER BY REPLACE(wm.phone_number, '+', ''), wm.created_at DESC
       LIMIT 60
     `)
 
     // Ordenar por último mensaje más reciente
-    const sorted = (conversations as Array<{last_at: string}>)
+    const sorted = (conversations as Array<{ last_at: string }>)
       .sort((a, b) => new Date(b.last_at).getTime() - new Date(a.last_at).getTime())
 
     return NextResponse.json({ conversations: sorted })
