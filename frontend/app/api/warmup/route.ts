@@ -81,22 +81,23 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  try {
-    const rows = await query(`
-      INSERT INTO warmup_numbers (phone_number, instance_name, display_name, target_days, daily_limit, notes, timezone, delay_preset)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-      RETURNING id
-    `, [
-      phone_number.trim(),
-      instance_name.trim(),
-      display_name?.trim() || null,
-      resolvedDays,
-      resolvedLimit,
-      notes || null,
-      timezone || 'America/Argentina/Buenos_Aires',
-      resolvedPreset,
-    ])
+  const doInsert = () => query(`
+    INSERT INTO warmup_numbers (phone_number, instance_name, display_name, target_days, daily_limit, notes, timezone, delay_preset)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    RETURNING id
+  `, [
+    phone_number.trim(),
+    instance_name.trim(),
+    display_name?.trim() || null,
+    resolvedDays,
+    resolvedLimit,
+    notes || null,
+    timezone || 'America/Argentina/Buenos_Aires',
+    resolvedPreset,
+  ])
 
+  try {
+    const rows = await doInsert()
     const newId = (rows[0] as { id: string }).id
     void audit({ req, action: 'create', resource: 'warmup', resource_id: newId,
       metadata: { instance_name: instance_name.trim() } })
@@ -104,8 +105,40 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ id: newId })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
+
+    // Auto-fix: columnas faltantes en la DB de producción (schema desfasado).
+    // Aplicar el ALTER TABLE y reintentar una vez.
+    if (msg.includes('does not exist') && msg.includes('column')) {
+      console.warn('[/api/warmup POST] columna faltante, aplicando fix de schema…', msg)
+      try {
+        await query(`
+          ALTER TABLE warmup_numbers
+            ADD COLUMN IF NOT EXISTS display_name          VARCHAR(100),
+            ADD COLUMN IF NOT EXISTS evolution_url         VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS delay_preset          VARCHAR(20)   DEFAULT 'normal',
+            ADD COLUMN IF NOT EXISTS delay_min_seconds     INTEGER       DEFAULT 45,
+            ADD COLUMN IF NOT EXISTS delay_max_seconds     INTEGER       DEFAULT 180,
+            ADD COLUMN IF NOT EXISTS sending_window_start  TIME          DEFAULT '09:00',
+            ADD COLUMN IF NOT EXISTS sending_window_end    TIME          DEFAULT '22:00',
+            ADD COLUMN IF NOT EXISTS active_days           INTEGER[]     DEFAULT '{1,2,3,4,5,6,7}',
+            ADD COLUMN IF NOT EXISTS anti_ban_enabled      BOOLEAN       DEFAULT false,
+            ADD COLUMN IF NOT EXISTS randomness_level      VARCHAR(10)   DEFAULT 'medium',
+            ADD COLUMN IF NOT EXISTS natural_distribution  BOOLEAN       DEFAULT false
+        `)
+        const rows = await doInsert()
+        const newId = (rows[0] as { id: string }).id
+        void audit({ req, action: 'create', resource: 'warmup', resource_id: newId,
+          metadata: { instance_name: instance_name.trim() } })
+        emitWarmupChange()
+        return NextResponse.json({ id: newId })
+      } catch (retryErr) {
+        const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr)
+        console.error('[/api/warmup POST] retry failed after schema fix:', retryMsg)
+        return NextResponse.json({ error: `Internal server error` }, { status: 500 })
+      }
+    }
+
     console.error('[/api/warmup POST]', msg)
-    // Exponemos el mensaje real para diagnóstico — lo quitamos una vez resuelto
-    return NextResponse.json({ error: `DB error: ${msg}` }, { status: 500 })
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
