@@ -73,6 +73,13 @@ const GAMING_STYLE: Record<string, string> = {
   ambas: 'bg-cyan-100 text-cyan-700',
 }
 
+const ZEUS_RE = /z(s|eus)?$/i
+function detectPlatform(first: string | null, last: string | null): 'zeus' | 'otros' | null {
+  if (ZEUS_RE.test(first || '') || ZEUS_RE.test(last || '')) return 'zeus'
+  if (first || last) return 'otros'
+  return null
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Página
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,6 +98,7 @@ export default function Contacts() {
   const [filterLinea, setFilterLinea]         = useState('')
   const [filterActividad, setFilterActividad] = useState('')
   const [filterAntiguedad, setFilterAntiguedad] = useState('')
+  const [filterPlataforma, setFilterPlataforma] = useState('')
 
   // ── Paginación (TanStack format) ──────────────────────────────────────────
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 })
@@ -169,13 +177,14 @@ export default function Contacts() {
       q: search, page: String(pagination.pageIndex + 1),
       segment, gaming: filterGaming, panel: filterPanel.trim(),
       linea: filterLinea, actividad: filterActividad, antiguedad: filterAntiguedad,
-      ...(filterList ? { list_id: filterList } : {}),
+      ...(filterList      ? { list_id: filterList }          : {}),
+      ...(filterPlataforma ? { plataforma: filterPlataforma } : {}),
     })
     fetchJson<{ contacts: Contact[]; total: number }>(`/api/contacts?${q}`)
       .then(d => { setContacts(d.contacts || []); setTotal(d.total || 0) })
       .catch(() => { setContacts([]); setTotal(0) })
       .finally(() => setLoading(false))
-  }, [search, pagination.pageIndex, segment, filterGaming, filterPanel, filterLinea, filterActividad, filterAntiguedad, filterList])
+  }, [search, pagination.pageIndex, segment, filterGaming, filterPanel, filterLinea, filterActividad, filterAntiguedad, filterList, filterPlataforma])
 
   useEffect(() => { load() }, [load])
   const reloadLists = useCallback(() => {
@@ -503,20 +512,25 @@ export default function Contacts() {
       accessorFn: (row) => [row.first_name, row.last_name].filter(Boolean).join(' '),
       header: ({ column }) => <DataTableColumnHeader column={column} title="Nombre" />,
       cell: ({ row }) => {
-        const full = [row.original.first_name, row.original.last_name].filter(Boolean).join(' ')
+        const full     = [row.original.first_name, row.original.last_name].filter(Boolean).join(' ')
+        const platform = detectPlatform(row.original.first_name, row.original.last_name)
         return (
-          <EditableTextCell
-            value={full}
-            placeholder="— sin nombre"
-            onSave={newName => {
-              const trimmed = newName.trim()
-              const parts   = trimmed ? trimmed.split(/\s+/) : []
-              const first   = parts[0] || null
-              const last    = parts.slice(1).join(' ') || null
-              updateField(row.original.id, 'first_name', first)
-              if (last !== (row.original.last_name || null)) updateField(row.original.id, 'last_name', last)
-            }}
-          />
+          <div className="flex items-center gap-1.5 min-w-0">
+            <EditableTextCell
+              value={full}
+              placeholder="— sin nombre"
+              onSave={newName => {
+                const trimmed = newName.trim()
+                const parts   = trimmed ? trimmed.split(/\s+/) : []
+                const first   = parts[0] || null
+                const last    = parts.slice(1).join(' ') || null
+                updateField(row.original.id, 'first_name', first)
+                if (last !== (row.original.last_name || null)) updateField(row.original.id, 'last_name', last)
+              }}
+            />
+            {platform === 'zeus'  && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">Zeus</span>}
+            {platform === 'otros' && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-gray-100 text-gray-500">otros</span>}
+          </div>
         )
       },
       meta: { mobileLabel: 'Nombre' },
@@ -897,6 +911,25 @@ export default function Contacts() {
             <X size={13} className="mr-1" /> Limpiar casino
           </Button>
         )}
+
+        {/* ── Filtro plataforma ── */}
+        <div className="flex items-center gap-1 border rounded-lg p-0.5 bg-muted/40">
+          {(['', 'zeus', 'otros'] as const).map(v => (
+            <button
+              key={v || 'all'}
+              onClick={() => { setFilterPlataforma(v); resetPage() }}
+              className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
+                filterPlataforma === v
+                  ? v === 'zeus'  ? 'bg-blue-600 text-white shadow-sm'
+                  : v === 'otros' ? 'bg-gray-600 text-white shadow-sm'
+                  : 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {v === '' ? 'Todos' : v === 'zeus' ? 'Zeus' : 'Otros'}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Badge de lista activa */}

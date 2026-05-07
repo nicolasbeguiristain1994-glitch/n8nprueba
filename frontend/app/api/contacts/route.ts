@@ -6,8 +6,13 @@ import { audit } from '@/lib/audit'
 import { visibilityClause } from '@/lib/contact-visibility'
 import { getAppSetting } from '@/lib/app-settings'
 
-const ACTIVIDAD_ALLOWED  = new Set(['nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido'])
-const ANTIGUEDAD_ALLOWED = new Set(['nuevo', 'reciente', 'establecido', 'veterano', 'leal'])
+const ACTIVIDAD_ALLOWED   = new Set(['nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido'])
+const ANTIGUEDAD_ALLOWED  = new Set(['nuevo', 'reciente', 'establecido', 'veterano', 'leal'])
+const PLATAFORMA_ALLOWED  = new Set(['zeus', 'otros'])
+
+// Zeus usernames end in z, zs, or zeus (case-insensitive)
+const ZEUS_SQL  = `(first_name ~* 'z(s|eus)?$' OR last_name ~* 'z(s|eus)?$')`
+const OTROS_SQL = `NOT (first_name ~* 'z(s|eus)?$' OR last_name ~* 'z(s|eus)?$')`
 
 export async function GET(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'contacts', 'read')
@@ -28,6 +33,7 @@ export async function GET(req: NextRequest) {
   const antiguedad = req.nextUrl.searchParams.get('antiguedad') || ''
   const listIdRaw  = req.nextUrl.searchParams.get('list_id') || ''
   const listId     = listIdRaw && /^[0-9a-f-]{36}$/i.test(listIdRaw) ? listIdRaw : ''
+  const plataforma = req.nextUrl.searchParams.get('plataforma') || ''
 
   if (actividad && !ACTIVIDAD_ALLOWED.has(actividad)) {
     return NextResponse.json({ error: `Invalid actividad "${actividad}"` }, { status: 400 })
@@ -35,6 +41,14 @@ export async function GET(req: NextRequest) {
   if (antiguedad && !ANTIGUEDAD_ALLOWED.has(antiguedad)) {
     return NextResponse.json({ error: `Invalid antiguedad "${antiguedad}"` }, { status: 400 })
   }
+  if (plataforma && !PLATAFORMA_ALLOWED.has(plataforma)) {
+    return NextResponse.json({ error: `Invalid plataforma "${plataforma}"` }, { status: 400 })
+  }
+
+  // Static (enum-validated) platform filter injected into WHERE clauses
+  const plataformaFilter = plataforma === 'zeus'  ? ` AND ${ZEUS_SQL}`
+                         : plataforma === 'otros' ? ` AND ${OTROS_SQL}`
+                         : ''
 
   // Bloquear descarga si está deshabilitada globalmente o el usuario no tiene permiso
   if (download) {
@@ -78,7 +92,7 @@ export async function GET(req: NextRequest) {
             SELECT 1 FROM contact_tags ct
             WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $7
           ))
-          ${vis2.sql}${agentFilter2}
+          ${vis2.sql}${agentFilter2}${plataformaFilter}
         ORDER BY created_at DESC
         LIMIT 100000
       `, [`%${search}%`, segment, gaming, panel, linea, actividad, antiguedad,
@@ -138,7 +152,7 @@ export async function GET(req: NextRequest) {
         AND ($10 = '' OR id IN (
           SELECT contact_id FROM contact_list_members WHERE list_id = $10::uuid
         ))
-        ${vis.sql}${agentFilter}
+        ${vis.sql}${agentFilter}${plataformaFilter}
       ORDER BY created_at DESC
       LIMIT $2 OFFSET $3
     `, [`%${search}%`, limit, offset, segment, gaming, panel, linea, actividad, antiguedad, listId,
@@ -162,7 +176,7 @@ export async function GET(req: NextRequest) {
          AND ($8 = '' OR id IN (
            SELECT contact_id FROM contact_list_members WHERE list_id = $8::uuid
          ))
-         ${vis7.sql}${agentFilterCt}`,
+         ${vis7.sql}${agentFilterCt}${plataformaFilter}`,
       [`%${search}%`, segment, gaming, panel, linea, actividad, antiguedad, listId,
        ...vis7.params, ...agentParams]
     )
