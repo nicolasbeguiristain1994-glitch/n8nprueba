@@ -4,10 +4,12 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Send, Loader2 } from 'lucide-react'
 import { useConversations } from '@/hooks/useConversations'
-import { ConversationItem }    from '@/components/conversations/ConversationItem'
-import { ConversationFilters } from '@/components/conversations/ConversationFilters'
-import { ConversationHeader }  from '@/components/conversations/ConversationHeader'
+import { ConversationItem }     from '@/components/conversations/ConversationItem'
+import { ConversationFilters }  from '@/components/conversations/ConversationFilters'
+import { ConversationHeader }   from '@/components/conversations/ConversationHeader'
 import { MessageBubble }        from '@/components/conversations/MessageBubble'
+import { QuickTemplates }       from '@/components/conversations/QuickTemplates'
+import { ConversationSidebar }  from '@/components/conversations/ConversationSidebar'
 
 export default function Conversations() {
   const {
@@ -26,7 +28,7 @@ export default function Conversations() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 h-[calc(100vh-152px)]">
+      <div className={`grid gap-4 h-[calc(100vh-152px)] ${selected ? 'grid-cols-1 lg:grid-cols-4' : 'grid-cols-1 lg:grid-cols-3'}`}>
 
         {/* Lista */}
         <Card className="overflow-hidden flex flex-col">
@@ -80,6 +82,10 @@ export default function Conversations() {
                 )}
 
                 <div className="border-t border-gray-100 p-3 flex gap-2 bg-white shrink-0">
+                  <QuickTemplates
+                    contactName={selectedConv?.first_name}
+                    onSelect={setReply}
+                  />
                   <Input
                     placeholder="Escribí una respuesta…"
                     value={reply}
@@ -100,6 +106,17 @@ export default function Conversations() {
             )
           }
         </Card>
+
+        {/* Sidebar */}
+        {selected && (
+          <Card className="overflow-hidden flex flex-col">
+            <ConversationSidebar
+              phone={selected}
+              conv={selectedConv}
+              onRefresh={() => openConv(selected)}
+            />
+          </Card>
+        )}
       </div>
     </div>
   )
