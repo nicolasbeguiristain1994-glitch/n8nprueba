@@ -34,6 +34,7 @@ interface DispatchSummary {
   sent: number; failed: number; skipped: number
   eligible_lines: number
   line_usage: { line_id: string; line_key: string; display_name: string; sent: number; failed: number }[]
+  top_errors?: { error: string; count: number }[]
 }
 
 const STATUS_BADGE: Record<string, string> = {
@@ -956,6 +957,17 @@ export default function Campaigns() {
                                 <span className="text-gray-500 truncate flex-1">{lu.display_name || lu.line_key}</span>
                                 <span className="text-green-600">{lu.sent} env.</span>
                                 {lu.failed > 0 && <span className="text-red-400">{lu.failed} err.</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {dispatch.top_errors && dispatch.top_errors.length > 0 && (
+                          <div className="space-y-1">
+                            <p className="text-xs font-medium text-red-600">Errores frecuentes</p>
+                            {dispatch.top_errors.map((e, i) => (
+                              <div key={i} className="flex items-start gap-2 text-xs bg-red-50 border border-red-100 rounded p-2">
+                                <span className="shrink-0 font-bold text-red-500">{e.count}×</span>
+                                <span className="text-red-700 break-all font-mono">{e.error}</span>
                               </div>
                             ))}
                           </div>

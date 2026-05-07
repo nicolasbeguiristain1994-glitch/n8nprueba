@@ -121,6 +121,7 @@ export type DispatchSummary = {
   skipped:        number
   eligible_lines: number
   line_usage:     LineUsageSummary[]
+  top_errors:     { error: string; count: number }[]
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -318,6 +319,16 @@ export async function getDispatchSummary(campaignId: string): Promise<DispatchSu
     [campaignId]
   )
 
+  const topErrors = await query<{ error: string; count: number }>(
+    `SELECT COALESCE(error_detail, 'sin detalle') AS error, COUNT(*)::int AS count
+     FROM campaign_recipients
+     WHERE campaign_id = $1 AND status = 'failed' AND error_detail IS NOT NULL
+     GROUP BY error_detail
+     ORDER BY count DESC
+     LIMIT 5`,
+    [campaignId]
+  ).catch(() => [] as { error: string; count: number }[])
+
   return {
     total:          Number(counts?.total      || 0),
     queued:         Number(counts?.queued     || 0),
@@ -327,6 +338,7 @@ export async function getDispatchSummary(campaignId: string): Promise<DispatchSu
     skipped:        Number(counts?.skipped    || 0),
     eligible_lines: eligibleLines.length,
     line_usage:     lineUsage,
+    top_errors:     topErrors,
   }
 }
 
