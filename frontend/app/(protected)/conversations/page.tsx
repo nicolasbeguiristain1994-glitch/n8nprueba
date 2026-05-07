@@ -21,6 +21,7 @@ export default function Conversations() {
     dateFrom, setDateFrom, dateTo, setDateTo,
     followUpOnly, setFollowUpOnly,
     realtimeStatus,
+    notifPermission, requestNotif,
     openConv, sendReply,
   } = useConversations()
 
@@ -62,9 +63,11 @@ export default function Conversations() {
           <ConversationFilters
             convs={convs} search={search} filter={filter}
             dateFrom={dateFrom} dateTo={dateTo} followUpOnly={followUpOnly}
-            realtimeStatus={realtimeStatus} searchRef={searchRef}
+            realtimeStatus={realtimeStatus} notifPermission={notifPermission}
+            searchRef={searchRef}
             onSearch={setSearch} onFilter={setFilter}
             onDateFrom={setDateFrom} onDateTo={setDateTo} onFollowUp={setFollowUpOnly}
+            onRequestNotif={requestNotif}
           />
           <VirtualizedConvList
             items={visible}

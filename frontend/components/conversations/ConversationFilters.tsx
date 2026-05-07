@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { Input } from '@/components/ui/input'
-import { SlidersHorizontal, CalendarRange, Calendar } from 'lucide-react'
+import { SlidersHorizontal, CalendarRange, Calendar, Bell, BellOff } from 'lucide-react'
 import { FILTER_DEFS, applyFilter, type Conv, type Filter } from '@/lib/scoring/conversation-scoring'
 import type { RealtimeStatus } from '@/hooks/useRealTime'
 
@@ -24,17 +24,25 @@ interface Props {
   dateTo:         string
   followUpOnly:   boolean
   realtimeStatus: RealtimeStatus
+  notifPermission: NotificationPermission
   searchRef:      React.RefObject<HTMLInputElement | null>
   onSearch:       (v: string)    => void
   onFilter:       (v: Filter)    => void
   onDateFrom:     (v: string)    => void
   onDateTo:       (v: string)    => void
   onFollowUp:     (v: boolean)   => void
+  onRequestNotif: ()             => void
+}
+
+const BELL_TITLE: Record<NotificationPermission, string> = {
+  granted: 'Notificaciones activas',
+  denied:  'Notificaciones bloqueadas — habilitá desde la configuración del navegador',
+  default: 'Activar notificaciones de escritorio',
 }
 
 export function ConversationFilters({
-  convs, search, filter, dateFrom, dateTo, followUpOnly, realtimeStatus,
-  searchRef, onSearch, onFilter, onDateFrom, onDateTo, onFollowUp,
+  convs, search, filter, dateFrom, dateTo, followUpOnly, realtimeStatus, notifPermission,
+  searchRef, onSearch, onFilter, onDateFrom, onDateTo, onFollowUp, onRequestNotif,
 }: Props) {
   const [showAdv, setShowAdv] = useState(false)
   const hasAdv = !!dateFrom || !!dateTo || followUpOnly
@@ -49,12 +57,27 @@ export function ConversationFilters({
           placeholder="Buscar nombre, teléfono…"
           value={search}
           onChange={e => onSearch(e.target.value)}
-          className="h-7 text-xs pr-6"
+          className="h-7 text-xs pr-10"
         />
-        <div
-          title={RT_LABEL[realtimeStatus]}
-          className={`absolute right-2.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full ${RT_DOT[realtimeStatus]}`}
-        />
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
+          <button
+            onClick={onRequestNotif}
+            title={BELL_TITLE[notifPermission]}
+            disabled={notifPermission === 'denied'}
+            className="text-gray-400 hover:text-gray-600 transition-colors disabled:cursor-not-allowed"
+          >
+            {notifPermission === 'denied'
+              ? <BellOff size={11} className="text-gray-300" />
+              : notifPermission === 'granted'
+              ? <Bell size={11} className="text-green-500" />
+              : <Bell size={11} className="text-gray-400" />
+            }
+          </button>
+          <div
+            title={RT_LABEL[realtimeStatus]}
+            className={`w-1.5 h-1.5 rounded-full shrink-0 ${RT_DOT[realtimeStatus]}`}
+          />
+        </div>
       </div>
 
       {/* Filter pills + advanced toggle */}

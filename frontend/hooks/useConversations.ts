@@ -5,7 +5,8 @@ import {
   applyFilter, priorityScore,
   type Conv, type Message, type Filter,
 } from '@/lib/scoring/conversation-scoring'
-import { useRealTime, type RealtimeStatus } from './useRealTime'
+import { useRealTime, type RealtimeStatus, type SseEvent } from './useRealTime'
+import { useDesktopNotifications } from './useDesktopNotifications'
 
 export function useConversations() {
   const [convs, setConvs]               = useState<Conv[]>([])
@@ -56,11 +57,16 @@ export function useConversations() {
     return () => clearInterval(t)
   }, [loadMessages])
 
-  // SSE — instant refresh on any server-side event
-  const onRealTimeUpdate = useCallback(() => {
+  const { permission: notifPermission, notify, request: requestNotif } = useDesktopNotifications()
+
+  // SSE — instant refresh; notify on inbound messages when tab is hidden
+  const onRealTimeUpdate = useCallback((event: SseEvent) => {
     loadConvs()
     if (selectedRef.current) loadMessages(selectedRef.current)
-  }, [loadConvs, loadMessages])
+    if (event.source === 'message' && document.hidden) {
+      notify('Nuevo mensaje', 'Hay un nuevo mensaje en una conversación')
+    }
+  }, [loadConvs, loadMessages, notify])
 
   const realtimeStatus: RealtimeStatus = useRealTime(onRealTimeUpdate)
 
@@ -121,6 +127,7 @@ export function useConversations() {
     dateFrom, setDateFrom, dateTo, setDateTo,
     followUpOnly, setFollowUpOnly,
     realtimeStatus,
+    notifPermission, requestNotif,
     openConv, sendReply,
   }
 }
