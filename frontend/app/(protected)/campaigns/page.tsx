@@ -888,6 +888,38 @@ export default function Campaigns() {
                 </div>
               )}
 
+              {/* Detalle de fallos — visible inmediatamente si hay fallidos */}
+              {selected.total_failed > 0 && (
+                <div className="border border-red-200 rounded-lg p-3 bg-red-50 space-y-2">
+                  <p className="text-sm font-medium text-red-700 flex items-center gap-1.5">
+                    <AlertTriangle size={14} /> {selected.total_failed} envío{selected.total_failed !== 1 ? 's' : ''} fallido{selected.total_failed !== 1 ? 's' : ''}
+                  </p>
+                  {loadingContacts
+                    ? <p className="text-xs text-red-400 flex items-center gap-1"><Loader2 size={11} className="animate-spin"/> Cargando errores…</p>
+                    : (() => {
+                        const failed = campContacts.filter(c => c.msg_status === 'failed')
+                        if (failed.length === 0) return <p className="text-xs text-red-400">Sin detalle disponible</p>
+                        const grouped = failed.reduce<Record<string, number>>((acc, c) => {
+                          const k = c.error_detail || 'sin detalle'
+                          acc[k] = (acc[k] || 0) + 1
+                          return acc
+                        }, {})
+                        return (
+                          <div className="space-y-1.5">
+                            {Object.entries(grouped).sort((a,b) => b[1]-a[1]).map(([err, cnt], i) => (
+                              <div key={i} className="flex items-start gap-2 text-xs bg-white border border-red-100 rounded px-2 py-1.5">
+                                <span className="shrink-0 font-bold text-red-500 min-w-[2rem]">{cnt}×</span>
+                                <span className="font-mono text-red-700 break-all">{err}</span>
+                              </div>
+                            ))}
+                            <p className="text-xs text-red-400 pt-1">Ver tabla de destinatarios abajo para detalle por contacto.</p>
+                          </div>
+                        )
+                      })()
+                  }
+                </div>
+              )}
+
               {/* Mensajes */}
               <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-2">
                 <p className="font-medium text-gray-700 flex items-center gap-2">
