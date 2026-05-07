@@ -21,6 +21,7 @@ import {
   DataTableRowActions,
   DataTableEmptyState,
   EditableCell,
+  EditableTextCell,
 } from '@/components/data-display/DataTable'
 import type { ColumnDef, RowSelectionState, PaginationState } from '@/components/data-display/DataTable'
 
@@ -501,9 +502,23 @@ export default function Contacts() {
       id: 'name',
       accessorFn: (row) => [row.first_name, row.last_name].filter(Boolean).join(' '),
       header: ({ column }) => <DataTableColumnHeader column={column} title="Nombre" />,
-      cell: ({ getValue }) => (
-        <span>{(getValue() as string) || '—'}</span>
-      ),
+      cell: ({ row }) => {
+        const full = [row.original.first_name, row.original.last_name].filter(Boolean).join(' ')
+        return (
+          <EditableTextCell
+            value={full}
+            placeholder="— sin nombre"
+            onSave={newName => {
+              const trimmed = newName.trim()
+              const parts   = trimmed ? trimmed.split(/\s+/) : []
+              const first   = parts[0] || null
+              const last    = parts.slice(1).join(' ') || null
+              updateField(row.original.id, 'first_name', first)
+              if (last !== (row.original.last_name || null)) updateField(row.original.id, 'last_name', last)
+            }}
+          />
+        )
+      },
       meta: { mobileLabel: 'Nombre' },
     },
     {

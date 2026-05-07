@@ -9,6 +9,8 @@
 export { DataTable }                  from './DataTable'
 export { EditableCell }               from './EditableCell'
 export type { EditableCellProps, EditableCellOption } from './EditableCell'
+export { EditableTextCell }           from './EditableTextCell'
+export type { EditableTextCellProps } from './EditableTextCell'
 export { DataTableToolbar }           from './DataTableToolbar'
 export { DataTablePagination }        from './DataTablePagination'
 export { DataTableColumnHeader }      from './DataTableColumnHeader'
