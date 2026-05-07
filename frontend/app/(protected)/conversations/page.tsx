@@ -87,10 +87,16 @@ export default function Conversations() {
       return
     }
     setSending(false)
+    const d = await res.json().catch(() => ({}))
     if (!res.ok) {
-      const d = await res.json().catch(() => ({}))
       setSendError(d.error || `Error ${res.status}`)
-      return  // preserve reply text
+      return
+    }
+    // /api/send returns 200 even when Evolution rejects — check individual result
+    const result = d.results?.[0]
+    if (result?.status === 'error') {
+      setSendError(result.error || 'El envío falló en WhatsApp')
+      return
     }
     setReply('')
     openConv(selected)
