@@ -26,6 +26,8 @@ export async function GET(req: NextRequest) {
   const linea     = req.nextUrl.searchParams.get('linea') || ''
   const actividad = req.nextUrl.searchParams.get('actividad') || ''
   const antiguedad = req.nextUrl.searchParams.get('antiguedad') || ''
+  const listIdRaw  = req.nextUrl.searchParams.get('list_id') || ''
+  const listId     = listIdRaw && /^[0-9a-f-]{36}$/i.test(listIdRaw) ? listIdRaw : ''
 
   if (actividad && !ACTIVIDAD_ALLOWED.has(actividad)) {
     return NextResponse.json({ error: `Invalid actividad "${actividad}"` }, { status: 400 })
@@ -89,18 +91,18 @@ export async function GET(req: NextRequest) {
   }
 
   // ── Query principal ───────────────────────────────────────────────────────────
-  // 9 base params: $1=%search%, $2=limit, $3=offset, $4=segment, $5=gaming,
-  //                $6=panel, $7=linea, $8=actividad, $9=antiguedad
-  const vis         = visibilityClause(user.role, user.user_id, 9)
+  // 10 base params: $1=%search%, $2=limit, $3=offset, $4=segment, $5=gaming,
+  //                 $6=panel, $7=linea, $8=actividad, $9=antiguedad, $10=list_id
+  const vis         = visibilityClause(user.role, user.user_id, 10)
   const agentFilter = agentAllowed
-    ? ` AND panel = ANY($${10 + vis.params.length}::text[])`
+    ? ` AND panel = ANY($${11 + vis.params.length}::text[])`
     : ''
   const agentParams = agentAllowed ? [agentAllowed] : []
 
-  // 7 base params for count query (no limit/offset)
-  const vis7          = visibilityClause(user.role, user.user_id, 7)
+  // 8 base params for count query (no limit/offset): $1-$7 same, $8=list_id
+  const vis7          = visibilityClause(user.role, user.user_id, 8)
   const agentFilterCt = agentAllowed
-    ? ` AND panel = ANY($${8 + vis7.params.length}::text[])`
+    ? ` AND panel = ANY($${9 + vis7.params.length}::text[])`
     : ''
 
   try {
@@ -133,10 +135,13 @@ export async function GET(req: NextRequest) {
           SELECT 1 FROM contact_tags ct
           WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $9
         ))
+        AND ($10 = '' OR id IN (
+          SELECT contact_id FROM contact_list_members WHERE list_id = $10::uuid
+        ))
         ${vis.sql}${agentFilter}
       ORDER BY created_at DESC
       LIMIT $2 OFFSET $3
-    `, [`%${search}%`, limit, offset, segment, gaming, panel, linea, actividad, antiguedad,
+    `, [`%${search}%`, limit, offset, segment, gaming, panel, linea, actividad, antiguedad, listId,
         ...vis.params, ...agentParams])
 
     const [{ count }] = await query<{ count: string }>(
@@ -154,8 +159,11 @@ export async function GET(req: NextRequest) {
            SELECT 1 FROM contact_tags ct
            WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $7
          ))
+         AND ($8 = '' OR id IN (
+           SELECT contact_id FROM contact_list_members WHERE list_id = $8::uuid
+         ))
          ${vis7.sql}${agentFilterCt}`,
-      [`%${search}%`, segment, gaming, panel, linea, actividad, antiguedad,
+      [`%${search}%`, segment, gaming, panel, linea, actividad, antiguedad, listId,
        ...vis7.params, ...agentParams]
     )
 

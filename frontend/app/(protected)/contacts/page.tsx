@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Search, Upload, RefreshCw, List, CheckSquare, X, Users, UserPlus,
-  Trash2, Download, DatabaseZap, Pencil,
+  Trash2, Download, DatabaseZap, Pencil, ChevronDown, Filter,
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
@@ -100,7 +100,11 @@ export default function Contacts() {
   const selectedCount = selectedIds.length
 
   // ── Listas ────────────────────────────────────────────────────────────────
-  const [lists, setLists] = useState<ContactList[]>([])
+  const [lists, setLists]             = useState<ContactList[]>([])
+  const [filterList, setFilterList]   = useState('')
+  const [showListsMenu, setShowListsMenu] = useState(false)
+  const [deletingListId, setDeletingListId] = useState<string | null>(null)
+  const listsMenuRef = useRef<HTMLDivElement>(null)
 
   // ── Import modal ─────────────────────────────────────────────────────────
   const [showImport, setShowImport]     = useState(false)
@@ -164,19 +168,34 @@ export default function Contacts() {
       q: search, page: String(pagination.pageIndex + 1),
       segment, gaming: filterGaming, panel: filterPanel.trim(),
       linea: filterLinea, actividad: filterActividad, antiguedad: filterAntiguedad,
+      ...(filterList ? { list_id: filterList } : {}),
     })
     fetchJson<{ contacts: Contact[]; total: number }>(`/api/contacts?${q}`)
       .then(d => { setContacts(d.contacts || []); setTotal(d.total || 0) })
       .catch(() => { setContacts([]); setTotal(0) })
       .finally(() => setLoading(false))
-  }, [search, pagination.pageIndex, segment, filterGaming, filterPanel, filterLinea, filterActividad, filterAntiguedad])
+  }, [search, pagination.pageIndex, segment, filterGaming, filterPanel, filterLinea, filterActividad, filterAntiguedad, filterList])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => {
+  const reloadLists = useCallback(() => {
     fetchJson<{ lists: ContactList[] }>('/api/lists')
       .then(d => setLists(d.lists || []))
       .catch(() => setLists([]))
   }, [])
+
+  useEffect(() => { reloadLists() }, [reloadLists])
+
+  // Cerrar dropdown de listas al hacer click fuera
+  useEffect(() => {
+    if (!showListsMenu) return
+    const handler = (e: MouseEvent) => {
+      if (listsMenuRef.current && !listsMenuRef.current.contains(e.target as Node)) {
+        setShowListsMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showListsMenu])
 
   // Resetear página al cambiar filtros
   const resetPage = useCallback(() => setPagination(p => ({ ...p, pageIndex: 0 })), [])
@@ -402,7 +421,19 @@ export default function Contacts() {
     if (!res.ok) { const d = await res.json().catch(() => ({})); setListError(d.error || 'Error al crear la lista'); return }
     setShowList(false); setNewListName(''); setRowSelection({})
     setCriteriaPanel(''); setCriteriaGaming(''); setCriteriaSegment(''); setCriteriaActividad(''); setCriteriaAntiguedad('')
-    fetch('/api/lists').then(r => r.json()).then(d => setLists(d.lists || []))
+    reloadLists()
+  }
+
+  const deleteList = async (listId: string, listName: string) => {
+    if (!confirm(`¿Eliminar la lista "${listName}"? Esta acción no se puede deshacer.`)) return
+    setDeletingListId(listId)
+    try {
+      const res = await fetch(`/api/lists/${listId}`, { method: 'DELETE' })
+      if (!res.ok) { const d = await res.json().catch(() => ({})); alert(d.error || 'Error al eliminar la lista'); return }
+      if (filterList === listId) { setFilterList(''); resetPage() }
+      setLists(prev => prev.filter(l => l.id !== listId))
+    } catch { alert('Error de conexión') }
+    finally { setDeletingListId(null) }
   }
 
   const repopularListas = async () => {
@@ -411,7 +442,7 @@ export default function Contacts() {
       const res = await fetch('/api/lists/casino/repopulate', { method: 'POST' })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) { setRepopulateError(data.error || 'Error al repoblar listas') }
-      else { setRepopulateResult(data); fetch('/api/lists').then(r => r.json()).then(d => setLists(d.lists || [])) }
+      else { setRepopulateResult(data); reloadLists() }
     } catch { setRepopulateError('Error de red') }
     finally { setRepopulating(false) }
   }
@@ -668,17 +699,72 @@ export default function Contacts() {
               <CheckSquare size={14} className="mr-1" />
               {selectingAll ? 'Seleccionando…' : 'Seleccionar todos'}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => { setListMode('criteria'); setShowList(true) }}
-              className="border-indigo-200 text-indigo-700">
-              <List size={14} className="mr-1" /> Lista por criterios
-            </Button>
-            {currentUser?.role === 'admin' && (
-              <Button size="sm" variant="outline" onClick={repopularListas} disabled={repopulating}
-                className="border-violet-200 text-violet-700 hover:bg-violet-50">
-                <DatabaseZap size={14} className={`mr-1 ${repopulating ? 'animate-pulse' : ''}`} />
-                {repopulating ? 'Repoblando…' : 'Listas casino'}
+            {/* Botón Listas — dropdown con todas las listas */}
+            <div className="relative" ref={listsMenuRef}>
+              <Button
+                size="sm" variant="outline"
+                onClick={() => setShowListsMenu(v => !v)}
+                className={`border-indigo-200 text-indigo-700 hover:bg-indigo-50 ${filterList ? 'bg-indigo-50 border-indigo-400' : ''}`}
+              >
+                <List size={14} className="mr-1" />
+                {filterList ? (lists.find(l => l.id === filterList)?.name ?? 'Lista') : 'Listas'}
+                {filterList && <X size={11} className="ml-1.5 opacity-60 hover:opacity-100" onClick={e => { e.stopPropagation(); setFilterList(''); resetPage() }} />}
+                {!filterList && <ChevronDown size={12} className="ml-1 opacity-60" />}
               </Button>
-            )}
+              {showListsMenu && (
+                <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-30 w-72 py-1 max-h-80 overflow-y-auto">
+                  <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Mis listas</span>
+                    <button
+                      className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                      onClick={() => { setShowListsMenu(false); setListMode('criteria'); setShowList(true) }}
+                    >
+                      + Nueva lista
+                    </button>
+                  </div>
+                  {lists.length === 0 && (
+                    <p className="text-xs text-gray-400 px-3 py-4 text-center">No hay listas creadas</p>
+                  )}
+                  {lists.map(l => (
+                    <div
+                      key={l.id}
+                      className={`flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50 cursor-pointer group ${filterList === l.id ? 'bg-indigo-50' : ''}`}
+                      onClick={() => { setFilterList(l.id); resetPage(); setShowListsMenu(false) }}
+                    >
+                      <Users size={13} className="text-gray-400 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm truncate ${filterList === l.id ? 'font-semibold text-indigo-700' : 'text-gray-700'}`}>{l.name}</p>
+                        <p className="text-[11px] text-gray-400">{l.contact_count.toLocaleString()} contactos</p>
+                      </div>
+                      {filterList === l.id && <Filter size={11} className="text-indigo-500 shrink-0" />}
+                      <button
+                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-red-500 p-0.5 rounded"
+                        title="Eliminar lista"
+                        disabled={deletingListId === l.id}
+                        onClick={e => { e.stopPropagation(); deleteList(l.id, l.name) }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                  {currentUser?.role === 'admin' && (
+                    <div className="border-t border-gray-100 px-3 py-2 mt-1">
+                      <button
+                        className="text-xs text-violet-600 hover:text-violet-800 font-medium flex items-center gap-1 disabled:opacity-50"
+                        disabled={repopulating}
+                        onClick={() => { repopularListas(); setShowListsMenu(false) }}
+                      >
+                        <DatabaseZap size={12} /> {repopulating ? 'Repoblando…' : 'Repoblar listas casino'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <Button size="sm" variant="outline" onClick={() => { setListMode('selection'); setShowList(true) }}
+              className="border-indigo-200 text-indigo-700">
+              <List size={14} className="mr-1" /> Lista por selección
+            </Button>
             <Button size="sm" onClick={() => setShowAdd(true)} className="bg-green-600 hover:bg-green-700 text-white">
               <UserPlus size={14} className="mr-1" /> Nuevo contacto
             </Button>
@@ -798,16 +884,19 @@ export default function Contacts() {
         )}
       </div>
 
-      {/* Listas existentes */}
-      {lists.length > 0 && (
-        <div className="flex gap-2 flex-wrap">
-          {lists.map(l => (
-            <Badge key={l.id} variant="outline" className="cursor-pointer gap-1 py-1 px-2">
-              <Users size={11} /> {l.name} <span className="text-muted-foreground">({l.contact_count})</span>
-            </Badge>
-          ))}
-        </div>
-      )}
+      {/* Badge de lista activa */}
+      {filterList && (() => {
+        const active = lists.find(l => l.id === filterList)
+        return active ? (
+          <div className="flex items-center gap-2 text-xs text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-1.5">
+            <Filter size={12} /> Mostrando lista: <span className="font-semibold">{active.name}</span>
+            <span className="text-indigo-400">({active.contact_count.toLocaleString()} contactos)</span>
+            <button onClick={() => { setFilterList(''); resetPage() }} className="ml-1 text-indigo-400 hover:text-indigo-700">
+              <X size={12} />
+            </button>
+          </div>
+        ) : null
+      })()}
 
       {/* ── DataTable ── */}
       <DataTable
