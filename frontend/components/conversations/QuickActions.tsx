@@ -1,9 +1,9 @@
 'use client'
 import { useState } from 'react'
-import { Crown, Clock, UserCheck, CheckCircle2, Ban, Loader2, Check } from 'lucide-react'
+import { Crown, Clock, UserCheck, CheckCircle2, Ban, ShieldOff, Loader2, Check } from 'lucide-react'
 import type { Conv } from '@/lib/scoring/conversation-scoring'
 
-type ActionKey = 'vip' | 'process' | 'resolve' | 'schedule' | 'blacklist'
+type ActionKey = 'vip' | 'process' | 'resolve' | 'schedule' | 'blacklist' | 'unblacklist'
 
 function ActionButton({
   label, icon, onClick, loading, done, disabled,
@@ -89,6 +89,13 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
     })
   }
 
+  const removeFromBlacklist = () => run('unblacklist', async () => {
+    const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/blacklist`, {
+      method: 'PATCH',
+    })
+    if (res.ok) { flash('unblacklist'); onRefresh?.() }
+  })
+
   const inProcess      = conv?.conv_flow === 'en_proceso'
   const isBlacklisted  = conv?.is_blacklisted === true
 
@@ -155,13 +162,21 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
           </div>
         )}
 
-        <ActionButton
-          label={isBlacklisted ? 'Ya en blacklist' : 'Agregar a blacklist'}
-          icon={<Ban size={13} className="text-red-500 shrink-0" />}
-          onClick={addToBlacklist}
-          loading={loading === 'blacklist'} done={done === 'blacklist'}
-          disabled={isBlacklisted}
-        />
+        {isBlacklisted ? (
+          <ActionButton
+            label="Remover de blacklist"
+            icon={<ShieldOff size={13} className="text-gray-500 shrink-0" />}
+            onClick={removeFromBlacklist}
+            loading={loading === 'unblacklist'} done={done === 'unblacklist'}
+          />
+        ) : (
+          <ActionButton
+            label="Agregar a blacklist"
+            icon={<Ban size={13} className="text-red-500 shrink-0" />}
+            onClick={addToBlacklist}
+            loading={loading === 'blacklist'} done={done === 'blacklist'}
+          />
+        )}
 
       </div>
     </div>

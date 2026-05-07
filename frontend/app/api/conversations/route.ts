@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
       LEFT JOIN contacts c
         ON REPLACE(c.phone_number, '+', '') = REPLACE(wm.phone_number, '+', '')
       ORDER BY REPLACE(wm.phone_number, '+', ''), wm.created_at DESC
-      LIMIT 60
+      LIMIT 200
     `)
 
     // Ordenar por último mensaje más reciente

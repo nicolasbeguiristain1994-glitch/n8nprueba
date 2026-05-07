@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
+import { emitUpdate } from '@/lib/sse-events'
 
 type Params = { params: Promise<{ phone: string }> }
 
@@ -24,6 +25,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
        DO UPDATE SET current_flow = $2, last_activity_at = NOW(), updated_at = NOW()`,
       [phone, flow]
     )
+    emitUpdate(phone, 'status')
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[PATCH /api/conversations/[phone]/status]', e instanceof Error ? e.message : e)

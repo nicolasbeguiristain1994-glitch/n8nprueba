@@ -1,23 +1,50 @@
 'use client'
+import { useRef } from 'react'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Send, Loader2 } from 'lucide-react'
 import { useConversations } from '@/hooks/useConversations'
-import { ConversationItem }     from '@/components/conversations/ConversationItem'
-import { ConversationFilters }  from '@/components/conversations/ConversationFilters'
-import { ConversationHeader }   from '@/components/conversations/ConversationHeader'
-import { MessageBubble }        from '@/components/conversations/MessageBubble'
-import { QuickTemplates }       from '@/components/conversations/QuickTemplates'
-import { ConversationSidebar }  from '@/components/conversations/ConversationSidebar'
+import { useKeyboardShortcuts } from '@/lib/keyboard-shortcuts'
+import { VirtualizedConvList }    from '@/components/conversations/VirtualizedConvList'
+import { ConversationFilters }    from '@/components/conversations/ConversationFilters'
+import { ConversationHeader }     from '@/components/conversations/ConversationHeader'
+import { MessageBubble }          from '@/components/conversations/MessageBubble'
+import { QuickTemplates }         from '@/components/conversations/QuickTemplates'
+import { ConversationSidebar }    from '@/components/conversations/ConversationSidebar'
 
 export default function Conversations() {
   const {
     convs, visible, selected, selectedConv, messages, messagesEndRef,
     reply, setReply, sending, sendError, setSendError,
     filter, setFilter, search, setSearch,
+    dateFrom, setDateFrom, dateTo, setDateTo,
+    followUpOnly, setFollowUpOnly,
+    realtimeStatus,
     openConv, sendReply,
   } = useConversations()
+
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  useKeyboardShortcuts([
+    // Ctrl/Cmd+K → enfocar búsqueda
+    { key: 'k', ctrl: true,
+      handler: () => searchRef.current?.focus() },
+    // Escape → limpiar búsqueda y filtros avanzados
+    { key: 'Escape',
+      handler: () => { setSearch(''); setDateFrom(''); setDateTo(''); setFollowUpOnly(false) } },
+    // Ctrl/Cmd+Shift+V → marcar conversación seleccionada como VIP
+    { key: 'V', ctrl: true, shift: true,
+      handler: async () => {
+        if (!selectedConv?.contact_id) return
+        await fetch(`/api/contacts/${selectedConv.contact_id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ segment: 'vip' }),
+        })
+        if (selected) openConv(selected)
+      },
+    },
+  ])
 
   return (
     <div className="space-y-3">
@@ -34,20 +61,16 @@ export default function Conversations() {
         <Card className="overflow-hidden flex flex-col">
           <ConversationFilters
             convs={convs} search={search} filter={filter}
+            dateFrom={dateFrom} dateTo={dateTo} followUpOnly={followUpOnly}
+            realtimeStatus={realtimeStatus} searchRef={searchRef}
             onSearch={setSearch} onFilter={setFilter}
+            onDateFrom={setDateFrom} onDateTo={setDateTo} onFollowUp={setFollowUpOnly}
           />
-          <div className="overflow-y-auto flex-1">
-            {visible.length === 0
-              ? <p className="text-sm text-gray-400 text-center py-10">Sin conversaciones</p>
-              : visible.map(c => (
-                <ConversationItem
-                  key={c.phone_number} conv={c}
-                  isSelected={selected === c.phone_number}
-                  onClick={() => openConv(c.phone_number)}
-                />
-              ))
-            }
-          </div>
+          <VirtualizedConvList
+            items={visible}
+            selected={selected}
+            onSelect={openConv}
+          />
         </Card>
 
         {/* Chat */}
@@ -59,6 +82,7 @@ export default function Conversations() {
                   <Send size={20} className="text-gray-300" />
                 </div>
                 <p className="text-sm">Seleccioná una conversación</p>
+                <p className="text-[11px] text-gray-300">Ctrl+K para buscar</p>
               </div>
             ) : (
               <>

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
+import { emitUpdate } from '@/lib/sse-events'
 
 type Params = { params: Promise<{ phone: string }> }
 
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest, { params }: Params) {
        VALUES ($1, $2, $3, $4)`,
       [phone, content, auth.user.user_id, authorName]
     )
+    emitUpdate(phone, 'note')
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[POST /api/conversations/[phone]/notes]', e instanceof Error ? e.message : e)
