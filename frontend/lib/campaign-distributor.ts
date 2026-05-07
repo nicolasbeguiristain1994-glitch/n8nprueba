@@ -322,7 +322,7 @@ export async function getDispatchSummary(campaignId: string): Promise<DispatchSu
   const topErrors = await query<{ error: string; count: number }>(
     `SELECT COALESCE(error_detail, 'sin detalle') AS error, COUNT(*)::int AS count
      FROM campaign_recipients
-     WHERE campaign_id = $1 AND status = 'failed' AND error_detail IS NOT NULL
+     WHERE campaign_id = $1 AND status = 'failed'
      GROUP BY error_detail
      ORDER BY count DESC
      LIMIT 5`,

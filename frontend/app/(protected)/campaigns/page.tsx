@@ -1044,6 +1044,9 @@ export default function Campaigns() {
                                 <td className="px-3 py-2 font-mono text-xs text-gray-500">{c.phone_number}</td>
                                 <td className="px-3 py-2">
                                   <ContactStatusBadge status={c.msg_status} />
+                                  {c.msg_status === 'failed' && c.error_detail && (
+                                    <p className="text-xs text-red-500 font-mono mt-0.5 break-all max-w-xs">{c.error_detail}</p>
+                                  )}
                                 </td>
                                 <td className="px-3 py-2 text-xs text-gray-400">
                                   {c.sent_at ? new Date(c.sent_at).toLocaleString('es-AR', { dateStyle:'short', timeStyle:'short' }) : '—'}
