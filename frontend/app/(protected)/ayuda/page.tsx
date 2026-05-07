@@ -165,7 +165,7 @@ const MODULES: ModuleSection[] = [
       {
         title: 'Antigüedad — 5 niveles',
         detail:
-          'Se calcula desde la fecha de la primera carga registrada:\n• Nuevo → cliente desde hace menos de 30 días\n• Reciente → 30–89 días como cliente\n• Establecido → 90–364 días (menos de 1 año)\n• Veterano → 1–3 años como cliente\n• Leal → más de 3 años (1.095+ días)',
+          'Se calcula desde la fecha de la primera carga registrada:\n• Nuevo → cliente desde hace menos de 30 días\n• Reciente → 30–89 días como cliente\n• Establecido → 90–149 días como cliente\n• Veterano → 150–269 días como cliente\n• Leal → más de 270 días como cliente',
       },
       {
         title: 'Valor en riesgo (combinación monto + actividad)',
