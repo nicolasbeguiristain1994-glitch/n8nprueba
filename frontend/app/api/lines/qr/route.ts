@@ -204,34 +204,22 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const res = await fetch(`${EVO_URL}/instance/connect/${encodeURIComponent(instance)}`, {
-      headers: { apikey: EVO_KEY },
-      cache:   'no-store',
-    })
+    // ── Verificar estado actual via fetchInstances (read-only, no perturba la conexión) ──
+    // /instance/connect puede devolver shapes inconsistentes cuando el estado es 'open'
+    // según la versión del build de Evolution. fetchInstances es más confiable para polling.
+    const liveState = await getCurrentState(EVO_URL, EVO_KEY, instance)
+    console.log('[qr/status] instance:', instance, '| liveState:', liveState)
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let data: any
-    try { data = await res.json() } catch { data = {} }
-
-    // Verify state after connect (diagnostic — helps identify cached-QR issues)
-    const stateAfterConnect = data?.instance?.state ?? data?.state ?? '?'
-    console.log(
-      '[qr/connect] instance:', instance,
-      '| http:', res.status,
-      '| state:', stateAfterConnect,
-      '| hasBase64:', !!extractBase64(data),
-    )
-    if (stateAfterConnect === '?' || stateAfterConnect === 'close') {
-      const liveState = await getCurrentState(EVO_URL, EVO_KEY, instance)
-      console.log('[qr/connect] live state check via fetchInstances:', liveState)
-      if (liveState === 'close') {
-        console.warn('[qr/connect] WARNING: state=close after connect — QR may be stale/invalid')
-      }
+    if (liveState === 'notFound') {
+      await query(
+        `UPDATE whatsapp_lines SET is_connected = false, updated_at = NOW() WHERE evolution_instance = $1`,
+        [instance],
+      ).catch(() => {})
+      return NextResponse.json({ connected: false, base64: null, notFound: true, canCreate: !!EVO_GLOBAL })
     }
 
-    // Instancia ya conectada
-    if (data?.instance?.state === 'open' || data?.state === 'open') {
-      // Obtener phone_number vía fetchInstances (más confiable que /connect)
+    if (liveState === 'open') {
+      // Obtener phone_number con fetchInstances (ya disponible desde getCurrentState, pero lo pedimos de nuevo para el phone)
       let phone_number: string | null = null
       try {
         const infoRes = await fetch(
@@ -261,25 +249,27 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ connected: true, phone_number })
     }
 
-    // Instancia en handshake — Evolution no devuelve QR en este estado.
-    // El frontend debe mostrar el spinner de "connecting" y esperar sin regenerar.
-    if (data?.instance?.state === 'connecting' || data?.state === 'connecting') {
+    if (liveState === 'connecting') {
+      // Instancia en handshake — Evolution no devuelve QR en este estado.
+      // El frontend debe mostrar el spinner de "connecting" y esperar sin regenerar.
       return NextResponse.json({ connected: false, base64: null, state: 'connecting' })
     }
 
-    // Instancia no existe
-    if (res.status === 404 || data?.status === 404) {
-      await query(
-        `UPDATE whatsapp_lines SET is_connected = false, updated_at = NOW() WHERE evolution_instance = $1`,
-        [instance],
-      ).catch(() => {})
-      return NextResponse.json({
-        connected: false,
-        base64:    null,
-        notFound:  true,
-        canCreate: !!EVO_GLOBAL,
-      })
-    }
+    // liveState === 'close' → pedir QR via /instance/connect
+    const res = await fetch(`${EVO_URL}/instance/connect/${encodeURIComponent(instance)}`, {
+      headers: { apikey: EVO_KEY },
+      cache:   'no-store',
+    })
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let data: any
+    try { data = await res.json() } catch { data = {} }
+
+    console.log(
+      '[qr/connect] instance:', instance,
+      '| http:', res.status,
+      '| hasBase64:', !!extractBase64(data),
+    )
 
     // Desconectada — marcar en DB y devolver QR
     await query(
