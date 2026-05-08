@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import {
   Flame, Loader2, AlertTriangle, CheckCircle2, Pause, Play,
   RotateCcw, Save, Zap, TrendingUp, Activity, Settings, Clock,
-  RefreshCw, Shield, ShieldAlert,
+  RefreshCw, Shield, ShieldAlert, Bell, X,
 } from 'lucide-react'
 import { getDailyLimitForDay, isActiveWindow, isActiveDay } from '@/lib/warmup-engine'
 import type { DelayPreset } from '@/lib/warmup-engine'
@@ -18,6 +18,9 @@ import {
   AB_DEFAULTS, type AntiBanValues, type RandomnessLevel,
 } from '@/lib/warmup-ui'
 import { AntiBanConfig } from '@/components/warmup/AntiBanConfig'
+import type { HealthResult }   from '@/lib/services/warming/health-calculator.service'
+import type { ScheduleResult } from '@/lib/services/warming/daily-quota-calculator.service'
+import type { HealthHistoryPoint, HistorySummary } from '@/lib/services/warming/warming-orchestrator.service'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -52,8 +55,17 @@ interface DetailData {
   total_logs:   number
 }
 
-type Tab = 'overview' | 'config' | 'activity'
+type Tab = 'overview' | 'config' | 'activity' | 'alerts'
 type LogFilter = 'all' | 'sent' | 'failed'
+
+interface LineAlert {
+  id:           string
+  severity:     string
+  type:         string
+  message:      string
+  triggered_at: string
+  resolved_at:  string | null
+}
 
 // ── Props ──────────────────────────────────────────────────────────────────────
 interface Props {
@@ -61,6 +73,8 @@ interface Props {
   defaultTab?: Tab
   onClose:     () => void
   onRefresh:   () => void
+  /** Resultado del endpoint GET /api/warmup/[id]/health — opcional, calculado en tiempo real. */
+  healthData?: { health: HealthResult; schedule: ScheduleResult }
 }
 
 // ── Bar chart ──────────────────────────────────────────────────────────────────
@@ -130,6 +144,57 @@ function DayChart({ line, stats }: { line: LineDetail; stats: DayStat[] }) {
   )
 }
 
+// ── Health history chart ───────────────────────────────────────────────────────
+function HealthHistoryChart({ history, summary }: { history: HealthHistoryPoint[]; summary: HistorySummary }) {
+  const CHART_H = 48
+
+  const trendColor = summary.trend.direction === 'improving'
+    ? 'text-green-600' : summary.trend.direction === 'declining'
+    ? 'text-red-500'   : 'text-gray-500'
+
+  const trendLabel = summary.trend.direction === 'improving' ? '↑ Mejorando'
+    : summary.trend.direction === 'declining' ? '↓ Declinando' : '→ Estable'
+
+  const maxScore = Math.max(...history.map(h => h.score), 1)
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs font-medium text-gray-600">Historial de salud (14 días)</p>
+        <div className="flex items-center gap-3 text-[10px]">
+          <span className="text-gray-400">Prom: <strong className="text-gray-600">{summary.averageScore}</strong></span>
+          <span className={`font-semibold ${trendColor}`}>{trendLabel}</span>
+        </div>
+      </div>
+      <div className="flex items-end gap-1">
+        {[...history].reverse().map((h, i) => {
+          const pct  = Math.round((h.score / maxScore) * 100)
+          const color = h.score >= 70 ? '#22c55e' : h.score >= 40 ? '#f59e0b' : '#ef4444'
+          const date  = new Date(h.recordedAt).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })
+          return (
+            <div key={i} className="flex-1 flex flex-col items-center gap-0.5 cursor-default group relative"
+              title={`${date}: ${h.score}/100 · cuota ${h.dailyQuota}`}
+            >
+              <div className="w-full rounded-t-sm bg-gray-100"
+                style={{ height: CHART_H, position: 'relative' }}>
+                <div className="absolute bottom-0 left-0 right-0 rounded-t-sm transition-all"
+                  style={{ height: `${pct}%`, background: color }} />
+              </div>
+              <span className="text-[8px] text-gray-300 group-hover:text-gray-500">{date.slice(0, 5)}</span>
+            </div>
+          )
+        })}
+      </div>
+      <div className="flex items-center gap-4 text-[10px] text-gray-400 mt-1.5">
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-green-400 inline-block" /> ≥70</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-amber-400 inline-block" /> 40–69</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-red-400 inline-block" /> &lt;40</span>
+        <span className="ml-auto">Min {summary.minScore} · Max {summary.maxScore}</span>
+      </div>
+    </div>
+  )
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function toTimeInput(t: string | null, fallback: string): string {
   return t ? String(t).slice(0, 5) : fallback
@@ -149,7 +214,7 @@ function lineToAb(l: LineDetail): AntiBanValues {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
-export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onRefresh }: Props) {
+export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onRefresh, healthData }: Props) {
   const [tab, setTab]   = useState<Tab>(defaultTab)
   const [data, setData] = useState<DetailData | null>(null)
   const [loading, setLoading] = useState(false)
@@ -184,6 +249,16 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
   // Timestamp
   const [lastFetchedAt, setLastFetchedAt] = useState<Date | null>(null)
 
+  // Fase 2: historial de salud
+  const [historyData,    setHistoryData]    = useState<{ history: HealthHistoryPoint[]; summary: HistorySummary } | null>(null)
+  const [historyLoading, setHistoryLoading] = useState(false)
+
+  // Fase 3: alertas de la línea
+  const [lineAlerts,       setLineAlerts]       = useState<LineAlert[]>([])
+  const [alertsLoading,    setAlertsLoading]    = useState(false)
+  const [resolvingAlertId, setResolvingAlertId] = useState<string | null>(null)
+  const [showResolved,     setShowResolved]     = useState(false)
+
   const fillForm = (d: DetailData) => {
     setCfgName(d.line.display_name || '')
     setCfgNotes(d.line.notes || '')
@@ -212,11 +287,54 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const fetchHistory = useCallback(async (id: string) => {
+    setHistoryLoading(true)
+    try {
+      const res  = await fetch(`/api/warmup/history?lineId=${id}&days=14`)
+      const json = await res.json()
+      if (json.history) setHistoryData({ history: json.history, summary: json.summary })
+      else setHistoryData(null)
+    } catch {
+      setHistoryData(null)
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [])
+
+  const fetchAlerts = useCallback(async (id: string, resolved = false) => {
+    setAlertsLoading(true)
+    try {
+      const res  = await fetch(`/api/warmup/alerts?lineId=${id}&resolved=${resolved}`)
+      const json = await res.json()
+      setLineAlerts(json.alerts ?? [])
+    } catch {
+      setLineAlerts([])
+    } finally {
+      setAlertsLoading(false)
+    }
+  }, [])
+
+  const resolveAlert = async (alertId: string, lineId: string) => {
+    setResolvingAlertId(alertId)
+    try {
+      await fetch(`/api/warmup/alerts/${alertId}/resolve`, { method: 'POST' })
+      await fetchAlerts(lineId, showResolved)
+    } finally {
+      setResolvingAlertId(null)
+    }
+  }
+
   useEffect(() => {
-    if (!lineId) { setData(null); setAllLogs([]); setTotalLogs(0); setLastFetchedAt(null); return }
+    if (!lineId) {
+      setData(null); setAllLogs([]); setTotalLogs(0)
+      setLastFetchedAt(null); setHistoryData(null); setLineAlerts([])
+      return
+    }
     setTab(defaultTab)
     fetchDetail(lineId)
-  }, [lineId, defaultTab, fetchDetail])
+    fetchHistory(lineId)
+    fetchAlerts(lineId, false)
+  }, [lineId, defaultTab, fetchDetail, fetchHistory, fetchAlerts])
 
   const saveConfig = async () => {
     if (!data) return
@@ -320,10 +438,12 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
   )
 
   // ── Tab bar ───────────────────────────────────────────────────────────────────
-  const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
-    { key: 'overview', label: 'Resumen',       icon: <Activity  size={13} /> },
-    { key: 'config',   label: 'Configuración', icon: <Settings  size={13} /> },
-    { key: 'activity', label: 'Actividad',     icon: <TrendingUp size={13} /> },
+  const activeAlertCount = lineAlerts.filter(a => !a.resolved_at).length
+  const tabs: { key: Tab; label: string; icon: React.ReactNode; badge?: number }[] = [
+    { key: 'overview',  label: 'Resumen',       icon: <Activity   size={13} /> },
+    { key: 'config',    label: 'Configuración', icon: <Settings   size={13} /> },
+    { key: 'activity',  label: 'Actividad',     icon: <TrendingUp size={13} /> },
+    { key: 'alerts',    label: 'Alertas',       icon: <Bell       size={13} />, badge: activeAlertCount },
   ]
 
   return (
@@ -376,6 +496,11 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                 {t.key === 'activity' && totalLogs > 0 && (
                   <span className="ml-0.5 bg-gray-200 text-gray-600 rounded-full px-1.5 py-px text-[10px]">
                     {totalLogs}
+                  </span>
+                )}
+                {t.key === 'alerts' && (t.badge ?? 0) > 0 && (
+                  <span className="ml-0.5 bg-red-100 text-red-600 rounded-full px-1.5 py-px text-[10px] font-semibold">
+                    {t.badge}
                   </span>
                 )}
               </button>
@@ -528,6 +653,82 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                     </div>
                   </div>
                 </div>
+              )}
+
+              {/* ── Desglose de salud (Fase 1.5) ── */}
+              {healthData && (() => {
+                const { health, schedule } = healthData
+                const c = health.components
+                return (
+                  <div className="rounded-xl border border-gray-100 bg-gray-50/60 p-3.5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">
+                        Desglose de salud
+                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${health.color}`} />
+                        <span className="text-[11px] font-semibold text-gray-700">{health.score}/100 — {health.label}</span>
+                      </div>
+                    </div>
+
+                    {/* Contribuciones positivas */}
+                    <div className="grid grid-cols-3 gap-2">
+                      {([
+                        { label: 'Base',       value: c.base,          max: 30, positive: true  },
+                        { label: 'Progreso',   value: c.progressScore, max: 30, positive: true  },
+                        { label: 'Tendencia',  value: c.trendScore,    max: 20, positive: true  },
+                        { label: 'Actividad',  value: c.activityScore, max: 20, positive: true  },
+                        { label: 'Inactividad',value: c.inactivityPenalty, max: 30, positive: false },
+                        { label: 'Fallos',     value: c.failurePenalty,    max: 20, positive: false },
+                      ] as const).map(row => (
+                        <div key={row.label} className="space-y-0.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] text-gray-400">{row.label}</span>
+                            <span className={`text-[10px] font-semibold ${row.positive ? 'text-gray-600' : 'text-red-500'}`}>
+                              {row.positive ? '+' : '−'}{row.value}
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-1">
+                            <div
+                              className={`h-1 rounded-full ${row.positive ? 'bg-amber-400' : 'bg-red-400'}`}
+                              style={{ width: `${Math.min((row.value / row.max) * 100, 100)}%` }}
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Recomendación */}
+                    <p className="text-[11px] text-gray-500 italic border-t border-gray-100 pt-2">
+                      {health.recommendation}
+                    </p>
+
+                    {/* Cuota del día */}
+                    <div className="flex items-center gap-3 text-[11px] text-gray-500 border-t border-gray-100 pt-2">
+                      <span>Cuota hoy:</span>
+                      <span className="font-semibold text-gray-700">{schedule.assignedQuotaToday} msgs</span>
+                      <span className="text-gray-400">·</span>
+                      <span>{schedule.remainingToday} restantes</span>
+                      <span className="text-gray-400">·</span>
+                      <span className="text-gray-400">{schedule.phaseLabel}</span>
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* ── Historial de salud (Fase 2) ── */}
+              {historyLoading ? (
+                <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+                  <Loader2 size={12} className="animate-spin" /> Cargando historial…
+                </div>
+              ) : historyData && historyData.history.length > 0 ? (
+                <div className="rounded-xl border border-gray-100 bg-gray-50/60 p-3.5">
+                  <HealthHistoryChart history={historyData.history} summary={historyData.summary} />
+                </div>
+              ) : (
+                <p className="text-[11px] text-gray-300 italic">
+                  Sin historial de salud aún — se registra diariamente al ejecutar el orquestador.
+                </p>
               )}
 
               {/* Last activity */}
@@ -729,6 +930,106 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
               </div>
             </div>
           )}
+
+          {/* ── ALERTS ──────────────────────────────────────────────────── */}
+          {!loading && !fetchErr && data && tab === 'alerts' && (() => {
+            const SEVERITY_CFG: Record<string, { cls: string; dot: string; label: string }> = {
+              critical: { cls: 'bg-red-50 border-red-200 text-red-800',         dot: 'bg-red-500',    label: 'Crítica' },
+              high:     { cls: 'bg-orange-50 border-orange-200 text-orange-800', dot: 'bg-orange-500', label: 'Alta' },
+              medium:   { cls: 'bg-amber-50 border-amber-200 text-amber-800',    dot: 'bg-amber-400',  label: 'Media' },
+              low:      { cls: 'bg-gray-50 border-gray-200 text-gray-700',       dot: 'bg-gray-400',   label: 'Baja' },
+            }
+            const TYPE_LABEL: Record<string, string> = {
+              ban_risk:          'Riesgo de ban',
+              inactivity:        'Inactividad',
+              health_drop:       'Caída de salud',
+              high_failure_rate: 'Alta tasa de fallos',
+            }
+            const visibleAlerts = showResolved ? lineAlerts : lineAlerts.filter(a => !a.resolved_at)
+            return (
+              <div className="p-5 space-y-4">
+                {/* Toggle + refresh */}
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={showResolved}
+                      onChange={e => {
+                        setShowResolved(e.target.checked)
+                        fetchAlerts(data.line.id, e.target.checked)
+                      }}
+                      className="accent-amber-500"
+                    />
+                    Mostrar resueltas
+                  </label>
+                  <button
+                    className="text-[11px] text-gray-400 hover:text-gray-600 flex items-center gap-1"
+                    onClick={() => fetchAlerts(data.line.id, showResolved)}
+                  >
+                    <RefreshCw size={10} /> Actualizar
+                  </button>
+                </div>
+
+                {alertsLoading ? (
+                  <div className="flex items-center gap-2 py-8 text-gray-400 text-sm justify-center">
+                    <Loader2 size={14} className="animate-spin" /> Cargando alertas…
+                  </div>
+                ) : visibleAlerts.length === 0 ? (
+                  <div className="flex flex-col items-center gap-3 py-14 text-center">
+                    <CheckCircle2 size={32} className="text-green-300" />
+                    <div>
+                      <p className="text-sm font-medium text-gray-500">Sin alertas activas</p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {showResolved ? 'No hay alertas registradas para esta línea.' : 'Esta línea no tiene alertas pendientes.'}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {visibleAlerts.map(alert => {
+                      const cfg = SEVERITY_CFG[alert.severity] ?? SEVERITY_CFG.low
+                      const isResolved = !!alert.resolved_at
+                      return (
+                        <div key={alert.id}
+                          className={`flex items-start gap-3 border rounded-lg px-3 py-2.5 ${isResolved ? 'opacity-50 bg-gray-50 border-gray-200' : cfg.cls}`}
+                        >
+                          <div className={`w-2 h-2 rounded-full shrink-0 mt-1 ${isResolved ? 'bg-gray-400' : cfg.dot}`} />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                              <span className="text-[11px] font-semibold">{TYPE_LABEL[alert.type] ?? alert.type}</span>
+                              <span className={`text-[10px] px-1.5 py-px rounded-full border font-medium ${isResolved ? 'bg-gray-100 border-gray-200 text-gray-500' : cfg.cls}`}>
+                                {isResolved ? 'Resuelta' : cfg.label}
+                              </span>
+                            </div>
+                            <p className="text-[12px] leading-snug">{alert.message}</p>
+                            <p className="text-[10px] text-gray-400 mt-1">
+                              {new Date(alert.triggered_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                              {isResolved && alert.resolved_at && (
+                                <> · Resuelta {new Date(alert.resolved_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</>
+                              )}
+                            </p>
+                          </div>
+                          {!isResolved && (
+                            <button
+                              className="shrink-0 text-gray-400 hover:text-gray-600 transition-colors p-0.5"
+                              title="Marcar como resuelta"
+                              disabled={resolvingAlertId === alert.id}
+                              onClick={() => resolveAlert(alert.id, data.line.id)}
+                            >
+                              {resolvingAlertId === alert.id
+                                ? <Loader2 size={13} className="animate-spin" />
+                                : <X size={13} />
+                              }
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
 
           {/* ── ACTIVITY ─────────────────────────────────────────────────── */}
           {!loading && !fetchErr && data && tab === 'activity' && (

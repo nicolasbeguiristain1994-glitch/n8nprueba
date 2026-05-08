@@ -10,7 +10,7 @@ import {
   RefreshCw, Plus, Flame, Pause, Play, Trash2,
   QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink,
   ArrowRight, Pencil, Wifi, WifiOff, Shield, ShieldAlert, Zap, TrendingUp,
-  AlertTriangle, Clock, X, Download, Bell,
+  AlertTriangle, Clock, X, Download, Bell, ChevronDown, ChevronUp, LayoutGrid,
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { getDailyLimitForDay } from '@/lib/warmup-engine'
@@ -20,11 +20,25 @@ import {
   STATUS_CFG, STRATEGIES, PRESET_BADGE, PRESET_LABEL, exportWarmupCSV,
   banRiskScore, banRiskLabel, banRiskCls,
 } from '@/lib/warmup-ui'
-import { WarmupLineDetail } from '@/components/warmup/WarmupLineDetail'
-import { WarmupStats }      from '@/components/warmup/WarmupStats'
-import { WarmupMetrics }    from '@/components/warmup/WarmupMetrics'
-import { BulkActions }      from '@/components/warmup/BulkActions'
+import type { HealthResult }   from '@/lib/services/warming/health-calculator.service'
+import type { ScheduleResult } from '@/lib/services/warming/daily-quota-calculator.service'
+import type { OrchestrationResult } from '@/lib/services/warming/warming-orchestrator.service'
+
+interface EnrichedPlanLine {
+  lineId:        string
+  phone_number:  string
+  instance_name: string | null
+  display_name:  string | null
+  weight:        number
+  health:        { score: number; label: string }
+  schedule:      { dailyQuota: number; remainingToday: number; shouldSendToday: boolean }
+}
+import { WarmupLineDetail }    from '@/components/warmup/WarmupLineDetail'
+import { WarmupStats }         from '@/components/warmup/WarmupStats'
+import { WarmupMetrics }       from '@/components/warmup/WarmupMetrics'
+import { BulkActions }         from '@/components/warmup/BulkActions'
 import { WarmupToastStack, useWarmupToasts } from '@/components/warmup/WarmupToast'
+import { WarmupIntelligence }  from '@/components/warmup/WarmupIntelligence'
 import { useWarmupRealtime }      from '@/hooks/useWarmupRealtime'
 import { useDesktopNotifications } from '@/hooks/useDesktopNotifications'
 
@@ -43,6 +57,25 @@ interface WarmupNumber {
   notes: string | null
   delay_preset: DelayPreset
   anti_ban_enabled: boolean | null
+  // Fase 1.5: persistido por POST /api/warmup/schedule
+  health_score?: number
+  health_updated_at?: string | null
+  // Fase 1.5: populado desde GET /api/warmup/[id]/health al abrir detalle
+  assignedQuotaToday?: number
+  remainingToday?: number
+}
+
+/**
+ * Devuelve el score de salud almacenado (DB) si existe,
+ * o lo estima con la fórmula legada de warmup-ui.
+ */
+function resolveScore(n: WarmupNumber): number {
+  return n.health_score ?? healthScore(n)
+}
+
+/** true cuando el score proviene de la DB; false cuando es estimado localmente. */
+function scoreIsFromDB(n: WarmupNumber): boolean {
+  return n.health_score !== undefined && n.health_score !== null
 }
 
 type QrState = 'idle' | 'loading' | 'not-found' | 'creating' | 'qr' | 'connected' | 'error'
@@ -99,6 +132,18 @@ export default function WarmupPage() {
   const [qrError, setQrError]   = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Fase 1.5: health detail para el modal de detalle
+  const [lineHealthData, setLineHealthData] = useState<{
+    health: HealthResult; schedule: ScheduleResult
+  } | null>(null)
+  // Garantiza que POST /api/warmup/schedule solo se llame una vez por mount
+  const healthSyncedRef = useRef(false)
+
+  // Fase 2: plan de distribución del día
+  const [showPlan,    setShowPlan]    = useState(false)
+  const [planData,    setPlanData]    = useState<{ plan: Omit<OrchestrationResult, 'lines'> & { lines: EnrichedPlanLine[] }; generatedAt: string } | null>(null)
+  const [planLoading, setPlanLoading] = useState(false)
+
   // ── Phase 3: bulk selection ────────────────────────────────────────────────
   const [selected,             setSelected]             = useState<Set<string>>(new Set())
   const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(new Set())
@@ -113,7 +158,25 @@ export default function WarmupPage() {
     const d = await fetchJson<{ numbers: WarmupNumber[] }>('/api/warmup').catch(() => ({ numbers: [] }))
     setNumbers(d.numbers || [])
     setLoading(false)
-  }, [])
+
+    // Recalcula y persiste health scores una sola vez por montaje de página.
+    // Fire-and-forget: no bloquea la UI; actualiza el estado cuando termina.
+    if (!healthSyncedRef.current) {
+      healthSyncedRef.current = true
+      fetchJson<{ summary: Array<{ id: string; health_score: number }> }>(
+        '/api/warmup/schedule',
+        { method: 'POST' },
+      )
+        .then(result => {
+          if (!result?.summary) return
+          setNumbers(prev => prev.map(n => {
+            const entry = result.summary.find(s => s.id === n.id)
+            return entry ? { ...n, health_score: entry.health_score } : n
+          }))
+        })
+        .catch(() => { /* falla silenciosa — no crítico para la UI */ })
+    }
+  }, []) // healthSyncedRef es un ref; no necesita estar en deps
 
   // ── Phase 3: SSE handler ───────────────────────────────────────────────────
   const handleSSENumbers = useCallback((rawNums: unknown[]) => {
@@ -124,8 +187,8 @@ export default function WarmupPage() {
       for (const n of nums) {
         const p = prev.find(x => x.id === n.id)
         if (!p) continue
-        const ns = healthScore(n)
-        const ps = healthScore(p)
+        const ns = resolveScore(n)
+        const ps = resolveScore(p)
         const label = n.display_name || n.instance_name
 
         if (ps >= 40 && ns < 40 && n.warmup_status !== 'banned') {
@@ -168,7 +231,7 @@ export default function WarmupPage() {
             line: n,
           })
       }
-      const sc = healthScore(n)
+      const sc = resolveScore(n)
       if (sc < 30 && n.warmup_status === 'active')
         result.push({
           key: `health-${n.id}`,
@@ -408,7 +471,26 @@ export default function WarmupPage() {
   }
 
   const openDetail = (n: WarmupNumber, tab: 'overview' | 'config' | 'activity' = 'overview') => {
-    setDetailTab(tab); setDetailId(n.id)
+    setDetailTab(tab)
+    setDetailId(n.id)
+    setLineHealthData(null)
+
+    // Calcula salud en tiempo real al abrir el detalle; actualiza también
+    // el score visible en la tabla para esa línea.
+    fetchJson<{ line_id: string; health: HealthResult; schedule: ScheduleResult }>(
+      `/api/warmup/${n.id}/health`,
+    )
+      .then(data => {
+        setLineHealthData(data)
+        setNumbers(prev => prev.map(x =>
+          x.id === n.id
+            ? { ...x, health_score: data.health.score,
+                assignedQuotaToday: data.schedule.assignedQuotaToday,
+                remainingToday:     data.schedule.remainingToday }
+            : x
+        ))
+      })
+      .catch(() => { /* falla silenciosa */ })
   }
 
   const migrate = async () => {
@@ -464,6 +546,15 @@ export default function WarmupPage() {
         pollRef.current = setInterval(() => fetchQr(qrFor.instance_name), 5000)
       } else { setQrError('Sin QR. Intentá "Obtener QR".'); setQrState('not-found') }
     } catch { setQrError('Error al crear la instancia'); setQrState('not-found') }
+  }
+
+  const loadPlan = async () => {
+    setPlanLoading(true)
+    const data = await fetchJson<{ plan: OrchestrationResult & { lines: EnrichedPlanLine[] }; generatedAt: string }>(
+      '/api/warmup/orchestrator/plan',
+    ).catch(() => null)
+    setPlanData(data)
+    setPlanLoading(false)
   }
 
   const migratingNumber = numbers.find(n => n.id === migratingId)
@@ -557,6 +648,116 @@ export default function WarmupPage() {
 
       {/* ── Métricas avanzadas (collapsible) ── */}
       <WarmupMetrics numbers={numbers} />
+
+      {/* ── Plan del día (Fase 2) ── */}
+      <Card>
+        <CardContent className="p-0">
+          <button
+            className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
+            onClick={() => {
+              const next = !showPlan
+              setShowPlan(next)
+              if (next && !planData) loadPlan()
+            }}
+          >
+            <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+              <LayoutGrid size={14} className="text-amber-500" />
+              Plan de distribución del día
+              {planData && (
+                <span className="text-xs font-normal text-gray-400 ml-1">
+                  {planData.plan.totalActiveLines} líneas · {planData.plan.totalDailyQuota} msgs totales
+                </span>
+              )}
+            </div>
+            {showPlan ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
+          </button>
+
+          {showPlan && (
+            <div className="border-t border-gray-100 px-4 pb-4 pt-3">
+              {planLoading ? (
+                <div className="flex items-center gap-2 py-4 text-gray-400 text-sm">
+                  <Loader2 size={14} className="animate-spin" /> Calculando plan…
+                </div>
+              ) : !planData ? (
+                <p className="text-sm text-gray-400 py-3">No se pudo cargar el plan.</p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-3 gap-3 mb-4 text-center">
+                    <div className="bg-amber-50 rounded-lg p-2.5">
+                      <p className="text-lg font-bold text-amber-700">{planData.plan.totalActiveLines}</p>
+                      <p className="text-[11px] text-amber-600">Líneas activas</p>
+                    </div>
+                    <div className="bg-blue-50 rounded-lg p-2.5">
+                      <p className="text-lg font-bold text-blue-700">{planData.plan.totalDailyQuota}</p>
+                      <p className="text-[11px] text-blue-600">Cuota total del día</p>
+                    </div>
+                    <div className="bg-green-50 rounded-lg p-2.5">
+                      <p className="text-lg font-bold text-green-700">{planData.plan.totalRemainingToday}</p>
+                      <p className="text-[11px] text-green-600">Restantes hoy</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    {planData.plan.lines
+                      .filter(r => r.schedule.shouldSendToday)
+                      .sort((a, b) => b.weight - a.weight)
+                      .map(r => {
+                        const name    = r.display_name || r.instance_name || r.lineId
+                        const pctBar  = Math.round(r.weight * 100)
+                        const sent    = r.schedule.dailyQuota - r.schedule.remainingToday
+                        const sentPct = r.schedule.dailyQuota > 0
+                          ? Math.round((sent / r.schedule.dailyQuota) * 100)
+                          : 0
+                        return (
+                          <div key={r.lineId} className="flex items-center gap-3">
+                            <div className="w-28 text-[11px] text-gray-600 truncate shrink-0" title={name}>{name}</div>
+                            <div className="flex-1 bg-gray-100 rounded-full h-1.5 relative">
+                              <div
+                                className="h-1.5 rounded-full bg-amber-400"
+                                style={{ width: `${pctBar}%` }}
+                              />
+                            </div>
+                            <div className="text-[11px] text-gray-500 w-12 text-right shrink-0">
+                              {Math.round(r.weight * 100)}%
+                            </div>
+                            <div className="text-[11px] text-gray-400 w-20 text-right shrink-0">
+                              {sent}/{r.schedule.dailyQuota}
+                              <span className="text-gray-300 ml-1">({sentPct}%)</span>
+                            </div>
+                            <div className="text-[11px] shrink-0">
+                              <span className={`font-medium ${r.health.score >= 70 ? 'text-green-600' : r.health.score >= 40 ? 'text-amber-600' : 'text-red-500'}`}>
+                                {r.health.score}
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      })
+                    }
+                  </div>
+
+                  <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+                    <p className="text-[11px] text-gray-400">
+                      Generado {new Date(planData.generatedAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                    <button
+                      className="text-[11px] text-amber-600 hover:text-amber-800 underline"
+                      onClick={loadPlan}
+                    >
+                      Recalcular
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── Inteligencia (Fase 3) ── */}
+      <WarmupIntelligence onOpenLine={id => {
+        const n = numbers.find(x => x.id === id)
+        if (n) openDetail(n)
+      }} />
 
       {/* ── Automation suggestions ── */}
       {suggestions.length > 0 && (
@@ -661,7 +862,7 @@ export default function WarmupPage() {
                 : numbers.map(n => {
                     const dayPct         = n.target_days ? Math.min((n.current_day / n.target_days) * 100, 100) : 0
                     const effectiveLimit = getDailyLimitForDay(n.current_day, n.target_days)
-                    const score          = healthScore(n)
+                    const score          = resolveScore(n)
                     const isComplete     = n.warmup_status === 'completed'
                     const label          = n.display_name || n.instance_name
                     const isEditing      = editingId === n.id
@@ -763,7 +964,7 @@ export default function WarmupPage() {
                             const risk = banRiskScore(n)
                             if (risk < 40) return null
                             const rCls = banRiskCls(risk)
-                            const score = healthScore(n)
+                            const score = resolveScore(n)
                             return (
                               <div
                                 title={`Riesgo de ban: ${risk}/100 — Salud: ${score}/100${n.anti_ban_enabled ? ' · Protección anti-ban activa' : ' · Sin protección anti-ban'}`}
@@ -802,11 +1003,24 @@ export default function WarmupPage() {
 
                         {/* Hoy / Total */}
                         <td className="px-4 py-3">
-                          <div className="text-sm font-medium text-gray-700">
-                            {n.messages_sent_today}
-                            <span className="text-gray-400 font-normal">/{effectiveLimit}</span>
-                          </div>
-                          <div className="text-[11px] text-gray-400">{n.total_messages_sent} total</div>
+                          {(() => {
+                            const quota     = n.assignedQuotaToday ?? effectiveLimit
+                            const remaining = n.remainingToday      ?? Math.max(0, quota - n.messages_sent_today)
+                            return (
+                              <>
+                                <div className="text-sm font-medium text-gray-700">
+                                  {n.messages_sent_today}
+                                  <span className="text-gray-400 font-normal">/{quota}</span>
+                                </div>
+                                <div className="text-[11px] text-gray-400">
+                                  {remaining > 0
+                                    ? <span className="text-amber-600 font-medium">{remaining} restantes</span>
+                                    : <span>{n.total_messages_sent} total</span>
+                                  }
+                                </div>
+                              </>
+                            )
+                          })()}
                         </td>
 
                         {/* Salud */}
@@ -819,6 +1033,12 @@ export default function WarmupPage() {
                               />
                             </div>
                             <span className="text-[11px] font-medium text-gray-600">{score}</span>
+                            {!scoreIsFromDB(n) && (
+                              <span
+                                className="text-[9px] text-gray-300 font-normal leading-none"
+                                title="Score estimado — aún no calculado por el scheduler"
+                              >~</span>
+                            )}
                           </div>
                           <div className="text-[10px] text-gray-400 mt-0.5">{healthLabel(score)}</div>
                         </td>
@@ -1171,6 +1391,7 @@ export default function WarmupPage() {
         defaultTab={detailTab}
         onClose={() => setDetailId(null)}
         onRefresh={load}
+        healthData={lineHealthData ?? undefined}
       />
 
       {/* ── Phase 3: Bulk actions floating toolbar ── */}

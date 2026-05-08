@@ -356,59 +356,74 @@ const MODULES: ModuleSection[] = [
     icon: Flame,
     role: 'both',
     color: 'text-orange-600',
-    subtitle: 'Warm-up progresivo de líneas nuevas',
+    subtitle: 'Sistema inteligente de warm-up progresivo para líneas de WhatsApp',
     description:
-      'Cuando conectás un número de WhatsApp nuevo, no podés empezar a enviar grandes volúmenes de mensajes inmediatamente. WhatsApp detecta comportamiento sospechoso y puede bloquear el número. El módulo de Calentamiento automatiza el proceso de envío progresivo para "madurar" la línea antes de usarla en campañas.',
+      'Si enviás muchos mensajes de golpe con un número nuevo, WhatsApp lo detecta como spam y lo banea rápidamente. Con un buen calentamiento podés llegar a enviar cientos de mensajes diarios de forma segura. Nuestro módulo ya no es solo "calentar líneas": es un sistema inteligente que calcula automáticamente la salud de cada línea, distribuye la actividad entre todas, predice problemas antes de que ocurran y te da recomendaciones y simulaciones en tiempo real. Para acceder, hacé clic en "Calentamiento" en el menú lateral.',
     steps: [
       {
-        title: 'Seleccionar la línea a calentar',
+        title: 'Vista general del Dashboard',
         detail:
-          'Elegí la línea nueva que querés calentar. Es recomendable esperar al menos 24 horas después de conectar un número antes de iniciar el calentamiento.',
+          'En la parte superior verás 4 tarjetas: Calentando (líneas activas, color ámbar), En Riesgo (líneas pausadas, naranja), Saludables (calentamiento completo, verde) y Baneadas (fuera de servicio, rojo). Debajo hay una barra de estadísticas con mensajes enviados hoy y promedio de salud. Si el sistema detecta una línea con muchos días sin actividad o salud muy baja, aparece una sugerencia automática con la opción de pausarla o configurarla.',
       },
       {
-        title: 'Configurar el plan de calentamiento',
+        title: 'Agregar una nueva línea',
         detail:
-          'Definí la duración del calentamiento (recomendado: 7 a 14 días) y el volumen inicial. El sistema empieza con pocos mensajes al día y va aumentando gradualmente el volumen de forma automática.',
+          'Hacé clic en "+ Agregar línea" (arriba a la derecha). Elegí la estrategia: Conservadora (más segura, más lenta — recomendada para principiantes), Normal (equilibrio, la más usada) o Agresiva (más rápida, mayor riesgo). Opcionalmente hacé clic en "Ajuste fino" para cambiar días objetivo y límite diario. Luego hacé clic en "Generar QR y escanear", escaneá el QR con WhatsApp (Dispositivos vinculados → Vincular un dispositivo) y la línea aparece automáticamente en el dashboard.',
       },
       {
-        title: 'Seleccionar los contactos de calentamiento',
+        title: 'Entender el score de salud (0–100)',
         detail:
-          'Usá contactos reales que puedan responder mensajes (no listas de clientes). Lo ideal son números de tu propio equipo o de prueba. Las respuestas de los destinatarios ayudan a que WhatsApp vea la línea como legítima.',
+          'Cada línea muestra un score de salud calculado en tiempo real. 80–100: Óptima — puede usarse en campañas. 60–79: Buena — seguir el calentamiento. 40–59: Regular — revisar actividad. 20–39: Crítico — riesgo alto, pausar o revisar. 0–19: Baneada — reemplazar la línea. Si el score aparece con un "~" tenue, es una estimación local; cuando está en color normal proviene de la base de datos (más confiable). Al hacer clic en cualquier línea verás el desglose completo: 6 barras que explican el score (progreso, tendencia, inactividad, fallos, etc.) y una recomendación personalizada.',
       },
       {
-        title: 'Monitorear el progreso',
+        title: 'Plan de distribución del día',
         detail:
-          'El panel muestra el progreso del calentamiento: día actual, mensajes enviados, respuestas recibidas y el "score" de salud de la línea. Cuando el score llega a verde, la línea está lista para campañas.',
+          'La sección "Plan de distribución del día" muestra cómo el sistema distribuye la actividad entre todas tus líneas activas. Cada línea tiene un peso: mientras más saludable esté, más mensajes se le asignan. Verás cuántos mensajes le corresponden hoy a cada una y cuántos ya se enviaron. Esto evita que todas las líneas envíen al mismo ritmo, un patrón que WhatsApp detecta fácilmente. Hacé clic en "Recalcular" para actualizar el plan en cualquier momento.',
       },
       {
-        title: 'Acciones disponibles en cada línea',
+        title: 'Centro de Inteligencia — Pestaña Alertas',
+        detail:
+          'Hacé clic en la sección colapsable "Inteligencia" del dashboard. En la pestaña Alertas el sistema te avisa automáticamente cuando detecta: Riesgo alto de ban (score < 35 con tendencia negativa), Inactividad prolongada (más de 4 días sin actividad en una línea activa), Caída brusca de salud (más de 25 puntos en 48 horas) y Tasa de fallos elevada (más del 30% de mensajes fallidos). Cada alerta muestra su severidad (Crítica, Alta, Media, Baja) y podés resolverla manualmente con el botón X. También podés ver estas alertas en la pestaña "Alertas" dentro del detalle de cada línea.',
+      },
+      {
+        title: 'Centro de Inteligencia — Efectividad y Simulador',
+        detail:
+          'En la pestaña Efectividad verás métricas reales del rendimiento: tasa de éxito (% de líneas que completan el calentamiento), ratio de completación, tasa de ban general y qué estrategia está funcionando mejor. En la pestaña Simulador podés simular escenarios what-if antes de tomar decisiones: "¿Qué pasa si agrego 5 líneas nuevas con estrategia Normal?", "¿Qué pasa si cambio todas mis líneas a Agresiva?" o "¿Cómo estará la salud de mis líneas en 14 días?". El sistema te da una proyección con nivel de riesgo y recomendación.',
+      },
+      {
+        title: 'Detalle de una línea (clic en cualquier fila)',
         detail: '',
         actions: [
           {
-            icon: QrCode,
-            label: 'QR — Vincular línea',
-            desc: 'Abre el modal para escanear el código QR y conectar (o reconectar) el número. Usalo si la sesión de WhatsApp expiró o cambiaste de dispositivo.',
-            color: 'bg-orange-100 text-orange-600',
+            icon: Activity,
+            label: 'Resumen',
+            desc: 'Score de salud, progreso, tasa de éxito, riesgo de ban, desglose de componentes, historial de 14 días y gráfico de mensajes por día.',
+            color: 'bg-amber-100 text-amber-600',
           },
           {
-            icon: TrendingUp,
-            label: 'Ver actividad',
-            desc: 'Abre el historial de mensajes enviados, errores y métricas por día para esa línea.',
+            icon: AlertTriangle,
+            label: 'Alertas',
+            desc: 'Todas las alertas predictivas de esa línea (activas y resueltas). Podés resolver cada alerta individualmente.',
+            color: 'bg-red-100 text-red-500',
+          },
+          {
+            icon: Settings,
+            label: 'Configuración',
+            desc: 'Cambiar estrategia, días objetivo, límite diario y ajustes de protección anti-ban. También podés pausar o reiniciar el calentamiento.',
             color: 'bg-blue-100 text-blue-600',
           },
           {
-            icon: Pause,
-            label: 'Pausar / Reanudar',
-            desc: 'Detiene el calentamiento temporalmente sin perder el progreso. Al reanudar, continúa desde el mismo día.',
-            color: 'bg-yellow-100 text-yellow-600',
-          },
-          {
-            icon: Trash2,
-            label: 'Eliminar',
-            desc: 'Quita la línea del módulo de calentamiento de forma permanente. Los mensajes ya enviados quedan en el historial.',
-            color: 'bg-red-100 text-red-500',
+            icon: TrendingUp,
+            label: 'Actividad',
+            desc: 'Historial completo de mensajes enviados con filtros por estado (enviados / fallidos). Permite cargar más registros.',
+            color: 'bg-green-100 text-green-600',
           },
         ],
+      },
+      {
+        title: 'Automatización con n8n (recomendado)',
+        detail:
+          'Para que el sistema actualice scores, distribuya cuotas y genere alertas automáticamente cada día, configurá en n8n un workflow que se ejecute todos los días a las 00:05. Agregá un nodo HTTP Request con método POST, URL: https://tu-dominio.com/api/warmup/orchestrator/run y el header x-warmup-secret con el valor de tu variable de entorno WARMUP_PROCESS_SECRET. Sin este paso el sistema funciona igual pero los scores y alertas solo se actualizan cuando alguien abre el dashboard.',
       },
     ],
     tips: [
@@ -417,20 +432,28 @@ const MODULES: ModuleSection[] = [
         text: 'No uses una línea en calentamiento para campañas masivas. Hacerlo puede terminar el proceso antes de tiempo y aumentar el riesgo de bloqueo.',
       },
       {
-        type: 'info',
-        text: 'El proceso de calentamiento es automático. Una vez iniciado, no necesitás hacer nada. Solo monitoreá el progreso cada día o dos.',
+        type: 'tip',
+        text: 'Revisá las alertas todos los días: te permiten actuar antes de que ocurra un ban. Con el Simulador podés ver el impacto de agregar muchas líneas antes de hacerlo.',
+      },
+      {
+        type: 'tip',
+        text: 'Mantené al menos una línea con estrategia Conservadora. Sirve como backup seguro y no cambies de estrategia muy seguido: el sistema necesita consistencia para calcular tendencias precisas.',
       },
       {
         type: 'info',
-        text: 'Si la sesión de WhatsApp se desconecta durante el calentamiento (se cierra sesión en el teléfono), usá el botón QR de esa línea para volver a vincularla sin perder el progreso.',
+        text: 'Si la sesión de WhatsApp se desconecta durante el calentamiento, usá el botón QR de esa línea para volver a vincularla sin perder el progreso.',
       },
       {
         type: 'warning',
-        text: 'Pausar una línea no reinicia el contador de días. Al reanudar, el calentamiento continúa desde donde quedó. Usá pausa para imprevistos cortos; si la pausa es muy larga el historial de actividad se interrumpe y WhatsApp puede "enfriar" la línea.',
+        text: 'Pausar una línea no reinicia el contador de días. Al reanudar, el calentamiento continúa desde donde quedó. Si la pausa es muy larga, el historial de actividad se interrumpe y WhatsApp puede "enfriar" la línea.',
+      },
+      {
+        type: 'info',
+        text: '¿Puedo pausar manualmente? Sí, con el botón ⏸ en la fila. ¿Qué pasa si se banea? Aparece en rojo como "Baneada" — reemplazala. ¿El sistema envía mensajes solo? No: el calentamiento calcula cuántos enviar; el envío real lo hacés vos o mediante campañas.',
       },
       {
         type: 'example',
-        text: 'Ejemplo: Comprás un chip nuevo el lunes. Lo conectás a la plataforma, esperás 24hs y arrancás el calentamiento de 10 días. A partir del día 11, la línea tiene un buen historial y está lista para una campaña de 500 mensajes.',
+        text: 'Ejemplo: Comprás un chip nuevo el lunes. Lo conectás a la plataforma, esperás 24hs y arrancás el calentamiento de 21 días con estrategia Normal. El sistema calcula el score diariamente, te avisa si algo falla y te muestra el plan de distribución. A partir del día 22, la línea tiene un historial sólido y está lista para campañas.',
       },
     ],
   },

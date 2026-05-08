@@ -17,7 +17,9 @@ export async function GET(req: Request) {
              w.last_message_at, w.start_date, w.notes, w.timezone,
              COALESCE(w.delay_preset, 'normal') AS delay_preset,
              w.anti_ban_enabled,
-             COALESCE(l.total_sent, 0)::int AS total_messages_sent
+             COALESCE(l.total_sent, 0)::int AS total_messages_sent,
+             COALESCE(w.health_score, 50)::int AS health_score,
+             w.health_updated_at
       FROM warmup_numbers w
       LEFT JOIN (
         SELECT warmup_number_id, COUNT(*) AS total_sent
