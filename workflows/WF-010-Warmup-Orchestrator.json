@@ -1,0 +1,227 @@
+{
+  "name": "WF-010-Warmup-Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 9-22 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-960, 0],
+      "id": "wf010orch-n01",
+      "name": "Cron – Cada 15 min (9AM-10PM)"
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/rpc/get_active_warmup_lines",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{}",
+        "options": { "timeout": 10000 }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "IMPORT_AND_LINK_SUPABASE_SERVICE",
+          "name": "Supabase Service"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [-740, 0],
+      "id": "wf010orch-n02",
+      "name": "HTTP – RPC get_active_warmup_lines"
+    },
+    {
+      "parameters": {
+        "jsCode": "/*\n * Valida el horario operativo y filtra líneas que aún tienen cupo hoy.\n *\n * Retorna UN solo item con { lines, count } para garantizar que el\n * siguiente HTTP node (GET contacts) se ejecute exactamente 1 vez,\n * sin importar cuántas líneas activas haya.\n */\nconst lines = $input.all().map(i => i.json);\n\n// Horario operativo: 9AM-22PM hora Argentina (UTC-3)\nconst nowArg = new Date(\n  new Date().toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' })\n);\nconst hour = nowArg.getHours();\n\nif (hour < 9 || hour >= 22) {\n  return [{ json: { lines: [], count: 0, reason: `Fuera de horario operativo: ${hour}hs ARG` } }];\n}\n\nconst available = lines.filter(line => {\n  if (!line.phone_number || !line.instance_name) return false;\n  return (line.daily_limit || 0) - (line.messages_sent_today || 0) > 0;\n});\n\nreturn [{\n  json: {\n    lines:      available,\n    count:      available.length,\n    checked_at: new Date().toISOString(),\n    hour_arg:   hour\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-520, 0],
+      "id": "wf010orch-n03",
+      "name": "Code – Validate & Consolidate"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "has-lines",
+              "leftValue": "={{ $json.count }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-300, 0],
+      "id": "wf010orch-n04",
+      "name": "IF – Hay líneas disponibles"
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/warmup_contacts?is_active=eq.true&select=id,phone_number&order=last_used_at.asc.nullsfirst&limit=50",
+        "options": { "timeout": 10000 }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "IMPORT_AND_LINK_SUPABASE_SERVICE",
+          "name": "Supabase Service"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [-80, 0],
+      "id": "wf010orch-n05",
+      "name": "HTTP – GET Warmup Contacts (1 llamada para todas las líneas)"
+    },
+    {
+      "parameters": {
+        "jsCode": "/*\n * Construye un job por cada línea activa asignando:\n *   - Contacto receptor (round-robin sobre el pool cargado)\n *   - Mensaje aleatorio según número de fase (config en warmup_phases)\n *   - Delay calculado con jitter ±10% sobre el rango de la fase\n *\n * Devuelve N items — Execute Workflow los dispara como sub-ejecuciones\n * asíncronas e independientes (una por línea, en paralelo controlado).\n *\n * Concurrencia: el sub-workflow WF-010a tiene maxConcurrency=8 (configurable\n * en Settings del workflow en n8n). Jobs que excedan ese límite se encolan.\n */\nconst { lines } = $('Code – Validate & Consolidate').first().json;\nconst contacts  = $input.all().map(i => i.json).filter(c => c.phone_number);\n\nif (!contacts.length) return [];\n\n// ── Banco de mensajes por fase (sincronizado con warmup_phases tabla) ─────\nconst MESSAGES = {\n  1: [ // Fase 1 (días 1-3): texto puro, natural y corto\n    'Hola! cómo andás?','Buenas! todo bien?','Ey! qué tal?',\n    'Hola, cómo estás?','Buenas! qué hacés?','Hola! cómo va todo?',\n    'Ey, qué onda?','Hola, todo bien por allá?','Buenas! cómo te va?',\n    'Hola! cómo va el día?'\n  ],\n  2: [ // Fase 2 (días 4-7): emojis simples\n    'Hola! cómo andás? 😊','Buenas! todo bien? 👋','Ey qué tal! 🙌',\n    'Hola, cómo estás? 😄','Buenas! qué hacés? ☀️','Hola! cómo va todo? 👍',\n    'Qué onda! todo bien? 🎉','Hola por acá! cómo te va? 😁',\n    'Buenas! se viene el finde 🙌','Ey! apareció el sol por allá? ☀️',\n    'Hola! tomando unos mates ☕ y vos?','Qué tal el día hoy? 😊',\n    'Buenas! qué está pasando por allá? 👀','Ey! hace rato no hablamos 😊'\n  ],\n  3: [ // Fase 3 (días 8-14): conversaciones cortas\n    'Hola! cómo andás? 😊 Hoy está haciendo un calor terrible por acá',\n    'Buenas! todo bien? 👋 Recién salí del trabajo, qué tal el día?',\n    'Ey qué tal! 🙌 Che, tenés alguna serie para recomendar?',\n    'Hola! 😄 Estoy tomando unos mates, nada mejor para la tarde',\n    'Buenas! ☀️ Qué semana larga, ya tengo ganas del finde',\n    'Hola! 👍 Pasé por el centro hoy y estaba lleno de gente, un caos',\n    'Qué onda! 🎉 Viste el partido de anoche? qué partidazo',\n    'Hola! 😁 El fin de semana estuve en el campo, una paz total',\n    'Buenas! 🙌 Me anoté al gimnasio otra vez, a ver si me mantengo jaja',\n    'Ey! ☀️ Hoy hice compras y no podía creer los precios, todo carísimo'\n  ],\n  4: [ // Fase 4 (día 15+): mensajes ricos y contextuales\n    'Hola! cómo andás? 😊 Hoy está haciendo un calor terrible, qué tal el clima donde estás?',\n    'Buenas! 👋 Recién salí del trabajo y vine caminando, qué semana larga',\n    'Ey! 🙌 Che, ¿viste el partido de anoche? no esperaba ese resultado para nada',\n    'Hola! 😄 Estoy tomando unos mates con galletitas, lo más. Vos qué hacés?',\n    'Buenas tardes! ☀️ Se viene el finde, algún plan? Nosotros vamos al campo',\n    'Hola! 👍 Pasé por el centro y estaba todo cortado, tardé el doble de siempre',\n    'Qué onda! 🎉 Me enteré que abrieron una pizzería nueva acá cerca, hay que ir a probar',\n    'Hola! 😁 El fin de semana hice asado, quedó buenísimo. Vos qué hiciste?'\n  ]\n};\n\nconst pickRandom = arr => arr[Math.floor(Math.random() * arr.length)];\n\n// Delay con jitter ±10% sobre el rango de la fase\nconst calcDelay = (min, max) => {\n  const base   = Math.floor(Math.random() * (max - min + 1)) + min;\n  const jitter = Math.round(base * 0.10 * (Math.random() * 2 - 1));\n  return Math.max(5, base + jitter);\n};\n\nreturn lines.map((line, idx) => ({\n  json: {\n    warmup_number_id:  line.id,\n    phone_number:      line.phone_number,\n    instance_name:     line.instance_name,\n    current_day:       line.current_day,\n    contact_id:        contacts[idx % contacts.length].id,\n    recipient_phone:   contacts[idx % contacts.length].phone_number,\n    message_text:      pickRandom(MESSAGES[line.phase_number || 1] || MESSAGES[1]),\n    message_type:      line.message_type,\n    // delay_sec es el valor base — el sub-workflow lo recalcula con el health score\n    delay_sec:         calcDelay(line.min_delay_seconds, line.max_delay_seconds),\n    daily_limit:       line.daily_limit,\n    remaining_today:   line.daily_limit - (line.messages_sent_today || 0),\n    // Parámetros de fase necesarios para el override adaptativo en WF-010a\n    phase_number:      line.phase_number || 1,\n    phase_min_delay:   line.min_delay_seconds,\n    phase_max_delay:   line.max_delay_seconds,\n    phase_daily_limit: line.daily_limit\n  }\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [140, 0],
+      "id": "wf010orch-n06",
+      "name": "Code – Build Jobs (N items → N sub-workflows)"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "WF-010a-Process-Single-Line",
+          "cachedResultUrl": ""
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [360, 0],
+      "id": "wf010orch-n07",
+      "name": "Execute – WF-010a Process Single Line (async)"
+    },
+    {
+      "parameters": {
+        "jsCode": "/*\n * Resumen del ciclo de despacho — corre UNA vez para todos los items.\n * Como el sub-workflow corre en modo async, solo podemos reportar\n * cuántos jobs fueron despachados, no sus resultados individuales.\n * Los resultados detallados están en warmup_activity_log (Supabase).\n */\nconst dispatched = $input.all();\nconst count      = dispatched.length;\n\nconst instanceNames = [...new Set(dispatched.map(i => i.json.instance_name || '?'))];\n\nconst summary = {\n  dispatched_count: count,\n  instances:        instanceNames,\n  dispatched_at:    new Date().toISOString(),\n  cycle:            'every-15min'\n};\n\nconsole.log(`[WF-010] Despacho completado: ${count} jobs | ${instanceNames.join(', ')}`);\n\nreturn [{ json: summary }];\n",
+        "mode": "runOnceForAllItems"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [580, 0],
+      "id": "wf010orch-n08",
+      "name": "Code – Dispatch Summary"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false, "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "has-webhook",
+              "leftValue": "={{ $env.ALERT_WEBHOOK_URL }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [800, 0],
+      "id": "wf010orch-n09",
+      "name": "IF – Alerta configurada"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ALERT_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": \"WF-010 Warmup: despachados {{ $json.dispatched_count }} jobs en {{ $json.dispatched_at }}\",\n  \"dispatched_count\": {{ $json.dispatched_count }},\n  \"instances\": {{ JSON.stringify($json.instances) }}\n}",
+        "options": { "timeout": 5000 }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1020, 0],
+      "id": "wf010orch-n10",
+      "name": "HTTP – Enviar Alerta (opcional)"
+    }
+  ],
+  "connections": {
+    "Cron – Cada 15 min (9AM-10PM)": {
+      "main": [[{ "node": "HTTP – RPC get_active_warmup_lines", "type": "main", "index": 0 }]]
+    },
+    "HTTP – RPC get_active_warmup_lines": {
+      "main": [[{ "node": "Code – Validate & Consolidate", "type": "main", "index": 0 }]]
+    },
+    "Code – Validate & Consolidate": {
+      "main": [[{ "node": "IF – Hay líneas disponibles", "type": "main", "index": 0 }]]
+    },
+    "IF – Hay líneas disponibles": {
+      "main": [
+        [{ "node": "HTTP – GET Warmup Contacts (1 llamada para todas las líneas)", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "HTTP – GET Warmup Contacts (1 llamada para todas las líneas)": {
+      "main": [[{ "node": "Code – Build Jobs (N items → N sub-workflows)", "type": "main", "index": 0 }]]
+    },
+    "Code – Build Jobs (N items → N sub-workflows)": {
+      "main": [[{ "node": "Execute – WF-010a Process Single Line (async)", "type": "main", "index": 0 }]]
+    },
+    "Execute – WF-010a Process Single Line (async)": {
+      "main": [[{ "node": "Code – Dispatch Summary", "type": "main", "index": 0 }]]
+    },
+    "Code – Dispatch Summary": {
+      "main": [[{ "node": "IF – Alerta configurada", "type": "main", "index": 0 }]]
+    },
+    "IF – Alerta configurada": {
+      "main": [
+        [{ "node": "HTTP – Enviar Alerta (opcional)", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "WF-ERR-Warmup-Error-Handler"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [
+    { "name": "warmup" },
+    { "name": "orchestrator" }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "name": "WF-ERR-Warmup-Error-Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [-480, 0],
+      "id": "wferr-n01",
+      "name": "Error Trigger",
+      "notes": "WF-ERR-Warmup-Error-Handler\n\nPropósito: captura errores de cualquier workflow del sistema de warmup que lo referencie\ncomo 'Error Workflow' en sus Settings.\n\nWorkflows que lo usan:\n  WF-010-Warmup-Orchestrator (configurado en settings.errorWorkflow)\n\nPara activarlo: importar este workflow y activarlo (Status → Active).\nSin él activo, n8n no puede dispararlo aunque esté referenciado.\n\nDatos disponibles del Error Trigger en $json:\n  execution.id / execution.url / execution.error.message / execution.lastNodeExecuted\n  workflow.id / workflow.name"
+    },
+    {
+      "parameters": {
+        "jsCode": "/*\n * Extrae y loguea la información relevante del error.\n * Intenta recuperar identificadores de la línea afectada\n * (warmup_number_id, instance_name, phone_number) del contexto de error.\n */\nconst exec = $json.execution || {};\nconst wf   = $json.workflow  || {};\nconst err  = exec.error      || {};\n\n// Fecha/hora legible en zona horaria Argentina\nconst nowArg = new Date(\n  new Date().toLocaleString('en-US', { timeZone: 'America/Argentina/Buenos_Aires' })\n);\nconst pad = n => String(n).padStart(2, '0');\nconst readableDate = `${pad(nowArg.getDate())}/${pad(nowArg.getMonth()+1)}/${nowArg.getFullYear()} ${pad(nowArg.getHours())}:${pad(nowArg.getMinutes())}:${pad(nowArg.getSeconds())} ARG`;\n\n// Intentar extraer identificadores de la línea afectada del contexto serializado\nconst errStr       = JSON.stringify(err);\nlet warmupLineId   = null;\nlet instanceName   = null;\nlet phoneNumber    = null;\n\ntry {\n  const lineMatch     = errStr.match(/\"p_warmup_number_id\"\\s*:\\s*\"([0-9a-f\\-]{36})\"/);\n  const instanceMatch = errStr.match(/\"instance_name\"\\s*:\\s*\"([^\"]+)\"/);\n  const phoneMatch    = errStr.match(/\"p_phone_number\"\\s*:\\s*\"([^\"]+)\"|\"phone_number\"\\s*:\\s*\"([^\"]+)\"/);\n\n  if (lineMatch)     warmupLineId = lineMatch[1];\n  if (instanceMatch) instanceName = instanceMatch[1];\n  if (phoneMatch)    phoneNumber  = phoneMatch[1] || phoneMatch[2];\n} catch (_) { /* campos opcionales — parsing no crítico */ }\n\nconst summary = {\n  workflow_name:   wf.name               || 'desconocido',\n  workflow_id:     wf.id                 || 'desconocido',\n  execution_id:    exec.id               || 'desconocido',\n  execution_url:   exec.url              || null,\n  last_node:       exec.lastNodeExecuted || 'desconocido',\n  error_message:   err.message           || 'Sin mensaje de error',\n  warmup_line_id:  warmupLineId,\n  instance_name:   instanceName,\n  phone_number:    phoneNumber,\n  occurred_at:     readableDate,\n  occurred_at_iso: new Date().toISOString()\n};\n\nconst lines = [\n  `[WF-ERR-WARMUP] ============================================`,\n  `  Workflow   : ${summary.workflow_name} (${summary.workflow_id})`,\n  `  Execution  : ${summary.execution_id}`,\n  `  Último nodo: ${summary.last_node}`,\n  `  Error      : ${summary.error_message}`,\n  summary.warmup_line_id ? `  Línea WU   : ${summary.warmup_line_id}` : null,\n  summary.instance_name  ? `  Instancia  : ${summary.instance_name}`  : null,\n  summary.phone_number   ? `  Teléfono   : ${summary.phone_number}`   : null,\n  summary.execution_url  ? `  URL        : ${summary.execution_url}`  : null,\n  `  Timestamp  : ${summary.occurred_at}`,\n  `============================================================`\n].filter(Boolean);\n\nconsole.error(lines.join('\\n'));\n\nreturn [{ json: summary }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-260, 0],
+      "id": "wferr-n02",
+      "name": "Code – Log & Summarize Error",
+      "notes": "Genera un resumen estructurado del error con fecha/hora ARG legible.\nIntenta extraer automáticamente warmup_line_id, instance_name y phone_number\ndel contexto del error (útil cuando el fallo ocurre en nodos HTTP del sub-workflow)."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": false, "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "has-webhook",
+              "leftValue": "={{ $env.ALERT_WEBHOOK_URL }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-40, 0],
+      "id": "wferr-n03",
+      "name": "IF – Alert Webhook Configurado",
+      "notes": "Envía alerta solo si ALERT_WEBHOOK_URL está configurada en las variables de entorno.\nSi no está definida, el flujo termina aquí (rama false queda vacía).\nCompatible con cualquier webhook HTTP: Slack, Discord, webhook propio, etc."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ALERT_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"text\": \"🚨 Error warmup | {{ $json.workflow_name }} | Nodo: {{ $json.last_node }} | {{ $json.error_message }}\",\n  \"workflow_name\":  \"{{ $json.workflow_name }}\",\n  \"execution_id\":   \"{{ $json.execution_id }}\",\n  \"last_node\":      \"{{ $json.last_node }}\",\n  \"error_message\":  \"{{ $json.error_message }}\",\n  \"warmup_line_id\": \"{{ $json.warmup_line_id }}\",\n  \"instance_name\":  \"{{ $json.instance_name }}\",\n  \"phone_number\":   \"{{ $json.phone_number }}\",\n  \"occurred_at\":    \"{{ $json.occurred_at }}\"\n}",
+        "options": { "timeout": 5000 }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "continueOnFail": true,
+      "position": [180, 0],
+      "id": "wferr-n04",
+      "name": "HTTP – Enviar Alerta de Error",
+      "notes": "continueOnFail=true: si el webhook falla, el error handler no genera un segundo error en cadena.\nEl cuerpo incluye todos los campos relevantes incluyendo los nuevos instance_name y phone_number."
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [[{ "node": "Code – Log & Summarize Error", "type": "main", "index": 0 }]]
+    },
+    "Code – Log & Summarize Error": {
+      "main": [[{ "node": "IF – Alert Webhook Configurado", "type": "main", "index": 0 }]]
+    },
+    "IF – Alert Webhook Configurado": {
+      "main": [
+        [{ "node": "HTTP – Enviar Alerta de Error", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [
+    { "name": "warmup" },
+    { "name": "error-handler" }
+  ]
+}

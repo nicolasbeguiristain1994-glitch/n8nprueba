@@ -1,0 +1,530 @@
+{
+  "name": "WF-010a-Process-Single-Line",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [-1820, 0],
+      "id": "wf010a-v2-n01",
+      "name": "Trigger – Recibe Job de Orchestrador",
+      "notes": "WF-010a-Process-Single-Line v2.2 | 2026-05-08 | Anti-Ban Inteligente\n\nFlujo: Health Score → Adaptive Config → [Typing opcional] → Send (3 intentos) → RPC log\n\nVariables de entorno requeridas:\n  SUPABASE_URL            → URL de la instancia Supabase\n  EVOLUTION_API_BASE_URL  → Base URL de Evolution API\n\nVariables opcionales:\n  ENABLE_TYPING_INDICATOR=true  → activa el typing indicator global\n  ALERT_WEBHOOK_URL             → webhook para alertas del Error Handler"
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/rpc/get_line_health_data",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"p_warmup_number_id\": \"{{ $json.warmup_number_id }}\"\n}",
+        "options": { "timeout": 8000 }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "IMPORT_AND_LINK_SUPABASE_SERVICE",
+          "name": "Supabase Service"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "continueOnFail": true,
+      "position": [-1600, 0],
+      "id": "wf010a-v2-n02",
+      "name": "HTTP – RPC get_line_health_data",
+      "notes": "continueOnFail=true: si la RPC falla (Supabase caído, timeout), el nodo siguiente\nasume stats vacías y asigna un score neutro de 70. El warmup no se detiene."
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * HEALTH SCORE ENGINE — Fórmula y Pesos\n * =======================================\n * El health score (0-100) mide el estado de salud de una línea y determina\n * si opera al máximo rendimiento (score alto) o de forma conservadora (score bajo).\n *\n * COMPONENTES — máximo posible entre corchetes:\n *\n *  1. success_rate_score  [0–40 pts]  ← mayor peso\n *     Tasa de envíos exitosos en los últimos 7 días.\n *     Fórmula: round((sent_7d / total_7d) * 40)\n *     Si total_7d < 10 (historial insuficiente) se asume 80% → 32 pts.\n *\n *  2. ban_penalty  [0–30 pts]\n *     Ausencia de bans en los últimos 7 días.\n *     Fórmula: max(0, 30 − banned_7d × 15)\n *     → 0 bans = 30 pts  |  1 ban = 15 pts  |  ≥2 bans = 0 pts\n *\n *  3. recency_score  [0–20 pts]\n *     Tiempo transcurrido desde el último error. Premia la recuperación.\n *     → Sin error previo o error > 24h  = 20 pts\n *     → Error hace 12–24h              = 12 pts\n *     → Error hace 6–12h               =  6 pts\n *     → Error hace 1–6h                =  2 pts\n *     → Error en la última hora        =  0 pts  (riesgo inmediato)\n *\n *  4. volume_score  [0–10 pts]\n *     Escala logarítmica de mensajes exitosos en 7 días.\n *     → > 30 enviados = 10 pts | > 15 = 8 pts | > 5 = 5 pts | > 0 = 2 pts\n *\n *  5. burst_penalty  [−15 a 0 pts]  ← RESTA al total\n *     Detecta ráfagas de errores en las últimas 6 horas (señal de riesgo inmediato).\n *     → errors_6h ≥ 3 → −15 pts  (frenar agresivamente)\n *     → errors_6h ≥ 1 →  −5 pts  (señal de precaución)\n *\n * SCORE FINAL = clamp(componentes + burst_penalty, 0, 100)\n *\n * OVERRIDES ADAPTATIVOS sobre la configuración de fase:\n *   score ≥ 85  → línea sana:      +20% daily_limit, −20% delay\n *   score ≤ 60  → línea en riesgo: −30% daily_limit, +40% delay\n *   60 < score < 85 → configuración de fase sin modificar (comportamiento neutral)\n *\n * CASO ESPECIAL — línea nueva (total_7d === 0):\n *   Score fijo = 70 (neutro-conservador), sin override.\n *   Evita penalizar una línea que aún no tiene historial real.\n */\nconst healthResult = $input.first().json;\nconst job          = $('Trigger – Recibe Job de Orchestrador').first().json;\n\nconst hasError = !healthResult || healthResult.error || healthResult.message;\nconst stats    = hasError ? {} : healthResult;\n\nconst sent7d   = Math.max(0, stats.sent_7d   || 0);\nconst failed7d = Math.max(0, stats.failed_7d  || 0);\nconst banned7d = Math.max(0, stats.banned_7d  || 0);\nconst errors6h = Math.max(0, stats.errors_6h  || 0);\nconst total7d  = Math.max(0, stats.total_7d   || 0);\n\nconst baseDailyLimit = job.phase_daily_limit || job.daily_limit || 20;\nconst baseMinDelay   = job.phase_min_delay   || 10;\nconst baseMaxDelay   = job.phase_max_delay   || 30;\n\nif (total7d === 0) {\n  return [{ json: {\n    ...job,\n    health_score:         70,\n    health_components:    { success_rate_score: 28, ban_penalty: 30, recency_score: 12, volume_score: 0, burst_penalty: 0 },\n    adaptive_daily_limit: baseDailyLimit,\n    adaptive_min_delay:   baseMinDelay,\n    adaptive_max_delay:   baseMaxDelay\n  } }];\n}\n\nconst successRatio     = total7d > 10 ? sent7d / total7d : 0.8;\nconst successRateScore = Math.round(Math.min(40, Math.max(0, successRatio * 40)));\nconst banPenalty       = Math.max(0, 30 - (banned7d * 15));\n\nlet recencyScore = 20;\nif (stats.last_error_at) {\n  const hoursSince = (Date.now() - new Date(stats.last_error_at).getTime()) / 3600000;\n  if      (hoursSince < 1)  recencyScore = 0;\n  else if (hoursSince < 6)  recencyScore = 2;\n  else if (hoursSince < 12) recencyScore = 6;\n  else if (hoursSince < 24) recencyScore = 12;\n  else                      recencyScore = 20;\n}\n\nlet volumeScore = 0;\nif      (sent7d > 30) volumeScore = 10;\nelse if (sent7d > 15) volumeScore =  8;\nelse if (sent7d > 5)  volumeScore =  5;\nelse if (sent7d > 0)  volumeScore =  2;\n\nconst burstPenalty = errors6h >= 3 ? -15 : (errors6h >= 1 ? -5 : 0);\nconst healthScore  = Math.min(100, Math.max(0, successRateScore + banPenalty + recencyScore + volumeScore + burstPenalty));\n\nconst healthComponents = { success_rate_score: successRateScore, ban_penalty: banPenalty, recency_score: recencyScore, volume_score: volumeScore, burst_penalty: burstPenalty };\n\nlet adaptiveDailyLimit = baseDailyLimit;\nlet adaptiveMinDelay   = baseMinDelay;\nlet adaptiveMaxDelay   = baseMaxDelay;\n\nif (healthScore >= 85) {\n  adaptiveDailyLimit = Math.round(adaptiveDailyLimit * 1.20);\n  adaptiveMinDelay   = Math.max(5, Math.round(adaptiveMinDelay * 0.80));\n  adaptiveMaxDelay   = Math.max(adaptiveMinDelay, Math.round(adaptiveMaxDelay * 0.80));\n} else if (healthScore <= 60) {\n  adaptiveDailyLimit = Math.max(1, Math.round(adaptiveDailyLimit * 0.70));\n  adaptiveMinDelay   = Math.round(adaptiveMinDelay * 1.40);\n  adaptiveMaxDelay   = Math.round(adaptiveMaxDelay * 1.40);\n}\n\nreturn [{ json: { ...job, health_score: healthScore, health_components: healthComponents, adaptive_daily_limit: adaptiveDailyLimit, adaptive_min_delay: adaptiveMinDelay, adaptive_max_delay: adaptiveMaxDelay } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1380, 0],
+      "id": "wf010a-v2-n03",
+      "name": "Code – Compute Health Score & Adaptive Config",
+      "notes": "Calcula el Health Score (0-100) a partir de 5 componentes del historial de 7 días.\nOverrides: score≥85 → +20% limit / −20% delay | score≤60 → −30% limit / +40% delay.\nLínea nueva (sin historial): score fijo=70, sin override."
+    },
+    {
+      "parameters": {
+        "jsCode": "/*\n * Valida los campos requeridos y calcula el delay final con jitter ±10%\n * aplicado sobre el rango adaptativo generado por el Health Score.\n */\nconst job = $input.first().json;\n\nconst required = ['warmup_number_id', 'instance_name', 'recipient_phone', 'message_text', 'contact_id'];\nconst missing  = required.filter(f => !job[f]);\nif (missing.length) throw new Error(`Job inválido — faltan campos: ${missing.join(', ')}`);\n\nconst minDelay = Math.max(5, job.adaptive_min_delay || job.phase_min_delay || 10);\nconst maxDelay = Math.max(minDelay, job.adaptive_max_delay || job.phase_max_delay || 30);\nconst base     = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;\nconst jitter   = Math.round(base * 0.10 * (Math.random() * 2 - 1));\nconst delaySec = Math.min(600, Math.max(5, base + jitter));\n\nreturn [{ json: { ...job, delay_sec: delaySec } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-1160, 0],
+      "id": "wf010a-v2-n04",
+      "name": "Code – Validate Job & Apply Adaptive Delay"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-main-payload",
+              "name": "mainPayload",
+              "value": "={{ $json }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {
+          "includeOtherFields": true
+        }
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-940, 0],
+      "id": "wf010a-v2-n05",
+      "name": "Set – Main Payload",
+      "notes": "Punto de referencia estable para todos los nodos posteriores.\nConsolida job + health score + adaptive config en mainPayload.\nNecesario porque $json cambia al cruzar HTTP calls (typing, reintentos).\nReferencia: $('Set – Main Payload').first().json.mainPayload.campo"
+    },
+    {
+      "parameters": {
+        "amount": "={{ $json.delay_sec }}",
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [-720, 0],
+      "id": "wf010a-v2-n06",
+      "name": "Wait – Human-like Delay",
+      "webhookId": "wf010a-v2-human-delay-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "env-typing",
+              "leftValue": "={{ $env.ENABLE_TYPING_INDICATOR }}",
+              "rightValue": "true",
+              "operator": { "type": "string", "operation": "equals" }
+            },
+            {
+              "id": "line-typing",
+              "leftValue": "={{ $json.mainPayload.supports_typing }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals", "rightType": "boolean" }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [-500, 0],
+      "id": "wf010a-v2-n07",
+      "name": "IF – ¿Typing Activado?",
+      "notes": "El typing indicator es condicional porque no todas las instancias Evolution API lo soportan\ny en redes lentas puede generar timeouts que retrasen el envío real.\n\nActivar con:\n  ENABLE_TYPING_INDICATOR=true  (variable de entorno — alcance global)\n  supports_typing=true           (campo en warmup_numbers — control por línea)\n\ntrue  → envía presencia 'composing' + espera 2s → mensaje\nfalse → envía mensaje directamente"
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "POST",
+        "url": "={{ $env.EVOLUTION_API_BASE_URL }}/chat/sendPresence/{{ $('Set – Main Payload').first().json.mainPayload.instance_name }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{ $('Set – Main Payload').first().json.mainPayload.recipient_phone }}\",\n  \"options\": {\n    \"presence\": \"composing\",\n    \"delay\": 1500\n  }\n}",
+        "options": { "timeout": 5000 }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "IMPORT_AND_LINK_EVOLUTION_API",
+          "name": "Evolution API"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "continueOnFail": true,
+      "position": [-280, -220],
+      "id": "wf010a-v2-n08",
+      "name": "HTTP – Evolution Typing Indicator"
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [-60, -220],
+      "id": "wf010a-v2-n09",
+      "name": "Wait – Typing Simulation 2s",
+      "webhookId": "wf010a-v2-typing-sim-webhook"
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "POST",
+        "url": "={{ $env.EVOLUTION_API_BASE_URL }}/message/sendText/{{ $('Set – Main Payload').first().json.mainPayload.instance_name }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{ $('Set – Main Payload').first().json.mainPayload.recipient_phone }}\",\n  \"text\":   \"{{ $('Set – Main Payload').first().json.mainPayload.message_text }}\"\n}",
+        "options": { "timeout": 15000 }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "IMPORT_AND_LINK_EVOLUTION_API",
+          "name": "Evolution API"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "continueOnFail": true,
+      "position": [160, 0],
+      "id": "wf010a-v2-n10",
+      "name": "HTTP – Evolution Send (Attempt 1)"
+    },
+    {
+      "parameters": {
+        "jsCode": "/*\n * Clasifica el resultado de Evolution API (intento 1/3).\n *\n * Tipos de error y comportamiento:\n *   permanent_ban   → 403/401 o keywords de ban       — NO reintentar, marcar como banned\n *   rate_limited    → 429 o \"rate limit\" en body       — SÍ reintentar (backoff 2s)\n *   temporary_block → 5xx o \"unavailable\" en body      — NO reintentar (fallo de infra)\n *   network_error   → timeout, status 0, sin respuesta — SÍ reintentar (backoff 2s)\n *\n * Regla: solo reintentan errores verdaderamente transitorios (network_error, rate_limited).\n * temporary_block no reintenta para no agravar el estado del servidor destino.\n */\nconst resp    = $input.first().json;\nconst payload = $('Set – Main Payload').first().json.mainPayload;\n\nconst status  = resp.statusCode || resp.status || 0;\nconst bodyStr = JSON.stringify(resp.body ?? resp).toLowerCase();\nconst success = status >= 200 && status <= 299;\n\nlet errorType = null;\nif (!success) {\n  const isBanKw = ['banned','blocked','unauthorized','not connected','forbidden','instance not found'].some(k => bodyStr.includes(k));\n  if      (status === 403 || status === 401 || isBanKw)                                        errorType = 'permanent_ban';\n  else if (status === 429 || bodyStr.includes('rate limit') || bodyStr.includes('too many'))   errorType = 'rate_limited';\n  else if (status >= 500  || bodyStr.includes('unavailable') || bodyStr.includes('service error')) errorType = 'temporary_block';\n  else                                                                                           errorType = 'network_error';\n}\n\nreturn [{ json: { ...payload, send_success: success, is_banned: errorType === 'permanent_ban', error_type: errorType, needs_retry: !success && (errorType === 'network_error' || errorType === 'rate_limited'), status_code: status, attempt: 1 } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [380, 0],
+      "id": "wf010a-v2-n11",
+      "name": "Code – Classify Result (Attempt 1)",
+      "notes": "permanent_ban / rate_limited / temporary_block / network_error\nReintenta: network_error y rate_limited → backoff 2s\nNo reintenta: permanent_ban (marcado como banned en RPC) y temporary_block (fallo de infra)"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "no-retry-1",
+              "leftValue": "={{ $json.needs_retry }}",
+              "rightValue": false,
+              "operator": { "type": "boolean", "operation": "equals", "rightType": "boolean" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [600, 0],
+      "id": "wf010a-v2-n12",
+      "name": "IF – Done? (Attempt 1)"
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [600, 220],
+      "id": "wf010a-v2-n13",
+      "name": "Wait – Backoff 2s (Attempt 2)",
+      "webhookId": "wf010a-v2-backoff-2s-webhook"
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "POST",
+        "url": "={{ $env.EVOLUTION_API_BASE_URL }}/message/sendText/{{ $('Set – Main Payload').first().json.mainPayload.instance_name }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{ $('Set – Main Payload').first().json.mainPayload.recipient_phone }}\",\n  \"text\":   \"{{ $('Set – Main Payload').first().json.mainPayload.message_text }}\"\n}",
+        "options": { "timeout": 15000 }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "IMPORT_AND_LINK_EVOLUTION_API",
+          "name": "Evolution API"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "continueOnFail": true,
+      "position": [820, 220],
+      "id": "wf010a-v2-n14",
+      "name": "HTTP – Evolution Send (Attempt 2)"
+    },
+    {
+      "parameters": {
+        "jsCode": "/*\n * Clasifica el resultado de Evolution API (intento 2/3).\n * Si falla con error transitorio → reintenta con backoff 4s (intento final).\n * Misma lógica de clasificación que intento 1.\n */\nconst resp    = $input.first().json;\nconst payload = $('Set – Main Payload').first().json.mainPayload;\n\nconst status  = resp.statusCode || resp.status || 0;\nconst bodyStr = JSON.stringify(resp.body ?? resp).toLowerCase();\nconst success = status >= 200 && status <= 299;\n\nlet errorType = null;\nif (!success) {\n  const isBanKw = ['banned','blocked','unauthorized','not connected','forbidden','instance not found'].some(k => bodyStr.includes(k));\n  if      (status === 403 || status === 401 || isBanKw)                                        errorType = 'permanent_ban';\n  else if (status === 429 || bodyStr.includes('rate limit') || bodyStr.includes('too many'))   errorType = 'rate_limited';\n  else if (status >= 500  || bodyStr.includes('unavailable') || bodyStr.includes('service error')) errorType = 'temporary_block';\n  else                                                                                           errorType = 'network_error';\n}\n\nreturn [{ json: { ...payload, send_success: success, is_banned: errorType === 'permanent_ban', error_type: errorType, needs_retry: !success && (errorType === 'network_error' || errorType === 'rate_limited'), status_code: status, attempt: 2 } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 220],
+      "id": "wf010a-v2-n15",
+      "name": "Code – Classify Result (Attempt 2)",
+      "notes": "permanent_ban / rate_limited / temporary_block / network_error\nReintenta: network_error y rate_limited → backoff 4s (último intento)\nNo reintenta: permanent_ban y temporary_block"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "no-retry-2",
+              "leftValue": "={{ $json.needs_retry }}",
+              "rightValue": false,
+              "operator": { "type": "boolean", "operation": "equals", "rightType": "boolean" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1260, 220],
+      "id": "wf010a-v2-n16",
+      "name": "IF – Done? (Attempt 2)"
+    },
+    {
+      "parameters": {
+        "amount": 4,
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1260, 440],
+      "id": "wf010a-v2-n17",
+      "name": "Wait – Backoff 4s (Attempt 3)",
+      "webhookId": "wf010a-v2-backoff-4s-webhook"
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "POST",
+        "url": "={{ $env.EVOLUTION_API_BASE_URL }}/message/sendText/{{ $('Set – Main Payload').first().json.mainPayload.instance_name }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{ $('Set – Main Payload').first().json.mainPayload.recipient_phone }}\",\n  \"text\":   \"{{ $('Set – Main Payload').first().json.mainPayload.message_text }}\"\n}",
+        "options": { "timeout": 15000 }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "IMPORT_AND_LINK_EVOLUTION_API",
+          "name": "Evolution API"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "continueOnFail": true,
+      "position": [1480, 440],
+      "id": "wf010a-v2-n18",
+      "name": "HTTP – Evolution Send (Attempt 3 – Final)"
+    },
+    {
+      "parameters": {
+        "jsCode": "/*\n * Clasifica el resultado del último intento (3/3).\n * needs_retry = false SIEMPRE — el flujo avanza al registro sin importar el resultado.\n * Misma lógica de clasificación que intentos anteriores.\n */\nconst resp    = $input.first().json;\nconst payload = $('Set – Main Payload').first().json.mainPayload;\n\nconst status  = resp.statusCode || resp.status || 0;\nconst bodyStr = JSON.stringify(resp.body ?? resp).toLowerCase();\nconst success = status >= 200 && status <= 299;\n\nlet errorType = null;\nif (!success) {\n  const isBanKw = ['banned','blocked','unauthorized','not connected','forbidden','instance not found'].some(k => bodyStr.includes(k));\n  if      (status === 403 || status === 401 || isBanKw)                                        errorType = 'permanent_ban';\n  else if (status === 429 || bodyStr.includes('rate limit') || bodyStr.includes('too many'))   errorType = 'rate_limited';\n  else if (status >= 500  || bodyStr.includes('unavailable') || bodyStr.includes('service error')) errorType = 'temporary_block';\n  else                                                                                           errorType = 'network_error';\n}\n\nreturn [{ json: { ...payload, send_success: success, is_banned: errorType === 'permanent_ban', error_type: errorType, needs_retry: false, status_code: status, attempt: 3 } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1700, 440],
+      "id": "wf010a-v2-n19",
+      "name": "Code – Classify Result (Attempt 3 – Final)",
+      "notes": "Último intento. needs_retry=false siempre → el resultado se registra sin más reintentos.\nSi sigue siendo network_error/rate_limited, queda registrado como 'failed' con su error_type."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "out-success",
+              "name": "success",
+              "value": "={{ $json.send_success }}",
+              "type": "boolean"
+            },
+            {
+              "id": "out-message-sent",
+              "name": "message_sent",
+              "value": "={{ $json.send_success }}",
+              "type": "boolean"
+            },
+            {
+              "id": "out-health-score",
+              "name": "health_score",
+              "value": "={{ $json.health_score }}",
+              "type": "number"
+            },
+            {
+              "id": "out-error-type",
+              "name": "error_type",
+              "value": "={{ $json.error_type ?? 'none' }}",
+              "type": "string"
+            },
+            {
+              "id": "out-attempt",
+              "name": "attempt",
+              "value": "={{ $json.attempt }}",
+              "type": "number"
+            }
+          ]
+        },
+        "options": {
+          "includeOtherFields": true
+        }
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1700, 0],
+      "id": "wf010a-v2-n20",
+      "name": "Set – Final Output",
+      "notes": "Salida estandarizada para facilitar debugging y futuras integraciones.\nExpone los campos clave del resultado de la ejecución:\n  success / message_sent → ¿se envió el mensaje?\n  health_score           → score calculado para esta línea\n  error_type             → clasificación del error ('none' si exitoso)\n  attempt                → en qué intento se resolvió (1, 2 o 3)\nTodos los campos originales se preservan con includeOtherFields."
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/rpc/warmup_record_activity",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  p_warmup_number_id:  $json.warmup_number_id,\n  p_contact_id:        $json.contact_id,\n  p_phone_number:      $json.phone_number,\n  p_recipient:         $json.recipient_phone,\n  p_message_type:      $json.message_type || 'text',\n  p_message_preview:   ($json.message_text || '').substring(0, 180),\n  p_warmup_day:        $json.current_day,\n  p_success:           $json.send_success,\n  p_is_banned:         $json.is_banned || false,\n  p_health_score:      $json.health_score,\n  p_health_components: $json.health_components,\n  p_error_type:        $json.error_type,\n  p_daily_quota:       $json.adaptive_daily_limit || 0\n}) }}",
+        "options": {
+          "timeout": 10000,
+          "retryOnFail": true,
+          "maxTries": 2,
+          "waitBetweenTries": 3000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "IMPORT_AND_LINK_SUPABASE_SERVICE",
+          "name": "Supabase Service"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1920, 0],
+      "id": "wf010a-v2-n21",
+      "name": "HTTP – RPC warmup_record_activity",
+      "notes": "Consolida en 1 transacción atómica: INSERT log + UPDATE warmup_numbers (health_score) +\nUPDATE warmup_contacts + INSERT warmup_health_history (snapshot del score).\nRetry interno: 2 intentos con 3s entre ellos si Supabase falla."
+    }
+  ],
+  "connections": {
+    "Trigger – Recibe Job de Orchestrador": {
+      "main": [[{ "node": "HTTP – RPC get_line_health_data", "type": "main", "index": 0 }]]
+    },
+    "HTTP – RPC get_line_health_data": {
+      "main": [[{ "node": "Code – Compute Health Score & Adaptive Config", "type": "main", "index": 0 }]]
+    },
+    "Code – Compute Health Score & Adaptive Config": {
+      "main": [[{ "node": "Code – Validate Job & Apply Adaptive Delay", "type": "main", "index": 0 }]]
+    },
+    "Code – Validate Job & Apply Adaptive Delay": {
+      "main": [[{ "node": "Set – Main Payload", "type": "main", "index": 0 }]]
+    },
+    "Set – Main Payload": {
+      "main": [[{ "node": "Wait – Human-like Delay", "type": "main", "index": 0 }]]
+    },
+    "Wait – Human-like Delay": {
+      "main": [[{ "node": "IF – ¿Typing Activado?", "type": "main", "index": 0 }]]
+    },
+    "IF – ¿Typing Activado?": {
+      "main": [
+        [{ "node": "HTTP – Evolution Typing Indicator",  "type": "main", "index": 0 }],
+        [{ "node": "HTTP – Evolution Send (Attempt 1)", "type": "main", "index": 0 }]
+      ]
+    },
+    "HTTP – Evolution Typing Indicator": {
+      "main": [[{ "node": "Wait – Typing Simulation 2s", "type": "main", "index": 0 }]]
+    },
+    "Wait – Typing Simulation 2s": {
+      "main": [[{ "node": "HTTP – Evolution Send (Attempt 1)", "type": "main", "index": 0 }]]
+    },
+    "HTTP – Evolution Send (Attempt 1)": {
+      "main": [[{ "node": "Code – Classify Result (Attempt 1)", "type": "main", "index": 0 }]]
+    },
+    "Code – Classify Result (Attempt 1)": {
+      "main": [[{ "node": "IF – Done? (Attempt 1)", "type": "main", "index": 0 }]]
+    },
+    "IF – Done? (Attempt 1)": {
+      "main": [
+        [{ "node": "Set – Final Output",              "type": "main", "index": 0 }],
+        [{ "node": "Wait – Backoff 2s (Attempt 2)",   "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait – Backoff 2s (Attempt 2)": {
+      "main": [[{ "node": "HTTP – Evolution Send (Attempt 2)", "type": "main", "index": 0 }]]
+    },
+    "HTTP – Evolution Send (Attempt 2)": {
+      "main": [[{ "node": "Code – Classify Result (Attempt 2)", "type": "main", "index": 0 }]]
+    },
+    "Code – Classify Result (Attempt 2)": {
+      "main": [[{ "node": "IF – Done? (Attempt 2)", "type": "main", "index": 0 }]]
+    },
+    "IF – Done? (Attempt 2)": {
+      "main": [
+        [{ "node": "Set – Final Output",              "type": "main", "index": 0 }],
+        [{ "node": "Wait – Backoff 4s (Attempt 3)",   "type": "main", "index": 0 }]
+      ]
+    },
+    "Wait – Backoff 4s (Attempt 3)": {
+      "main": [[{ "node": "HTTP – Evolution Send (Attempt 3 – Final)", "type": "main", "index": 0 }]]
+    },
+    "HTTP – Evolution Send (Attempt 3 – Final)": {
+      "main": [[{ "node": "Code – Classify Result (Attempt 3 – Final)", "type": "main", "index": 0 }]]
+    },
+    "Code – Classify Result (Attempt 3 – Final)": {
+      "main": [[{ "node": "Set – Final Output", "type": "main", "index": 0 }]]
+    },
+    "Set – Final Output": {
+      "main": [[{ "node": "HTTP – RPC warmup_record_activity", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromAnyOwner",
+    "maxConcurrency": 8,
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "pinData": {},
+  "tags": [
+    { "name": "warmup" },
+    { "name": "sub-workflow" },
+    { "name": "anti-ban-v2" }
+  ]
+}
