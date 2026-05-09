@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Search, Upload, RefreshCw, List, CheckSquare, X, Users, UserPlus,
-  Trash2, Download, DatabaseZap, Pencil, ChevronDown, Filter,
+  Trash2, Download, DatabaseZap, Pencil, ChevronDown, Filter, Info,
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
@@ -706,6 +706,11 @@ export default function Contacts() {
       cell: ({ row }) => (
         <DataTableRowActions>
           <DataTableActionButton
+            onClick={() => openViewContact(row.original)}
+            icon={Info}
+            label="Más información"
+          />
+          <DataTableActionButton
             onClick={() => openEdit(row.original)}
             icon={Pencil}
             label="Editar contacto"
@@ -995,7 +1000,6 @@ export default function Contacts() {
         getRowId={(row) => row.id}
         rowSelection={rowSelection}
         onRowSelectionChange={setRowSelection}
-        onRowClick={c => openViewContact(c)}
         manualPagination
         pageCount={Math.ceil(total / pagination.pageSize)}
         pagination={pagination}
