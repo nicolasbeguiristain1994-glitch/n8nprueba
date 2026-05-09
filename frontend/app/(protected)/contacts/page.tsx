@@ -152,6 +152,16 @@ export default function Contacts() {
 
   // ── View contact modal ────────────────────────────────────────────────────
   const [viewContact, setViewContact]   = useState<Contact | null>(null)
+  const [casinoStats, setCasinoStats]   = useState<{ monto_cargas_mes: number; monto_retiros_mes: number; last_deposit_at: string | null } | null>(null)
+
+  const openViewContact = (c: Contact) => {
+    setViewContact(c)
+    setCasinoStats(null)
+    fetch(`/api/contacts/${c.id}/casino-stats`)
+      .then(r => r.json())
+      .then(d => setCasinoStats(d))
+      .catch(() => {})
+  }
 
   // ── Edit contact modal ────────────────────────────────────────────────────
   const [editContact, setEditContact]   = useState<Contact | null>(null)
@@ -985,7 +995,7 @@ export default function Contacts() {
         getRowId={(row) => row.id}
         rowSelection={rowSelection}
         onRowSelectionChange={setRowSelection}
-        onRowClick={c => setViewContact(c)}
+        onRowClick={c => openViewContact(c)}
         manualPagination
         pageCount={Math.ceil(total / pagination.pageSize)}
         pagination={pagination}
@@ -1249,28 +1259,32 @@ export default function Contacts() {
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Historial del jugador</p>
                 <div className="grid grid-cols-3 gap-3 text-center">
                   <div>
-                    <p className="text-xl font-bold text-gray-900">{viewContact.total_deposits ?? 0}</p>
-                    <p className="text-[10px] text-gray-500">Cargas (mes)</p>
+                    <p className="text-xl font-bold text-gray-900">
+                      {casinoStats
+                        ? `$${casinoStats.monto_cargas_mes.toLocaleString('es-AR')}`
+                        : <span className="text-gray-300 text-sm">…</span>}
+                    </p>
+                    <p className="text-[10px] text-gray-500">Cargas (30d)</p>
                   </div>
                   <div>
-                    <p className="text-xl font-bold text-gray-900">{viewContact.total_withdrawals ?? 0}</p>
-                    <p className="text-[10px] text-gray-500">Retiros (mes)</p>
+                    <p className="text-xl font-bold text-gray-900">
+                      {casinoStats
+                        ? `$${casinoStats.monto_retiros_mes.toLocaleString('es-AR')}`
+                        : <span className="text-gray-300 text-sm">…</span>}
+                    </p>
+                    <p className="text-[10px] text-gray-500">Retiros (30d)</p>
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-gray-700">
-                      {viewContact.last_deposit_at
-                        ? new Date(viewContact.last_deposit_at).toLocaleDateString('es-AR')
-                        : '—'}
+                      {casinoStats
+                        ? (casinoStats.last_deposit_at
+                            ? new Date(casinoStats.last_deposit_at).toLocaleDateString('es-AR')
+                            : '—')
+                        : <span className="text-gray-300">…</span>}
                     </p>
                     <p className="text-[10px] text-gray-500">Última carga</p>
                   </div>
                 </div>
-                {viewContact.total_deposits === 1 && viewContact.last_deposit_at &&
-                  (Date.now() - new Date(viewContact.last_deposit_at).getTime()) > 10 * 24 * 60 * 60 * 1000 && (
-                  <p className="mt-2 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 text-center">
-                    Solo 1 depósito — más de 10 días desde la primera carga
-                  </p>
-                )}
               </div>
               <Button variant="outline" size="sm" className="w-full" onClick={() => { setViewContact(null); openEdit(viewContact) }}>
                 <Pencil size={13} className="mr-1.5" /> Editar contacto
