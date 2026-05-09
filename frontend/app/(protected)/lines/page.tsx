@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, LogOut, Plus, RotateCcw } from 'lucide-react'
+import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, LogOut, Plus, RotateCcw, Pencil } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
@@ -61,6 +61,49 @@ export default function Lines() {
   const [unlinkTarget, setUnlinkTarget]   = useState<Line | null>(null)
   const [unlinkLoading, setUnlinkLoading] = useState(false)
   const [unlinkError, setUnlinkError]     = useState<string | null>(null)
+
+  // Edit line modal
+  const [editTarget, setEditTarget]         = useState<Line | null>(null)
+  const [editForm, setEditForm]             = useState({ display_name: '', msg_per_day: '', msg_per_hour: '', priority: '' })
+  const [editLoading, setEditLoading]       = useState(false)
+  const [editError, setEditError]           = useState<string | null>(null)
+
+  const openEdit = (l: Line) => {
+    setEditTarget(l)
+    setEditForm({
+      display_name: l.display_name || '',
+      msg_per_day:  String(l.msg_per_day),
+      msg_per_hour: String(l.msg_per_hour),
+      priority:     String(l.priority),
+    })
+    setEditError(null)
+  }
+
+  const saveEdit = async () => {
+    if (!editTarget) return
+    setEditLoading(true); setEditError(null)
+    try {
+      const res = await fetch('/api/lines', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id:           editTarget.id,
+          display_name: editForm.display_name,
+          msg_per_day:  Number(editForm.msg_per_day),
+          msg_per_hour: Number(editForm.msg_per_hour),
+          priority:     Number(editForm.priority),
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setEditError(data.error || 'Error al guardar'); return }
+      setEditTarget(null)
+      load()
+    } catch {
+      setEditError('Error de conexión')
+    } finally {
+      setEditLoading(false)
+    }
+  }
 
   // Add existing line modal
   const [addOpen, setAddOpen]               = useState(false)
@@ -397,7 +440,17 @@ export default function Lines() {
                               ? <Wifi size={14} className="text-green-500" />
                               : <WifiOff size={14} className="text-gray-300" />
                             }
-                            <span className="font-medium">{l.display_name || l.line_key}</span>
+                            {isAdmin
+                              ? <button
+                                  onClick={() => openEdit(l)}
+                                  className="font-medium hover:text-indigo-600 flex items-center gap-1 group"
+                                  title="Editar línea"
+                                >
+                                  {l.display_name || l.line_key}
+                                  <Pencil size={11} className="text-gray-300 group-hover:text-indigo-400 transition-colors" />
+                                </button>
+                              : <span className="font-medium">{l.display_name || l.line_key}</span>
+                            }
                           </div>
                         </td>
                         <td className="px-4 py-3 font-mono text-xs text-gray-500">{l.evolution_instance}</td>
@@ -491,6 +544,68 @@ export default function Lines() {
           </table>
         </CardContent>
       </Card>
+
+      {/* ── Modal editar línea ── */}
+      <Dialog open={!!editTarget} onOpenChange={open => { if (!open) { setEditTarget(null); setEditError(null) } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil size={16} /> Editar línea
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-gray-700">Nombre para mostrar</label>
+              <Input
+                value={editForm.display_name}
+                onChange={e => setEditForm(f => ({ ...f, display_name: e.target.value }))}
+                onKeyDown={e => e.key === 'Enter' && saveEdit()}
+                placeholder="ej: Línea 01"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-gray-700">Límite diario</label>
+                <Input
+                  type="number" min={1}
+                  value={editForm.msg_per_day}
+                  onChange={e => setEditForm(f => ({ ...f, msg_per_day: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-gray-700">Límite por hora</label>
+                <Input
+                  type="number" min={1}
+                  value={editForm.msg_per_hour}
+                  onChange={e => setEditForm(f => ({ ...f, msg_per_hour: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-gray-700">Prioridad <span className="text-gray-400 font-normal">(menor número = mayor prioridad)</span></label>
+              <Input
+                type="number"
+                value={editForm.priority}
+                onChange={e => setEditForm(f => ({ ...f, priority: e.target.value }))}
+              />
+            </div>
+            {editError && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{editError}</p>
+            )}
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" disabled={editLoading}
+                onClick={() => { setEditTarget(null); setEditError(null) }}>
+                Cancelar
+              </Button>
+              <Button className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white" disabled={editLoading || !editForm.display_name.trim()}
+                onClick={saveEdit}>
+                {editLoading ? <Loader2 size={14} className="animate-spin mr-1" /> : null}
+                Guardar
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Modal desvincular línea ── */}
       <Dialog open={!!unlinkTarget} onOpenChange={open => { if (!open) { setUnlinkTarget(null); setUnlinkError(null) } }}>

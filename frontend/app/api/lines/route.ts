@@ -27,31 +27,69 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// PATCH /api/lines — toggle sending_enabled for a line
-// Body: { id: string; sending_enabled: boolean }
+// PATCH /api/lines — update a line's fields
+// Body: { id: string; sending_enabled?: boolean; display_name?: string; msg_per_day?: number; msg_per_hour?: number; priority?: number }
 export async function PATCH(req: NextRequest) {
   const err = await checkPermission(req, 'lines', 'update')
   if (err) return err
 
-  let body: { id?: string; sending_enabled?: boolean }
+  let body: {
+    id?: string
+    sending_enabled?: boolean
+    display_name?: string
+    msg_per_day?: number
+    msg_per_hour?: number
+    priority?: number
+  }
   try { body = await req.json() } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { id, sending_enabled } = body
+  const { id, sending_enabled, display_name, msg_per_day, msg_per_hour, priority } = body
   if (!id || !isUUID(id))
     return NextResponse.json({ error: 'id is required and must be a valid UUID' }, { status: 400 })
-  if (typeof sending_enabled !== 'boolean')
-    return NextResponse.json({ error: 'sending_enabled must be a boolean' }, { status: 400 })
 
+  // Build dynamic SET clause
+  const sets: string[] = ['updated_at = NOW()']
+  const params: unknown[] = []
+
+  if (typeof sending_enabled === 'boolean') {
+    params.push(sending_enabled); sets.push(`sending_enabled = $${params.length}`)
+  }
+  if (display_name !== undefined) {
+    const trimmed = String(display_name).trim().slice(0, 100)
+    if (!trimmed) return NextResponse.json({ error: 'display_name no puede estar vacío' }, { status: 400 })
+    params.push(trimmed); sets.push(`display_name = $${params.length}`)
+  }
+  if (msg_per_day !== undefined) {
+    const v = Number(msg_per_day)
+    if (!Number.isFinite(v) || v < 1) return NextResponse.json({ error: 'msg_per_day debe ser >= 1' }, { status: 400 })
+    params.push(v); sets.push(`msg_per_day = $${params.length}`)
+  }
+  if (msg_per_hour !== undefined) {
+    const v = Number(msg_per_hour)
+    if (!Number.isFinite(v) || v < 1) return NextResponse.json({ error: 'msg_per_hour debe ser >= 1' }, { status: 400 })
+    params.push(v); sets.push(`msg_per_hour = $${params.length}`)
+  }
+  if (priority !== undefined) {
+    const v = Number(priority)
+    if (!Number.isFinite(v)) return NextResponse.json({ error: 'priority debe ser un número' }, { status: 400 })
+    params.push(v); sets.push(`priority = $${params.length}`)
+  }
+
+  if (params.length === 0)
+    return NextResponse.json({ error: 'No hay campos para actualizar' }, { status: 400 })
+
+  params.push(id)
   try {
     const rows = await query<{ id: string }>(
-      `UPDATE whatsapp_lines SET sending_enabled = $1, updated_at = NOW()
-       WHERE id = $2 RETURNING id`,
-      [sending_enabled, id]
+      `UPDATE whatsapp_lines SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id`,
+      params
     )
     if (rows.length === 0)
       return NextResponse.json({ error: 'Line not found' }, { status: 404 })
+    void audit({ req, action: 'update', resource: 'lines', resource_id: id,
+      metadata: { display_name, msg_per_day, msg_per_hour, priority, sending_enabled } })
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[/api/lines PATCH]', e instanceof Error ? e.message : e)

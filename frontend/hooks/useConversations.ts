@@ -79,12 +79,13 @@ export function useConversations() {
   const sendReply = async () => {
     if (!selected || !reply.trim()) return
     setSending(true); setSendError(null)
+    const msgText = reply
     let res: Response
     try {
       res = await fetch('/api/send', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ phones: [selected], message: reply }),
+        body:    JSON.stringify({ phones: [selected], message: msgText }),
       })
     } catch {
       setSending(false); setSendError('Error de red al enviar'); return
@@ -95,6 +96,13 @@ export function useConversations() {
     const result = data.results?.[0]
     if (result?.status === 'error') { setSendError(result.error || 'El envío falló en WhatsApp'); return }
     setReply('')
+    // Actualización optimista: subir la conv al tope inmediatamente sin esperar SSE
+    const now = new Date().toISOString()
+    setConvs(prev => prev.map(c =>
+      c.phone_number === selected
+        ? { ...c, last_message: msgText, last_direction: 'outbound', last_at: now }
+        : c
+    ))
     openConv(selected)
   }
 
@@ -112,9 +120,11 @@ export function useConversations() {
     if (dateFrom)    list = list.filter(c => c.last_at >= dateFrom)
     if (dateTo)      list = list.filter(c => c.last_at <= dateTo + 'T23:59:59.999Z')
     if (followUpOnly) list = list.filter(c => !!c.has_follow_up)
+    // Ordenar siempre por último mensaje más reciente (comportamiento tipo WhatsApp).
+    // priorityScore como desempate secundario para timestamps idénticos.
     return [...list].sort((a, b) => {
-      const delta = priorityScore(b) - priorityScore(a)
-      return delta !== 0 ? delta : new Date(b.last_at).getTime() - new Date(a.last_at).getTime()
+      const timeDelta = new Date(b.last_at).getTime() - new Date(a.last_at).getTime()
+      return timeDelta !== 0 ? timeDelta : priorityScore(b) - priorityScore(a)
     })
   }, [convs, filter, search, dateFrom, dateTo, followUpOnly])
 
