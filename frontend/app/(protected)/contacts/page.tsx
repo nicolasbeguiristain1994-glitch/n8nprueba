@@ -150,6 +150,9 @@ export default function Contacts() {
   const [criteriaActividad, setCriteriaActividad]   = useState('')
   const [criteriaAntiguedad, setCriteriaAntiguedad] = useState('')
 
+  // ── View contact modal ────────────────────────────────────────────────────
+  const [viewContact, setViewContact]   = useState<Contact | null>(null)
+
   // ── Edit contact modal ────────────────────────────────────────────────────
   const [editContact, setEditContact]   = useState<Contact | null>(null)
   const [editFirstName, setEditFirstName] = useState('')
@@ -982,6 +985,7 @@ export default function Contacts() {
         getRowId={(row) => row.id}
         rowSelection={rowSelection}
         onRowSelectionChange={setRowSelection}
+        onRowClick={c => setViewContact(c)}
         manualPagination
         pageCount={Math.ceil(total / pagination.pageSize)}
         pagination={pagination}
@@ -1223,6 +1227,59 @@ export default function Contacts() {
           </div>
         </DialogContent>
       </Dialog>
+      {/* ── Modal ver contacto ── */}
+      <Dialog open={!!viewContact} onOpenChange={v => { if (!v) setViewContact(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base">
+              {viewContact ? `${viewContact.first_name || ''} ${viewContact.last_name || ''}`.trim() || viewContact.phone_number : ''}
+            </DialogTitle>
+          </DialogHeader>
+          {viewContact && (
+            <div className="space-y-3">
+              <p className="font-mono text-sm text-muted-foreground">{viewContact.phone_number}</p>
+              <div className="flex flex-wrap gap-1.5">
+                {viewContact.panel    && <span className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full">{viewContact.panel}</span>}
+                {viewContact.segment  && <span className={`text-xs px-2 py-0.5 rounded-full ${SEGMENT_STYLE[viewContact.segment] ?? 'bg-gray-100 text-gray-600'}`}>{NIVEL_LABEL[viewContact.segment] ?? viewContact.segment}</span>}
+                {viewContact.gaming   && <span className={`text-xs px-2 py-0.5 rounded-full ${GAMING_STYLE[viewContact.gaming] ?? 'bg-gray-100 text-gray-600'}`}>{viewContact.gaming}</span>}
+                {viewContact.actividad && <span className={`text-xs px-2 py-0.5 rounded-full ${ACTIVIDAD_STYLE[viewContact.actividad] ?? 'bg-gray-100 text-gray-600'}`}>{viewContact.actividad}</span>}
+                {viewContact.antiguedad && <span className={`text-xs px-2 py-0.5 rounded-full ${ANTIGUEDAD_STYLE[viewContact.antiguedad] ?? 'bg-gray-100 text-gray-600'}`}>{viewContact.antiguedad}</span>}
+              </div>
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Historial del jugador</p>
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div>
+                    <p className="text-xl font-bold text-gray-900">{viewContact.total_deposits ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">Depósitos</p>
+                  </div>
+                  <div>
+                    <p className="text-xl font-bold text-gray-900">{viewContact.total_withdrawals ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">Retiros</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-700">
+                      {viewContact.last_deposit_at
+                        ? new Date(viewContact.last_deposit_at).toLocaleDateString('es-AR')
+                        : '—'}
+                    </p>
+                    <p className="text-[10px] text-gray-500">Última carga</p>
+                  </div>
+                </div>
+                {viewContact.total_deposits === 1 && viewContact.last_deposit_at &&
+                  (Date.now() - new Date(viewContact.last_deposit_at).getTime()) > 10 * 24 * 60 * 60 * 1000 && (
+                  <p className="mt-2 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 text-center">
+                    Solo 1 depósito — más de 10 días desde la primera carga
+                  </p>
+                )}
+              </div>
+              <Button variant="outline" size="sm" className="w-full" onClick={() => { setViewContact(null); openEdit(viewContact) }}>
+                <Pencil size={13} className="mr-1.5" /> Editar contacto
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* ── Modal editar contacto ── */}
       <Dialog open={!!editContact} onOpenChange={v => { if (!v) setEditContact(null) }}>
         <DialogContent className="max-w-md">
