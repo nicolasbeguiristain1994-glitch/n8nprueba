@@ -320,7 +320,7 @@ export async function DELETE(req: NextRequest) {
 
     await query(
       `UPDATE whatsapp_lines
-       SET is_connected = false, status = 'inactive', updated_at = NOW()
+       SET is_connected = false, status = 'offline', updated_at = NOW()
        WHERE evolution_instance = $1`,
       [instance],
     )
