@@ -4,13 +4,16 @@
  *
  * Calcula y aplica seg_monto + seg_actividad en casino_players.
  *
- * Umbrales fijos de seg_monto (sobre total_cargas):
- *   bajo       → < 250.000
- *   medio      → 250.000 a 499.999
- *   alto (Vip) → 500.000 a 999.999
- *   vip (Super VIP) → >= 1.000.000
+ * seg_monto — basado en PROMEDIO de cargas sobre meses CON actividad real
+ * (meses donde el jugador hizo al menos una carga en casino_transactions).
+ * No penaliza los meses que no jugó.
  *
- * Reglas de seg_actividad:
+ *   bajo       → < $250.000/mes activo
+ *   medio      → $250.000 – $499.999/mes activo
+ *   alto (Vip) → $500.000 – $999.999/mes activo
+ *   vip (Super VIP) → >= $1.000.000/mes activo
+ *
+ * seg_actividad (sin cambios):
  *   perdido    → fecha_ultima > 180 días atrás (o NULL)
  *   inactivo   → fecha_ultima 61–180 días atrás
  *   en_riesgo  → fecha_ultima 31–60 días atrás
@@ -63,43 +66,74 @@ const pool = new Pool({
 
 const AGENTES = ['bigwin','ofizeus','betcoin','royal','farabet']
 
-// Umbrales fijos de monto (en pesos)
-const THRESHOLD_MEDIO     = 250_000   // bajo  → < 250k
-const THRESHOLD_ALTO      = 500_000   // medio → 250k–500k
-const THRESHOLD_VIP       = 1_000_000 // alto  → 500k–1M  /  vip → >= 1M
+// Umbrales de PROMEDIO MENSUAL sobre meses con actividad real (en pesos)
+const THRESHOLD_MEDIO = 250_000   // bajo  → < $250k/mes activo
+const THRESHOLD_ALTO  = 500_000   // medio → $250k–$499k/mes activo
+const THRESHOLD_VIP   = 1_000_000 // alto  → $500k–$999k/mes activo  /  vip → >= $1M/mes activo
+
+// CTE que calcula meses activos y promedio mensual por jugador
+// usando casino_transactions (tipo='carga'). Si no hay transacciones,
+// el fallback es meses calendario entre fecha_primera y fecha_ultima.
+const CTE_MESES_ACTIVOS = `
+  active_months AS (
+    SELECT
+      LOWER(ct.username)                           AS username_lower,
+      COUNT(DISTINCT DATE_TRUNC('month', ct.fecha))::int AS meses_con_cargas
+    FROM casino_transactions ct
+    WHERE ct.tipo = 'carga'
+    GROUP BY LOWER(ct.username)
+  ),
+  carga_mensual AS (
+    SELECT
+      cp.id,
+      cp.username_lower,
+      cp.total_cargas,
+      COALESCE(am.meses_con_cargas, 1)             AS meses_activos,
+      ROUND(
+        cp.total_cargas::numeric /
+        GREATEST(COALESCE(am.meses_con_cargas, 1), 1)
+      )                                             AS avg_mensual
+    FROM casino_players cp
+    LEFT JOIN active_months am ON am.username_lower = cp.username_lower
+    WHERE cp.agente = ANY($4::text[])
+  )
+`
 
 async function main() {
   console.log('')
   console.log('═══════════════════════════════════════════════════════════════')
-  console.log('  casino_players — segmentación por umbrales fijos de monto')
+  console.log('  casino_players — segmentación por promedio mensual de cargas')
   if (DRY_RUN) console.log('  *** DRY RUN — no se modificará nada ***')
   console.log('═══════════════════════════════════════════════════════════════')
   console.log('')
-  console.log('  Umbrales de seg_monto:')
-  console.log(`    bajo       →       $0  a  $${Number(THRESHOLD_MEDIO - 1).toLocaleString('es-AR')}`)
-  console.log(`    medio      → $${Number(THRESHOLD_MEDIO).toLocaleString('es-AR')}  a  $${Number(THRESHOLD_ALTO - 1).toLocaleString('es-AR')}`)
-  console.log(`    alto (Vip) → $${Number(THRESHOLD_ALTO).toLocaleString('es-AR')}  a  $${Number(THRESHOLD_VIP - 1).toLocaleString('es-AR')}`)
-  console.log(`    vip (Super VIP) → $${Number(THRESHOLD_VIP).toLocaleString('es-AR')}+`)
+  console.log('  Criterio: promedio sobre meses CON actividad (no meses totales)')
+  console.log('  Umbrales:')
+  console.log(`    bajo       →       $0  a  $${Number(THRESHOLD_MEDIO - 1).toLocaleString('es-AR')}/mes activo`)
+  console.log(`    medio      → $${Number(THRESHOLD_MEDIO).toLocaleString('es-AR')}  a  $${Number(THRESHOLD_ALTO - 1).toLocaleString('es-AR')}/mes activo`)
+  console.log(`    alto (Vip) → $${Number(THRESHOLD_ALTO).toLocaleString('es-AR')}  a  $${Number(THRESHOLD_VIP - 1).toLocaleString('es-AR')}/mes activo`)
+  console.log(`    vip (Super VIP) → $${Number(THRESHOLD_VIP).toLocaleString('es-AR')}+/mes activo`)
   console.log('')
 
   if (DRY_RUN) {
     const previewRes = await pool.query(`
+      WITH ${CTE_MESES_ACTIVOS}
       SELECT
         CASE
-          WHEN total_cargas >= $1 THEN 'vip'
-          WHEN total_cargas >= $2 THEN 'alto'
-          WHEN total_cargas >= $3 THEN 'medio'
-          ELSE                         'bajo'
-        END AS seg_monto,
-        COUNT(*)::int AS n
-      FROM casino_players
-      WHERE agente = ANY($4::text[])
+          WHEN cm.avg_mensual >= $1 THEN 'vip'
+          WHEN cm.avg_mensual >= $2 THEN 'alto'
+          WHEN cm.avg_mensual >= $3 THEN 'medio'
+          ELSE                          'bajo'
+        END AS seg_correcto,
+        COUNT(*)::int AS n,
+        ROUND(AVG(cm.avg_mensual)) AS avg_mensual_grupo,
+        ROUND(AVG(cm.meses_activos), 1) AS avg_meses_activos
+      FROM carga_mensual cm
       GROUP BY 1 ORDER BY 1
     `, [THRESHOLD_VIP, THRESHOLD_ALTO, THRESHOLD_MEDIO, AGENTES])
 
     console.log('  DRY RUN — distribución estimada de seg_monto:')
     for (const r of previewRes.rows) {
-      console.log(`    ${r.seg_monto.padEnd(10)} ${Number(r.n).toLocaleString('es-AR')} jugadores`)
+      console.log(`    ${r.seg_correcto.padEnd(10)} ${Number(r.n).toLocaleString('es-AR').padStart(6)} jugadores  (avg $${Number(r.avg_mensual_grupo).toLocaleString('es-AR')}/mes · ${r.avg_meses_activos} meses activos prom.)`)
     }
     console.log('')
     console.log('  Volvé a correr sin --dry-run para aplicar.')
@@ -107,12 +141,9 @@ async function main() {
     return
   }
 
-  // ── Aplicar segmentación en un solo UPDATE ──────────────────────────────────
-  //
-  // seg_monto:    umbrales fijos (ver constantes arriba)
-  // seg_actividad: reglas de días de inactividad + freq_semanal
-
+  // ── Paso 1: Actualizar casino_players ────────────────────────────────────────
   const updateRes = await pool.query(`
+    WITH ${CTE_MESES_ACTIVOS}
     UPDATE casino_players cp
     SET
       freq_semanal = CASE
@@ -131,10 +162,10 @@ async function main() {
       END,
 
       seg_monto = CASE
-        WHEN cp.total_cargas >= $1 THEN 'vip'
-        WHEN cp.total_cargas >= $2 THEN 'alto'
-        WHEN cp.total_cargas >= $3 THEN 'medio'
-        ELSE                            'bajo'
+        WHEN cm.avg_mensual >= $1 THEN 'vip'
+        WHEN cm.avg_mensual >= $2 THEN 'alto'
+        WHEN cm.avg_mensual >= $3 THEN 'medio'
+        ELSE                          'bajo'
       END,
 
       seg_actividad = CASE
@@ -156,10 +187,22 @@ async function main() {
       END,
 
       updated_at = NOW()
-    WHERE cp.agente = ANY($4::text[])
+    FROM carga_mensual cm
+    WHERE cm.id = cp.id
   `, [THRESHOLD_VIP, THRESHOLD_ALTO, THRESHOLD_MEDIO, AGENTES])
 
-  const updated = updateRes.rowCount ?? 0
+  const updatedPlayers = updateRes.rowCount ?? 0
+
+  // ── Paso 2: Sincronizar contacts.segment desde casino_players ────────────────
+  const syncRes = await pool.query(`
+    UPDATE contacts c
+    SET segment = cp.seg_monto::contact_segment
+    FROM casino_players cp
+    WHERE LOWER(TRIM(c.first_name)) = cp.username_lower
+      AND cp.seg_monto IS NOT NULL
+      AND c.segment::text != cp.seg_monto
+  `)
+  const syncedContacts = syncRes.rowCount ?? 0
 
   // ── Resultado ─────────────────────────────────────────────────────────────────
   const resultRes = await pool.query(`
@@ -180,7 +223,7 @@ async function main() {
     byAct[r.seg_actividad] = (byAct[r.seg_actividad] || 0) + r.n
   }
 
-  console.log('  Distribución seg_monto:')
+  console.log('  Distribución seg_monto (tras corrección):')
   for (const [k, v] of Object.entries(byMonto).sort()) {
     console.log(`    ${k.padEnd(10)} ${Number(v).toLocaleString('es-AR')} jugadores`)
   }
@@ -192,7 +235,8 @@ async function main() {
 
   console.log('')
   console.log('═══════════════════════════════════════════════════════════════')
-  console.log(`  Jugadores actualizados: ${Number(updated).toLocaleString('es-AR')}`)
+  console.log(`  casino_players actualizados: ${Number(updatedPlayers).toLocaleString('es-AR')}`)
+  console.log(`  contacts sincronizados:      ${Number(syncedContacts).toLocaleString('es-AR')}`)
   console.log('  ✓  Segmentación completada.')
   console.log('')
 
