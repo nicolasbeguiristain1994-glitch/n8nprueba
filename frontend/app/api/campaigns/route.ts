@@ -92,13 +92,7 @@ export async function POST(req: NextRequest) {
 
   const nameStr = clampStr(name, 255)
   if (!nameStr)
-    return NextResponse.json({ error: 'name es requerido y no puede estar vacío' }, { status: 400 })
-
-  const ALLOWED_CAMPAIGN_NAMES = ['adquisición', 'promoción', 'retención', 'reactivación', 'gamificación']
-  if (!ALLOWED_CAMPAIGN_NAMES.includes(nameStr.toLowerCase()))
-    return NextResponse.json({
-      error: `Nombre de campaña inválido. Opciones permitidas: ${ALLOWED_CAMPAIGN_NAMES.join(', ')}`,
-    }, { status: 400 })
+    return NextResponse.json({ error: 'El nombre de la campaña es requerido' }, { status: 400 })
 
   // messages[] takes priority; fall back to single message
   const rawMsgs = Array.isArray(messages) ? messages : (message ? [message] : [])

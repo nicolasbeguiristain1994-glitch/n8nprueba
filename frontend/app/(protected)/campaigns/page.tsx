@@ -615,6 +615,16 @@ export default function Campaigns() {
             <DialogTitle>Nueva campaña</DialogTitle>
           </DialogHeader>
           <div className="grid grid-cols-2 gap-4">
+            {/* Nombre de campaña */}
+            <div className="col-span-2">
+              <label className="text-xs font-medium text-gray-600 mb-1 block">Nombre de campaña</label>
+              <Input
+                placeholder="Ej: Retención VIP Mayo, Promo Slots Junio…"
+                value={form.name}
+                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              />
+            </div>
+
             {/* Toggle plantilla */}
             <div className="col-span-2">
               <button
