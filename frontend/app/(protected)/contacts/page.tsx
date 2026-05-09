@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
+import { DownloadContactsModal } from '@/components/contacts/DownloadContactsModal'
 import { PageHeader } from '@/components/layout/PageHeader'
 import {
   DataTable,
@@ -176,8 +177,9 @@ export default function Contacts() {
 
   // ── Misc ──────────────────────────────────────────────────────────────────
   const [updateError, setUpdateError]           = useState<string | null>(null)
-  const [downloading, setDownloading]           = useState(false)
-  const [selectingAll, setSelectingAll]         = useState(false)
+  const [showDownloadModal, setShowDownloadModal] = useState(false)
+  const [downloadList, setDownloadList]           = useState<ContactList | null>(null)
+  const [selectingAll, setSelectingAll]           = useState(false)
   const [repopulating, setRepopulating]         = useState(false)
   const [repopulateResult, setRepopulateResult] = useState<{ total_lists: number; lists: Array<{ nombre: string; members: number; created: boolean }> } | null>(null)
   const [repopulateError, setRepopulateError]   = useState<string | null>(null)
@@ -386,43 +388,25 @@ export default function Contacts() {
 
   // ── Export ────────────────────────────────────────────────────────────────
 
-  const downloadContacts = async (format: 'csv' | 'xlsx') => {
-    setDownloading(true)
-    const q = new URLSearchParams({
-      q: search, segment, gaming: filterGaming, panel: filterPanel.trim(),
-      linea: filterLinea, actividad: filterActividad, antiguedad: filterAntiguedad, download: 'true',
-    })
-    const d = await fetch(`/api/contacts?${q}`).then(r => r.json())
-    const rows: Contact[] = d.contacts || []
-    const exportData = rows.map(c => ({
-      'Teléfono': c.phone_number,
-      'Nombre': [c.first_name, c.last_name].filter(Boolean).join(' ') || '',
-      'Email': c.email || '', 'Agente': c.panel || '', 'Línea': c.linea ?? '',
-      'Juego': c.gaming || '', 'Nivel': NIVEL_LABEL[c.segment] || c.segment || '',
-      'Estado': c.actividad || c.status || '', 'Riesgo': c.valor_riesgo || '',
-      'Antigüedad': c.antiguedad || '', 'Opt-in': c.opt_in ? 'sí' : 'no',
-      'Fecha alta': c.created_at ? new Date(c.created_at).toLocaleDateString('es-AR') : '',
-    }))
-    const ws = XLSX.utils.json_to_sheet(exportData)
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, 'Contactos')
-    ws['!cols'] = [14, 22, 24, 12, 8, 12, 10, 12, 12, 14, 10, 12].map(w => ({ wch: w }))
-    const filterStr = [
-      filterPanel && `panel-${filterPanel}`, filterGaming && `juego-${filterGaming}`,
-      segment && `nivel-${segment}`, search && `busq-${search}`,
-      filterActividad && `actividad-${filterActividad}`, filterAntiguedad && `antiguedad-${filterAntiguedad}`,
+  const buildFilterStr = () =>
+    [
+      filterPanel      && `panel-${filterPanel}`,
+      filterGaming     && `juego-${filterGaming}`,
+      segment          && `nivel-${segment}`,
+      search           && `busq-${search}`,
+      filterActividad  && `actividad-${filterActividad}`,
+      filterAntiguedad && `antiguedad-${filterAntiguedad}`,
     ].filter(Boolean).join('_') || 'todos'
-    const filename = `contactos_${filterStr}_${new Date().toISOString().slice(0, 10)}.${format}`
-    if (format === 'csv') {
-      const csv = XLSX.utils.sheet_to_csv(ws)
-      const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a'); a.href = url; a.download = filename; a.click()
-      URL.revokeObjectURL(url)
-    } else {
-      XLSX.writeFile(wb, filename)
-    }
-    setDownloading(false)
+
+  const buildDownloadParams = (): URLSearchParams => {
+    const p = new URLSearchParams({
+      q: search, segment, gaming: filterGaming, panel: filterPanel.trim(),
+      linea: filterLinea, actividad: filterActividad, antiguedad: filterAntiguedad,
+    })
+    if (filterList)          p.set('list_id', filterList)
+    if (filterPlataforma)    p.set('plataforma', filterPlataforma)
+    if (filterSinMovimiento) p.set('sin_movimiento', 'true')
+    return p
   }
 
   // ── Crear lista ───────────────────────────────────────────────────────────
@@ -740,20 +724,11 @@ export default function Contacts() {
             </Button>
 
             {currentUser?.can_download_contacts && (
-              <div className="relative group">
-                <Button variant="outline" size="sm" disabled={downloading} className="border-teal-200 text-teal-700 hover:bg-teal-50">
-                  <Download size={14} className={`mr-1 ${downloading ? 'animate-bounce' : ''}`} />
-                  {downloading ? 'Descargando…' : 'Descargar'}
-                </Button>
-                <div className="absolute right-0 top-full mt-1 bg-popover border border-border rounded-lg shadow-lg z-20 hidden group-hover:block min-w-36">
-                  <button onClick={() => downloadContacts('xlsx')} className="w-full text-left px-4 py-2 text-sm hover:bg-muted flex items-center gap-2 rounded-t-lg">
-                    <span className="text-green-600 font-bold text-xs">XLS</span> Excel (.xlsx)
-                  </button>
-                  <button onClick={() => downloadContacts('csv')} className="w-full text-left px-4 py-2 text-sm hover:bg-muted flex items-center gap-2 rounded-b-lg border-t border-border">
-                    <span className="text-blue-600 font-bold text-xs">CSV</span> CSV (.csv)
-                  </button>
-                </div>
-              </div>
+              <Button variant="outline" size="sm"
+                onClick={() => setShowDownloadModal(true)}
+                className="border-teal-200 text-teal-700 hover:bg-teal-50">
+                <Download size={14} className="mr-1" /> Descargar
+              </Button>
             )}
 
             <Button size="sm" variant="outline" onClick={selectAllFiltered} disabled={selectingAll}
@@ -799,6 +774,13 @@ export default function Contacts() {
                         <p className="text-[11px] text-gray-400">{l.contact_count.toLocaleString()} contactos</p>
                       </div>
                       {filterList === l.id && <Filter size={11} className="text-indigo-500 shrink-0" />}
+                      <button
+                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-teal-500 p-0.5 rounded"
+                        title="Descargar lista"
+                        onClick={e => { e.stopPropagation(); setDownloadList(l); setShowListsMenu(false) }}
+                      >
+                        <Download size={13} />
+                      </button>
                       <button
                         className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-red-500 p-0.5 rounded"
                         title="Eliminar lista"
@@ -1388,6 +1370,26 @@ export default function Contacts() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Modal de descarga global (contactos con filtros activos) */}
+      <DownloadContactsModal
+        open={showDownloadModal}
+        onClose={() => setShowDownloadModal(false)}
+        contactCount={total}
+        fetchParams={buildDownloadParams()}
+        filenameHint={buildFilterStr()}
+      />
+
+      {/* Modal de descarga de lista específica */}
+      {downloadList && (
+        <DownloadContactsModal
+          open={!!downloadList}
+          onClose={() => setDownloadList(null)}
+          contactCount={downloadList.contact_count}
+          fetchParams={new URLSearchParams({ list_id: downloadList.id })}
+          filenameHint={`lista-${downloadList.name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-')}`}
+        />
+      )}
     </div>
   )
 }
