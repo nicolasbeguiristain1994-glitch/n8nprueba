@@ -1,9 +1,9 @@
 'use client'
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { Card } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
-import { Send, Loader2 } from 'lucide-react'
+import { Send, Loader2, Smile } from 'lucide-react'
 import { useConversations } from '@/hooks/useConversations'
 import { useKeyboardShortcuts } from '@/lib/keyboard-shortcuts'
 import { VirtualizedConvList }    from '@/components/conversations/VirtualizedConvList'
@@ -12,6 +12,7 @@ import { ConversationHeader }     from '@/components/conversations/ConversationH
 import { MessageBubble }          from '@/components/conversations/MessageBubble'
 import { QuickTemplates }         from '@/components/conversations/QuickTemplates'
 import { ConversationSidebar }    from '@/components/conversations/ConversationSidebar'
+import { EmojiPicker }            from '@/components/conversations/EmojiPicker'
 
 export default function Conversations() {
   const {
@@ -25,16 +26,13 @@ export default function Conversations() {
     openConv, sendReply,
   } = useConversations()
 
-  const searchRef = useRef<HTMLInputElement>(null)
+  const searchRef    = useRef<HTMLInputElement>(null)
+  const textareaRef  = useRef<HTMLTextAreaElement>(null)
+  const [showEmoji, setShowEmoji] = useState(false)
 
   useKeyboardShortcuts([
-    // Ctrl/Cmd+K → enfocar búsqueda
-    { key: 'k', ctrl: true,
-      handler: () => searchRef.current?.focus() },
-    // Escape → limpiar búsqueda y filtros avanzados
-    { key: 'Escape',
-      handler: () => { setSearch(''); setDateFrom(''); setDateTo(''); setFollowUpOnly(false) } },
-    // Ctrl/Cmd+Shift+V → marcar conversación seleccionada como VIP
+    { key: 'k', ctrl: true, handler: () => searchRef.current?.focus() },
+    { key: 'Escape', handler: () => { setSearch(''); setDateFrom(''); setDateTo(''); setFollowUpOnly(false); setShowEmoji(false) } },
     { key: 'V', ctrl: true, shift: true,
       handler: async () => {
         if (!selectedConv?.contact_id) return
@@ -46,6 +44,20 @@ export default function Conversations() {
       },
     },
   ])
+
+  const insertEmoji = (emoji: string) => {
+    setReply(prev => prev + emoji)
+    setShowEmoji(false)
+    textareaRef.current?.focus()
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Enter sin Shift → enviar; Shift+Enter → nueva línea
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      sendReply()
+    }
+  }
 
   return (
     <div className="space-y-3">
@@ -91,6 +103,7 @@ export default function Conversations() {
               <>
                 <ConversationHeader phone={selected} conv={selectedConv} />
 
+                {/* Área de mensajes */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-gray-50">
                   {messages.length === 0
                     ? <p className="text-center text-gray-400 text-sm pt-10">Sin mensajes aún</p>
@@ -108,26 +121,51 @@ export default function Conversations() {
                   </div>
                 )}
 
-                <div className="border-t border-gray-100 p-3 flex gap-2 bg-white shrink-0">
-                  <QuickTemplates
-                    contactName={selectedConv?.first_name}
-                    onSelect={setReply}
-                  />
-                  <Input
-                    placeholder="Escribí una respuesta…"
-                    value={reply}
-                    onChange={e => setReply(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && !e.shiftKey && sendReply()}
-                    className="flex-1"
-                  />
-                  <Button
-                    onClick={sendReply}
-                    disabled={sending || !reply.trim()}
-                    size="icon"
-                    className="bg-green-600 hover:bg-green-700 shrink-0"
-                  >
-                    {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                  </Button>
+                {/* Input area */}
+                <div className="border-t border-gray-100 p-3 bg-white shrink-0">
+                  <div className="flex gap-2 items-start">
+                    <QuickTemplates
+                      contactName={selectedConv?.first_name}
+                      onSelect={setReply}
+                    />
+
+                    {/* Emoji picker */}
+                    <div className="relative">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-9 w-9 text-gray-400 hover:text-yellow-500 shrink-0"
+                        onClick={() => setShowEmoji(v => !v)}
+                        type="button"
+                      >
+                        <Smile size={18} />
+                      </Button>
+                      {showEmoji && (
+                        <div className="absolute bottom-10 left-0 z-50">
+                          <EmojiPicker onSelect={insertEmoji} onClose={() => setShowEmoji(false)} />
+                        </div>
+                      )}
+                    </div>
+
+                    <Textarea
+                      ref={textareaRef}
+                      placeholder="Escribí una respuesta… (Enter para enviar, Shift+Enter para nueva línea)"
+                      value={reply}
+                      onChange={e => setReply(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      rows={1}
+                      className="flex-1 resize-none min-h-[36px] max-h-32 overflow-y-auto text-sm leading-relaxed"
+                    />
+
+                    <Button
+                      onClick={sendReply}
+                      disabled={sending || !reply.trim()}
+                      size="icon"
+                      className="bg-green-600 hover:bg-green-700 shrink-0 h-9 w-9"
+                    >
+                      {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                    </Button>
+                  </div>
                 </div>
               </>
             )

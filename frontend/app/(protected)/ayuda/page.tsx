@@ -146,7 +146,7 @@ const MODULES: ModuleSection[] = [
     id: 'segmentacion',
     label: 'Segmentación de Jugadores',
     icon: Tag,
-    role: 'admin',
+    role: 'both',
     color: 'text-pink-600',
     subtitle: 'Cómo se clasifican automáticamente los jugadores del casino',
     description:
@@ -173,9 +173,14 @@ const MODULES: ModuleSection[] = [
           'Cuando un jugador de alto valor deja de estar activo, se genera automáticamente una etiqueta adicional de alerta:\n• Riesgo crítico → (Perdido / Inactivo / En riesgo) + (Super VIP o VIP)\n• Riesgo medio → (Perdido / Inactivo / En riesgo) + Medio\n• Riesgo bajo → (Perdido / Inactivo / En riesgo) + Bajo\nEstas etiquetas son ideales para campañas de reactivación priorizadas.',
       },
       {
+        title: 'Sin movimiento — jugadores sin actividad hace 12+ meses',
+        detail:
+          'La categoría "Sin movimiento" identifica a los jugadores que no registraron ningún depósito en los últimos 12 meses (o que nunca depositaron).\n\nCómo usarla:\n• En el módulo de Contactos activá el filtro "Sin movimiento" (botón en la barra de filtros).\n• Estos jugadores son candidatos a campañas de reactivación agresiva o acciones de limpieza de base.\n• También podés cruzarlos con el filtro de Nivel para priorizar: primero los VIP sin movimiento, luego los Medio, etc.\n\nCriterio técnico: la plataforma considera "sin movimiento" cuando el campo last_deposit_at es nulo o está antes del 12 meses atrás desde hoy.',
+      },
+      {
         title: 'Dónde ver y usar la segmentación',
         detail:
-          'En el módulo de Contactos podés filtrar por cualquiera de estas dimensiones usando los selectores de "Nivel", "Actividad" y "Antigüedad". Al crear una lista dinámica, podés combinar varios filtros (ej: Nivel = Super VIP + Actividad = En riesgo) para construir audiencias muy específicas para tus campañas.',
+          'En el módulo de Contactos podés filtrar por cualquiera de estas dimensiones usando los selectores de "Nivel", "Actividad", "Antigüedad" y el botón "Sin movimiento". Al crear una lista dinámica, podés combinar varios filtros (ej: Nivel = Super VIP + "Sin movimiento") para construir audiencias muy específicas para tus campañas.',
       },
     ],
     tips: [
@@ -186,6 +191,10 @@ const MODULES: ModuleSection[] = [
       {
         type: 'example',
         text: 'Ejemplo de campaña de reactivación: filtrás Nivel = VIP o Super VIP + Actividad = En riesgo o Inactivo. Obtenés la lista de tus mejores clientes que dejaron de jugar en los últimos 1–6 meses. Les mandás una oferta exclusiva de bienvenida de vuelta.',
+      },
+      {
+        type: 'example',
+        text: 'Ejemplo con "Sin movimiento": activás el filtro "Sin movimiento" + Nivel = Medio o Superior. Obtenés jugadores de valor que llevan más de un año sin cargar. Son candidatos perfectos para una campaña de reactivación con bono especial.',
       },
       {
         type: 'example',

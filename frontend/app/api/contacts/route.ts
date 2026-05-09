@@ -28,12 +28,14 @@ export async function GET(req: NextRequest) {
   const page      = Number(req.nextUrl.searchParams.get('page') || 1)
   const limit     = download ? 100000 : 50
   const offset    = download ? 0 : (page - 1) * limit
-  const linea     = req.nextUrl.searchParams.get('linea') || ''
-  const actividad = req.nextUrl.searchParams.get('actividad') || ''
+  const linea      = req.nextUrl.searchParams.get('linea') || ''
+  const actividad  = req.nextUrl.searchParams.get('actividad') || ''
   const antiguedad = req.nextUrl.searchParams.get('antiguedad') || ''
   const listIdRaw  = req.nextUrl.searchParams.get('list_id') || ''
   const listId     = listIdRaw && /^[0-9a-f-]{36}$/i.test(listIdRaw) ? listIdRaw : ''
-  const plataforma = req.nextUrl.searchParams.get('plataforma') || ''
+  const plataforma    = req.nextUrl.searchParams.get('plataforma') || ''
+  // Filtro "Sin movimiento": contactos sin depósitos en los últimos 12 meses
+  const sinMovimiento = req.nextUrl.searchParams.get('sin_movimiento') === 'true'
 
   if (actividad && !ACTIVIDAD_ALLOWED.has(actividad)) {
     return NextResponse.json({ error: `Invalid actividad "${actividad}"` }, { status: 400 })
@@ -49,6 +51,11 @@ export async function GET(req: NextRequest) {
   const plataformaFilter = plataforma === 'zeus'  ? ` AND ${ZEUS_SQL}`
                          : plataforma === 'otros' ? ` AND ${OTROS_SQL}`
                          : ''
+
+  // Sin movimiento: last_deposit_at nulo o anterior a hace 12 meses
+  const sinMovimientoFilter = sinMovimiento
+    ? ` AND (last_deposit_at IS NULL OR last_deposit_at < NOW() - INTERVAL '12 months')`
+    : ''
 
   // Bloquear descarga si está deshabilitada globalmente o el usuario no tiene permiso
   if (download) {
@@ -123,6 +130,7 @@ export async function GET(req: NextRequest) {
     const rows = await query(`
       SELECT id, phone_number, first_name, last_name, email,
              status, opt_in_marketing AS opt_in, created_at, segment, panel, gaming::text AS gaming, linea,
+             last_deposit_at, total_deposits, total_withdrawals,
              (SELECT REPLACE(tag, 'casino:actividad:', '')
               FROM contact_tags
               WHERE contact_id = contacts.id AND tag LIKE 'casino:actividad:%'
@@ -152,7 +160,7 @@ export async function GET(req: NextRequest) {
         AND ($10 = '' OR id IN (
           SELECT contact_id FROM contact_list_members WHERE list_id = $10::uuid
         ))
-        ${vis.sql}${agentFilter}${plataformaFilter}
+        ${vis.sql}${agentFilter}${plataformaFilter}${sinMovimientoFilter}
       ORDER BY created_at DESC
       LIMIT $2 OFFSET $3
     `, [`%${search}%`, limit, offset, segment, gaming, panel, linea, actividad, antiguedad, listId,
@@ -176,7 +184,7 @@ export async function GET(req: NextRequest) {
          AND ($8 = '' OR id IN (
            SELECT contact_id FROM contact_list_members WHERE list_id = $8::uuid
          ))
-         ${vis7.sql}${agentFilterCt}${plataformaFilter}`,
+         ${vis7.sql}${agentFilterCt}${plataformaFilter}${sinMovimientoFilter}`,
       [`%${search}%`, segment, gaming, panel, linea, actividad, antiguedad, listId,
        ...vis7.params, ...agentParams]
     )

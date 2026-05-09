@@ -33,6 +33,7 @@ interface Contact {
   id: string; phone_number: string; first_name: string; last_name: string
   email: string; status: string; opt_in: boolean; created_at: string; segment: string; panel: string; gaming: string; linea: number | null
   actividad?: string; valor_riesgo?: string; antiguedad?: string
+  last_deposit_at?: string | null; total_deposits?: number; total_withdrawals?: number
 }
 interface ImportRow   { phone: string; name?: string; segment?: string }
 interface ContactList { id: string; name: string; contact_count: number; created_at: string }
@@ -99,6 +100,7 @@ export default function Contacts() {
   const [filterActividad, setFilterActividad] = useState('')
   const [filterAntiguedad, setFilterAntiguedad] = useState('')
   const [filterPlataforma, setFilterPlataforma] = useState('')
+  const [filterSinMovimiento, setFilterSinMovimiento] = useState(false)
 
   // ── Paginación (TanStack format) ──────────────────────────────────────────
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 })
@@ -177,14 +179,15 @@ export default function Contacts() {
       q: search, page: String(pagination.pageIndex + 1),
       segment, gaming: filterGaming, panel: filterPanel.trim(),
       linea: filterLinea, actividad: filterActividad, antiguedad: filterAntiguedad,
-      ...(filterList      ? { list_id: filterList }          : {}),
-      ...(filterPlataforma ? { plataforma: filterPlataforma } : {}),
+      ...(filterList          ? { list_id: filterList }          : {}),
+      ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
+      ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
     })
     fetchJson<{ contacts: Contact[]; total: number }>(`/api/contacts?${q}`)
       .then(d => { setContacts(d.contacts || []); setTotal(d.total || 0) })
       .catch(() => { setContacts([]); setTotal(0) })
       .finally(() => setLoading(false))
-  }, [search, pagination.pageIndex, segment, filterGaming, filterPanel, filterLinea, filterActividad, filterAntiguedad, filterList, filterPlataforma])
+  }, [search, pagination.pageIndex, segment, filterGaming, filterPanel, filterLinea, filterActividad, filterAntiguedad, filterList, filterPlataforma, filterSinMovimiento])
 
   useEffect(() => { load() }, [load])
   const reloadLists = useCallback(() => {
@@ -612,23 +615,35 @@ export default function Contacts() {
       id: 'casino',
       header: 'Casino',
       enableSorting: false,
-      cell: ({ row }) => (
-        <div className="flex flex-col gap-0.5">
-          {row.original.valor_riesgo && (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${VALOR_RIESGO_STYLE[row.original.valor_riesgo] ?? 'bg-gray-100 text-gray-600'}`}>
-              ⚠ {row.original.valor_riesgo}
-            </span>
-          )}
-          {row.original.antiguedad && (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${ANTIGUEDAD_STYLE[row.original.antiguedad] ?? 'bg-gray-100 text-gray-600'}`}>
-              {row.original.antiguedad}
-            </span>
-          )}
-          {!row.original.valor_riesgo && !row.original.antiguedad && (
-            <span className="text-muted-foreground/40 text-xs">—</span>
-          )}
-        </div>
-      ),
+      cell: ({ row }) => {
+        const c = row.original
+        // Badge: solo 1 depósito y han pasado más de 10 días desde la primera carga
+        const soloUnDeposito = c.total_deposits === 1 && c.last_deposit_at
+          ? (Date.now() - new Date(c.last_deposit_at).getTime()) > 10 * 24 * 60 * 60 * 1000
+          : false
+        return (
+          <div className="flex flex-col gap-0.5">
+            {soloUnDeposito && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap bg-amber-100 text-amber-700 border border-amber-200">
+                1er dep. · 10d+
+              </span>
+            )}
+            {c.valor_riesgo && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${VALOR_RIESGO_STYLE[c.valor_riesgo] ?? 'bg-gray-100 text-gray-600'}`}>
+                ⚠ {c.valor_riesgo}
+              </span>
+            )}
+            {c.antiguedad && (
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${ANTIGUEDAD_STYLE[c.antiguedad] ?? 'bg-gray-100 text-gray-600'}`}>
+                {c.antiguedad}
+              </span>
+            )}
+            {!soloUnDeposito && !c.valor_riesgo && !c.antiguedad && (
+              <span className="text-muted-foreground/40 text-xs">—</span>
+            )}
+          </div>
+        )
+      },
       meta: { mobileLabel: 'Casino' },
     },
     {
@@ -930,6 +945,18 @@ export default function Contacts() {
             </button>
           ))}
         </div>
+
+        {/* ── Sin movimiento (12+ meses) ── */}
+        <button
+          onClick={() => { setFilterSinMovimiento(v => !v); resetPage() }}
+          className={`text-xs px-2.5 py-1 rounded-md font-medium border transition-colors ${
+            filterSinMovimiento
+              ? 'bg-zinc-800 text-white border-zinc-800'
+              : 'border-zinc-300 text-zinc-500 hover:border-zinc-500 hover:text-zinc-700'
+          }`}
+        >
+          Sin movimiento
+        </button>
       </div>
 
       {/* Badge de lista activa */}
@@ -1236,6 +1263,37 @@ export default function Contacts() {
                 </div>
               ))}
             </div>
+            {/* Información financiera del jugador */}
+            {editContact && (editContact.total_deposits !== undefined || editContact.last_deposit_at) && (
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Historial del jugador</p>
+                <div className="grid grid-cols-3 gap-3 text-center">
+                  <div>
+                    <p className="text-lg font-bold text-gray-900">{editContact.total_deposits ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">Depósitos</p>
+                  </div>
+                  <div>
+                    <p className="text-lg font-bold text-gray-900">{editContact.total_withdrawals ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">Retiros</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-semibold text-gray-700">
+                      {editContact.last_deposit_at
+                        ? new Date(editContact.last_deposit_at).toLocaleDateString('es-AR')
+                        : '—'}
+                    </p>
+                    <p className="text-[10px] text-gray-500">Última carga</p>
+                  </div>
+                </div>
+                {editContact.total_deposits === 1 && editContact.last_deposit_at &&
+                  (Date.now() - new Date(editContact.last_deposit_at).getTime()) > 10 * 24 * 60 * 60 * 1000 && (
+                  <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 text-center">
+                    Solo 1 depósito — más de 10 días desde la primera carga
+                  </p>
+                )}
+              </div>
+            )}
+
             {editError && <p className="text-xs text-destructive">{editError}</p>}
             <div className="flex gap-2 pt-1">
               <Button variant="outline" className="flex-1" onClick={() => setEditContact(null)} disabled={editSaving}>

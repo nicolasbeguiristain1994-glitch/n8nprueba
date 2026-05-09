@@ -653,17 +653,14 @@ export default function Campaigns() {
             </div>
 
             <div className="col-span-2">
-              <label className="text-xs font-medium text-gray-600 mb-1 block">Nombre de la campaña</label>
-              <Input placeholder="Ej: Promo Abril 2026" value={form.name} onChange={e => setForm(f=>({...f,name:e.target.value}))} />
-            </div>
-
-            <div>
               <label className="text-xs font-medium text-gray-600 mb-1 block">Tipo de campaña</label>
-              <Select value={form.type} onValueChange={v => setForm(f=>({...f,type:v ?? 'promotion'}))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+              <Select value={form.name} onValueChange={v => setForm(f => ({ ...f, name: v }))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccioná el tipo de campaña" />
+                </SelectTrigger>
                 <SelectContent>
-                  {[['promotion','Promoción'],['retention','Retención'],['onboarding','Onboarding'],['support','Soporte'],['survey','Encuesta'],['payment','Cobro'],['risk_alert','Alerta']].map(([val,label]) => (
-                    <SelectItem key={val} value={val}>{label}</SelectItem>
+                  {['adquisición','promoción','retención','reactivación','gamificación'].map(n => (
+                    <SelectItem key={n} value={n} className="capitalize">{n}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>

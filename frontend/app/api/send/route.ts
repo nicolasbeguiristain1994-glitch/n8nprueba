@@ -3,7 +3,8 @@ import { query } from '@/lib/db'
 import { isE164, isUUID, clampStr } from '@/lib/validate'
 import { checkPermissionWithUser, isOwnerOrAdmin } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
-import { getEligibleLines, selectLine, sendViaEvolution } from '@/lib/campaign-distributor'
+import { getEligibleLines, selectLine, sendViaEvolution, type EligibleLine } from '@/lib/campaign-distributor'
+import { sseEmitter } from '@/lib/sse-events'
 
 type LogEntry = {
   phone_number:         string
@@ -12,6 +13,37 @@ type LogEntry = {
   evolution_message_id: string
   campaign_id:          string
   error_detail:         string
+}
+
+// Devuelve la línea fija asignada al número si existe y sigue disponible.
+// Si no, elige una nueva y la persiste en phone_line_assignments.
+async function getOrAssignLine(
+  phone: string,
+  eligibleLines: EligibleLine[],
+): Promise<EligibleLine> {
+  const normalized = phone.replace(/^\+/, '')
+
+  const [existing] = await query<{ line_id: string }>(
+    `SELECT line_id FROM phone_line_assignments WHERE phone = $1`,
+    [normalized],
+  )
+
+  if (existing?.line_id) {
+    const fixed = eligibleLines.find(l => l.id === existing.line_id)
+    if (fixed) return fixed
+    // La línea asignada ya no está disponible — reasignar
+  }
+
+  const line = selectLine(eligibleLines) ?? eligibleLines[0]
+
+  await query(
+    `INSERT INTO phone_line_assignments (phone, line_id, updated_at)
+     VALUES ($1, $2, NOW())
+     ON CONFLICT (phone) DO UPDATE SET line_id = EXCLUDED.line_id, updated_at = NOW()`,
+    [normalized, line.id],
+  )
+
+  return line
 }
 
 export async function POST(req: NextRequest) {
@@ -33,7 +65,6 @@ export async function POST(req: NextRequest) {
   }
 
   // Normalize: strip spaces, dashes, parentheses then ensure + prefix for E.164.
-  // Conversations stores phone from WhatsApp JID (no + prefix) — add it automatically.
   const normalizedPhones = phones.map((p: unknown) => {
     if (typeof p !== 'string') return p
     const stripped = p.replace(/[\s\-().]/g, '')
@@ -73,8 +104,8 @@ export async function POST(req: NextRequest) {
 
   // Send sequentially (antiblock) — collect results in memory
   for (const phone of uniquePhones) {
-    // Pick a line using weighted selection (spreads load across available lines)
-    const line = selectLine(eligibleLines) ?? eligibleLines[0]
+    // Línea fija por número: si el contacto tiene una línea asignada, usar esa siempre
+    const line = await getOrAssignLine(phone, eligibleLines)
     try {
       const { messageId } = await sendViaEvolution(line, phone, messageStr, media_url || null)
 
@@ -125,6 +156,9 @@ export async function POST(req: NextRequest) {
                    evolution_message_id text, campaign_id text, error_detail text)`,
         [JSON.stringify(logs)]
       )
+
+      // Notificar en tiempo real a todos los clientes SSE conectados
+      sseEmitter.emit('update', { source: 'message' })
     } catch (e) {
       console.error('[/api/send] batch log insert error:', e instanceof Error ? e.message : e)
     }

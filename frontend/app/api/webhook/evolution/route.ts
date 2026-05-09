@@ -5,6 +5,7 @@ import { normalizePhone } from '@/lib/validate'
 import { evaluateAutomations } from '@/lib/automation-engine'
 import { notify } from '@/lib/notify'
 import { parseInstancesResponse } from '@/lib/evolution-utils'
+import { sseEmitter } from '@/lib/sse-events'
 
 // ── Palabras clave de opt-out ─────────────────────────────────────────────────
 // Comparación normalizada: sin acentos, minúsculas, trim.
@@ -160,6 +161,9 @@ export async function POST(req: NextRequest) {
          ON CONFLICT (evolution_message_id) WHERE evolution_message_id IS NOT NULL DO NOTHING`,
         [phone, body_text, msgId || null, sent_at]
       )
+
+      // Notificar en tiempo real a todos los clientes SSE conectados
+      sseEmitter.emit('update', { source: 'message' })
 
       // ── Detección de opt-out automático ──────────────────────────────────────
       // Si el mensaje contiene una keyword de baja, agrega el número a blacklist.

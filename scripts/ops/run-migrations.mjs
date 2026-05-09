@@ -147,6 +147,7 @@ const MIGRATIONS = [
   { file: 'db/migrations/057_warmup_delay_preset.sql',             label: '057 — warmup_numbers.delay_preset column' },
   { file: 'db/migrations/058_warmup_anti_ban.sql',                 label: '058 — warmup_numbers anti-ban columns (8 campos)' },
   { file: 'db/migrations/059_warmup_missing_columns.sql',          label: '059 — warmup_numbers display_name + evolution_url (fix 044)' },
+  { file: 'db/migrations/066_fixed_line_and_transactions.sql',     label: '066 — phone_line_assignments + contacts transaction fields' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
