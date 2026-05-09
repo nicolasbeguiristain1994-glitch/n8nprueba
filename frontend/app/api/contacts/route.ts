@@ -99,7 +99,7 @@ export async function GET(req: NextRequest) {
             SELECT 1 FROM contact_tags ct
             WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $7
           ))
-          ${vis2.sql}${agentFilter2}${plataformaFilter}
+          ${vis2.sql}${agentFilter2}${plataformaFilter}${sinMovimientoFilter}
         ORDER BY created_at DESC
         LIMIT 100000
       `, [`%${search}%`, segment, gaming, panel, linea, actividad, antiguedad,
