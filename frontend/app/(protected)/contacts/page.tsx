@@ -152,7 +152,7 @@ export default function Contacts() {
 
   // ── View contact modal ────────────────────────────────────────────────────
   const [viewContact, setViewContact]   = useState<Contact | null>(null)
-  const [casinoStats, setCasinoStats]   = useState<{ monto_cargas_mes: number; monto_retiros_mes: number; last_deposit_at: string | null } | null>(null)
+  const [casinoStats, setCasinoStats]   = useState<{ monto_cargas_mes: number; monto_retiros_mes: number; last_deposit_at: string | null; mes_referencia: string | null } | null>(null)
 
   const openViewContact = (c: Contact) => {
     setViewContact(c)
@@ -1256,7 +1256,14 @@ export default function Contacts() {
                 {viewContact.antiguedad && <span className={`text-xs px-2 py-0.5 rounded-full ${ANTIGUEDAD_STYLE[viewContact.antiguedad] ?? 'bg-gray-100 text-gray-600'}`}>{viewContact.antiguedad}</span>}
               </div>
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Historial del jugador</p>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Historial del jugador</p>
+                  {casinoStats?.mes_referencia && (
+                    <span className="text-[10px] text-gray-400 bg-white border border-gray-200 rounded px-1.5 py-0.5">
+                      {casinoStats.mes_referencia}
+                    </span>
+                  )}
+                </div>
                 <div className="grid grid-cols-3 gap-3 text-center">
                   <div>
                     <p className="text-xl font-bold text-gray-900">
@@ -1264,7 +1271,7 @@ export default function Contacts() {
                         ? `$${casinoStats.monto_cargas_mes.toLocaleString('es-AR')}`
                         : <span className="text-gray-300 text-sm">…</span>}
                     </p>
-                    <p className="text-[10px] text-gray-500">Cargas (30d)</p>
+                    <p className="text-[10px] text-gray-500">Cargas</p>
                   </div>
                   <div>
                     <p className="text-xl font-bold text-gray-900">
@@ -1272,7 +1279,7 @@ export default function Contacts() {
                         ? `$${casinoStats.monto_retiros_mes.toLocaleString('es-AR')}`
                         : <span className="text-gray-300 text-sm">…</span>}
                     </p>
-                    <p className="text-[10px] text-gray-500">Retiros (30d)</p>
+                    <p className="text-[10px] text-gray-500">Retiros</p>
                   </div>
                   <div>
                     <p className="text-sm font-semibold text-gray-700">
