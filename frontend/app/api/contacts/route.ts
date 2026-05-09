@@ -52,10 +52,9 @@ export async function GET(req: NextRequest) {
                          : plataforma === 'otros' ? ` AND ${OTROS_SQL}`
                          : ''
 
-  // Sin movimiento: last_deposit_at nulo o anterior a hace 12 meses
-  const sinMovimientoFilter = sinMovimiento
-    ? ` AND (last_deposit_at IS NULL OR last_deposit_at < NOW() - INTERVAL '12 months')`
-    : ''
+  // Sin movimiento: requires migration 066 (last_deposit_at column) on the production DB.
+  // Disabled until migration is confirmed applied to the correct database.
+  const sinMovimientoFilter = ''
 
   // Bloquear descarga si está deshabilitada globalmente o el usuario no tiene permiso
   if (download) {
@@ -130,7 +129,6 @@ export async function GET(req: NextRequest) {
     const rows = await query(`
       SELECT id, phone_number, first_name, last_name, email,
              status, opt_in_marketing AS opt_in, created_at, segment, panel, gaming::text AS gaming, linea,
-             last_deposit_at, total_deposits, total_withdrawals,
              (SELECT REPLACE(tag, 'casino:actividad:', '')
               FROM contact_tags
               WHERE contact_id = contacts.id AND tag LIKE 'casino:actividad:%'
