@@ -206,51 +206,111 @@ const MODULES: ModuleSection[] = [
     color: 'text-purple-600',
     subtitle: 'Envío masivo de mensajes a listas de contactos',
     description:
-      'El módulo de Campañas permite crear y ejecutar envíos masivos de WhatsApp. Podés seleccionar una lista de contactos, elegir el mensaje (usando una plantilla o escribiéndolo en el momento), configurar el horario y el ritmo de envío para evitar bloqueos.',
+      'Una campaña es un envío masivo de mensajes WhatsApp a una lista de contactos. Podés enviar texto, imágenes o video, con hasta 10 variantes del mismo mensaje para que cada contacto reciba una versión diferente. El sistema distribuye los envíos con delays humanizados entre líneas activas para evitar bloqueos. Requisitos mínimos: al menos una línea conectada y activa, y una lista con contactos que tengan opt_in_marketing activado.',
     steps: [
       {
-        title: 'Crear una nueva campaña',
+        title: 'Crear la campaña',
         detail:
-          'Hacé clic en "Nueva campaña". Elegí un nombre descriptivo (ej: "Promo Mayo - Clientes VIP"). Seleccioná la lista de destinatarios. Si no tenés una lista, primero andá a Contactos a crearla.',
+          'Hacé clic en "Nueva campaña". Poné un nombre descriptivo (ej: "Promo Mayo - VIP"). Seleccioná la lista de destinatarios — si no tenés una, primero andá a Contactos a crearla. Elegí el tipo de campaña (promoción, retención, soporte, etc.) para organizarlas mejor.',
       },
       {
-        title: 'Seleccionar la línea de envío',
+        title: 'Escribir el mensaje y variantes',
         detail:
-          'Elegí qué número de WhatsApp va a enviar los mensajes. Si tenés múltiples líneas, podés distribuir el envío entre varias para reducir el riesgo de bloqueo. Usá solo líneas con buen estado de calentamiento.',
-      },
-      {
-        title: 'Escribir el mensaje',
-        detail:
-          'Podés escribir el mensaje directamente o elegir una plantilla guardada. Usá variables para personalización: {{nombre}} se reemplaza automáticamente con el nombre del contacto. También podés adjuntar imágenes, PDFs o archivos de audio.',
+          'Escribí el texto directamente o seleccioná una plantilla guardada. Usá {{nombre}} para personalizar — se reemplaza automáticamente con el nombre de cada contacto. Podés agregar hasta 10 variantes del mensaje: el sistema las distribuye al azar entre los contactos, lo que hace que el tráfico parezca más orgánico y reduce el riesgo de detección como spam. También podés adjuntar una imagen o video.',
       },
       {
         title: 'Configurar el ritmo de envío',
         detail:
-          'Define el delay entre mensajes (recomendado: entre 3 y 8 segundos). Un delay más alto es más seguro pero más lento. Para listas grandes, activá el envío distribuido que mezcla los mensajes aleatoriamente.',
+          'Definí el delay mínimo y máximo entre mensajes. El valor recomendado es entre 3 y 8 segundos — el sistema elige un valor aleatorio dentro de ese rango para cada envío. Delays más altos son más seguros pero más lentos. Para listas grandes con urgencia podés bajar a 2–5s; para campañas de alto valor donde el riesgo importa, subilo a 8–15s.',
+      },
+      {
+        title: 'Elegir el modo de envío',
+        detail:
+          'Modo simple: usa una sola línea, más fácil de controlar. Modo multi-línea: distribuye los mensajes entre todas las líneas activas en paralelo, mucho más rápido para listas grandes. En modo multi-línea, las líneas con más cupo disponible reciben más mensajes — el sistema balancea automáticamente. Activá multi-línea al crear la campaña si querés ese modo.',
       },
       {
         title: 'Programar o enviar ahora',
         detail:
-          'Podés iniciar el envío inmediatamente o programarlo para una fecha y hora específica. Hacé clic en "Guardar y programar" para agendar, o "Iniciar ahora" para empezar el envío de inmediato.',
+          'Podés iniciar el envío inmediatamente o agendarlo para una fecha y hora específica. Una campaña programada se activa sola cuando llega el momento. Podés programarla para el viernes a las 18hs y olvidarte — el sistema la lanza solo.',
       },
       {
-        title: 'Monitorear el progreso',
+        title: 'Monitorear el progreso en tiempo real',
         detail:
-          'Una vez iniciada, la campaña muestra en tiempo real: cuántos mensajes se enviaron, cuántos fallaron y cuál es la tasa de entrega. Podés pausar o cancelar la campaña en cualquier momento.',
+          'Una vez iniciada, la campaña muestra: Enviados (WhatsApp confirmó recepción ✓), Entregados (llegó al teléfono ✓✓), Leídos (abierto por el contacto ✓✓ azul), Fallidos (error permanente) y Saltados (omitido por frecuencia u opt-out). En modo multi-línea también ves el desglose por línea — cuánto envió cada una y si hubo errores concentrados en alguna.',
+      },
+      {
+        title: 'Entender los estados de una campaña',
+        detail: '',
+        actions: [
+          {
+            icon: FileText,
+            label: 'Borrador',
+            desc: 'Recién creada. Podés editarla antes de enviar.',
+            color: 'bg-gray-100 text-gray-500',
+          },
+          {
+            icon: CalendarDays,
+            label: 'Programada',
+            desc: 'Tiene fecha futura. Se activa sola cuando llega el momento.',
+            color: 'bg-blue-100 text-blue-600',
+          },
+          {
+            icon: Activity,
+            label: 'En curso',
+            desc: 'Enviando ahora. Podés pausarla en cualquier momento.',
+            color: 'bg-green-100 text-green-600',
+          },
+          {
+            icon: Pause,
+            label: 'Pausada',
+            desc: 'Detenida. Siempre muestra el motivo. Podés reanudarla cuando quieras.',
+            color: 'bg-amber-100 text-amber-600',
+          },
+          {
+            icon: CheckSquare,
+            label: 'Completada',
+            desc: 'Todos los contactos fueron procesados. Solo lectura.',
+            color: 'bg-indigo-100 text-indigo-600',
+          },
+          {
+            icon: Trash2,
+            label: 'Cancelada',
+            desc: 'Terminal. No se puede revertir ni reanudar.',
+            color: 'bg-red-100 text-red-500',
+          },
+        ],
+      },
+      {
+        title: 'Qué hacer cuando se pausa sola',
+        detail:
+          'Si la campaña se pausa automáticamente, fijate en el motivo que aparece bajo el estado. "Sin líneas elegibles": todas tus líneas llegaron al límite diario — esperá al día siguiente o agregá más líneas. "Fuera de horario": las líneas no están en su horario activo — se reanuda sola cuando entren en horario. "Frecuencia agotada": todos los contactos ya recibieron un mensaje reciente — esperá las 24–48hs de cooldown. "Error sistémico": error técnico — avisale al administrador.',
+      },
+      {
+        title: 'Reintentar mensajes fallidos',
+        detail:
+          'Si algunos mensajes fallaron (número inválido, línea caída momentáneamente), podés reintentar solo esos sin tocar los que ya llegaron. Buscá el botón "Reintentar fallidos" en la campaña. La plataforma resetea solo los fallidos a "pendiente" y vuelve a intentar — los contactos que ya recibieron el mensaje no se ven afectados.',
       },
     ],
     tips: [
       {
-        type: 'warning',
-        text: 'Nunca envíes más de 200-300 mensajes por hora desde una misma línea. WhatsApp puede bloquear el número por comportamiento automatizado.',
+        type: 'example',
+        text: 'Ejemplo promo flash: Creás "Descuento fin de semana" para la lista "Clientes activos" (500 contactos). Configurás 3 variantes del mensaje con distintos emojis. Delay: 4–8s. Multi-línea activado (tenés 3 líneas). Lo programás para el viernes 18hs. El sistema lo lanza solo y en ~2 horas todos lo recibieron.',
       },
       {
         type: 'example',
-        text: 'Ejemplo: Creás una campaña "Descuento fin de semana" para la lista "Clientes activos" (500 contactos). Mensaje: "Hola {{nombre}}! Este fin de semana tenés 20% de descuento en toda nuestra tienda. Válido sáb y dom. Mostrá este mensaje." Ritmo: 5 segundos entre mensajes. Programás el envío para el viernes a las 18hs.',
+        text: 'Ejemplo segmentado: Filtrás en Contactos: Nivel = Super VIP + Actividad = En riesgo. Creás la lista "VIP en riesgo" con esos 80 contactos. Campaña de reactivación con mensaje personalizado y delay conservador 8–15s. Resultado: alta tasa de lectura porque es un mensaje relevante para una audiencia chica y específica.',
+      },
+      {
+        type: 'warning',
+        text: 'No uses una línea en calentamiento para campañas masivas. Puede interrumpir el proceso de warm-up y aumentar el riesgo de bloqueo. Usá solo líneas con score de salud ≥ 80.',
       },
       {
         type: 'tip',
-        text: 'Antes de enviar a toda la lista, hacé una prueba con un grupo pequeño de 10-20 contactos para verificar que el mensaje se vea bien y las variables se reemplacen correctamente.',
+        text: 'Con 10 variantes de mensaje y personalización de nombre activada, cada contacto recibe un mensaje único. Es la mejor defensa contra la detección de spam en envíos masivos.',
+      },
+      {
+        type: 'info',
+        text: 'Un mismo contacto no puede recibir el mismo mensaje dos veces en una campaña. Y entre campañas distintas hay un cooldown de 24–48hs por contacto — si un contacto aparece como "saltado", es por esta protección.',
       },
     ],
   },

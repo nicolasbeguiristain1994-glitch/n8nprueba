@@ -67,12 +67,12 @@ async function api(method, endpoint, body = null) {
 
 function clean(wf) {
   // Strips runtime fields that differ between n8n instances
+  // tags is read-only in the n8n API — omit from body
   return {
     name:        wf.name,
     nodes:       (wf.nodes || []).map(({ credentials: _, ...n }) => n),
     connections: wf.connections || {},
     settings:    { executionOrder: wf.settings?.executionOrder ?? 'v1' },
-    tags:        wf.tags || [],
   };
 }
 
