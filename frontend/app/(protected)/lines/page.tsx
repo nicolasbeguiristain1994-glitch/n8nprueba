@@ -685,6 +685,12 @@ export default function Lines() {
                   Confirmá en tu teléfono si WhatsApp lo solicita.<br />
                   No cierres esta ventana ni regeneres el QR.
                 </p>
+                <button
+                  onClick={handleRegenerate}
+                  className="mt-2 text-xs text-gray-400 underline hover:text-gray-600"
+                >
+                  ¿Sigue cargando? Forzar nuevo QR
+                </button>
               </div>
             )}
 
