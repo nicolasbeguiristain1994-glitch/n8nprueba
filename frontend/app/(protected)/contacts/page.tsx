@@ -152,7 +152,7 @@ export default function Contacts() {
 
   // ── View contact modal ────────────────────────────────────────────────────
   const [viewContact, setViewContact]   = useState<Contact | null>(null)
-  const [casinoStats, setCasinoStats]   = useState<{ monto_cargas_mes: number; monto_retiros_mes: number; last_deposit_at: string | null; mes_referencia: string | null } | null>(null)
+  const [casinoStats, setCasinoStats]   = useState<{ monto_cargas_mes: number; monto_retiros_mes: number; last_deposit_at: string | null; mes_referencia: string | null; fuente: 'transactions' | 'historico' | null } | null>(null)
 
   const openViewContact = (c: Contact) => {
     setViewContact(c)
@@ -1258,9 +1258,9 @@ export default function Contacts() {
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Historial del jugador</p>
-                  {casinoStats?.mes_referencia && (
+                  {casinoStats && (
                     <span className="text-[10px] text-gray-400 bg-white border border-gray-200 rounded px-1.5 py-0.5">
-                      {casinoStats.mes_referencia}
+                      {casinoStats.mes_referencia ?? 'Histórico total'}
                     </span>
                   )}
                 </div>
@@ -1271,7 +1271,7 @@ export default function Contacts() {
                         ? `$${casinoStats.monto_cargas_mes.toLocaleString('es-AR')}`
                         : <span className="text-gray-300 text-sm">…</span>}
                     </p>
-                    <p className="text-[10px] text-gray-500">Cargas</p>
+                    <p className="text-[10px] text-gray-500">{casinoStats?.fuente === 'historico' ? 'Cargas total' : 'Cargas'}</p>
                   </div>
                   <div>
                     <p className="text-xl font-bold text-gray-900">
