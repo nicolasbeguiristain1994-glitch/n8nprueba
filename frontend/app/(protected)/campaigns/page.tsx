@@ -654,7 +654,7 @@ export default function Campaigns() {
 
             <div className="col-span-2">
               <label className="text-xs font-medium text-gray-600 mb-1 block">Tipo de campaña</label>
-              <Select value={form.name} onValueChange={v => setForm(f => ({ ...f, name: v }))}>
+              <Select value={form.name} onValueChange={v => setForm(f => ({ ...f, name: v ?? '' }))}>
                 <SelectTrigger>
                   <SelectValue placeholder="Seleccioná el tipo de campaña" />
                 </SelectTrigger>
