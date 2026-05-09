@@ -1,12 +1,12 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Send, Plus, Loader2, Eye, Play, BarChart2, Shield, Clock, Pause, XCircle, CheckCheck, Truck, AlertTriangle, HelpCircle, Trash2, Shuffle, UserCheck, UserX, Zap, GitBranch, RefreshCw, Ban } from 'lucide-react'
+import { Send, Plus, Loader2, Eye, Play, BarChart2, Shield, Clock, Pause, XCircle, CheckCheck, Truck, AlertTriangle, HelpCircle, Trash2, Shuffle, UserCheck, UserX, Zap, GitBranch, RefreshCw, Ban, ImageIcon, X, Upload } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
@@ -87,6 +87,27 @@ export default function Campaigns() {
   const [messages, setMessages] = useState<string[]>([''])
   const [previewIdx, setPreviewIdx] = useState(0)
   const [creating, setCreating] = useState(false)
+
+  // Upload de imagen
+  const [uploadingMedia, setUploadingMedia] = useState(false)
+  const [uploadError, setUploadError]       = useState<string | null>(null)
+  const mediaInputRef = useRef<HTMLInputElement>(null)
+
+  const uploadMedia = async (file: File) => {
+    setUploadingMedia(true); setUploadError(null)
+    const fd = new FormData()
+    fd.append('file', file)
+    try {
+      const res  = await fetch('/api/upload', { method: 'POST', body: fd })
+      const data = await res.json()
+      if (!res.ok) { setUploadError(data.error || 'Error al subir imagen'); return }
+      setForm(f => ({ ...f, media_url: data.url }))
+    } catch {
+      setUploadError('Error de red al subir imagen')
+    } finally {
+      setUploadingMedia(false)
+    }
+  }
 
   // Plantillas
   const [useTemplate,      setUseTemplate]      = useState(false)
@@ -608,6 +629,7 @@ export default function Campaigns() {
           setSendError(null)
           setUseTemplate(false)
           setSelectedTemplate('')
+          setUploadError(null)
         }
       }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -817,9 +839,84 @@ export default function Campaigns() {
               </div>
             )}
 
-            <div>
-              <label className="text-xs font-medium text-gray-600 mb-1 block">URL de media (opcional)</label>
-              <Input placeholder="https://…" value={form.media_url} onChange={e => setForm(f=>({...f,media_url:e.target.value}))} />
+            {/* Imagen adjunta */}
+            <div className="col-span-2">
+              <label className="text-xs font-medium text-gray-600 mb-2 block flex items-center gap-1">
+                <ImageIcon size={12} /> Imagen adjunta (opcional)
+              </label>
+
+              {form.media_url ? (
+                <div className="relative w-full rounded-lg border border-gray-200 overflow-hidden bg-gray-50 flex items-center gap-3 p-3">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={form.media_url}
+                    alt="Media preview"
+                    className="h-20 w-20 object-cover rounded-md border border-gray-200 shrink-0"
+                    onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-gray-500 truncate">{form.media_url}</p>
+                    <p className="text-xs text-green-600 mt-0.5">Imagen cargada correctamente</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setForm(f => ({ ...f, media_url: '' })); setUploadError(null) }}
+                    className="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0"
+                    title="Quitar imagen"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              ) : (
+                <div>
+                  <input
+                    ref={mediaInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    className="hidden"
+                    onChange={e => {
+                      const file = e.target.files?.[0]
+                      if (file) uploadMedia(file)
+                      e.target.value = ''
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={uploadingMedia}
+                    onClick={() => mediaInputRef.current?.click()}
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => {
+                      e.preventDefault()
+                      const file = e.dataTransfer.files?.[0]
+                      if (file) uploadMedia(file)
+                    }}
+                    className="w-full border-2 border-dashed border-gray-200 rounded-lg py-6 text-sm text-gray-400 hover:border-indigo-300 hover:text-indigo-500 transition-colors flex flex-col items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {uploadingMedia
+                      ? <><Loader2 size={20} className="animate-spin text-indigo-400" /><span>Subiendo imagen…</span></>
+                      : <><Upload size={20} /><span>Hacé clic o arrastrá una imagen aquí</span><span className="text-xs text-gray-300">JPG, PNG, WEBP, GIF · máx. 10 MB</span></>
+                    }
+                  </button>
+                  {/* También permitir pegar URL directamente */}
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="h-px flex-1 bg-gray-100" />
+                    <span className="text-xs text-gray-300">o pegá una URL</span>
+                    <div className="h-px flex-1 bg-gray-100" />
+                  </div>
+                  <Input
+                    className="mt-2"
+                    placeholder="https://…"
+                    value={form.media_url}
+                    onChange={e => { setForm(f => ({ ...f, media_url: e.target.value })); setUploadError(null) }}
+                  />
+                </div>
+              )}
+
+              {uploadError && (
+                <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                  <AlertTriangle size={11} /> {uploadError}
+                </p>
+              )}
             </div>
 
             <div>
