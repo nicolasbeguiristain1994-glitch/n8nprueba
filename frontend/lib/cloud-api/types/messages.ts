@@ -1,7 +1,11 @@
 // Tipos relacionados con el envío y contenido de mensajes
 
-import type { MessageType, MessageStatus, MessageDirection } from './domain'
-export type { MessageType, MessageStatus, MessageDirection }
+import type { MessageStatus, MessageDirection } from './domain'
+export type { MessageStatus, MessageDirection }
+
+export type MessageType =
+  | 'text' | 'template' | 'image' | 'video' | 'audio'
+  | 'document' | 'sticker' | 'reaction' | 'location' | 'contacts' | 'interactive'
 
 export interface SendMessageRequest {
   phoneNumberId:    string

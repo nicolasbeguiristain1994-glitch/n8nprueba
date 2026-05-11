@@ -1,6 +1,6 @@
 // Tipos de los payloads de Webhook de Meta
 
-import type { MessageType } from './domain'
+import type { MessageType } from './messages'
 
 export interface WebhookPayload {
   object: 'whatsapp_business_account'
