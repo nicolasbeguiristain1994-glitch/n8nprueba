@@ -38,7 +38,7 @@ function getEncryptionKey(): string {
 export async function getTokenForNumber(phoneNumberId: string): Promise<string> {
   const encKey = getEncryptionKey()
 
-  type Row = { token_enc: Buffer | null; token_plain: string | null; expires_at: Date | null }
+  type Row = { token_enc: string | null; token_plain: string | null; expires_at: Date | null }
   const rows = await query<Row>(
     `SELECT
        CASE WHEN access_token_enc IS NOT NULL
