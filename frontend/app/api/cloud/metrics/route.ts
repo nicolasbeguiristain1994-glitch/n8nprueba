@@ -9,7 +9,7 @@ import { getQueueStats }             from '@/lib/cloud-api/message-queue'
 // Protegido: requiere permiso de admin.
 
 export async function GET(req: NextRequest) {
-  const err = await checkPermission(req, 'admin', 'read')
+  const err = await checkPermission(req, 'settings', 'read')
   if (err) return err
 
   const accept = req.headers.get('accept') ?? ''
