@@ -106,6 +106,8 @@ export default function Lines() {
   }
 
   // Add existing line modal
+  const [cloudOnboardOpen, setCloudOnboardOpen] = useState(false)
+
   const [addOpen, setAddOpen]               = useState(false)
   const [addInstance, setAddInstance]       = useState('')
   const [addDisplayName, setAddDisplayName] = useState('')
@@ -374,6 +376,13 @@ export default function Lines() {
           </p>
         </div>
         <div className="flex gap-2">
+          {isAdmin && (
+            <Button size="sm" variant="outline"
+              className="border-green-600 text-green-700 hover:bg-green-50"
+              onClick={() => setCloudOnboardOpen(true)}>
+              <Plus size={14} className="mr-1" /> Agregar línea API
+            </Button>
+          )}
           {isAdmin && (
             <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white"
               onClick={() => { setAddOpen(true); setAddError(null) }}>
@@ -683,6 +692,23 @@ export default function Lines() {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Modal Cloud API onboarding ── */}
+      <Dialog open={cloudOnboardOpen} onOpenChange={open => { if (!open) { setCloudOnboardOpen(false); load() } }}>
+        <DialogContent className="max-w-2xl p-0 overflow-hidden">
+          <DialogHeader className="px-6 pt-5 pb-0">
+            <DialogTitle className="flex items-center gap-2">
+              <Plus size={16} className="text-green-600" /> Conectar número oficial de WhatsApp
+            </DialogTitle>
+          </DialogHeader>
+          <iframe
+            src="/lines/cloud-onboard"
+            className="w-full border-0"
+            style={{ height: 560 }}
+            title="Onboarding WhatsApp API"
+          />
         </DialogContent>
       </Dialog>
 
