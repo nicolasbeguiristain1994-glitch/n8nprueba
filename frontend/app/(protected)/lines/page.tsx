@@ -9,6 +9,25 @@ import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, Ex
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
+// ─── Tipos para Embedded Signup (Cloud API) ───────────────────────────────────
+interface SignupResult {
+  authResponse?: { code: string; waba_id: string; phone_number_id: string } | null
+  status: string
+}
+interface OnboardResult {
+  cloudNumberId: string; phoneNumberId: string; displayPhone: string
+  status: string; message: string
+}
+declare global {
+  interface Window {
+    FB: {
+      init:  (config: Record<string, unknown>) => void
+      login: (callback: (res: SignupResult) => void, options: Record<string, unknown>) => void
+    }
+    fbAsyncInit?: () => void
+  }
+}
+
 interface Line {
   id: string; line_key: string; display_name: string; phone_number: string
   evolution_instance: string; status: string; is_connected: boolean
@@ -105,8 +124,71 @@ export default function Lines() {
     }
   }
 
-  // Add existing line modal
-  const [cloudOnboardOpen, setCloudOnboardOpen] = useState(false)
+  // Cloud API onboarding modal
+  const [cloudOnboardOpen, setCloudOnboardOpen]   = useState(false)
+  const [sdkReady,         setSdkReady]           = useState(false)
+  const [cloudLoading,     setCloudLoading]       = useState(false)
+  const [cloudResult,      setCloudResult]        = useState<OnboardResult | null>(null)
+  const [cloudError,       setCloudError]         = useState<string | null>(null)
+  const [cloudLineId,      setCloudLineId]        = useState('')
+
+  // Cargar FB SDK cuando se abre el modal (una sola vez)
+  useEffect(() => {
+    if (!cloudOnboardOpen) return
+    const appId = process.env.NEXT_PUBLIC_META_APP_ID
+    if (!appId) { setCloudError('NEXT_PUBLIC_META_APP_ID no está configurado'); return }
+    if (document.getElementById('fb-sdk')) { setSdkReady(true); return }
+    window.fbAsyncInit = function () {
+      window.FB.init({ appId, autoLogAppEvents: true, xfbml: true, version: 'v21.0' })
+      setSdkReady(true)
+    }
+    const script = document.createElement('script')
+    script.id = 'fb-sdk'; script.src = 'https://connect.facebook.net/es_LA/sdk.js'
+    script.async = true; script.defer = true
+    document.head.appendChild(script)
+  }, [cloudOnboardOpen])
+
+  const startEmbeddedSignup = useCallback(() => {
+    if (!sdkReady) return
+    setCloudError(null); setCloudLoading(true)
+    window.FB.login(
+      async (response: SignupResult) => {
+        if (response.status !== 'connected' || !response.authResponse?.code) {
+          setCloudError('El usuario canceló el proceso o hubo un error de autorización')
+          setCloudLoading(false); return
+        }
+        const { code, waba_id, phone_number_id } = response.authResponse
+        try {
+          const res  = await fetch('/api/cloud/onboard', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code, wabaId: waba_id, phoneNumberId: phone_number_id,
+              whatsappLineId: cloudLineId || undefined }),
+          })
+          const data: OnboardResult & { error?: string } = await res.json()
+          if (!res.ok || data.error) setCloudError(data.error ?? 'Error al procesar el onboarding')
+          else setCloudResult(data)
+        } catch (err) {
+          setCloudError(err instanceof Error ? err.message : 'Error de red')
+        } finally {
+          setCloudLoading(false)
+        }
+      },
+      {
+        config_id: process.env.NEXT_PUBLIC_META_CONFIG_ID,
+        response_type: 'code', override_default_response_type: true,
+        extras: {
+          feature: 'whatsapp_embedded_signup',
+          featureType: 'whatsapp_business_app_onboarding',
+          setup: {}, sessionInfoVersion: 3,
+        },
+      },
+    )
+  }, [sdkReady, cloudLineId])
+
+  const closeCloudOnboard = () => {
+    setCloudOnboardOpen(false); setCloudResult(null); setCloudError(null)
+    setCloudLineId(''); setSdkReady(false); load()
+  }
 
   const [addOpen, setAddOpen]               = useState(false)
   const [addInstance, setAddInstance]       = useState('')
@@ -696,19 +778,114 @@ export default function Lines() {
       </Dialog>
 
       {/* ── Modal Cloud API onboarding ── */}
-      <Dialog open={cloudOnboardOpen} onOpenChange={open => { if (!open) { setCloudOnboardOpen(false); load() } }}>
-        <DialogContent className="max-w-2xl p-0 overflow-hidden">
-          <DialogHeader className="px-6 pt-5 pb-0">
+      <Dialog open={cloudOnboardOpen} onOpenChange={open => { if (!open) closeCloudOnboard() }}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Plus size={16} className="text-green-600" /> Conectar número oficial de WhatsApp
             </DialogTitle>
           </DialogHeader>
-          <iframe
-            src="/lines/cloud-onboard"
-            className="w-full border-0"
-            style={{ height: 560 }}
-            title="Onboarding WhatsApp API"
-          />
+
+          <div className="space-y-4 py-1">
+            <p className="text-sm text-gray-500">
+              Registrá un número en la API oficial de Meta.
+              Con <strong>Coexistence</strong> el número puede seguir usando la WhatsApp Business App al mismo tiempo.
+            </p>
+
+            {/* Línea a vincular (opcional) */}
+            {!cloudResult && (
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-gray-700">Línea existente a vincular (opcional)</label>
+                <Input
+                  placeholder="UUID de la línea en la plataforma"
+                  value={cloudLineId}
+                  onChange={e => setCloudLineId(e.target.value)}
+                />
+              </div>
+            )}
+
+            {/* Botón principal */}
+            {!cloudResult && (
+              <button
+                onClick={startEmbeddedSignup}
+                disabled={!sdkReady || cloudLoading || !!cloudError?.includes('META_APP_ID')}
+                className="w-full bg-green-600 text-white font-semibold py-3 rounded-xl
+                           hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed
+                           flex items-center justify-center gap-2 text-sm"
+              >
+                {cloudLoading ? (
+                  <><Loader2 size={14} className="animate-spin" /> Procesando...</>
+                ) : !sdkReady && !cloudError ? (
+                  <><Loader2 size={14} className="animate-spin" /> Cargando SDK de Meta...</>
+                ) : (
+                  'Conectar con Meta Business'
+                )}
+              </button>
+            )}
+
+            {/* Error */}
+            {cloudError && (
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                <strong>Error:</strong> {cloudError}
+              </div>
+            )}
+
+            {/* Éxito */}
+            {cloudResult && (
+              <div className="space-y-3">
+                <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <h3 className="font-semibold text-green-800 mb-2">Número registrado</h3>
+                  <dl className="text-sm space-y-1">
+                    <div className="flex gap-2">
+                      <dt className="text-gray-500 w-24">Número:</dt>
+                      <dd className="font-mono font-medium">{cloudResult.displayPhone}</dd>
+                    </div>
+                    <div className="flex gap-2">
+                      <dt className="text-gray-500 w-24">Estado:</dt>
+                      <dd>
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                          cloudResult.status === 'active'
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-yellow-100 text-yellow-800'
+                        }`}>
+                          {cloudResult.status}
+                        </span>
+                      </dd>
+                    </div>
+                  </dl>
+                  <p className="mt-2 text-sm text-gray-600">{cloudResult.message}</p>
+                </div>
+
+                {cloudResult.status === 'code_sent' && (
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                    <strong>Próximo paso:</strong> El cliente debe ingresar el código en su <strong>WhatsApp Business App</strong>.
+                    Una vez verificado, la sincronización comenzará automáticamente (hasta 15 minutos).
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1 text-sm"
+                    onClick={() => { setCloudResult(null); setCloudError(null) }}>
+                    Conectar otro número
+                  </Button>
+                  <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm"
+                    onClick={closeCloudOnboard}>
+                    Cerrar
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Info Coexistence */}
+            {!cloudResult && (
+              <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-500 space-y-1">
+                <p className="font-semibold text-gray-700 mb-1">¿Qué es Coexistence?</p>
+                <p>• El número puede usar la API oficial <strong>y</strong> la app simultáneamente</p>
+                <p>• Los mensajes desde la app se sincronizan en la plataforma</p>
+                <p>• Historial de hasta 180 días sincronizado automáticamente</p>
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
 
