@@ -1,6 +1,9 @@
 import { META_BASE_URL, type SmbSyncRequest, type SmbSyncStatus } from './types'
 import { CloudApiError, fromHttpResponse } from './errors'
 import { query } from '@/lib/db'
+import { createLogger } from './infrastructure/logger'
+
+const log = createLogger({ correlationId: 'system', operation: 'coexistence_sync' })
 
 // ─── SMB App Data API ─────────────────────────────────────────────────────────
 // Documentación: developers.facebook.com/docs/whatsapp/cloud-api/coexistence
@@ -74,7 +77,7 @@ export async function runInitialCoexistenceSync(
   accessToken:   string,
   historyDays:   number = 180,
 ): Promise<{ contacts: SmbSyncStatus; history: SmbSyncStatus }> {
-  console.log('[coex-sync] Starting initial sync for', phoneNumberId)
+  log.logInfo('starting initial sync', { phoneNumberId })
 
   const contacts = await triggerSmbSync(
     { wabaId, phoneNumberId, syncType: 'smb_app_state_sync' },
@@ -109,9 +112,9 @@ export async function handleSyncWebhook(
       `UPDATE cloud_numbers SET ${column} = true, updated_at = NOW() WHERE phone_number_id = $1`,
       [phoneNumberId],
     )
-    console.log(`[coex-sync] ${syncType} completed for ${phoneNumberId}`)
+    log.logInfo('sync webhook completed', { syncType, phoneNumberId })
   } else {
-    console.error(`[coex-sync] ${syncType} failed for ${phoneNumberId}:`, error)
+    log.logError('sync webhook failed', undefined, { syncType, phoneNumberId, error })
   }
 }
 

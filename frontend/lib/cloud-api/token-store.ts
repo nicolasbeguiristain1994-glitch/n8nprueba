@@ -1,103 +1,171 @@
+// Gestión de tokens de acceso con encriptación en reposo (AES-256 via pgcrypto).
+//
+// KEY MANAGEMENT:
+//   TOKEN_ENCRYPTION_KEY  = secreto de 32+ chars en Doppler (nunca en código)
+//   La clave NUNCA se almacena en PostgreSQL — se pasa como parámetro a pgp_sym_encrypt.
+//
+// ROTACIÓN DE CLAVE:
+//   1. Agregar TOKEN_ENCRYPTION_KEY_NEW en Doppler.
+//   2. Ejecutar: scripts/ops/rotate-token-key.ts
+//      (lee con KEY_OLD, escribe con KEY_NEW — nunca hay ventana sin encriptación)
+//   3. Eliminar TOKEN_ENCRYPTION_KEY_OLD de Doppler.
+//
+// MIGRACIÓN LAZY desde tokens en texto plano (access_token column):
+//   Si access_token_enc = NULL, se lee de access_token (deprecated) y se re-encripta.
+//   Esto permite cero-downtime durante la transición.
+
 import { query } from '@/lib/db'
-import { MetaCloudApiClient } from './client'
-import { TokenExpiredError } from './errors'
+import { TokenExpiredError, CloudApiError } from './errors'
+import { generateLongLivedToken } from './infrastructure/meta-http.gateway'
+import { createLogger } from './infrastructure/logger'
 
-// Renueva el token si vence en menos de 7 días
-const REFRESH_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000
+const REFRESH_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000  // renovar si vence en < 7 días
+const tokenStoreLog = createLogger({ correlationId: 'system', operation: 'token_store' })
 
-export interface StoredToken {
-  phoneNumberId: string
-  accessToken:   string
-  expiresAt:     Date | null
+function getEncryptionKey(): string {
+  const key = process.env.TOKEN_ENCRYPTION_KEY
+  if (!key || key.length < 16) {
+    throw new CloudApiError(
+      'TOKEN_ENCRYPTION_KEY no está configurada o es demasiado corta. Configúrala en Doppler.',
+      0, 'ConfigurationError', undefined, false,
+    )
+  }
+  return key
 }
 
-// ─── Recuperar token de un número ─────────────────────────────────────────────
+// ─── Leer token (con migración lazy desde plaintext) ──────────────────────────
 
 export async function getTokenForNumber(phoneNumberId: string): Promise<string> {
-  const result = await query<{ access_token: string; token_expires_at: Date | null }>(
-    `SELECT access_token, token_expires_at
+  const encKey = getEncryptionKey()
+
+  type Row = { token_enc: Buffer | null; token_plain: string | null; expires_at: Date | null }
+  const rows = await query<Row>(
+    `SELECT
+       CASE WHEN access_token_enc IS NOT NULL
+            THEN pgp_sym_decrypt(access_token_enc, $1)::text
+            ELSE NULL
+       END AS token_enc,
+       CASE WHEN access_token_enc IS NULL THEN access_token ELSE NULL END AS token_plain,
+       token_expires_at AS expires_at
      FROM cloud_numbers
-     WHERE phone_number_id = $1 AND status = 'active'`,
-    [phoneNumberId],
+     WHERE phone_number_id = $2 AND status = 'active'`,
+    [encKey, phoneNumberId],
   )
 
-  const row = result[0]
+  const row = rows[0]
   if (!row) throw new TokenExpiredError()
 
-  // Si el token tiene expiración y está próximo a vencer, renovar automáticamente
-  if (row.token_expires_at && shouldRefresh(row.token_expires_at)) {
-    return refreshToken(phoneNumberId, row.access_token)
+  const token = row.token_enc ?? row.token_plain
+
+  if (!token) throw new TokenExpiredError()
+
+  // Migración lazy: si vino de plaintext, encriptar ahora
+  if (row.token_plain && !row.token_enc) {
+    void migrateToEncrypted(phoneNumberId, token, encKey)
   }
 
-  return row.access_token
+  // Renovar si vence pronto
+  if (row.expires_at && shouldRefresh(row.expires_at)) {
+    return refreshToken(phoneNumberId, token, encKey)
+  }
+
+  return token
 }
 
-// ─── Persiste un token nuevo o actualizado ────────────────────────────────────
+// ─── Persistir token encriptado ───────────────────────────────────────────────
 
 export async function storeToken(
   phoneNumberId: string,
-  accessToken:   string,
+  plainToken:    string,
   expiresAt:     Date | null,
 ): Promise<void> {
+  const encKey = getEncryptionKey()
   await query(
     `UPDATE cloud_numbers
-     SET access_token = $1, token_expires_at = $2, updated_at = NOW()
-     WHERE phone_number_id = $3`,
-    [accessToken, expiresAt, phoneNumberId],
+     SET access_token_enc   = pgp_sym_encrypt($1, $2),
+         access_token       = '',          -- limpia el plaintext
+         token_expires_at   = $3,
+         updated_at         = NOW()
+     WHERE phone_number_id = $4`,
+    [plainToken, encKey, expiresAt, phoneNumberId],
   )
 }
 
-// ─── Rotación / renovación de token ──────────────────────────────────────────
-// Los System User tokens de Meta no expiran, pero los tokens de usuario sí.
-// Si el cliente usa un token de usuario, debemos renovar con App Secret.
+// ─── Revocar token ────────────────────────────────────────────────────────────
 
-async function refreshToken(phoneNumberId: string, currentToken: string): Promise<string> {
-  const appId     = process.env.META_APP_ID!
-  const appSecret = process.env.META_APP_SECRET!
+export async function revokeToken(phoneNumberId: string): Promise<void> {
+  await query(
+    `UPDATE cloud_numbers
+     SET status            = 'suspended',
+         access_token_enc  = NULL,
+         access_token      = '',
+         updated_at        = NOW()
+     WHERE phone_number_id = $1`,
+    [phoneNumberId],
+  )
+}
+
+// ─── Listar números activos ───────────────────────────────────────────────────
+
+export interface StoredToken {
+  phoneNumberId: string
+  expiresAt:     Date | null
+}
+
+export async function listActiveNumbers(): Promise<StoredToken[]> {
+  const rows = await query<StoredToken>(
+    `SELECT phone_number_id AS "phoneNumberId", token_expires_at AS "expiresAt"
+     FROM cloud_numbers WHERE status = 'active' ORDER BY created_at`,
+  )
+  return rows
+}
+
+// ─── Helpers privados ─────────────────────────────────────────────────────────
+
+async function migrateToEncrypted(
+  phoneNumberId: string,
+  plainToken:    string,
+  encKey:        string,
+): Promise<void> {
+  try {
+    await query(
+      `UPDATE cloud_numbers
+       SET access_token_enc = pgp_sym_encrypt($1, $2), access_token = '', updated_at = NOW()
+       WHERE phone_number_id = $3`,
+      [plainToken, encKey, phoneNumberId],
+    )
+    tokenStoreLog.logInfo('lazy migration completed', { phoneNumberId })
+  } catch (err) {
+    tokenStoreLog.logError('lazy migration failed', err, { phoneNumberId })
+  }
+}
+
+async function refreshToken(
+  phoneNumberId: string,
+  currentToken:  string,
+  encKey:        string,
+): Promise<string> {
+  const appId     = process.env.META_APP_ID
+  const appSecret = process.env.META_APP_SECRET
+  if (!appId || !appSecret) return currentToken
 
   try {
-    const { accessToken, expiresIn } = await MetaCloudApiClient.generateSystemUserToken(
-      appId,
-      appSecret,
-      currentToken,
+    const { accessToken, expiresIn } = await generateLongLivedToken(appId, appSecret, currentToken)
+    const expiresAt = expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000) : null
+
+    await query(
+      `UPDATE cloud_numbers
+       SET access_token_enc = pgp_sym_encrypt($1, $2), access_token = '', token_expires_at = $3, updated_at = NOW()
+       WHERE phone_number_id = $4`,
+      [accessToken, encKey, expiresAt, phoneNumberId],
     )
-
-    const expiresAt = expiresIn > 0
-      ? new Date(Date.now() + expiresIn * 1000)
-      : null
-
-    await storeToken(phoneNumberId, accessToken, expiresAt)
     return accessToken
   } catch (err) {
-    console.error('[token-store] Failed to refresh token for', phoneNumberId, err)
-    // Retornar el token existente aunque esté próximo a vencer
+    tokenStoreLog.logWarn('token refresh failed', { phoneNumberId, error: String(err) })
     return currentToken
   }
 }
 
 function shouldRefresh(expiresAt: Date): boolean {
   return expiresAt.getTime() - Date.now() < REFRESH_THRESHOLD_MS
-}
-
-// ─── Revocar token (logout / desconexión) ────────────────────────────────────
-
-export async function revokeToken(phoneNumberId: string): Promise<void> {
-  await query(
-    `UPDATE cloud_numbers
-     SET status = 'suspended', access_token = '', updated_at = NOW()
-     WHERE phone_number_id = $1`,
-    [phoneNumberId],
-  )
-}
-
-// ─── Listar todos los números activos ─────────────────────────────────────────
-
-export async function listActiveNumbers(): Promise<StoredToken[]> {
-  const result = await query<StoredToken>(
-    `SELECT phone_number_id as "phoneNumberId", access_token as "accessToken", token_expires_at as "expiresAt"
-     FROM cloud_numbers
-     WHERE status = 'active'
-     ORDER BY created_at`,
-  )
-  return result
 }

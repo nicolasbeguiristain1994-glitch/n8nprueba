@@ -1,14 +1,11 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { checkPermissionWithUser } from '@/lib/permissions'
-import { startCoexistenceOnboarding } from '@/lib/cloud-api/embedded-signup'
-import { audit } from '@/lib/audit'
-import type { OnboardingRequest } from '@/lib/cloud-api/types'
+import { NextRequest, NextResponse }      from 'next/server'
+import { checkPermissionWithUser }        from '@/lib/permissions'
+import { onboardCoexistenceUseCase }      from '@/lib/cloud-api/use-cases/onboard-coexistence.use-case'
+import { audit }                          from '@/lib/audit'
+import type { OnboardingRequest }         from '@/lib/cloud-api/types/domain'
 
 // POST /api/cloud/onboard
-// Recibe el resultado del Embedded Signup (code, waba_id, phone_number_id)
-// y dispara el flujo completo de onboarding con Coexistence.
-//
-// Body: { code: string, wabaId: string, phoneNumberId: string, whatsappLineId?: string }
+// Recibe el resultado del Embedded Signup y delega al OnboardCoexistenceUseCase.
 
 export async function POST(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'lines', 'manage')
@@ -22,35 +19,24 @@ export async function POST(req: NextRequest) {
   const { code, wabaId, phoneNumberId, whatsappLineId } = body
 
   if (!code || !wabaId || !phoneNumberId) {
-    return NextResponse.json(
-      { error: 'Se requieren: code, wabaId, phoneNumberId' },
-      { status: 400 },
-    )
+    return NextResponse.json({ error: 'Se requieren: code, wabaId, phoneNumberId' }, { status: 400 })
   }
 
   try {
-    const result = await startCoexistenceOnboarding(
+    const result = await onboardCoexistenceUseCase.execute(
       { code, wabaId, phoneNumberId, whatsappLineId },
       auth.user.user_id,
     )
 
     void audit({
-      req,
-      action:   'manage',
-      resource: 'lines',
-      metadata: {
-        action:        'cloud_onboard',
-        phoneNumberId,
-        wabaId,
-        status:        result.status,
-        cloudNumberId: result.cloudNumberId,
-      },
+      req, action: 'manage', resource: 'lines',
+      metadata: { action: 'cloud_onboard', ...result },
     })
 
-    return NextResponse.json(result, { status: 200 })
+    return NextResponse.json(result)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    console.error('[cloud/onboard] Error:', message)
+    console.error('[cloud/onboard]', message)
     return NextResponse.json({ error: message }, { status: 500 })
   }
 }

@@ -9,6 +9,9 @@
 import { Queue, QueueEvents, type ConnectionOptions } from 'bullmq'
 import type { QueuedMessage, QueueConfig } from './types'
 import { query } from '@/lib/db'
+import { createLogger } from './infrastructure/logger'
+
+const queueLog = createLogger({ correlationId: 'system', operation: 'message_queue' })
 
 const QUEUE_NAME = 'cloud-messages'
 const DLQ_NAME   = 'cloud-messages-dlq'
@@ -93,7 +96,7 @@ export async function enqueueMessage(
   await query(
     `UPDATE cloud_messages SET status = 'queued', queued_at = NOW() WHERE id = $1`,
     [msg.messageId],
-  ).catch(err => console.warn('[queue] Failed to update message status:', err))
+  ).catch(err => queueLog.logWarn('failed to update message status', { error: String(err) }))
 
   return job.id ?? msg.jobId
 }
@@ -113,9 +116,9 @@ export async function moveToDeadLetter(
      SET status = 'failed', failed_at = NOW(), error_code = $1, error_details = $2
      WHERE id = $3`,
     [errorCode ?? null, errorMessage, msg.messageId],
-  ).catch(err => console.warn('[queue] Failed to update DLQ message status:', err))
+  ).catch(err => queueLog.logWarn('failed to update DLQ message status', { error: String(err) }))
 
-  console.error('[queue] Message moved to DLQ:', {
+  queueLog.logError('message moved to DLQ', undefined, {
     messageId:     msg.messageId,
     phoneNumberId: msg.phoneNumberId,
     to:            msg.to,

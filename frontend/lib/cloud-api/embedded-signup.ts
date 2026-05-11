@@ -4,6 +4,9 @@ import { runInitialCoexistenceSync } from './coexistence-sync'
 import { storeToken } from './token-store'
 import type { OnboardingRequest, CloudNumberStatus } from './types'
 import { CloudApiError } from './errors'
+import { createLogger } from './infrastructure/logger'
+
+const signupLog = createLogger({ correlationId: 'system', operation: 'embedded_signup' })
 
 // ─── Flujo completo de onboarding con Coexistence ────────────────────────────
 //
@@ -40,7 +43,7 @@ export async function startCoexistenceOnboarding(
   }
 
   // ── Paso 1: Intercambiar code por access token ────────────────────────────
-  console.log('[onboarding] Exchanging code for token, phone_number_id:', req.phoneNumberId)
+  signupLog.logInfo('exchanging code for token', { phoneNumberId: req.phoneNumberId })
   const { accessToken } = await MetaCloudApiClient.exchangeCodeForToken(req.code, appId, appSecret)
 
   // ── Paso 2: Generar System User token long-lived (no expira) ─────────────
@@ -58,7 +61,7 @@ export async function startCoexistenceOnboarding(
     tokenExpiresAt = expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000) : null
   } catch (err) {
     // Si falla el refresh (ej: no es un user token), continuar con el token corto
-    console.warn('[onboarding] Could not extend token lifetime:', err)
+    signupLog.logWarn('could not extend token lifetime', { error: String(err) })
   }
 
   const client = new MetaCloudApiClient(finalToken)
@@ -131,9 +134,9 @@ export async function startCoexistenceOnboarding(
       `UPDATE cloud_numbers SET status = 'code_sent', updated_at = NOW() WHERE id = $1`,
       [cloudNumberId],
     )
-    console.log('[onboarding] OTP requested for', req.phoneNumberId)
+    signupLog.logInfo('OTP requested', { phoneNumberId: req.phoneNumberId })
   } catch (err) {
-    console.warn('[onboarding] OTP request failed (may already be verified):', err)
+    signupLog.logWarn('OTP request failed (may already be verified)', { error: String(err) })
   }
 
   return {
@@ -205,6 +208,6 @@ async function completeVerification(
   // Iniciar sincronización asíncrona de historial y contactos
   // Esto no bloquea el onboarding — Meta notificará via webhook cuando complete
   runInitialCoexistenceSync(wabaId, phoneNumberId, accessToken, 180)
-    .then(() => console.log('[onboarding] Coexistence sync started for', phoneNumberId))
-    .catch(err => console.error('[onboarding] Coexistence sync failed:', err))
+    .then(() => signupLog.logInfo('coexistence sync started', { phoneNumberId }))
+    .catch(err => signupLog.logError('coexistence sync failed', err, { phoneNumberId }))
 }

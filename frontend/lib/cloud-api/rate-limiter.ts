@@ -9,6 +9,9 @@
 import { createClient } from 'redis'
 import type { RateLimitResult } from './types'
 import { RateLimitError } from './errors'
+import { createLogger } from './infrastructure/logger'
+
+const rateLimitLog = createLogger({ correlationId: 'system', operation: 'rate_limiter' })
 
 // El máximo de mensajes/s en Coexistence según docs de Meta (mayo 2026)
 const COEXISTENCE_MAX_MPS = 20
@@ -44,7 +47,7 @@ let redisClient: ReturnType<typeof createClient> | null = null
 function getRedis() {
   if (!redisClient) {
     redisClient = createClient({ url: process.env.REDIS_URL ?? 'redis://localhost:6379' })
-    redisClient.connect().catch(err => console.error('[rate-limiter] Redis connect error:', err))
+    redisClient.connect().catch(err => rateLimitLog.logError('redis connect error', err))
   }
   return redisClient
 }
@@ -72,7 +75,7 @@ export async function checkRateLimit(
     }
   } catch (err) {
     // Si Redis no está disponible, permitir el paso (fail-open) con log de warning
-    console.warn('[rate-limiter] Redis unavailable, allowing request:', err)
+    rateLimitLog.logWarn('redis unavailable, fail-open', { error: String(err) })
     return { allowed: true, remaining: max - 1, retryAfterMs: 0 }
   }
 }
