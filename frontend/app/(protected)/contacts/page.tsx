@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import * as XLSX from 'xlsx'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -89,6 +90,32 @@ const ANTIGUEDAD_STYLE: Record<string, string> = {
 const GAMING_STYLE: Record<string, string> = {
   slots: 'bg-pink-100 text-pink-700', deportivas: 'bg-green-100 text-green-700',
   ambas: 'bg-cyan-100 text-cyan-700',
+}
+
+function SegmentItem({ value, label, desc }: { value: string; label: string; desc: string }) {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+
+  const handleMouseEnter = (e: React.MouseEvent<HTMLElement>) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    setPos({ x: r.right + 10, y: r.top + r.height / 2 })
+  }
+
+  return (
+    <>
+      <SelectItem value={value} onMouseEnter={handleMouseEnter} onMouseLeave={() => setPos(null)}>
+        {label}
+      </SelectItem>
+      {pos && typeof document !== 'undefined' && createPortal(
+        <div
+          style={{ position: 'fixed', left: pos.x, top: pos.y, transform: 'translateY(-50%)', zIndex: 9999 }}
+          className="rounded-md bg-gray-900 text-white text-xs px-2.5 py-1.5 shadow-lg max-w-52 pointer-events-none leading-snug"
+        >
+          {desc}
+        </div>,
+        document.body
+      )}
+    </>
+  )
 }
 
 const ZEUS_RE = /z(s|eus)?$/i
@@ -914,25 +941,19 @@ export default function Contacts() {
       <div className="flex gap-3 flex-wrap items-center">
         <Select value={filterActividad} onValueChange={v => { setFilterActividad(v ?? ''); resetPage() }}>
           <SelectTrigger className="w-40"><SelectValue placeholder="Actividad" /></SelectTrigger>
-          <SelectContent className="w-64">
+          <SelectContent>
             <SelectItem value="">Toda actividad</SelectItem>
-            {(Object.keys(ACTIVIDAD_DESC) as Array<keyof typeof ACTIVIDAD_DESC>).map(v => (
-              <SelectItem key={v} value={v}>
-                <span className="font-medium capitalize">{v.replace('_', ' ')}</span>
-                <span className="block text-xs text-muted-foreground font-normal">{ACTIVIDAD_DESC[v]}</span>
-              </SelectItem>
+            {(Object.keys(ACTIVIDAD_DESC) as string[]).map(v => (
+              <SegmentItem key={v} value={v} label={v.replace('_', ' ')} desc={ACTIVIDAD_DESC[v]} />
             ))}
           </SelectContent>
         </Select>
         <Select value={filterAntiguedad} onValueChange={v => { setFilterAntiguedad(v ?? ''); resetPage() }}>
           <SelectTrigger className="w-40"><SelectValue placeholder="Antigüedad" /></SelectTrigger>
-          <SelectContent className="w-64">
+          <SelectContent>
             <SelectItem value="">Cualquier antigüedad</SelectItem>
-            {(Object.keys(ANTIGUEDAD_DESC) as Array<keyof typeof ANTIGUEDAD_DESC>).map(v => (
-              <SelectItem key={v} value={v}>
-                <span className="font-medium capitalize">{v}</span>
-                <span className="block text-xs text-muted-foreground font-normal">{ANTIGUEDAD_DESC[v]}</span>
-              </SelectItem>
+            {(Object.keys(ANTIGUEDAD_DESC) as string[]).map(v => (
+              <SegmentItem key={v} value={v} label={v} desc={ANTIGUEDAD_DESC[v]} />
             ))}
           </SelectContent>
         </Select>
@@ -1167,13 +1188,10 @@ export default function Contacts() {
                       <label className="text-xs font-medium text-muted-foreground mb-1 block">{label}</label>
                       <Select value={value || 'all'} onValueChange={v => set(v === 'all' ? '' : (v ?? ''))}>
                         <SelectTrigger><SelectValue placeholder={`Cualquier ${label.toLowerCase()}`} /></SelectTrigger>
-                        <SelectContent className="w-64">
+                        <SelectContent>
                           <SelectItem value="all">Cualquier {label.toLowerCase()}</SelectItem>
                           {Object.keys(desc).map(v => (
-                            <SelectItem key={v} value={v}>
-                              <span className="font-medium capitalize">{v.replace('_', ' ')}</span>
-                              <span className="block text-xs text-muted-foreground font-normal">{desc[v]}</span>
-                            </SelectItem>
+                            <SegmentItem key={v} value={v} label={v.replace('_', ' ')} desc={desc[v]} />
                           ))}
                         </SelectContent>
                       </Select>
