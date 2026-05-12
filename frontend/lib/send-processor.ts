@@ -269,6 +269,25 @@ export async function sendOne(
          AND status = 'queued'`,
       [messageId, recipient.id]
     )
+    // Fallback: ensure a 'sent' row exists if the pre-insert never ran
+    await query(
+      `INSERT INTO whatsapp_messages
+         (contact_id, campaign_id, phone_number, message_body, direction, status,
+          evolution_message_id, sent_at, campaign_recipient_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'outbound', 'sent', $5, NOW(), $6, NOW(), NOW())
+       ON CONFLICT (campaign_recipient_id)
+         WHERE campaign_recipient_id IS NOT NULL
+       DO UPDATE SET
+         status               = CASE WHEN whatsapp_messages.status IN ('delivered','read') THEN whatsapp_messages.status ELSE 'sent' END,
+         evolution_message_id = COALESCE(whatsapp_messages.evolution_message_id, EXCLUDED.evolution_message_id),
+         updated_at           = NOW()`,
+      [recipient.contact_id, campaignId, recipient.phone_number, personalizedMsg, messageId, recipient.id]
+    ).catch(e =>
+      clog.warn({
+        event: 'sent.fallback.insert.error', campaignId, mode: 'single-line',
+        recipientId: recipient.id, error: e instanceof Error ? e.message : String(e),
+      })
+    )
     await query(
       `UPDATE campaign_recipients
        SET status = 'sent', sent_at = NOW(), locked_at = NULL,

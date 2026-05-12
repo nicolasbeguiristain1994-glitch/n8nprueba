@@ -27,25 +27,31 @@ export async function GET(req: NextRequest) {
              ${includePauseReason ? 'c.pause_reason,' : 'NULL::text AS pause_reason,'}
              c.processor_locked_at,
              c.created_at, c.owned_by, cl.name AS list_name, cl.id AS list_id,
-             COUNT(m.id) FILTER (WHERE m.status IN ('sent','delivered','read'))::int AS total_sent,
-             COUNT(m.id) FILTER (WHERE m.status IN ('delivered','read'))::int       AS total_delivered,
+             COALESCE(cr.sent, 0)::int                                             AS total_sent,
+             COUNT(m.id) FILTER (WHERE m.status IN ('delivered','read'))::int      AS total_delivered,
              COUNT(m.id) FILTER (WHERE m.status = 'read')::int                    AS total_read,
-             COUNT(m.id) FILTER (WHERE m.status = 'failed')::int                  AS total_failed,
-             (SELECT COUNT(*) FROM campaign_recipients cr
-              WHERE cr.campaign_id = c.id AND cr.status = 'skipped')::int         AS total_skipped,
-             CASE WHEN COUNT(m.id) FILTER (WHERE m.status IN ('sent','delivered','read')) > 0
+             COALESCE(cr.failed, 0)::int                                           AS total_failed,
+             COALESCE(cr.skipped, 0)::int                                          AS total_skipped,
+             CASE WHEN COALESCE(cr.sent, 0) > 0
                THEN ROUND(COUNT(m.id) FILTER (WHERE m.status = 'read')::numeric /
-                          COUNT(m.id) FILTER (WHERE m.status IN ('sent','delivered','read')) * 100, 1)
+                          COALESCE(cr.sent, 0) * 100, 1)
                ELSE 0 END AS read_rate,
              CASE WHEN c.total_targets > 0
-               THEN ROUND(COUNT(m.id) FILTER (WHERE m.status IN ('sent','delivered','read'))::numeric /
-                          c.total_targets * 100, 1)
+               THEN ROUND(COALESCE(cr.sent, 0)::numeric / c.total_targets * 100, 1)
                ELSE 0 END AS delivery_rate
       FROM campaigns c
       LEFT JOIN contact_lists cl ON cl.id = c.list_id
       LEFT JOIN whatsapp_messages m ON m.campaign_id = c.id
+      LEFT JOIN (
+        SELECT campaign_id,
+               COUNT(*) FILTER (WHERE status = 'sent')    AS sent,
+               COUNT(*) FILTER (WHERE status = 'failed')  AS failed,
+               COUNT(*) FILTER (WHERE status = 'skipped') AS skipped
+        FROM campaign_recipients
+        GROUP BY campaign_id
+      ) cr ON cr.campaign_id = c.id
       ${ownerClause}
-      GROUP BY c.id, cl.id
+      GROUP BY c.id, cl.id, cr.sent, cr.failed, cr.skipped
       ORDER BY c.created_at DESC
     `
 
