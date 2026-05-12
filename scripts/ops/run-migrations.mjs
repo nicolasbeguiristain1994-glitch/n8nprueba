@@ -148,6 +148,12 @@ const MIGRATIONS = [
   { file: 'db/migrations/058_warmup_anti_ban.sql',                 label: '058 — warmup_numbers anti-ban columns (8 campos)' },
   { file: 'db/migrations/059_warmup_missing_columns.sql',          label: '059 — warmup_numbers display_name + evolution_url (fix 044)' },
   { file: 'db/migrations/066_fixed_line_and_transactions.sql',     label: '066 — phone_line_assignments + contacts transaction fields' },
+  { file: 'db/migrations/067_cloud_api_numbers.sql',               label: '067 — cloud_api_numbers table' },
+  { file: 'db/migrations/068_cloud_api_conversations.sql',          label: '068 — cloud_api_conversations table' },
+  { file: 'db/migrations/069_cloud_api_opt_outs.sql',              label: '069 — cloud_api_opt_outs table' },
+  { file: 'db/migrations/070_encrypt_tokens.sql',                   label: '070 — encrypt_tokens helpers' },
+  { file: 'db/migrations/071_anti_ban_profiles.sql',                label: '071 — anti_ban_profiles table + warmup_numbers.anti_ban_profile_id' },
+  { file: 'db/migrations/072_campaigns_anti_ban.sql',               label: '072 — anti-ban fields en campaigns' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

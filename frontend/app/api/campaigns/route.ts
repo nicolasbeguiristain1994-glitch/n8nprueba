@@ -79,6 +79,8 @@ export async function POST(req: NextRequest) {
     name?: string; message?: string; messages?: string[]; media_url?: string; media_type?: string
     list_id?: string; scheduled_at?: string; antiblock_delay_min?: number; antiblock_delay_max?: number
     type?: string; personalize_name?: boolean; use_multi_line?: boolean
+    delay_type?: string; custom_delay_seconds?: number; daily_limit_override?: number | null
+    anti_ban_profile_id?: string | null; enable_mini_sessions?: boolean; mini_session_text?: string
   }
   try {
     body = await req.json()
@@ -88,7 +90,9 @@ export async function POST(req: NextRequest) {
 
   const { name, message, messages, media_url, media_type, list_id, scheduled_at,
           antiblock_delay_min, antiblock_delay_max, type: campaignType,
-          personalize_name, use_multi_line } = body
+          personalize_name, use_multi_line,
+          delay_type, custom_delay_seconds, daily_limit_override,
+          anti_ban_profile_id, enable_mini_sessions, mini_session_text } = body
 
   const nameStr = clampStr(name, 255)
   if (!nameStr)
@@ -106,6 +110,14 @@ export async function POST(req: NextRequest) {
 
   if (list_id !== undefined && list_id !== null && !isUUID(list_id))
     return NextResponse.json({ error: 'list_id debe ser un UUID válido' }, { status: 400 })
+
+  if (anti_ban_profile_id !== undefined && anti_ban_profile_id !== null && !isUUID(anti_ban_profile_id))
+    return NextResponse.json({ error: 'anti_ban_profile_id debe ser un UUID válido' }, { status: 400 })
+
+  const ALLOWED_DELAY_TYPES = ['gaussian', 'human_noisy', 'uniform']
+  const resolvedDelayType = delay_type && ALLOWED_DELAY_TYPES.includes(delay_type) ? delay_type : 'gaussian'
+  const resolvedCustomDelay = custom_delay_seconds !== undefined ? Math.max(5, Number(custom_delay_seconds)) : 18
+  const resolvedDailyLimit = daily_limit_override != null ? Math.max(5, Number(daily_limit_override)) : null
 
   const delayMin = antiblock_delay_min !== undefined ? Number(antiblock_delay_min) : 3
   const delayMax = antiblock_delay_max !== undefined ? Number(antiblock_delay_max) : 8
@@ -147,8 +159,10 @@ export async function POST(req: NextRequest) {
       `INSERT INTO campaigns
          (name, message, messages, media_url, media_type, list_id, type, status, scheduled_at,
           total_targets, antiblock_delay_min, antiblock_delay_max, personalize_name,
-          use_multi_line, owned_by, updated_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15)
+          use_multi_line, delay_type, custom_delay_seconds, daily_limit_override,
+          anti_ban_profile_id, enable_mini_sessions, mini_session_text,
+          owned_by, updated_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$21)
        RETURNING id`,
       [nameStr, msgArray[0], JSON.stringify(msgArray), media_url || null, media_type || null,
        list_id || null, resolvedType,
@@ -157,6 +171,10 @@ export async function POST(req: NextRequest) {
        delayMin, delayMax,
        personalize_name !== false,
        use_multi_line === true,
+       resolvedDelayType, resolvedCustomDelay, resolvedDailyLimit,
+       anti_ban_profile_id || null,
+       enable_mini_sessions === true,
+       mini_session_text || '👍',
        session.user_id]
     )
 

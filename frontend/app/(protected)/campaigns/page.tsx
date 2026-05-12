@@ -11,6 +11,7 @@ import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
 interface CampaignList { id: string; name: string; contact_count: number }
+interface AntiBanProfile { id: string; profile_name: string; is_default: boolean; timing_mode: string; risk_tolerance: string; recommended_for: string | null }
 interface CampaignContact {
   id: string; first_name: string; last_name: string; phone_number: string
   msg_status: string | null; sent_at: string | null
@@ -59,9 +60,10 @@ export default function Campaigns() {
   const { user } = useCurrentUser()
   const isAdmin  = user?.role === 'admin'
 
-  const [campaigns, setCampaigns] = useState<Campaign[]>([])
-  const [lists, setLists]         = useState<CampaignList[]>([])
-  const [showNew, setShowNew]     = useState(false)
+  const [campaigns, setCampaigns]         = useState<Campaign[]>([])
+  const [lists, setLists]                 = useState<CampaignList[]>([])
+  const [antiBanProfiles, setAntiBanProfiles] = useState<AntiBanProfile[]>([])
+  const [showNew, setShowNew]             = useState(false)
   const [selected, setSelected]       = useState<Campaign | null>(null)
   const [campContacts, setCampContacts] = useState<CampaignContact[]>([])
   const [loadingContacts, setLoadingContacts] = useState(false)
@@ -78,12 +80,18 @@ export default function Campaigns() {
   const [unlocking, setUnlocking]         = useState<string | null>(null)
   const [syncing, setSyncing]             = useState<string | null>(null)
 
-  // Form
-  const [form, setForm] = useState({
+  const FORM_DEFAULT = {
     name: '', list_id: '', scheduled_at: '',
     media_url: '', antiblock_delay_min: 3, antiblock_delay_max: 8,
-    type: 'promotion', personalize_name: true, use_multi_line: false
-  })
+    type: 'promotion', personalize_name: true, use_multi_line: false,
+    delay_type: 'gaussian', custom_delay_seconds: 18,
+    daily_limit_override: '' as '' | number,
+    anti_ban_profile_id: '',
+    enable_mini_sessions: false, mini_session_text: '👍',
+  }
+
+  // Form
+  const [form, setForm] = useState(FORM_DEFAULT)
   const [messages, setMessages] = useState<string[]>([''])
   const [previewIdx, setPreviewIdx] = useState(0)
   const [creating, setCreating] = useState(false)
@@ -128,6 +136,9 @@ export default function Campaigns() {
     fetchJson<{ lists: CampaignList[] }>('/api/lists')
       .then(d => setLists(d.lists || []))
       .catch(() => setLists([]))
+    fetchJson<{ profiles: AntiBanProfile[] }>('/api/anti-ban-profiles')
+      .then(d => setAntiBanProfiles(d.profiles || []))
+      .catch(() => setAntiBanProfiles([]))
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -136,9 +147,20 @@ export default function Campaigns() {
     setCreating(true)
     setCreateError(null)
     const validMsgs = messages.filter(m => m.trim())
+    if (form.daily_limit_override !== '' && Number(form.daily_limit_override) < 5) {
+      setCreating(false)
+      setCreateError('El límite diario por línea debe ser al menos 5')
+      return
+    }
     let res: Response
     try {
-      const payload: Record<string, unknown> = { ...form, messages: validMsgs, message: validMsgs[0] }
+      const payload: Record<string, unknown> = {
+        ...form,
+        messages: validMsgs,
+        message: validMsgs[0],
+        daily_limit_override: form.daily_limit_override === '' ? null : Number(form.daily_limit_override),
+        anti_ban_profile_id: form.anti_ban_profile_id === '' ? null : form.anti_ban_profile_id,
+      }
       if (useTemplate && selectedTemplate) {
         payload.template_id = selectedTemplate
       }
@@ -159,7 +181,7 @@ export default function Campaigns() {
       return  // keep modal open, preserve form state
     }
     setShowNew(false)
-    setForm({ name:'', list_id:'', scheduled_at:'', media_url:'', antiblock_delay_min:3, antiblock_delay_max:8, type:'promotion', personalize_name: true, use_multi_line: false })
+    setForm(FORM_DEFAULT)
     setMessages([''])
     setPreviewIdx(0)
     load()
@@ -621,7 +643,7 @@ export default function Campaigns() {
         if (creating) return  // block close while save is in progress
         setShowNew(v)
         if (!v) {
-          setForm({ name:'', list_id:'', scheduled_at:'', media_url:'', antiblock_delay_min:3, antiblock_delay_max:8, type:'promotion', personalize_name: true, use_multi_line: false })
+          setForm(FORM_DEFAULT)
           setMessages([''])
           setPreviewIdx(0)
           setCreating(false)
@@ -919,17 +941,111 @@ export default function Campaigns() {
               )}
             </div>
 
-            <div>
-              <label className="text-xs font-medium text-gray-600 mb-1 block">
-                <Shield size={12} className="inline mr-1"/>Antibloqueo — delay entre mensajes (seg)
-              </label>
-              <div className="flex gap-2 items-center">
-                <Input type="number" className="w-20" min={1} max={60} value={form.antiblock_delay_min}
-                  onChange={e => setForm(f=>({...f,antiblock_delay_min:Number(e.target.value)}))} />
-                <span className="text-gray-400 text-sm">a</span>
-                <Input type="number" className="w-20" min={1} max={120} value={form.antiblock_delay_max}
-                  onChange={e => setForm(f=>({...f,antiblock_delay_max:Number(e.target.value)}))} />
-                <span className="text-gray-400 text-xs">segundos</span>
+            {/* Configuración Anti-Ban */}
+            <div className="col-span-2 border border-indigo-100 rounded-xl p-4 space-y-4 bg-indigo-50/30">
+              <div className="flex items-center gap-2">
+                <Shield size={14} className="text-indigo-500" />
+                <span className="text-sm font-semibold text-gray-700">Configuración Anti-Ban</span>
+              </div>
+
+              {/* Perfil Anti-Ban */}
+              <div>
+                <label className="text-xs font-medium text-gray-600 mb-1 block">Perfil Anti-Ban</label>
+                <Select value={form.anti_ban_profile_id} onValueChange={v => setForm(f => ({ ...f, anti_ban_profile_id: (!v || v === '_default') ? '' : v }))}>
+                  <SelectTrigger className="text-sm bg-white">
+                    <SelectValue placeholder="Usar perfil por defecto (Meta-Stealth-2026)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="_default">Usar perfil por defecto</SelectItem>
+                    {antiBanProfiles.map(p => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.profile_name}{p.is_default ? ' ★' : ''} — {p.risk_tolerance}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {antiBanProfiles.length === 0 && (
+                  <p className="text-xs text-orange-500 mt-1">No se pudieron cargar los perfiles. Aplicá la migración 071 si aún no lo hiciste.</p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                {/* Tipo de delay */}
+                <div>
+                  <label className="text-xs font-medium text-gray-600 mb-1 block">Tipo de Delay</label>
+                  <Select value={form.delay_type} onValueChange={v => setForm(f => ({ ...f, delay_type: v ?? f.delay_type }))}>
+                    <SelectTrigger className="text-sm bg-white"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="gaussian">Gaussiano (recomendado)</SelectItem>
+                      <SelectItem value="human_noisy">Humano con ruido</SelectItem>
+                      <SelectItem value="uniform">Uniforme</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Delay base */}
+                <div>
+                  <label className="text-xs font-medium text-gray-600 mb-1 block">Delay base (seg)</label>
+                  <Input
+                    type="number"
+                    min={5}
+                    max={120}
+                    className="bg-white"
+                    value={form.custom_delay_seconds}
+                    onChange={e => setForm(f => ({ ...f, custom_delay_seconds: Number(e.target.value) }))}
+                  />
+                </div>
+              </div>
+
+              {/* Límite diario por línea */}
+              <div>
+                <label className="text-xs font-medium text-gray-600 mb-1 block">Límite diario por línea (opcional)</label>
+                <Input
+                  type="number"
+                  min={5}
+                  placeholder="Sin límite adicional"
+                  className="bg-white"
+                  value={form.daily_limit_override}
+                  onChange={e => setForm(f => ({ ...f, daily_limit_override: e.target.value === '' ? '' : Number(e.target.value) }))}
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Este límite se aplica solo a esta campaña. El perfil define el comportamiento general.
+                </p>
+              </div>
+
+              {/* Mini-sessions */}
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, enable_mini_sessions: !f.enable_mini_sessions }))}
+                  className={`flex items-center gap-3 w-full rounded-lg border px-4 py-3 text-sm transition-colors ${
+                    form.enable_mini_sessions
+                      ? 'border-purple-200 bg-purple-50 text-purple-800'
+                      : 'border-gray-200 bg-white text-gray-500'
+                  }`}
+                >
+                  <div className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${form.enable_mini_sessions ? 'bg-purple-500' : 'bg-gray-300'}`}>
+                    <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${form.enable_mini_sessions ? 'translate-x-4' : ''}`} />
+                  </div>
+                  <Zap size={15} className="shrink-0" />
+                  {form.enable_mini_sessions
+                    ? <span>Mini-sesión activada — envía seguimiento corto tras cada mensaje exitoso</span>
+                    : <span>Mini-sesión desactivada</span>
+                  }
+                </button>
+                {form.enable_mini_sessions && (
+                  <div className="mt-2">
+                    <label className="text-xs font-medium text-gray-600 mb-1 block">Texto de seguimiento</label>
+                    <Input
+                      placeholder="👍"
+                      className="bg-white"
+                      value={form.mini_session_text}
+                      maxLength={100}
+                      onChange={e => setForm(f => ({ ...f, mini_session_text: e.target.value }))}
+                    />
+                    <p className="text-xs text-gray-400 mt-1">Emoji o frase corta enviada tras el mensaje principal.</p>
+                  </div>
+                )}
               </div>
             </div>
 
