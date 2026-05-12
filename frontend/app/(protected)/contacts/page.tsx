@@ -98,12 +98,20 @@ const GAMING_STYLE: Record<string, string> = {
   ambas: 'bg-cyan-100 text-cyan-700',
 }
 
+const TOOLTIP_WIDTH = 210 // px — coincide con max-w-[210px]
+
 function SegmentItem({ value, label, desc }: { value: string; label: string; desc: string }) {
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const [pos, setPos] = useState<{ x: number; y: number; flip: boolean } | null>(null)
 
   const handleMouseEnter = (e: React.MouseEvent<HTMLElement>) => {
     const r = e.currentTarget.getBoundingClientRect()
-    setPos({ x: r.right + 10, y: r.top + r.height / 2 })
+    const spaceRight = window.innerWidth - r.right - 10
+    const flip = spaceRight < TOOLTIP_WIDTH
+    setPos({
+      x: flip ? r.left - TOOLTIP_WIDTH - 10 : r.right + 10,
+      y: r.top + r.height / 2,
+      flip,
+    })
   }
 
   return (
@@ -113,8 +121,8 @@ function SegmentItem({ value, label, desc }: { value: string; label: string; des
       </SelectItem>
       {pos && typeof document !== 'undefined' && createPortal(
         <div
-          style={{ position: 'fixed', left: pos.x, top: pos.y, transform: 'translateY(-50%)', zIndex: 9999 }}
-          className="rounded-md bg-gray-600 text-white text-xs px-2.5 py-1.5 shadow-lg max-w-52 pointer-events-none leading-snug"
+          style={{ position: 'fixed', left: pos.x, top: pos.y, transform: 'translateY(-50%)', zIndex: 9999, width: TOOLTIP_WIDTH }}
+          className="rounded-md bg-gray-600 text-white text-xs px-2.5 py-1.5 shadow-lg pointer-events-none leading-snug"
         >
           {desc}
         </div>,
