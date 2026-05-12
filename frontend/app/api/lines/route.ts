@@ -10,6 +10,9 @@ export async function GET(req: NextRequest) {
   if (err) return err
 
   try {
+    // Resetea contadores vencidos antes de devolver los datos
+    await query(`SELECT reset_line_counters_if_due()`).catch(() => {})
+
     const lines = await query(`
       SELECT id, line_key, display_name, phone_number, evolution_instance,
              status, is_connected, sending_enabled,
