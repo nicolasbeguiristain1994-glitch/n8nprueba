@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
-import { AGENTES_SQL_ARRAY } from '@/lib/casino-agents'
+import { getAgentsSqlArray, isValidPlatform } from '@/lib/casino-agents'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -51,6 +51,16 @@ export async function GET(req: Request) {
   const err = await checkPermission(req, 'dashboard', 'read')
   if (err) return err
 
+  const url          = new URL(req.url)
+  const platformParam = url.searchParams.get('platform')?.trim() || 'zeus'
+  if (!isValidPlatform(platformParam)) {
+    return NextResponse.json(
+      { error: `Plataforma inválida: "${platformParam}"` },
+      { status: 400 },
+    )
+  }
+  const agentsSql = getAgentsSqlArray(platformParam)
+
   try {
     const [summary, agentes, vips, segActividad, segMonto] = await Promise.all([
 
@@ -78,7 +88,7 @@ export async function GET(req: Request) {
           )::int                                                        AS prioridad_reactivacion,
           COUNT(*)::int                                                 AS total_jugadores
         FROM casino_players
-        WHERE agente = ANY(${AGENTES_SQL_ARRAY})
+        WHERE agente = ANY(${agentsSql})
       `),
 
       // ── Por agente ──────────────────────────────────────────────────────────
@@ -96,7 +106,7 @@ export async function GET(req: Request) {
           COALESCE(SUM(total_retiros), 0)::bigint                                   AS sum_retiros,
           ROUND(COALESCE(AVG(total_cargas), 0))::bigint                             AS avg_cargas
         FROM casino_players
-        WHERE agente = ANY(${AGENTES_SQL_ARRAY})
+        WHERE agente = ANY(${agentsSql})
         GROUP BY agente
         ORDER BY total DESC
       `),
@@ -119,7 +129,7 @@ export async function GET(req: Request) {
         FROM casino_players
         WHERE seg_monto IN ('vip','alto')
           AND fecha_ultima IS NOT NULL
-          AND agente = ANY(${AGENTES_SQL_ARRAY})
+          AND agente = ANY(${agentsSql})
         ORDER BY
           CASE seg_actividad
             WHEN 'perdido'    THEN 1
@@ -136,14 +146,14 @@ export async function GET(req: Request) {
       query<{ seg: string; cnt: number }>(`
         SELECT seg_actividad AS seg, COUNT(*)::int AS cnt
         FROM casino_players
-        WHERE agente = ANY(${AGENTES_SQL_ARRAY})
+        WHERE agente = ANY(${agentsSql})
         GROUP BY seg_actividad
       `),
 
       query<{ seg: string; cnt: number }>(`
         SELECT seg_monto AS seg, COUNT(*)::int AS cnt
         FROM casino_players
-        WHERE agente = ANY(${AGENTES_SQL_ARRAY})
+        WHERE agente = ANY(${agentsSql})
         GROUP BY seg_monto
       `),
     ])

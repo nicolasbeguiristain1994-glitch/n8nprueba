@@ -7,7 +7,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import {
-  LayoutDashboard, RefreshCw, SlidersHorizontal, Clock, CalendarRange,
+  LayoutDashboard, RefreshCw, SlidersHorizontal, Clock, CalendarRange, Database,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -17,6 +17,7 @@ import {
   type DateRange,
   type DateRangePreset,
 } from './types'
+import { PLATFORMS, type Platform } from '@/lib/casino-agents'
 
 // ── "X min ago" ticker ────────────────────────────────────────────────────────
 
@@ -137,6 +138,38 @@ function AutoRefreshToggle({ enabled, softLoading, onToggle }: AutoRefreshToggle
   )
 }
 
+// ── Platform selector ─────────────────────────────────────────────────────────
+
+const PLATFORM_LABELS: Record<Platform, string> = {
+  zeus:  'Zeus',
+  bet30: 'Bet30',
+}
+
+interface PlatformSelectorProps {
+  value: Platform
+  onChange: (p: Platform) => void
+}
+
+function PlatformSelector({ value, onChange }: PlatformSelectorProps) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <Database className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+      <Select value={value} onValueChange={v => onChange(v as Platform)}>
+        <SelectTrigger size="sm" className="h-7 w-auto min-w-[80px] text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent align="end">
+          {PLATFORMS.map(p => (
+            <SelectItem key={p} value={p} className="text-xs">
+              {PLATFORM_LABELS[p]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
+
 // ── Header ────────────────────────────────────────────────────────────────────
 
 export interface DashboardHeaderProps {
@@ -145,10 +178,12 @@ export interface DashboardHeaderProps {
   lastUpdated: Date | null
   dateRange: DateRange
   autoRefreshEnabled: boolean
+  platform: Platform
   onCustomize: () => void
   onRefresh: () => void
   onDateRangeChange: (range: DateRange) => void
   onAutoRefreshToggle: () => void
+  onPlatformChange: (p: Platform) => void
 }
 
 export const DashboardHeader = memo(function DashboardHeader({
@@ -157,10 +192,12 @@ export const DashboardHeader = memo(function DashboardHeader({
   lastUpdated,
   dateRange,
   autoRefreshEnabled,
+  platform,
   onCustomize,
   onRefresh,
   onDateRangeChange,
   onAutoRefreshToggle,
+  onPlatformChange,
 }: DashboardHeaderProps) {
   const minutesAgo = useMinutesAgo(lastUpdated)
 
@@ -183,6 +220,9 @@ export const DashboardHeader = memo(function DashboardHeader({
       <div className="flex items-center gap-2 flex-wrap">
         {/* Date range picker */}
         <DateRangePicker value={dateRange} onChange={onDateRangeChange} />
+
+        {/* Platform selector */}
+        <PlatformSelector value={platform} onChange={onPlatformChange} />
 
         <div className="flex items-center gap-1.5 ml-auto">
           {/* Soft-loading indicator */}

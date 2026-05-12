@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
-import { AGENTES_SQL_ARRAY } from '@/lib/casino-agents'
+import { getAgentsSqlArray, isValidPlatform } from '@/lib/casino-agents'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -250,6 +250,16 @@ export async function GET(req: Request) {
 
   const url = new URL(req.url)
 
+  // ── Platform ────────────────────────────────────────────────────────────────
+  const platformParam = url.searchParams.get('platform')?.trim() || 'zeus'
+  if (!isValidPlatform(platformParam)) {
+    return NextResponse.json(
+      { error: `Plataforma inválida: "${platformParam}"` },
+      { status: 400 },
+    )
+  }
+  const agentsSql = getAgentsSqlArray(platformParam)
+
   // ── Existing filters ────────────────────────────────────────────────────────
   const agenteParam     = url.searchParams.get('agente')?.trim()      || null
   const usernameParam   = url.searchParams.get('username')?.trim()    || null
@@ -415,7 +425,7 @@ export async function GET(req: Request) {
             SUM(ct.monto) FILTER (WHERE ct.tipo = 'retiro')::bigint  AS total_retiros,
             COUNT(*)      FILTER (WHERE ct.tipo = 'retiro')::int      AS cant_retiros
           FROM casino_transactions ct
-          WHERE ct.agente = ANY(${AGENTES_SQL_ARRAY})
+          WHERE ct.agente = ANY(${agentsSql})
             AND ct.username != ct.agente          -- excluye Carga/Retiro indirecto
             AND ($1::text IS NULL OR ct.agente   = $1)
             AND ($4::text IS NULL OR ct.username ILIKE '%' || $4 || '%')
@@ -527,7 +537,7 @@ export async function GET(req: Request) {
       ]
 
       const histWhere = `
-        WHERE agente = ANY(${AGENTES_SQL_ARRAY})
+        WHERE agente = ANY(${agentsSql})
           AND ($1::text IS NULL OR agente        = $1)
           AND ($2::text IS NULL OR username      ILIKE '%' || $2 || '%')
           AND ($3::text IS NULL OR seg_monto     = $3)

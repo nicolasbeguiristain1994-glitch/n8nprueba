@@ -1,0 +1,42 @@
+{
+  "defaultPlatform": "zeus",
+  "platforms": [
+    {
+      "name": "zeus",
+      "type": "zeus",
+      "baseUrl": "https://local-admin2.zeuscasino.fun",
+      "baseUrlEnvVar": "ZEUS_API_BASE",
+      "apiKeyEnvVar": "ZEUS_API_KEY",
+      "playerTokenEnvVar": "ZEUS_PLAYER_TOKEN",
+      "endpoint": "/api/records/movimiento-fichas",
+      "timezone": "-03",
+      "responseMapping": {
+        "idField": "id",
+        "usernameField": "username",
+        "agentField": "creator_username",
+        "valueField": "valor",
+        "detailsField": "detalles",
+        "dateField": "fecha"
+      }
+    }
+    ,
+    {
+      "name": "bet30",
+      "type": "bet30",
+      "baseUrl": "https://local-admin2.bet30.world",
+      "baseUrlEnvVar": "BET30_API_BASE",
+      "apiKeyEnvVar": "BET30_API_KEY",
+      "playerTokenEnvVar": "BET30_PLAYER_TOKEN",
+      "endpoint": "/api/records/movimiento-fichas",
+      "timezone": "-03",
+      "responseMapping": {
+        "idField": "id",
+        "usernameField": "username",
+        "agentField": "creator_username",
+        "valueField": "valor",
+        "detailsField": "detalles",
+        "dateField": "fecha"
+      }
+    }
+  ]
+}

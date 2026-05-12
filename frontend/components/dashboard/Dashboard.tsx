@@ -20,10 +20,12 @@ export function Dashboard() {
     visibleWidgets,
     dateRange,
     autoRefreshEnabled,
+    platform,
     toggleWidget,
     reorderByIds,
     setDateRange,
     toggleAutoRefresh,
+    setPlatform,
     refresh,
   } = useDashboard()
 
@@ -47,10 +49,12 @@ export function Dashboard() {
         lastUpdated={lastUpdated}
         dateRange={dateRange}
         autoRefreshEnabled={autoRefreshEnabled}
+        platform={platform}
         onCustomize={() => setCustomizeOpen(true)}
         onRefresh={refresh}
         onDateRangeChange={setDateRange}
         onAutoRefreshToggle={toggleAutoRefresh}
+        onPlatformChange={setPlatform}
       />
 
       {error && (

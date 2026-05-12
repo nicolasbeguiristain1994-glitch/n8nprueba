@@ -14,7 +14,10 @@
       },
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
-      "position": [-960, 0],
+      "position": [
+        -960,
+        0
+      ],
       "id": "wf010orch-n01",
       "name": "Cron – Cada 15 min (9AM-10PM)"
     },
@@ -27,13 +30,18 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "{}",
-        "options": { "timeout": 10000 }
+        "options": {
+          "timeout": 10000
+        }
       },
       "credentials": {
         "httpHeaderAuth": {
@@ -43,7 +51,10 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [-740, 0],
+      "position": [
+        -740,
+        0
+      ],
       "id": "wf010orch-n02",
       "name": "HTTP – RPC get_active_warmup_lines"
     },
@@ -53,20 +64,29 @@
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-520, 0],
+      "position": [
+        -520,
+        0
+      ],
       "id": "wf010orch-n03",
       "name": "Code – Validate & Consolidate"
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
           "conditions": [
             {
               "id": "has-lines",
               "leftValue": "={{ $json.count }}",
               "rightValue": 0,
-              "operator": { "type": "number", "operation": "gt" }
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
             }
           ],
           "combinator": "and"
@@ -75,7 +95,10 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [-300, 0],
+      "position": [
+        -300,
+        0
+      ],
       "id": "wf010orch-n04",
       "name": "IF – Hay líneas disponibles"
     },
@@ -85,7 +108,9 @@
         "genericAuthType": "httpHeaderAuth",
         "method": "GET",
         "url": "={{ $env.SUPABASE_URL }}/rest/v1/warmup_contacts?is_active=eq.true&select=id,phone_number&order=last_used_at.asc.nullsfirst&limit=50",
-        "options": { "timeout": 10000 }
+        "options": {
+          "timeout": 10000
+        }
       },
       "credentials": {
         "httpHeaderAuth": {
@@ -95,7 +120,10 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [-80, 0],
+      "position": [
+        -80,
+        0
+      ],
       "id": "wf010orch-n05",
       "name": "HTTP – GET Warmup Contacts (1 llamada para todas las líneas)"
     },
@@ -105,7 +133,10 @@
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [140, 0],
+      "position": [
+        140,
+        0
+      ],
       "id": "wf010orch-n06",
       "name": "Code – Build Jobs (N items → N sub-workflows)"
     },
@@ -113,10 +144,10 @@
       "parameters": {
         "workflowId": {
           "__rl": true,
-          "value": "",
+          "value": "o2bkzWxUABaTOgad",
           "mode": "list",
           "cachedResultName": "WF-010a-Process-Single-Line",
-          "cachedResultUrl": ""
+          "cachedResultUrl": "https://zestful-learning-production-537c.up.railway.app/workflow/o2bkzWxUABaTOgad"
         },
         "options": {
           "waitForSubWorkflow": false
@@ -124,7 +155,10 @@
       },
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.1,
-      "position": [360, 0],
+      "position": [
+        360,
+        0
+      ],
       "id": "wf010orch-n07",
       "name": "Execute – WF-010a Process Single Line (async)"
     },
@@ -135,20 +169,29 @@
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [580, 0],
+      "position": [
+        580,
+        0
+      ],
       "id": "wf010orch-n08",
       "name": "Code – Dispatch Summary"
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": false, "typeValidation": "loose" },
+          "options": {
+            "caseSensitive": false,
+            "typeValidation": "loose"
+          },
           "conditions": [
             {
               "id": "has-webhook",
               "leftValue": "={{ $env.ALERT_WEBHOOK_URL }}",
               "rightValue": "",
-              "operator": { "type": "string", "operation": "notEquals" }
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
             }
           ],
           "combinator": "and"
@@ -157,7 +200,10 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [800, 0],
+      "position": [
+        800,
+        0
+      ],
       "id": "wf010orch-n09",
       "name": "IF – Alerta configurada"
     },
@@ -168,46 +214,119 @@
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"text\": \"WF-010 Warmup: despachados {{ $json.dispatched_count }} jobs en {{ $json.dispatched_at }}\",\n  \"dispatched_count\": {{ $json.dispatched_count }},\n  \"instances\": {{ JSON.stringify($json.instances) }}\n}",
-        "options": { "timeout": 5000 }
+        "options": {
+          "timeout": 5000
+        }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [1020, 0],
+      "position": [
+        1020,
+        0
+      ],
       "id": "wf010orch-n10",
       "name": "HTTP – Enviar Alerta (opcional)"
     }
   ],
   "connections": {
     "Cron – Cada 15 min (9AM-10PM)": {
-      "main": [[{ "node": "HTTP – RPC get_active_warmup_lines", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "HTTP – RPC get_active_warmup_lines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "HTTP – RPC get_active_warmup_lines": {
-      "main": [[{ "node": "Code – Validate & Consolidate", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Code – Validate & Consolidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Code – Validate & Consolidate": {
-      "main": [[{ "node": "IF – Hay líneas disponibles", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "IF – Hay líneas disponibles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "IF – Hay líneas disponibles": {
       "main": [
-        [{ "node": "HTTP – GET Warmup Contacts (1 llamada para todas las líneas)", "type": "main", "index": 0 }],
+        [
+          {
+            "node": "HTTP – GET Warmup Contacts (1 llamada para todas las líneas)",
+            "type": "main",
+            "index": 0
+          }
+        ],
         []
       ]
     },
     "HTTP – GET Warmup Contacts (1 llamada para todas las líneas)": {
-      "main": [[{ "node": "Code – Build Jobs (N items → N sub-workflows)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Code – Build Jobs (N items → N sub-workflows)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Code – Build Jobs (N items → N sub-workflows)": {
-      "main": [[{ "node": "Execute – WF-010a Process Single Line (async)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Execute – WF-010a Process Single Line (async)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Execute – WF-010a Process Single Line (async)": {
-      "main": [[{ "node": "Code – Dispatch Summary", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Code – Dispatch Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Code – Dispatch Summary": {
-      "main": [[{ "node": "IF – Alerta configurada", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "IF – Alerta configurada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "IF – Alerta configurada": {
       "main": [
-        [{ "node": "HTTP – Enviar Alerta (opcional)", "type": "main", "index": 0 }],
+        [
+          {
+            "node": "HTTP – Enviar Alerta (opcional)",
+            "type": "main",
+            "index": 0
+          }
+        ],
         []
       ]
     }
@@ -221,7 +340,11 @@
   "staticData": null,
   "pinData": {},
   "tags": [
-    { "name": "warmup" },
-    { "name": "orchestrator" }
+    {
+      "name": "warmup"
+    },
+    {
+      "name": "orchestrator"
+    }
   ]
 }

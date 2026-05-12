@@ -1,8 +1,30 @@
 {
+  "scripts": {
+    "test": "jest",
+    "test:coverage": "jest --coverage"
+  },
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "pg": "^8.20.0",
+    "pino": "^10.3.1",
     "playwright": "^1.59.1",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "jest": "^30.4.2"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "src/casino-connectors/**/*.js"
+    ],
+    "coverageDirectory": "coverage",
+    "coverageReporters": [
+      "text",
+      "text-summary"
+    ]
   }
 }

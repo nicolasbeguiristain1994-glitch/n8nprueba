@@ -5,10 +5,13 @@
       "parameters": {},
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
-      "position": [-1820, 0],
+      "position": [
+        -1820,
+        0
+      ],
       "id": "wf010a-v2-n01",
       "name": "Trigger – Recibe Job de Orchestrador",
-      "notes": "WF-010a-Process-Single-Line v2.2 | 2026-05-08 | Anti-Ban Inteligente\n\nFlujo: Health Score → Adaptive Config → [Typing opcional] → Send (3 intentos) → RPC log\n\nVariables de entorno requeridas:\n  SUPABASE_URL            → URL de la instancia Supabase\n  EVOLUTION_API_BASE_URL  → Base URL de Evolution API\n\nVariables opcionales:\n  ENABLE_TYPING_INDICATOR=true  → activa el typing indicator global\n  ALERT_WEBHOOK_URL             → webhook para alertas del Error Handler"
+      "notes": "WF-010a-Process-Single-Line v2.6 | 2026-05-12 | Versión Estable Enterprise\n\nFlujo: Health Score → Load Profile → Validate+Delay → [Typing] → Send (3 intentos) → [Mini-Sesión opcional] → Set Output → RPC log\n\nVariables de entorno requeridas:\n  SUPABASE_URL            → URL de la instancia Supabase\n  EVOLUTION_API_BASE_URL  → Base URL de Evolution API\n\nVariables opcionales:\n  ENABLE_TYPING_INDICATOR=true  → activa el typing indicator global\n  ALERT_WEBHOOK_URL             → webhook para alertas\n\nCampo opcional en el job:\n  anti_ban_profile_id → UUID del perfil en anti_ban_profiles\n                        Si no se pasa, se usa el perfil con is_default=true\n\nCambios v2.6 (producción enterprise):\n  - Arquitectura corregida: Set Final Output DESPUÉS de mini-sesión (resultado real)\n  - n26 Code Classify Mini-Session Result — clasificación HTTP idéntica a intentos principales\n  - n27 Set Mini-Session Not Executed — marcador en rama sin mini-sesión\n  - mini_session_success ahora refleja el resultado HTTP real (no optimista)\n  - mini_session_error_type captura el tipo de error exacto de la mini-sesión\n  - Nuevos campos: execution_phase, total_delay_applied, profile_source\n  - n23 valida mini_session_text no vacío antes de ejecutar\n  - n25 timeout reducido a 8s (best-effort, no bloquea el flujo)\n  - Documentación enterprise en todos los nodos clave"
     },
     {
       "parameters": {
@@ -19,13 +22,18 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"p_warmup_number_id\": \"{{ $json.warmup_number_id }}\"\n}",
-        "options": { "timeout": 8000 }
+        "options": {
+          "timeout": 8000
+        }
       },
       "credentials": {
         "httpHeaderAuth": {
@@ -36,31 +44,81 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "continueOnFail": true,
-      "position": [-1600, 0],
+      "position": [
+        -1600,
+        0
+      ],
       "id": "wf010a-v2-n02",
       "name": "HTTP – RPC get_line_health_data",
       "notes": "continueOnFail=true: si la RPC falla (Supabase caído, timeout), el nodo siguiente\nasume stats vacías y asigna un score neutro de 70. El warmup no se detiene."
     },
     {
       "parameters": {
-        "jsCode": "/**\n * HEALTH SCORE ENGINE — Fórmula y Pesos\n * =======================================\n * El health score (0-100) mide el estado de salud de una línea y determina\n * si opera al máximo rendimiento (score alto) o de forma conservadora (score bajo).\n *\n * COMPONENTES — máximo posible entre corchetes:\n *\n *  1. success_rate_score  [0–40 pts]  ← mayor peso\n *     Tasa de envíos exitosos en los últimos 7 días.\n *     Fórmula: round((sent_7d / total_7d) * 40)\n *     Si total_7d < 10 (historial insuficiente) se asume 80% → 32 pts.\n *\n *  2. ban_penalty  [0–30 pts]\n *     Ausencia de bans en los últimos 7 días.\n *     Fórmula: max(0, 30 − banned_7d × 15)\n *     → 0 bans = 30 pts  |  1 ban = 15 pts  |  ≥2 bans = 0 pts\n *\n *  3. recency_score  [0–20 pts]\n *     Tiempo transcurrido desde el último error. Premia la recuperación.\n *     → Sin error previo o error > 24h  = 20 pts\n *     → Error hace 12–24h              = 12 pts\n *     → Error hace 6–12h               =  6 pts\n *     → Error hace 1–6h                =  2 pts\n *     → Error en la última hora        =  0 pts  (riesgo inmediato)\n *\n *  4. volume_score  [0–10 pts]\n *     Escala logarítmica de mensajes exitosos en 7 días.\n *     → > 30 enviados = 10 pts | > 15 = 8 pts | > 5 = 5 pts | > 0 = 2 pts\n *\n *  5. burst_penalty  [−15 a 0 pts]  ← RESTA al total\n *     Detecta ráfagas de errores en las últimas 6 horas (señal de riesgo inmediato).\n *     → errors_6h ≥ 3 → −15 pts  (frenar agresivamente)\n *     → errors_6h ≥ 1 →  −5 pts  (señal de precaución)\n *\n * SCORE FINAL = clamp(componentes + burst_penalty, 0, 100)\n *\n * OVERRIDES ADAPTATIVOS sobre la configuración de fase:\n *   score ≥ 85  → línea sana:      +20% daily_limit, −20% delay\n *   score ≤ 60  → línea en riesgo: −30% daily_limit, +40% delay\n *   60 < score < 85 → configuración de fase sin modificar (comportamiento neutral)\n *\n * CASO ESPECIAL — línea nueva (total_7d === 0):\n *   Score fijo = 70 (neutro-conservador), sin override.\n *   Evita penalizar una línea que aún no tiene historial real.\n */\nconst healthResult = $input.first().json;\nconst job          = $('Trigger – Recibe Job de Orchestrador').first().json;\n\nconst hasError = !healthResult || healthResult.error || healthResult.message;\nconst stats    = hasError ? {} : healthResult;\n\nconst sent7d   = Math.max(0, stats.sent_7d   || 0);\nconst failed7d = Math.max(0, stats.failed_7d  || 0);\nconst banned7d = Math.max(0, stats.banned_7d  || 0);\nconst errors6h = Math.max(0, stats.errors_6h  || 0);\nconst total7d  = Math.max(0, stats.total_7d   || 0);\n\nconst baseDailyLimit = job.phase_daily_limit || job.daily_limit || 20;\nconst baseMinDelay   = job.phase_min_delay   || 10;\nconst baseMaxDelay   = job.phase_max_delay   || 30;\n\nif (total7d === 0) {\n  return [{ json: {\n    ...job,\n    health_score:         70,\n    health_components:    { success_rate_score: 28, ban_penalty: 30, recency_score: 12, volume_score: 0, burst_penalty: 0 },\n    adaptive_daily_limit: baseDailyLimit,\n    adaptive_min_delay:   baseMinDelay,\n    adaptive_max_delay:   baseMaxDelay\n  } }];\n}\n\nconst successRatio     = total7d > 10 ? sent7d / total7d : 0.8;\nconst successRateScore = Math.round(Math.min(40, Math.max(0, successRatio * 40)));\nconst banPenalty       = Math.max(0, 30 - (banned7d * 15));\n\nlet recencyScore = 20;\nif (stats.last_error_at) {\n  const hoursSince = (Date.now() - new Date(stats.last_error_at).getTime()) / 3600000;\n  if      (hoursSince < 1)  recencyScore = 0;\n  else if (hoursSince < 6)  recencyScore = 2;\n  else if (hoursSince < 12) recencyScore = 6;\n  else if (hoursSince < 24) recencyScore = 12;\n  else                      recencyScore = 20;\n}\n\nlet volumeScore = 0;\nif      (sent7d > 30) volumeScore = 10;\nelse if (sent7d > 15) volumeScore =  8;\nelse if (sent7d > 5)  volumeScore =  5;\nelse if (sent7d > 0)  volumeScore =  2;\n\nconst burstPenalty = errors6h >= 3 ? -15 : (errors6h >= 1 ? -5 : 0);\nconst healthScore  = Math.min(100, Math.max(0, successRateScore + banPenalty + recencyScore + volumeScore + burstPenalty));\n\nconst healthComponents = { success_rate_score: successRateScore, ban_penalty: banPenalty, recency_score: recencyScore, volume_score: volumeScore, burst_penalty: burstPenalty };\n\nlet adaptiveDailyLimit = baseDailyLimit;\nlet adaptiveMinDelay   = baseMinDelay;\nlet adaptiveMaxDelay   = baseMaxDelay;\n\nif (healthScore >= 85) {\n  adaptiveDailyLimit = Math.round(adaptiveDailyLimit * 1.20);\n  adaptiveMinDelay   = Math.max(5, Math.round(adaptiveMinDelay * 0.80));\n  adaptiveMaxDelay   = Math.max(adaptiveMinDelay, Math.round(adaptiveMaxDelay * 0.80));\n} else if (healthScore <= 60) {\n  adaptiveDailyLimit = Math.max(1, Math.round(adaptiveDailyLimit * 0.70));\n  adaptiveMinDelay   = Math.round(adaptiveMinDelay * 1.40);\n  adaptiveMaxDelay   = Math.round(adaptiveMaxDelay * 1.40);\n}\n\nreturn [{ json: { ...job, health_score: healthScore, health_components: healthComponents, adaptive_daily_limit: adaptiveDailyLimit, adaptive_min_delay: adaptiveMinDelay, adaptive_max_delay: adaptiveMaxDelay } }];\n"
+        "jsCode": "/**\n * HEALTH SCORE ENGINE — Fórmula y Pesos\n * =======================================\n * El health score (0-100) mide el estado de salud de una línea y determina\n * si opera al máximo rendimiento (score alto) o de forma conservadora (score bajo).\n *\n * COMPONENTES — máximo posible entre corchetes:\n *\n *  1. success_rate_score  [0–40 pts]  ← mayor peso\n *     Tasa de envíos exitosos en los últimos 7 días.\n *     Si total_7d < 10 (historial insuficiente) se asume 80% → 32 pts.\n *\n *  2. ban_penalty  [0–30 pts]\n *     Ausencia de bans en los últimos 7 días.\n *     → 0 bans = 30 pts  |  1 ban = 15 pts  |  ≥2 bans = 0 pts\n *\n *  3. recency_score  [0–20 pts]\n *     Tiempo desde el último error. Premia la recuperación.\n *\n *  4. volume_score  [0–10 pts]\n *     Escala logarítmica de mensajes exitosos en 7 días.\n *\n *  5. burst_penalty  [−15 a 0 pts]  ← RESTA al total\n *     Detecta ráfagas de errores en las últimas 6 horas.\n *\n * NOTA v2.3+: los overrides adaptativos son re-calibrados por risk_tolerance\n * del perfil anti-ban en n04. Este nodo solo calcula el score puro.\n *\n * CASO ESPECIAL — línea nueva (total_7d === 0): score fijo = 70.\n */\nconst healthResult = $input.first().json;\nconst job          = $('Trigger – Recibe Job de Orchestrador').first().json;\n\nconst hasError = !healthResult || healthResult.error || healthResult.message;\nconst stats    = hasError ? {} : healthResult;\n\nconst sent7d   = Math.max(0, stats.sent_7d   || 0);\nconst failed7d = Math.max(0, stats.failed_7d  || 0);\nconst banned7d = Math.max(0, stats.banned_7d  || 0);\nconst errors6h = Math.max(0, stats.errors_6h  || 0);\nconst total7d  = Math.max(0, stats.total_7d   || 0);\n\nconst baseDailyLimit = job.phase_daily_limit || job.daily_limit || 20;\nconst baseMinDelay   = job.phase_min_delay   || 10;\nconst baseMaxDelay   = job.phase_max_delay   || 30;\n\nif (total7d === 0) {\n  return [{ json: {\n    ...job,\n    health_score:         70,\n    health_components:    { success_rate_score: 28, ban_penalty: 30, recency_score: 12, volume_score: 0, burst_penalty: 0 },\n    adaptive_daily_limit: baseDailyLimit,\n    adaptive_min_delay:   baseMinDelay,\n    adaptive_max_delay:   baseMaxDelay\n  } }];\n}\n\nconst successRatio     = total7d > 10 ? sent7d / total7d : 0.8;\nconst successRateScore = Math.round(Math.min(40, Math.max(0, successRatio * 40)));\nconst banPenalty       = Math.max(0, 30 - (banned7d * 15));\n\nlet recencyScore = 20;\nif (stats.last_error_at) {\n  const hoursSince = (Date.now() - new Date(stats.last_error_at).getTime()) / 3600000;\n  if      (hoursSince < 1)  recencyScore = 0;\n  else if (hoursSince < 6)  recencyScore = 2;\n  else if (hoursSince < 12) recencyScore = 6;\n  else if (hoursSince < 24) recencyScore = 12;\n  else                      recencyScore = 20;\n}\n\nlet volumeScore = 0;\nif      (sent7d > 30) volumeScore = 10;\nelse if (sent7d > 15) volumeScore =  8;\nelse if (sent7d > 5)  volumeScore =  5;\nelse if (sent7d > 0)  volumeScore =  2;\n\nconst burstPenalty = errors6h >= 3 ? -15 : (errors6h >= 1 ? -5 : 0);\nconst healthScore  = Math.min(100, Math.max(0, successRateScore + banPenalty + recencyScore + volumeScore + burstPenalty));\n\nconst healthComponents = { success_rate_score: successRateScore, ban_penalty: banPenalty, recency_score: recencyScore, volume_score: volumeScore, burst_penalty: burstPenalty };\n\nlet adaptiveDailyLimit = baseDailyLimit;\nlet adaptiveMinDelay   = baseMinDelay;\nlet adaptiveMaxDelay   = baseMaxDelay;\n\nif (healthScore >= 85) {\n  adaptiveDailyLimit = Math.round(adaptiveDailyLimit * 1.20);\n  adaptiveMinDelay   = Math.max(5, Math.round(adaptiveMinDelay * 0.80));\n  adaptiveMaxDelay   = Math.max(adaptiveMinDelay, Math.round(adaptiveMaxDelay * 0.80));\n} else if (healthScore <= 60) {\n  adaptiveDailyLimit = Math.max(1, Math.round(adaptiveDailyLimit * 0.70));\n  adaptiveMinDelay   = Math.round(adaptiveMinDelay * 1.40);\n  adaptiveMaxDelay   = Math.round(adaptiveMaxDelay * 1.40);\n}\n\nreturn [{ json: { ...job, health_score: healthScore, health_components: healthComponents, adaptive_daily_limit: adaptiveDailyLimit, adaptive_min_delay: adaptiveMinDelay, adaptive_max_delay: adaptiveMaxDelay } }];\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-1380, 0],
+      "position": [
+        -1380,
+        0
+      ],
       "id": "wf010a-v2-n03",
       "name": "Code – Compute Health Score & Adaptive Config",
-      "notes": "Calcula el Health Score (0-100) a partir de 5 componentes del historial de 7 días.\nOverrides: score≥85 → +20% limit / −20% delay | score≤60 → −30% limit / +40% delay.\nLínea nueva (sin historial): score fijo=70, sin override."
+      "notes": "HEALTH SCORE ENGINE — Propósito y Comportamiento\n=================================================\nCalcula un score 0-100 basado en el historial de 7 días de una línea.\n\nCOMPONENTES (detallados en el header del código):\n  1. success_rate_score [0-40 pts] — tasa de envíos exitosos (mayor peso)\n  2. ban_penalty        [0-30 pts] — penaliza bans recientes\n  3. recency_score      [0-20 pts] — premia recuperación después de errores\n  4. volume_score       [0-10 pts] — escala logarítmica de actividad\n  5. burst_penalty      [-15-0 pts] — penaliza ráfagas de errores en 6h\n\nOVERRIDES BASE (re-calibrados por risk_tolerance en n04):\n  score ≥ 85 → +20% limit / −20% delay (línea sana)\n  score ≤ 60 → −30% limit / +40% delay (línea en riesgo)\n\nCASO DE ERROR/FALLBACK:\n  Si la RPC de Supabase falla (n02 con continueOnFail=true), this node\n  recibe {} como stats y asigna score neutro 70 sin override.\n\nCASO ESPECIAL (línea nueva):\n  total_7d === 0 → score fijo 70, sin override. Evita penalizar líneas\n  que no tienen historial real aún.\n\nOUTPUT CLAVE: health_score, health_components, adaptive_min/max_delay"
     },
     {
       "parameters": {
-        "jsCode": "/*\n * Valida los campos requeridos y calcula el delay final con jitter ±10%\n * aplicado sobre el rango adaptativo generado por el Health Score.\n */\nconst job = $input.first().json;\n\nconst required = ['warmup_number_id', 'instance_name', 'recipient_phone', 'message_text', 'contact_id'];\nconst missing  = required.filter(f => !job[f]);\nif (missing.length) throw new Error(`Job inválido — faltan campos: ${missing.join(', ')}`);\n\nconst minDelay = Math.max(5, job.adaptive_min_delay || job.phase_min_delay || 10);\nconst maxDelay = Math.max(minDelay, job.adaptive_max_delay || job.phase_max_delay || 30);\nconst base     = Math.floor(Math.random() * (maxDelay - minDelay + 1)) + minDelay;\nconst jitter   = Math.round(base * 0.10 * (Math.random() * 2 - 1));\nconst delaySec = Math.min(600, Math.max(5, base + jitter));\n\nreturn [{ json: { ...job, delay_sec: delaySec } }];\n"
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "GET",
+        "url": "={{ $env.SUPABASE_URL + '/rest/v1/anti_ban_profiles?select=*' + ($json.anti_ban_profile_id ? '&id=eq.' + $json.anti_ban_profile_id : '&is_default=eq.true') + '&limit=1' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "IMPORT_AND_LINK_SUPABASE_SERVICE",
+          "name": "Supabase Service"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "continueOnFail": true,
+      "position": [
+        -1270,
+        0
+      ],
+      "id": "wf010a-v2-n22",
+      "name": "HTTP – Load Anti-Ban Profile",
+      "notes": "Carga el perfil anti-ban desde anti_ban_profiles en Supabase.\ncontinueOnFail=true: si falla → n04 activa fallback a Meta-Stealth-2026 con console.log.\n\nSi job.anti_ban_profile_id existe → busca por ID.\nSi no → carga el perfil con is_default=true.\n\nVer migración: db/migrations/071_anti_ban_profiles.sql"
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * APPLY ANTI-BAN PROFILE & COMPUTE DELAY — v2.4\n * ===============================================\n * Cambios v2.4 sobre v2.3:\n *   1. isProfileValid() — validación defensiva de todos los campos críticos\n *   2. console.log al activar fallback con motivo (trazabilidad en logs n8n)\n *   3. Campos applied_* en output (applied_timing_mode, applied_typing_style, etc.)\n *   4. mini_session_delay_sec y mini_session_text para el flujo de mini-sesión\n *   5. Funciones auxiliares definidas al inicio para mayor legibilidad\n *\n * FUENTES DE DATOS:\n *   n03 → health_score, adaptive_min/max_delay\n *   n22 → array Supabase o error; n04 valida y aplica fallback si es necesario\n *\n * TIMING MODES:\n *   gaussian    → distribución normal, σ=(max-min)/6\n *   uniform     → aleatorio uniforme + jitter ±10%\n *   human_noisy → uniform + 10% pausas largas (distracción humana)\n *\n * RISK TOLERANCE (calibra umbrales del Health Score override):\n *   low    → boost≥80 / penalidad≤65  (conservador — default)\n *   medium → boost≥85 / penalidad≤60\n *   high   → boost≥90 / penalidad≤55  (solo líneas maduras)\n *\n * TYPING STYLES:\n *   fixed              → 2 s fijo\n *   variable_by_length → ceil(palabras/40wpm*60), clampado 1–8 s\n *   realistic          → variable_by_length ± gaussiano 20%\n */\n\n// ─── 1. FUNCIONES AUXILIARES ─────────────────────────────────────────────────\n\n/** Número aleatorio ~N(0,1) via transformada Box-Muller */\nfunction gaussianRandom() {\n  let u = 0, v = 0;\n  while (u === 0) u = Math.random();\n  while (v === 0) v = Math.random();\n  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);\n}\n\n/** Delay en segundos según el timing_mode del perfil */\nfunction computeDelay(mode, min, max) {\n  const range = max - min;\n  const mean  = min + range / 2;\n  const sigma = range / 6;\n  switch (mode) {\n    case 'gaussian': {\n      const raw = mean + gaussianRandom() * sigma;\n      return Math.round(Math.min(max * 1.1, Math.max(min * 0.9, raw)));\n    }\n    case 'human_noisy': {\n      // 10% de probabilidad de pausa larga — simula distracción humana real\n      if (Math.random() < 0.10) return Math.round(max * (1.2 + Math.random() * 0.5));\n      const raw = min + Math.random() * range;\n      return Math.round(Math.min(max * 1.1, Math.max(min * 0.9, raw + raw * 0.08 * (Math.random() * 2 - 1))));\n    }\n    default: { // 'uniform'\n      const base   = Math.floor(Math.random() * (range + 1)) + min;\n      const jitter = Math.round(base * 0.10 * (Math.random() * 2 - 1));\n      return Math.min(600, Math.max(5, base + jitter));\n    }\n  }\n}\n\n/** Duración de typing en segundos según typing_style y longitud del mensaje */\nfunction computeTypingDuration(style, text) {\n  const words = (text || '').trim().split(/\\s+/).filter(Boolean).length;\n  switch (style) {\n    case 'variable_by_length':\n      // ~40 palabras por minuto, clampado 1–8 s\n      return Math.min(8, Math.max(1, Math.ceil(words / 40 * 60)));\n    case 'realistic': {\n      const base = Math.min(8, Math.max(1, Math.ceil(words / 40 * 60)));\n      return Math.max(1, Math.round(base + base * 0.20 * gaussianRandom()));\n    }\n    default: return 2; // 'fixed'\n  }\n}\n\n/**\n * Valida que el perfil cargado tenga todos los campos críticos con valores\n * admisibles. Ante cualquier campo ausente, nulo o fuera de enum → false.\n * Garantiza que nunca se ejecute con un perfil parcialmente corrupto.\n */\nfunction isProfileValid(p) {\n  if (!p || typeof p !== 'object') return false;\n  const VALID_TIMING = ['gaussian', 'uniform', 'human_noisy'];\n  const VALID_TYPING = ['fixed', 'variable_by_length', 'realistic'];\n  const VALID_RISK   = ['low', 'medium', 'high'];\n  if (typeof p.profile_name !== 'string' || !p.profile_name.trim()) return false;\n  if (!VALID_TIMING.includes(p.timing_mode))                        return false;\n  if (!VALID_TYPING.includes(p.typing_style))                       return false;\n  if (!VALID_RISK.includes(p.risk_tolerance))                       return false;\n  if (typeof p.min_delay_seconds !== 'number' || p.min_delay_seconds < 5)             return false;\n  if (typeof p.max_delay_seconds !== 'number' || p.max_delay_seconds <= p.min_delay_seconds) return false;\n  return true;\n}\n\n// ─── 2. FUENTES DE DATOS ────────────────────────────────────────────────────\nconst job         = $('Code \\u2013 Compute Health Score & Adaptive Config').first().json;\nconst profileResp = $input.first().json;\n\n// ─── 3. PERFIL POR DEFECTO: Meta-Stealth-2026 ───────────────────────────────\n// Se activa cuando: Supabase falla | array vacío | perfil no pasa isProfileValid.\n// Para agregar perfiles: INSERT INTO anti_ban_profiles en Supabase.\n// Todos los campos de Supabase se fusionan sobre este objeto con spread,\n// garantizando que ningún campo quede undefined.\nconst DEFAULT_PROFILE = {\n  profile_name:                'Meta-Stealth-2026',\n  timing_mode:                 'gaussian',\n  min_delay_seconds:           12,\n  max_delay_seconds:           40,\n  enable_mini_sessions:        false,\n  mini_session_followup_count: 0,\n  mini_session_text:           '👍',\n  mini_session_delay_min:      8,\n  mini_session_delay_max:      25,\n  typing_style:                'variable_by_length',\n  risk_tolerance:              'low',\n  enable_human_noise:          true,\n  recommended_for:             'L\\u00edneas nuevas y campa\\u00f1as cr\\u00edticas \\u2013 m\\u00e1xima protecci\\u00f3n Meta 2026'\n};\n\n// ─── 4. EXTRAER Y VALIDAR PERFIL ─────────────────────────────────────────────\nlet profile        = DEFAULT_PROFILE;\nlet fallbackUsed   = true;\nlet fallbackReason = 'no_profile_loaded';\n\nif (Array.isArray(profileResp) && profileResp.length > 0) {\n  const candidate = { ...DEFAULT_PROFILE, ...profileResp[0] };\n  if (isProfileValid(candidate)) {\n    profile        = candidate;\n    fallbackUsed   = false;\n    fallbackReason = null;\n  } else {\n    fallbackReason = 'invalid_fields_in_db_profile';\n    console.log(`[WF-010a v2.4] Fallback a Meta-Stealth-2026 — perfil DB inv\\u00e1lido. Motivo: ${fallbackReason}. Perfil recibido: ${JSON.stringify(profileResp[0])}`);\n  }\n} else if (profileResp && !profileResp.error && profileResp.profile_name) {\n  // Respuesta como objeto único (no array)\n  const candidate = { ...DEFAULT_PROFILE, ...profileResp };\n  if (isProfileValid(candidate)) {\n    profile        = candidate;\n    fallbackUsed   = false;\n    fallbackReason = null;\n  } else {\n    fallbackReason = 'invalid_fields_in_single_profile';\n    console.log(`[WF-010a v2.4] Fallback a Meta-Stealth-2026 — campos fuera de rango. Motivo: ${fallbackReason}.`);\n  }\n} else {\n  fallbackReason = (Array.isArray(profileResp) && profileResp.length === 0)\n    ? 'no_matching_profile_in_db'\n    : 'supabase_error_or_null_response';\n  console.log(`[WF-010a v2.4] Fallback a Meta-Stealth-2026 — razón: ${fallbackReason}.`);\n}\n\n// ─── 5. VALIDACIÓN DE CAMPOS REQUERIDOS DEL JOB ──────────────────────────────\nconst required = ['warmup_number_id', 'instance_name', 'recipient_phone', 'message_text', 'contact_id'];\nconst missing  = required.filter(f => !job[f]);\nif (missing.length) throw new Error(`Job inv\\u00e1lido \\u2014 faltan campos: ${missing.join(', ')}`);\n\n// ─── 6. BASE DELAYS: perfil tiene prioridad sobre adaptive del Health Score ──\nlet minDelay = Math.max(5, profile.min_delay_seconds);\nlet maxDelay = Math.max(minDelay + 5, profile.max_delay_seconds);\n\n// ─── 7. RE-OVERRIDE POR RISK TOLERANCE ───────────────────────────────────────\n// Ajusta los umbrales del Health Score override según la tolerancia al riesgo.\nconst score = job.health_score || 70;\nconst RISK_THRESHOLDS = {\n  low:    { boost: 80, penalty: 65 },\n  medium: { boost: 85, penalty: 60 },\n  high:   { boost: 90, penalty: 55 }\n};\nconst { boost: boostThr, penalty: penaltyThr } =\n  RISK_THRESHOLDS[profile.risk_tolerance] || RISK_THRESHOLDS.medium;\n\nif (score >= boostThr) {\n  minDelay = Math.max(5, Math.round(minDelay * 0.80));\n  maxDelay = Math.max(minDelay, Math.round(maxDelay * 0.80));\n} else if (score <= penaltyThr) {\n  minDelay = Math.round(minDelay * 1.40);\n  maxDelay = Math.round(maxDelay * 1.40);\n}\n\n// ─── 8. CALCULAR DELAY PRINCIPAL ─────────────────────────────────────────────\nlet delaySec = computeDelay(profile.timing_mode, minDelay, maxDelay);\ndelaySec = Math.min(600, Math.max(5, delaySec));\n\n// Micro-ruido ±5% adicional cuando enable_human_noise está activo\nif (profile.enable_human_noise) {\n  const micro = Math.round(delaySec * 0.05 * (Math.random() * 2 - 1));\n  delaySec = Math.max(5, delaySec + micro);\n}\n\n// ─── 9. CALCULAR DURACIÓN DE TYPING ──────────────────────────────────────────\nconst typingDurationSec = computeTypingDuration(\n  profile.typing_style,\n  job.message_text || ''\n);\n\n// ─── 10. CALCULAR DELAY DE MINI-SESIÓN ───────────────────────────────────────\n// Gaussiano entre los límites del perfil (default 8–25 s).\n// Solo se usa si enable_mini_sessions=true; calcularlo siempre es inocuo.\nconst miniMin          = Math.max(5,  profile.mini_session_delay_min || 8);\nconst miniMax          = Math.max(10, profile.mini_session_delay_max || 25);\nconst miniSessionDelaySec = computeDelay('gaussian', miniMin, miniMax);\n\n// ─── 11. OUTPUT ──────────────────────────────────────────────────────────────\nreturn [{ json: {\n  ...job,\n  // Timing principal\n  delay_sec:                   delaySec,\n  typing_duration_sec:         typingDurationSec,\n  final_min_delay:             minDelay,\n  final_max_delay:             maxDelay,\n  // Perfil aplicado (expuesto en applied_* en Set – Final Output)\n  anti_ban_profile_name:       profile.profile_name,\n  anti_ban_risk_tolerance:     profile.risk_tolerance,\n  applied_timing_mode:         profile.timing_mode,\n  applied_typing_style:        profile.typing_style,\n  fallback_profile_used:       fallbackUsed,\n  fallback_reason:             fallbackReason,\n  // Mini-sesión\n  enable_mini_sessions:        profile.enable_mini_sessions  || false,\n  mini_session_followup_count: profile.mini_session_followup_count || 0,\n  mini_session_text:           profile.mini_session_text || '👍',\n  mini_session_delay_sec:      miniSessionDelaySec\n} }];\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [-1160, 0],
+      "position": [
+        -1160,
+        0
+      ],
       "id": "wf010a-v2-n04",
-      "name": "Code – Validate Job & Apply Adaptive Delay"
+      "name": "Code – Validate Job & Apply Adaptive Delay",
+      "notes": "APPLY ANTI-BAN PROFILE & COMPUTE DELAY — Nodo central de configuración\n========================================================================\nCombina el Health Score (n03) con el perfil anti-ban (n22) para\nproducir la configuración final de timing, typing y mini-sesión.\n\nPOR QUÉ EXISTE:\n  Centraliza la lógica de configuración en un punto. Todos los nodos\n  downstream leen de mainPayload (n05), que es este output congelado.\n\nVALIDACIÓN DEFENSIVA (v2.4+):\n  isProfileValid() verifica tipo, presencia y valores enum de cada campo.\n  Si falla → fallback a DEFAULT_PROFILE (Meta-Stealth-2026) con console.log.\n  fallback_reason clasificado en 4 categorías para trazabilidad.\n\nOUTPUTS CLAVE:\n  delay_sec              → delay principal (gaussiano/uniform/noisy + noise)\n  typing_duration_sec    → duración de typing calculada por palabras\n  mini_session_delay_sec → delay antes del mensaje de seguimiento\n  mini_session_text      → texto del seguimiento ('👍' como fallback)\n  applied_*              → campos de trazabilidad para Set – Final Output\n  fallback_profile_used  → true si se activó DEFAULT_PROFILE\n  profile_source         → 'supabase' | 'default_fallback'\n\nEN CASO DE ERROR:\n  El único throw es por job inválido (campos requeridos faltantes).\n  Todo lo demás tiene fallbacks seguros."
     },
     {
       "parameters": {
@@ -80,10 +138,13 @@
       },
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [-940, 0],
+      "position": [
+        -940,
+        0
+      ],
       "id": "wf010a-v2-n05",
       "name": "Set – Main Payload",
-      "notes": "Punto de referencia estable para todos los nodos posteriores.\nConsolida job + health score + adaptive config en mainPayload.\nNecesario porque $json cambia al cruzar HTTP calls (typing, reintentos).\nReferencia: $('Set – Main Payload').first().json.mainPayload.campo"
+      "notes": "Punto de referencia estable para todos los nodos posteriores.\nConsolida job + health score + perfil anti-ban + delays en mainPayload.\nv2.4: incluye applied_*, fallback_*, mini_session_* para trazabilidad completa.\nReferencia: $('Set – Main Payload').first().json.mainPayload.campo"
     },
     {
       "parameters": {
@@ -92,7 +153,10 @@
       },
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [-720, 0],
+      "position": [
+        -720,
+        0
+      ],
       "id": "wf010a-v2-n06",
       "name": "Wait – Human-like Delay",
       "webhookId": "wf010a-v2-human-delay-webhook"
@@ -100,19 +164,29 @@
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
           "conditions": [
             {
               "id": "env-typing",
               "leftValue": "={{ $env.ENABLE_TYPING_INDICATOR }}",
               "rightValue": "true",
-              "operator": { "type": "string", "operation": "equals" }
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
             },
             {
               "id": "line-typing",
               "leftValue": "={{ $json.mainPayload.supports_typing }}",
               "rightValue": true,
-              "operator": { "type": "boolean", "operation": "equals", "rightType": "boolean" }
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "rightType": "boolean"
+              }
             }
           ],
           "combinator": "or"
@@ -121,10 +195,13 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [-500, 0],
+      "position": [
+        -500,
+        0
+      ],
       "id": "wf010a-v2-n07",
       "name": "IF – ¿Typing Activado?",
-      "notes": "El typing indicator es condicional porque no todas las instancias Evolution API lo soportan\ny en redes lentas puede generar timeouts que retrasen el envío real.\n\nActivar con:\n  ENABLE_TYPING_INDICATOR=true  (variable de entorno — alcance global)\n  supports_typing=true           (campo en warmup_numbers — control por línea)\n\ntrue  → envía presencia 'composing' + espera 2s → mensaje\nfalse → envía mensaje directamente"
+      "notes": "Activar con:\n  ENABLE_TYPING_INDICATOR=true  (variable de entorno — alcance global)\n  supports_typing=true           (campo en warmup_numbers — control por línea)\n\ntrue  → envía presencia 'composing' + espera typing_duration_sec (dinámico) → mensaje\nfalse → envía mensaje directamente"
     },
     {
       "parameters": {
@@ -135,13 +212,18 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"number\": \"{{ $('Set – Main Payload').first().json.mainPayload.recipient_phone }}\",\n  \"options\": {\n    \"presence\": \"composing\",\n    \"delay\": 1500\n  }\n}",
-        "options": { "timeout": 5000 }
+        "options": {
+          "timeout": 5000
+        }
       },
       "credentials": {
         "httpHeaderAuth": {
@@ -152,21 +234,28 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "continueOnFail": true,
-      "position": [-280, -220],
+      "position": [
+        -280,
+        -220
+      ],
       "id": "wf010a-v2-n08",
       "name": "HTTP – Evolution Typing Indicator"
     },
     {
       "parameters": {
-        "amount": 2,
+        "amount": "={{ $('Set – Main Payload').first().json.mainPayload.typing_duration_sec || 2 }}",
         "unit": "seconds"
       },
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [-60, -220],
+      "position": [
+        -60,
+        -220
+      ],
       "id": "wf010a-v2-n09",
       "name": "Wait – Typing Simulation 2s",
-      "webhookId": "wf010a-v2-typing-sim-webhook"
+      "webhookId": "wf010a-v2-typing-sim-webhook",
+      "notes": "Duración dinámica según typing_style del perfil y longitud del mensaje.\n  fixed              → 2 s\n  variable_by_length → ceil(palabras/40wpm*60) clampado 1–8 s\n  realistic          → variable_by_length ±20% gaussiano"
     },
     {
       "parameters": {
@@ -177,13 +266,18 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"number\": \"{{ $('Set – Main Payload').first().json.mainPayload.recipient_phone }}\",\n  \"text\":   \"{{ $('Set – Main Payload').first().json.mainPayload.message_text }}\"\n}",
-        "options": { "timeout": 15000 }
+        "options": {
+          "timeout": 15000
+        }
       },
       "credentials": {
         "httpHeaderAuth": {
@@ -194,31 +288,44 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "continueOnFail": true,
-      "position": [160, 0],
+      "position": [
+        160,
+        0
+      ],
       "id": "wf010a-v2-n10",
       "name": "HTTP – Evolution Send (Attempt 1)"
     },
     {
       "parameters": {
-        "jsCode": "/*\n * Clasifica el resultado de Evolution API (intento 1/3).\n *\n * Tipos de error y comportamiento:\n *   permanent_ban   → 403/401 o keywords de ban       — NO reintentar, marcar como banned\n *   rate_limited    → 429 o \"rate limit\" en body       — SÍ reintentar (backoff 2s)\n *   temporary_block → 5xx o \"unavailable\" en body      — NO reintentar (fallo de infra)\n *   network_error   → timeout, status 0, sin respuesta — SÍ reintentar (backoff 2s)\n *\n * Regla: solo reintentan errores verdaderamente transitorios (network_error, rate_limited).\n * temporary_block no reintenta para no agravar el estado del servidor destino.\n */\nconst resp    = $input.first().json;\nconst payload = $('Set – Main Payload').first().json.mainPayload;\n\nconst status  = resp.statusCode || resp.status || 0;\nconst bodyStr = JSON.stringify(resp.body ?? resp).toLowerCase();\nconst success = status >= 200 && status <= 299;\n\nlet errorType = null;\nif (!success) {\n  const isBanKw = ['banned','blocked','unauthorized','not connected','forbidden','instance not found'].some(k => bodyStr.includes(k));\n  if      (status === 403 || status === 401 || isBanKw)                                        errorType = 'permanent_ban';\n  else if (status === 429 || bodyStr.includes('rate limit') || bodyStr.includes('too many'))   errorType = 'rate_limited';\n  else if (status >= 500  || bodyStr.includes('unavailable') || bodyStr.includes('service error')) errorType = 'temporary_block';\n  else                                                                                           errorType = 'network_error';\n}\n\nreturn [{ json: { ...payload, send_success: success, is_banned: errorType === 'permanent_ban', error_type: errorType, needs_retry: !success && (errorType === 'network_error' || errorType === 'rate_limited'), status_code: status, attempt: 1 } }];\n"
+        "jsCode": "/*\n * Clasifica el resultado de Evolution API (intento 1/3).\n *\n * Tipos de error:\n *   permanent_ban   → 403/401 o keywords de ban  — NO reintentar\n *   rate_limited    → 429 o \"rate limit\" en body  — SÍ reintentar (backoff 2s)\n *   temporary_block → 5xx o \"unavailable\"         — NO reintentar (fallo de infra)\n *   network_error   → timeout, status 0           — SÍ reintentar (backoff 2s)\n */\nconst resp    = $input.first().json;\nconst payload = $('Set – Main Payload').first().json.mainPayload;\n\nconst status  = resp.statusCode || resp.status || 0;\nconst bodyStr = JSON.stringify(resp.body ?? resp).toLowerCase();\nconst success = status >= 200 && status <= 299;\n\nlet errorType = null;\nif (!success) {\n  const isBanKw = ['banned','blocked','unauthorized','not connected','forbidden','instance not found'].some(k => bodyStr.includes(k));\n  if      (status === 403 || status === 401 || isBanKw)                                        errorType = 'permanent_ban';\n  else if (status === 429 || bodyStr.includes('rate limit') || bodyStr.includes('too many'))   errorType = 'rate_limited';\n  else if (status >= 500  || bodyStr.includes('unavailable') || bodyStr.includes('service error')) errorType = 'temporary_block';\n  else                                                                                           errorType = 'network_error';\n}\n\nreturn [{ json: { ...payload, send_success: success, is_banned: errorType === 'permanent_ban', error_type: errorType, needs_retry: !success && (errorType === 'network_error' || errorType === 'rate_limited'), status_code: status, attempt: 1 } }];\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [380, 0],
+      "position": [
+        380,
+        0
+      ],
       "id": "wf010a-v2-n11",
       "name": "Code – Classify Result (Attempt 1)",
-      "notes": "permanent_ban / rate_limited / temporary_block / network_error\nReintenta: network_error y rate_limited → backoff 2s\nNo reintenta: permanent_ban (marcado como banned en RPC) y temporary_block (fallo de infra)"
+      "notes": "permanent_ban / rate_limited / temporary_block / network_error\nReintenta: network_error y rate_limited → backoff 2s\nNo reintenta: permanent_ban y temporary_block"
     },
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
           "conditions": [
             {
               "id": "no-retry-1",
               "leftValue": "={{ $json.needs_retry }}",
               "rightValue": false,
-              "operator": { "type": "boolean", "operation": "equals", "rightType": "boolean" }
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "rightType": "boolean"
+              }
             }
           ],
           "combinator": "and"
@@ -227,7 +334,10 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [600, 0],
+      "position": [
+        600,
+        0
+      ],
       "id": "wf010a-v2-n12",
       "name": "IF – Done? (Attempt 1)"
     },
@@ -238,7 +348,10 @@
       },
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [600, 220],
+      "position": [
+        600,
+        220
+      ],
       "id": "wf010a-v2-n13",
       "name": "Wait – Backoff 2s (Attempt 2)",
       "webhookId": "wf010a-v2-backoff-2s-webhook"
@@ -252,13 +365,18 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"number\": \"{{ $('Set – Main Payload').first().json.mainPayload.recipient_phone }}\",\n  \"text\":   \"{{ $('Set – Main Payload').first().json.mainPayload.message_text }}\"\n}",
-        "options": { "timeout": 15000 }
+        "options": {
+          "timeout": 15000
+        }
       },
       "credentials": {
         "httpHeaderAuth": {
@@ -269,17 +387,23 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "continueOnFail": true,
-      "position": [820, 220],
+      "position": [
+        820,
+        220
+      ],
       "id": "wf010a-v2-n14",
       "name": "HTTP – Evolution Send (Attempt 2)"
     },
     {
       "parameters": {
-        "jsCode": "/*\n * Clasifica el resultado de Evolution API (intento 2/3).\n * Si falla con error transitorio → reintenta con backoff 4s (intento final).\n * Misma lógica de clasificación que intento 1.\n */\nconst resp    = $input.first().json;\nconst payload = $('Set – Main Payload').first().json.mainPayload;\n\nconst status  = resp.statusCode || resp.status || 0;\nconst bodyStr = JSON.stringify(resp.body ?? resp).toLowerCase();\nconst success = status >= 200 && status <= 299;\n\nlet errorType = null;\nif (!success) {\n  const isBanKw = ['banned','blocked','unauthorized','not connected','forbidden','instance not found'].some(k => bodyStr.includes(k));\n  if      (status === 403 || status === 401 || isBanKw)                                        errorType = 'permanent_ban';\n  else if (status === 429 || bodyStr.includes('rate limit') || bodyStr.includes('too many'))   errorType = 'rate_limited';\n  else if (status >= 500  || bodyStr.includes('unavailable') || bodyStr.includes('service error')) errorType = 'temporary_block';\n  else                                                                                           errorType = 'network_error';\n}\n\nreturn [{ json: { ...payload, send_success: success, is_banned: errorType === 'permanent_ban', error_type: errorType, needs_retry: !success && (errorType === 'network_error' || errorType === 'rate_limited'), status_code: status, attempt: 2 } }];\n"
+        "jsCode": "/*\n * Clasifica el resultado de Evolution API (intento 2/3).\n * Si falla con error transitorio → reintenta con backoff 4s (intento final).\n */\nconst resp    = $input.first().json;\nconst payload = $('Set – Main Payload').first().json.mainPayload;\n\nconst status  = resp.statusCode || resp.status || 0;\nconst bodyStr = JSON.stringify(resp.body ?? resp).toLowerCase();\nconst success = status >= 200 && status <= 299;\n\nlet errorType = null;\nif (!success) {\n  const isBanKw = ['banned','blocked','unauthorized','not connected','forbidden','instance not found'].some(k => bodyStr.includes(k));\n  if      (status === 403 || status === 401 || isBanKw)                                        errorType = 'permanent_ban';\n  else if (status === 429 || bodyStr.includes('rate limit') || bodyStr.includes('too many'))   errorType = 'rate_limited';\n  else if (status >= 500  || bodyStr.includes('unavailable') || bodyStr.includes('service error')) errorType = 'temporary_block';\n  else                                                                                           errorType = 'network_error';\n}\n\nreturn [{ json: { ...payload, send_success: success, is_banned: errorType === 'permanent_ban', error_type: errorType, needs_retry: !success && (errorType === 'network_error' || errorType === 'rate_limited'), status_code: status, attempt: 2 } }];\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1040, 220],
+      "position": [
+        1040,
+        220
+      ],
       "id": "wf010a-v2-n15",
       "name": "Code – Classify Result (Attempt 2)",
       "notes": "permanent_ban / rate_limited / temporary_block / network_error\nReintenta: network_error y rate_limited → backoff 4s (último intento)\nNo reintenta: permanent_ban y temporary_block"
@@ -287,13 +411,20 @@
     {
       "parameters": {
         "conditions": {
-          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
           "conditions": [
             {
               "id": "no-retry-2",
               "leftValue": "={{ $json.needs_retry }}",
               "rightValue": false,
-              "operator": { "type": "boolean", "operation": "equals", "rightType": "boolean" }
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "rightType": "boolean"
+              }
             }
           ],
           "combinator": "and"
@@ -302,7 +433,10 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [1260, 220],
+      "position": [
+        1260,
+        220
+      ],
       "id": "wf010a-v2-n16",
       "name": "IF – Done? (Attempt 2)"
     },
@@ -313,7 +447,10 @@
       },
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
-      "position": [1260, 440],
+      "position": [
+        1260,
+        440
+      ],
       "id": "wf010a-v2-n17",
       "name": "Wait – Backoff 4s (Attempt 3)",
       "webhookId": "wf010a-v2-backoff-4s-webhook"
@@ -327,13 +464,18 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\n  \"number\": \"{{ $('Set – Main Payload').first().json.mainPayload.recipient_phone }}\",\n  \"text\":   \"{{ $('Set – Main Payload').first().json.mainPayload.message_text }}\"\n}",
-        "options": { "timeout": 15000 }
+        "options": {
+          "timeout": 15000
+        }
       },
       "credentials": {
         "httpHeaderAuth": {
@@ -344,20 +486,26 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "continueOnFail": true,
-      "position": [1480, 440],
+      "position": [
+        1480,
+        440
+      ],
       "id": "wf010a-v2-n18",
       "name": "HTTP – Evolution Send (Attempt 3 – Final)"
     },
     {
       "parameters": {
-        "jsCode": "/*\n * Clasifica el resultado del último intento (3/3).\n * needs_retry = false SIEMPRE — el flujo avanza al registro sin importar el resultado.\n * Misma lógica de clasificación que intentos anteriores.\n */\nconst resp    = $input.first().json;\nconst payload = $('Set – Main Payload').first().json.mainPayload;\n\nconst status  = resp.statusCode || resp.status || 0;\nconst bodyStr = JSON.stringify(resp.body ?? resp).toLowerCase();\nconst success = status >= 200 && status <= 299;\n\nlet errorType = null;\nif (!success) {\n  const isBanKw = ['banned','blocked','unauthorized','not connected','forbidden','instance not found'].some(k => bodyStr.includes(k));\n  if      (status === 403 || status === 401 || isBanKw)                                        errorType = 'permanent_ban';\n  else if (status === 429 || bodyStr.includes('rate limit') || bodyStr.includes('too many'))   errorType = 'rate_limited';\n  else if (status >= 500  || bodyStr.includes('unavailable') || bodyStr.includes('service error')) errorType = 'temporary_block';\n  else                                                                                           errorType = 'network_error';\n}\n\nreturn [{ json: { ...payload, send_success: success, is_banned: errorType === 'permanent_ban', error_type: errorType, needs_retry: false, status_code: status, attempt: 3 } }];\n"
+        "jsCode": "/*\n * Clasifica el resultado del último intento (3/3).\n * needs_retry = false SIEMPRE — el flujo avanza al registro.\n */\nconst resp    = $input.first().json;\nconst payload = $('Set – Main Payload').first().json.mainPayload;\n\nconst status  = resp.statusCode || resp.status || 0;\nconst bodyStr = JSON.stringify(resp.body ?? resp).toLowerCase();\nconst success = status >= 200 && status <= 299;\n\nlet errorType = null;\nif (!success) {\n  const isBanKw = ['banned','blocked','unauthorized','not connected','forbidden','instance not found'].some(k => bodyStr.includes(k));\n  if      (status === 403 || status === 401 || isBanKw)                                        errorType = 'permanent_ban';\n  else if (status === 429 || bodyStr.includes('rate limit') || bodyStr.includes('too many'))   errorType = 'rate_limited';\n  else if (status >= 500  || bodyStr.includes('unavailable') || bodyStr.includes('service error')) errorType = 'temporary_block';\n  else                                                                                           errorType = 'network_error';\n}\n\nreturn [{ json: { ...payload, send_success: success, is_banned: errorType === 'permanent_ban', error_type: errorType, needs_retry: false, status_code: status, attempt: 3 } }];\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1700, 440],
+      "position": [
+        1700,
+        440
+      ],
       "id": "wf010a-v2-n19",
       "name": "Code – Classify Result (Attempt 3 – Final)",
-      "notes": "Último intento. needs_retry=false siempre → el resultado se registra sin más reintentos.\nSi sigue siendo network_error/rate_limited, queda registrado como 'failed' con su error_type."
+      "notes": "Último intento. needs_retry=false siempre → el resultado se registra sin más reintentos."
     },
     {
       "parameters": {
@@ -392,6 +540,84 @@
               "name": "attempt",
               "value": "={{ $json.attempt }}",
               "type": "number"
+            },
+            {
+              "id": "out-profile-name",
+              "name": "anti_ban_profile_name",
+              "value": "={{ $json.anti_ban_profile_name || 'Meta-Stealth-2026' }}",
+              "type": "string"
+            },
+            {
+              "id": "out-applied-profile-name",
+              "name": "applied_profile_name",
+              "value": "={{ $json.anti_ban_profile_name || 'Meta-Stealth-2026' }}",
+              "type": "string"
+            },
+            {
+              "id": "out-applied-timing-mode",
+              "name": "applied_timing_mode",
+              "value": "={{ $json.applied_timing_mode || 'gaussian' }}",
+              "type": "string"
+            },
+            {
+              "id": "out-applied-min-delay",
+              "name": "applied_min_delay",
+              "value": "={{ $json.final_min_delay || 12 }}",
+              "type": "number"
+            },
+            {
+              "id": "out-applied-max-delay",
+              "name": "applied_max_delay",
+              "value": "={{ $json.final_max_delay || 40 }}",
+              "type": "number"
+            },
+            {
+              "id": "out-applied-typing-style",
+              "name": "applied_typing_style",
+              "value": "={{ $json.applied_typing_style || 'variable_by_length' }}",
+              "type": "string"
+            },
+            {
+              "id": "out-applied-risk-tolerance",
+              "name": "applied_risk_tolerance",
+              "value": "={{ $json.anti_ban_risk_tolerance || 'low' }}",
+              "type": "string"
+            },
+            {
+              "id": "out-mini-session-executed",
+              "name": "mini_session_executed",
+              "value": "={{ $json.mini_session_executed ?? false }}",
+              "type": "boolean"
+            },
+            {
+              "id": "out-mini-session-success",
+              "name": "mini_session_success",
+              "value": "={{ $json.mini_session_success ?? false }}",
+              "type": "boolean"
+            },
+            {
+              "id": "out-mini-session-error-type",
+              "name": "mini_session_error_type",
+              "value": "={{ $json.mini_session_error_type ?? 'none' }}",
+              "type": "string"
+            },
+            {
+              "id": "out-execution-phase",
+              "name": "execution_phase",
+              "value": "={{ $json.execution_phase || 'warmup' }}",
+              "type": "string"
+            },
+            {
+              "id": "out-total-delay-applied",
+              "name": "total_delay_applied",
+              "value": "={{ ($json.delay_sec || 0) + ($json.mini_session_executed ? ($json.mini_session_delay_sec || 0) : 0) }}",
+              "type": "number"
+            },
+            {
+              "id": "out-profile-source",
+              "name": "profile_source",
+              "value": "={{ $json.fallback_profile_used ? 'default_fallback' : 'supabase' }}",
+              "type": "string"
             }
           ]
         },
@@ -401,10 +627,120 @@
       },
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [1700, 0],
+      "position": [
+        2580,
+        0
+      ],
       "id": "wf010a-v2-n20",
       "name": "Set – Final Output",
-      "notes": "Salida estandarizada para facilitar debugging y futuras integraciones.\nExpone los campos clave del resultado de la ejecución:\n  success / message_sent → ¿se envió el mensaje?\n  health_score           → score calculado para esta línea\n  error_type             → clasificación del error ('none' si exitoso)\n  attempt                → en qué intento se resolvió (1, 2 o 3)\nTodos los campos originales se preservan con includeOtherFields."
+      "notes": "SET – FINAL OUTPUT — Salida estandarizada del sub-workflow\n=============================================================\nNOTA v2.6: Este nodo ahora corre DESPUÉS de la mini-sesión (n26/n27).\nCaptura el resultado real del HTTP de mini-sesión, no un valor optimista.\n\nRESULTADO DEL MENSAJE PRINCIPAL:\n  success / message_sent     → ¿se envió el mensaje principal?\n  health_score               → score de la línea en este momento\n  error_type                 → clasificación del error ('none' si exitoso)\n  attempt                    → intento en que se resolvió (1, 2 o 3)\n\nTRAZABILIDAD DEL PERFIL:\n  applied_profile_name       → perfil efectivamente usado\n  applied_timing_mode        → distribución de delay usada\n  applied_min/max_delay      → rango efectivo en segundos\n  applied_typing_style       → estilo de typing simulado\n  applied_risk_tolerance     → calibración de umbrales del Health Score\n  profile_source             → 'supabase' | 'default_fallback'\n\nRESULTADO DE MINI-SESIÓN (v2.6 — valores REALES capturados desde n26/n27):\n  mini_session_executed      → ¿se intentó la mini-sesión?\n  mini_session_success       → ¿tuvo éxito el HTTP? (resultado real)\n  mini_session_error_type    → tipo de error si falló, 'none' si no aplica\n\nMÉTRICAS DE EJECUCIÓN:\n  execution_phase            → 'warmup' | 'maintenance' | 'recovery'\n  total_delay_applied        → suma delay principal + mini-sesión (segundos)\n\nTodos los campos originales se preservan con includeOtherFields=true."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "mini-session-enabled",
+              "leftValue": "={{ $json.enable_mini_sessions }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "rightType": "boolean"
+              }
+            },
+            {
+              "id": "main-message-sent",
+              "leftValue": "={{ $json.send_success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "rightType": "boolean"
+              }
+            },
+            {
+              "id": "mini-text-not-empty",
+              "leftValue": "={{ ($json.mini_session_text || '').trim().length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1920,
+        0
+      ],
+      "id": "wf010a-v2-n23",
+      "name": "IF – ¿Activar Mini-Sesión?",
+      "notes": "IF – ¿ACTIVAR MINI-SESIÓN? — Guard de 3 condiciones (AND)\n============================================================\nEjecuta mini-sesión SOLO si se cumplen las 3 condiciones simultáneamente:\n\n  1. enable_mini_sessions = true  → el perfil lo permite explícitamente\n  2. send_success = true          → el mensaje principal se envió (raw, pre-n20)\n  3. mini_session_text no vacío   → hay texto válido para enviar\n\nNOTA v2.6: Este nodo ahora corre ANTES de Set – Final Output para que n20\npueda capturar el resultado real del HTTP de mini-sesión (n25→n26).\nPor eso usa 'send_success' (campo raw del classify) en vez de 'message_sent'.\n\nRAMA TRUE  → Wait gaussiano → HTTP Send → Classify → Set Final Output → RPC\nRAMA FALSE → Set No Mini Marker (mini_session_executed=false) → Set Final Output → RPC\n\nEN CASO DE ERROR:\n  Si enable_mini_sessions o mini_session_text no llegan en el payload,\n  las condiciones evalúan false y el flujo toma la rama false sin errores."
+    },
+    {
+      "parameters": {
+        "amount": "={{ $('Set – Main Payload').first().json.mainPayload.mini_session_delay_sec || 12 }}",
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1920,
+        -220
+      ],
+      "id": "wf010a-v2-n24",
+      "name": "Wait – Mini Session Delay (Gaussiano)",
+      "webhookId": "wf010a-v2-mini-session-delay-webhook",
+      "notes": "Delay gaussiano entre el mensaje principal y el seguimiento.\nRango configurable: mini_session_delay_min–max del perfil (default 8–25 s).\nDistribución gaussiana: valores concentrados en el centro del rango, extremos poco frecuentes.\nFallback: 12 s si mini_session_delay_sec no está disponible."
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "method": "POST",
+        "url": "={{ $env.EVOLUTION_API_BASE_URL }}/message/sendText/{{ $('Set – Main Payload').first().json.mainPayload.instance_name }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{ $('Set – Main Payload').first().json.mainPayload.recipient_phone }}\",\n  \"text\":   \"{{ $('Set – Main Payload').first().json.mainPayload.mini_session_text }}\"\n}",
+        "options": {
+          "timeout": 8000
+        }
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "IMPORT_AND_LINK_EVOLUTION_API",
+          "name": "Evolution API"
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "continueOnFail": true,
+      "position": [
+        2140,
+        -220
+      ],
+      "id": "wf010a-v2-n25",
+      "name": "HTTP – Send Mini-Session Message",
+      "notes": "HTTP – SEND MINI-SESSION MESSAGE — Envío best-effort\n======================================================\nEnvía el texto de seguimiento corto del perfil (ej: '👍').\nTimeout agresivo (8s): la mini-sesión NO debe bloquear el flujo principal.\ncontinueOnFail=true: un fallo aquí continúa hacia Classify Mini-Session (n26).\n\nTEXTO: mainPayload.mini_session_text — garantizado no vacío por IF n23.\n  El fallback '👍' está centralizado en n04. n25 solo lee el campo.\n  Para personalizar: UPDATE anti_ban_profiles SET mini_session_text='...';\n\nRESULTADO:\n  El resultado HTTP real es clasificado en n26 (siguiente nodo).\n  n20 (Set Final Output) captura mini_session_success desde n26.\n\nEN CASO DE ERROR/TIMEOUT:\n  continueOnFail → n26 recibe el error como response y lo clasifica.\n  El mensaje principal YA fue enviado exitosamente antes de llegar aquí."
     },
     {
       "parameters": {
@@ -415,7 +751,10 @@
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "Content-Type", "value": "application/json" }
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
           ]
         },
         "sendBody": true,
@@ -436,81 +775,382 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [1920, 0],
+      "position": [
+        2800,
+        0
+      ],
       "id": "wf010a-v2-n21",
       "name": "HTTP – RPC warmup_record_activity",
-      "notes": "Consolida en 1 transacción atómica: INSERT log + UPDATE warmup_numbers (health_score) +\nUPDATE warmup_contacts + INSERT warmup_health_history (snapshot del score).\nRetry interno: 2 intentos con 3s entre ellos si Supabase falla."
+      "notes": "Consolida en 1 transacción atómica: INSERT log + UPDATE warmup_numbers (health_score) +\nUPDATE warmup_contacts + INSERT warmup_health_history.\nRetry interno: 2 intentos con 3s entre ellos.\nRecibe datos tanto de la rama normal como de la rama de mini-sesión."
+    },
+    {
+      "parameters": {
+        "jsCode": "/*\n * CLASSIFY MINI-SESSION RESULT\n * =============================\n * Clasifica el resultado HTTP de la mini-sesión (intento único, sin reintentos).\n * Lógica IDÉNTICA a los intentos principales (n11/n15/n19): misma clasificación,\n * mismas keywords de ban, mismo árbol de decisión.\n *\n * La mini-sesión es best-effort: fallo aquí NO afecta al mensaje principal,\n * que ya fue enviado y registrado antes de llegar a este punto.\n *\n * OUTPUT:\n *   mini_session_executed   → true  (siempre: este nodo solo corre si hubo intento)\n *   mini_session_success    → true si HTTP 2xx, false si error\n *   mini_session_error_type → 'permanent_ban' | 'rate_limited' |\n *                             'temporary_block' | 'network_error' | null\n *\n * Fuente de datos del mensaje principal: $('Set – Main Payload').mainPayload\n * (los campos send_success, attempt, etc. del mensaje principal se preservan).\n */\nconst resp    = $input.first().json;\nconst payload = $('Set – Main Payload').first().json.mainPayload;\n\nconst status  = resp.statusCode || resp.status || 0;\nconst bodyStr = JSON.stringify(resp.body ?? resp).toLowerCase();\nconst success = status >= 200 && status <= 299;\n\nlet errorType = null;\nif (!success) {\n  const isBanKw = ['banned','blocked','unauthorized','not connected','forbidden','instance not found'].some(k => bodyStr.includes(k));\n  if      (status === 403 || status === 401 || isBanKw)                                        errorType = 'permanent_ban';\n  else if (status === 429 || bodyStr.includes('rate limit') || bodyStr.includes('too many'))   errorType = 'rate_limited';\n  else if (status >= 500  || bodyStr.includes('unavailable') || bodyStr.includes('service error')) errorType = 'temporary_block';\n  else                                                                                           errorType = 'network_error';\n  console.log(`[WF-010a v2.6] Mini-sesión falló. error_type: ${errorType}. HTTP status: ${status}.`);\n}\n\nreturn [{ json: {\n  ...payload,\n  mini_session_executed:   true,\n  mini_session_success:    success,\n  mini_session_error_type: errorType\n} }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "continueOnFail": true,
+      "position": [
+        2360,
+        -220
+      ],
+      "id": "wf010a-v2-n26",
+      "name": "Code – Classify Mini-Session Result",
+      "notes": "Clasifica el resultado HTTP de la mini-sesión usando la misma lógica\nque los intentos principales (n11/n15/n19).\ncontinueOnFail=true: si hay error inesperado en este nodo, el flujo\ncontinúa hacia n20 con mini_session_success=false por defecto.\n\nOUTPUT clave:\n  mini_session_executed   → true (siempre en este nodo)\n  mini_session_success    → resultado real HTTP (no optimista)\n  mini_session_error_type → clasificación del fallo o null si exitoso"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "no-mini-executed",
+              "name": "mini_session_executed",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "no-mini-success",
+              "name": "mini_session_success",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "no-mini-error-type",
+              "name": "mini_session_error_type",
+              "value": "none",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {
+          "includeOtherFields": true
+        }
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2140,
+        220
+      ],
+      "id": "wf010a-v2-n27",
+      "name": "Set – Mini-Session Not Executed",
+      "notes": "Marcador para la rama donde NO se ejecutó mini-sesión.\nEstablece mini_session_executed=false, mini_session_success=false,\nmini_session_error_type='none' antes de llegar a Set – Final Output.\nGarantiza que n20 siempre recibe estos 3 campos independientemente\nde si pasó por la rama de mini-sesión o no.\nincludeOtherFields=true: preserva todo el payload (send_success, etc.)."
     }
   ],
   "connections": {
     "Trigger – Recibe Job de Orchestrador": {
-      "main": [[{ "node": "HTTP – RPC get_line_health_data", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "HTTP – RPC get_line_health_data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "HTTP – RPC get_line_health_data": {
-      "main": [[{ "node": "Code – Compute Health Score & Adaptive Config", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Code – Compute Health Score & Adaptive Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Code – Compute Health Score & Adaptive Config": {
-      "main": [[{ "node": "Code – Validate Job & Apply Adaptive Delay", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "HTTP – Load Anti-Ban Profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP – Load Anti-Ban Profile": {
+      "main": [
+        [
+          {
+            "node": "Code – Validate Job & Apply Adaptive Delay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Code – Validate Job & Apply Adaptive Delay": {
-      "main": [[{ "node": "Set – Main Payload", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Set – Main Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Set – Main Payload": {
-      "main": [[{ "node": "Wait – Human-like Delay", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Wait – Human-like Delay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Wait – Human-like Delay": {
-      "main": [[{ "node": "IF – ¿Typing Activado?", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "IF – ¿Typing Activado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "IF – ¿Typing Activado?": {
       "main": [
-        [{ "node": "HTTP – Evolution Typing Indicator",  "type": "main", "index": 0 }],
-        [{ "node": "HTTP – Evolution Send (Attempt 1)", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "HTTP – Evolution Typing Indicator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP – Evolution Send (Attempt 1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "HTTP – Evolution Typing Indicator": {
-      "main": [[{ "node": "Wait – Typing Simulation 2s", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Wait – Typing Simulation 2s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Wait – Typing Simulation 2s": {
-      "main": [[{ "node": "HTTP – Evolution Send (Attempt 1)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "HTTP – Evolution Send (Attempt 1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "HTTP – Evolution Send (Attempt 1)": {
-      "main": [[{ "node": "Code – Classify Result (Attempt 1)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Code – Classify Result (Attempt 1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Code – Classify Result (Attempt 1)": {
-      "main": [[{ "node": "IF – Done? (Attempt 1)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "IF – Done? (Attempt 1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "IF – Done? (Attempt 1)": {
       "main": [
-        [{ "node": "Set – Final Output",              "type": "main", "index": 0 }],
-        [{ "node": "Wait – Backoff 2s (Attempt 2)",   "type": "main", "index": 0 }]
+        [
+          {
+            "node": "IF – ¿Activar Mini-Sesión?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait – Backoff 2s (Attempt 2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Wait – Backoff 2s (Attempt 2)": {
-      "main": [[{ "node": "HTTP – Evolution Send (Attempt 2)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "HTTP – Evolution Send (Attempt 2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "HTTP – Evolution Send (Attempt 2)": {
-      "main": [[{ "node": "Code – Classify Result (Attempt 2)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Code – Classify Result (Attempt 2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Code – Classify Result (Attempt 2)": {
-      "main": [[{ "node": "IF – Done? (Attempt 2)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "IF – Done? (Attempt 2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "IF – Done? (Attempt 2)": {
       "main": [
-        [{ "node": "Set – Final Output",              "type": "main", "index": 0 }],
-        [{ "node": "Wait – Backoff 4s (Attempt 3)",   "type": "main", "index": 0 }]
+        [
+          {
+            "node": "IF – ¿Activar Mini-Sesión?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait – Backoff 4s (Attempt 3)",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Wait – Backoff 4s (Attempt 3)": {
-      "main": [[{ "node": "HTTP – Evolution Send (Attempt 3 – Final)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "HTTP – Evolution Send (Attempt 3 – Final)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "HTTP – Evolution Send (Attempt 3 – Final)": {
-      "main": [[{ "node": "Code – Classify Result (Attempt 3 – Final)", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Code – Classify Result (Attempt 3 – Final)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Code – Classify Result (Attempt 3 – Final)": {
-      "main": [[{ "node": "Set – Final Output", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "IF – ¿Activar Mini-Sesión?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     },
     "Set – Final Output": {
-      "main": [[{ "node": "HTTP – RPC warmup_record_activity", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "HTTP – RPC warmup_record_activity",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF – ¿Activar Mini-Sesión?": {
+      "main": [
+        [
+          {
+            "node": "Wait – Mini Session Delay (Gaussiano)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set – Mini-Session Not Executed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait – Mini Session Delay (Gaussiano)": {
+      "main": [
+        [
+          {
+            "node": "HTTP – Send Mini-Session Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP – Send Mini-Session Message": {
+      "main": [
+        [
+          {
+            "node": "Code – Classify Mini-Session Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code – Classify Mini-Session Result": {
+      "main": [
+        [
+          {
+            "node": "Set – Final Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set – Mini-Session Not Executed": {
+      "main": [
+        [
+          {
+            "node": "Set – Final Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "settings": {
@@ -523,8 +1163,17 @@
   "staticData": null,
   "pinData": {},
   "tags": [
-    { "name": "warmup" },
-    { "name": "sub-workflow" },
-    { "name": "anti-ban-v2" }
+    {
+      "name": "warmup"
+    },
+    {
+      "name": "sub-workflow"
+    },
+    {
+      "name": "anti-ban-v2"
+    },
+    {
+      "name": "anti-ban-profiles"
+    }
   ]
 }

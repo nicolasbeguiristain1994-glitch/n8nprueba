@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
-import { AGENTES_SQL_ARRAY } from '@/lib/casino-agents'
+import { getAgentsSqlArray, isValidPlatform } from '@/lib/casino-agents'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -57,8 +57,17 @@ export async function GET(req: Request) {
   const err = await checkPermission(req, 'dashboard', 'read')
   if (err) return err
 
-  const url         = new URL(req.url)
-  const agenteParam = url.searchParams.get('agente')?.trim() || null
+  const url           = new URL(req.url)
+  const agenteParam   = url.searchParams.get('agente')?.trim() || null
+  const platformParam = url.searchParams.get('platform')?.trim() || 'zeus'
+
+  if (!isValidPlatform(platformParam)) {
+    return NextResponse.json(
+      { error: `Plataforma inválida: "${platformParam}"` },
+      { status: 400 },
+    )
+  }
+  const agentsSql = getAgentsSqlArray(platformParam)
 
   try {
     const [summaryRows, extractores, deficit, recuperables] = await Promise.all([
@@ -92,7 +101,7 @@ export async function GET(req: Request) {
           )::int AS vip_recuperables
 
         FROM casino_players
-        WHERE agente = ANY(${AGENTES_SQL_ARRAY})
+        WHERE agente = ANY(${agentsSql})
       `, [agenteParam]),
 
       // ── Nuevos extractores ────────────────────────────────────────────────
@@ -114,7 +123,7 @@ export async function GET(req: Request) {
           AND total_cargas  > 0
           AND cant_retiros  > 0
           AND total_retiros::numeric / total_cargas > 0.6
-          AND agente = ANY(${AGENTES_SQL_ARRAY})
+          AND agente = ANY(${agentsSql})
           AND ($1::text IS NULL OR agente = $1)
         ORDER BY (total_retiros::numeric / total_cargas) DESC, total_retiros DESC
         LIMIT 100
@@ -135,7 +144,7 @@ export async function GET(req: Request) {
         FROM casino_players
         WHERE total_cargas  > 0
           AND total_retiros > total_cargas
-          AND agente = ANY(${AGENTES_SQL_ARRAY})
+          AND agente = ANY(${agentsSql})
           AND ($1::text IS NULL OR agente = $1)
         ORDER BY (total_retiros - total_cargas) DESC
         LIMIT 100
@@ -157,7 +166,7 @@ export async function GET(req: Request) {
         WHERE seg_monto    IN ('vip','alto')
           AND seg_actividad = 'en_riesgo'
           AND fecha_ultima IS NOT NULL
-          AND agente = ANY(${AGENTES_SQL_ARRAY})
+          AND agente = ANY(${agentsSql})
           AND ($1::text IS NULL OR agente = $1)
         ORDER BY (CURRENT_DATE - fecha_ultima) ASC, total_cargas DESC
         LIMIT 50

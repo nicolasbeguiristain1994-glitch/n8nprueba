@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkPermission } from '@/lib/permissions'
+import { isValidPlatform } from '@/lib/casino-agents'
 import { spawn } from 'child_process'
 import path from 'path'
 
@@ -11,46 +12,67 @@ import path from 'path'
  * casino_transactions y sincroniza desde ahí hasta hoy.
  *
  * Query params:
+ *   ?platform=zeus|bet30                →  plataforma a sincronizar (default: zeus)
  *   ?desde=YYYY-MM-DD&hasta=YYYY-MM-DD  →  rango explícito
- *   (sin params)                         →  modo --auto (incremental)
+ *   (sin desde/hasta)                   →  modo --auto (incremental)
  *
  * Requiere rol admin.
  *
- * Variables de entorno requeridas en el servidor:
- *   ZEUS_API_KEY, ZEUS_PLAYER_TOKEN  (DATABASE_URL ya está configurado)
+ * Variables de entorno requeridas en el servidor (según plataforma):
+ *   ZEUS_API_KEY, ZEUS_PLAYER_TOKEN     (para zeus)
+ *   BET30_API_KEY, BET30_PLAYER_TOKEN   (para bet30)
+ *   DATABASE_URL ya debe estar configurado
  */
+
+const PLATFORM_ENV_VARS: Record<string, { keyVar: string; tokenVar: string }> = {
+  zeus:  { keyVar: 'ZEUS_API_KEY',  tokenVar: 'ZEUS_PLAYER_TOKEN'  },
+  bet30: { keyVar: 'BET30_API_KEY', tokenVar: 'BET30_PLAYER_TOKEN' },
+}
+
 export async function POST(req: NextRequest) {
   const err = await checkPermission(req, 'dashboard', 'read')
   if (err) return err
 
-  // Solo admins pueden disparar sincronizaciones con Zeus
+  // Solo admins pueden disparar sincronizaciones
   const { getSessionFromRequest } = await import('@/lib/auth')
   const session = getSessionFromRequest(req)
   if (!session || session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const apiKey      = process.env.ZEUS_API_KEY
-  const playerToken = process.env.ZEUS_PLAYER_TOKEN
+  // ── Plataforma ────────────────────────────────────────────────────────────────
+  const platformParam = req.nextUrl.searchParams.get('platform')?.trim() || 'zeus'
+
+  if (!isValidPlatform(platformParam)) {
+    return NextResponse.json(
+      { error: `Plataforma inválida: "${platformParam}". Valores permitidos: zeus, bet30` },
+      { status: 400 },
+    )
+  }
+
+  const creds = PLATFORM_ENV_VARS[platformParam]
+  const apiKey      = process.env[creds.keyVar]
+  const playerToken = process.env[creds.tokenVar]
 
   if (!apiKey || !playerToken) {
     return NextResponse.json(
-      { error: 'Variables ZEUS_API_KEY y ZEUS_PLAYER_TOKEN no configuradas en el servidor' },
+      { error: `Variables ${creds.keyVar} y ${creds.tokenVar} no configuradas en el servidor` },
       { status: 503 },
     )
   }
 
+  // ── Rango de fechas ───────────────────────────────────────────────────────────
   const desde = req.nextUrl.searchParams.get('desde')
   const hasta  = req.nextUrl.searchParams.get('hasta')
 
   // Los scripts viven en <repo-root>/scripts/ — Next.js corre desde frontend/
-  const scriptsDir   = path.resolve(process.cwd(), '..', 'scripts')
-  const syncScript   = path.join(scriptsDir, 'sync-casino-players-live.js')
-  const segScript    = path.join(scriptsDir, 'segmentar-casino-players.js')
+  const scriptsDir = path.resolve(process.cwd(), '..', 'scripts')
+  const syncScript = path.join(scriptsDir, 'sync-casino-players-live.js')
+  const segScript  = path.join(scriptsDir, 'segmentar-casino-players.js')
 
   const syncArgs = desde
-    ? [`--desde=${desde}`, ...(hasta ? [`--hasta=${hasta}`] : [])]
-    : ['--auto']
+    ? [`--platform=${platformParam}`, `--desde=${desde}`, ...(hasta ? [`--hasta=${hasta}`] : [])]
+    : [`--platform=${platformParam}`, '--auto']
 
   // Encadena sync → segmentación: la segmentación solo corre si el sync termina OK.
   // Se lanza en un proceso detached para no bloquear la respuesta HTTP.
@@ -66,19 +88,22 @@ export async function POST(req: NextRequest) {
       stdio:    'ignore',
       env: {
         ...process.env,
-        ZEUS_API_KEY:      apiKey,
-        ZEUS_PLAYER_TOKEN: playerToken,
-        PATH:              process.env.PATH ?? '',
+        [creds.keyVar]:   apiKey,
+        [creds.tokenVar]: playerToken,
+        PATH:             process.env.PATH ?? '',
       },
     })
 
     child.unref()
 
+    const platformLabel = platformParam === 'bet30' ? 'Bet30' : 'Zeus'
+
     return NextResponse.json({
-      ok:      true,
-      message: desde
-        ? `Sync iniciado para el rango ${desde} → ${hasta ?? 'hoy'}. Los datos (con segmentación) se actualizarán en ~5 minutos.`
-        : 'Sync incremental + segmentación iniciados (--auto). Los datos se actualizarán en ~5 minutos.',
+      ok:       true,
+      platform: platformParam,
+      message:  desde
+        ? `Sync ${platformLabel} iniciado para el rango ${desde} → ${hasta ?? 'hoy'}. Los datos (con segmentación) se actualizarán en ~5 minutos.`
+        : `Sync incremental ${platformLabel} + segmentación iniciados (--auto). Los datos se actualizarán en ~5 minutos.`,
       pid:  child.pid,
       mode: desde ? 'range' : 'auto',
     })
