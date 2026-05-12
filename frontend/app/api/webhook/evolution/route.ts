@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
   const data  = body.data as Record<string, unknown>
 
   // ── Mensaje entrante / confirmación de envío ──────────────────────────────
-  if (event === 'messages.upsert') {
+  if (event === 'messages.upsert' || event === 'MESSAGES_UPSERT') {
     // Validate key shape
     if (typeof data.key !== 'object' || data.key === null) {
       return NextResponse.json({ error: 'Missing key in data' }, { status: 400 })
@@ -255,7 +255,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Actualización de estado (enviado → entregado → leído) ─────────────────
-  if (event === 'messages.update') {
+  if (event === 'messages.update' || event === 'MESSAGES_UPDATE') {
     const updates = Array.isArray(data) ? data : [data]
 
     try {

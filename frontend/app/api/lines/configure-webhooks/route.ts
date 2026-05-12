@@ -63,21 +63,31 @@ export async function POST(req: NextRequest) {
         },
       )
 
-      // 2. Settings: readStatus=true so Evolution fires MESSAGES_UPDATE for ACKs
-      const settingsRes = await fetch(
-        `${lineEvoUrl}/settings/set/${encodeURIComponent(instance)}`,
-        {
-          method:  'POST',
-          headers: { apikey: apiKey, 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ readStatus: true }),
-          signal:  AbortSignal.timeout(8000),
-        },
-      )
+      // 2. Settings: readStatus=true so Evolution fires MESSAGES_UPDATE for ACKs.
+      // Field name varies by Evolution version — try both forms.
+      let settingsOk = false
+      for (const body of [
+        { readStatus: true },
+        { readMessages: true },
+        { readStatus: true, readMessages: true },
+      ]) {
+        const res = await fetch(
+          `${lineEvoUrl}/settings/set/${encodeURIComponent(instance)}`,
+          {
+            method:  'POST',
+            headers: { apikey: apiKey, 'Content-Type': 'application/json' },
+            body:    JSON.stringify(body),
+            signal:  AbortSignal.timeout(8000),
+          },
+        ).catch(() => null)
+        if (res?.ok) { settingsOk = true; break }
+      }
 
-      if (!webhookRes.ok || !settingsRes.ok) {
-        results.push({ instance, ok: false, error: `webhook=${webhookRes.status} settings=${settingsRes.status}` })
+      // Webhook success (2xx) is sufficient — settings failure is non-critical
+      if (!webhookRes.ok) {
+        results.push({ instance, ok: false, error: `webhook=${webhookRes.status}` })
       } else {
-        results.push({ instance, ok: true })
+        results.push({ instance, ok: true, ...(settingsOk ? {} : { error: 'settings failed (non-critical)' }) })
       }
     } catch (e) {
       results.push({ instance, ok: false, error: e instanceof Error ? e.message : String(e) })
