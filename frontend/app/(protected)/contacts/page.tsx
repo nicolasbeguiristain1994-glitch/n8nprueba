@@ -78,6 +78,12 @@ const ANTIGUEDAD_DESC: Record<string, string> = {
   reciente:    'Entre 1 y 3 meses',
   nuevo:       'Menos de 1 mes',
 }
+const NIVEL_DESC: Record<string, string> = {
+  vip:  'Super Vip — jugador de alto valor, depósitos frecuentes y altos',
+  alto: 'Vip — jugador activo con buen historial de depósitos',
+  medio:'Medio — actividad regular, potencial de crecimiento',
+  bajo: 'Bajo — actividad baja o reciente, en etapa de calificación',
+}
 const VALOR_RIESGO_STYLE: Record<string, string> = {
   critico: 'bg-red-100 text-red-700', medio: 'bg-orange-100 text-orange-700',
   bajo: 'bg-yellow-100 text-yellow-700',
@@ -108,7 +114,7 @@ function SegmentItem({ value, label, desc }: { value: string; label: string; des
       {pos && typeof document !== 'undefined' && createPortal(
         <div
           style={{ position: 'fixed', left: pos.x, top: pos.y, transform: 'translateY(-50%)', zIndex: 9999 }}
-          className="rounded-md bg-gray-900 text-white text-xs px-2.5 py-1.5 shadow-lg max-w-52 pointer-events-none leading-snug"
+          className="rounded-md bg-gray-600 text-white text-xs px-2.5 py-1.5 shadow-lg max-w-52 pointer-events-none leading-snug"
         >
           {desc}
         </div>,
@@ -929,10 +935,9 @@ export default function Contacts() {
           <SelectTrigger className="w-40"><SelectValue placeholder="Nivel" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="">Todos los niveles</SelectItem>
-            <SelectItem value="vip">Super Vip</SelectItem>
-            <SelectItem value="alto">Vip</SelectItem>
-            <SelectItem value="medio">Medio</SelectItem>
-            <SelectItem value="bajo">Bajo</SelectItem>
+            {(Object.keys(NIVEL_DESC) as string[]).map(v => (
+              <SegmentItem key={v} value={v} label={NIVEL_LABEL[v] ?? v} desc={NIVEL_DESC[v]} />
+            ))}
           </SelectContent>
         </Select>
       </div>
