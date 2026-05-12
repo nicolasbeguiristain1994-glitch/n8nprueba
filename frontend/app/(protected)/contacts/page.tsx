@@ -61,6 +61,22 @@ const ACTIVIDAD_STYLE: Record<string, string> = {
   en_riesgo: 'bg-orange-100 text-orange-700', inactivo: 'bg-red-100 text-red-600',
   perdido: 'bg-zinc-800 text-white',
 }
+const ACTIVIDAD_DESC: Record<string, string> = {
+  frecuente: '≥ 3 cargas por semana en promedio',
+  regular:   '1–2 cargas por semana en promedio',
+  ocasional: '1–3 cargas al mes',
+  nuevo:     'Primera semana de actividad',
+  en_riesgo: 'Sin actividad en las últimas 2–4 semanas',
+  inactivo:  'Sin actividad entre 1 y 3 meses',
+  perdido:   'Sin actividad por más de 3 meses',
+}
+const ANTIGUEDAD_DESC: Record<string, string> = {
+  leal:        'Cliente por más de 1 año',
+  veterano:    'Entre 6 y 12 meses de historia',
+  establecido: 'Entre 3 y 6 meses',
+  reciente:    'Entre 1 y 3 meses',
+  nuevo:       'Menos de 1 mes',
+}
 const VALOR_RIESGO_STYLE: Record<string, string> = {
   critico: 'bg-red-100 text-red-700', medio: 'bg-orange-100 text-orange-700',
   bajo: 'bg-yellow-100 text-yellow-700',
@@ -898,26 +914,26 @@ export default function Contacts() {
       <div className="flex gap-3 flex-wrap items-center">
         <Select value={filterActividad} onValueChange={v => { setFilterActividad(v ?? ''); resetPage() }}>
           <SelectTrigger className="w-40"><SelectValue placeholder="Actividad" /></SelectTrigger>
-          <SelectContent>
+          <SelectContent className="w-64">
             <SelectItem value="">Toda actividad</SelectItem>
-            <SelectItem value="frecuente">frecuente</SelectItem>
-            <SelectItem value="regular">regular</SelectItem>
-            <SelectItem value="ocasional">ocasional</SelectItem>
-            <SelectItem value="nuevo">nuevo</SelectItem>
-            <SelectItem value="en_riesgo">en riesgo</SelectItem>
-            <SelectItem value="inactivo">inactivo</SelectItem>
-            <SelectItem value="perdido">perdido</SelectItem>
+            {(Object.keys(ACTIVIDAD_DESC) as Array<keyof typeof ACTIVIDAD_DESC>).map(v => (
+              <SelectItem key={v} value={v}>
+                <span className="font-medium capitalize">{v.replace('_', ' ')}</span>
+                <span className="block text-xs text-muted-foreground font-normal">{ACTIVIDAD_DESC[v]}</span>
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
         <Select value={filterAntiguedad} onValueChange={v => { setFilterAntiguedad(v ?? ''); resetPage() }}>
           <SelectTrigger className="w-40"><SelectValue placeholder="Antigüedad" /></SelectTrigger>
-          <SelectContent>
+          <SelectContent className="w-64">
             <SelectItem value="">Cualquier antigüedad</SelectItem>
-            <SelectItem value="leal">leal</SelectItem>
-            <SelectItem value="veterano">veterano</SelectItem>
-            <SelectItem value="establecido">establecido</SelectItem>
-            <SelectItem value="reciente">reciente</SelectItem>
-            <SelectItem value="nuevo">nuevo</SelectItem>
+            {(Object.keys(ANTIGUEDAD_DESC) as Array<keyof typeof ANTIGUEDAD_DESC>).map(v => (
+              <SelectItem key={v} value={v}>
+                <span className="font-medium capitalize">{v}</span>
+                <span className="block text-xs text-muted-foreground font-normal">{ANTIGUEDAD_DESC[v]}</span>
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
         {(filterActividad || filterAntiguedad) && (
@@ -1144,16 +1160,21 @@ export default function Contacts() {
                     <p className="text-xs font-medium text-muted-foreground mb-2">Casino (tags)</p>
                   </div>
                   {[
-                    { label: 'Actividad', value: criteriaActividad, set: setCriteriaActividad, key: 'all-act', items: ['frecuente', 'regular', 'ocasional', 'nuevo', 'en_riesgo', 'inactivo', 'perdido'].map(v => ({ v, l: v })) },
-                    { label: 'Antigüedad', value: criteriaAntiguedad, set: setCriteriaAntiguedad, key: 'all-ant', items: ['leal', 'veterano', 'establecido', 'reciente', 'nuevo'].map(v => ({ v, l: v })) },
-                  ].map(({ label, value, set, key, items }) => (
+                    { label: 'Actividad',  value: criteriaActividad,  set: setCriteriaActividad,  key: 'all-act', desc: ACTIVIDAD_DESC  as Record<string,string> },
+                    { label: 'Antigüedad', value: criteriaAntiguedad, set: setCriteriaAntiguedad, key: 'all-ant', desc: ANTIGUEDAD_DESC as Record<string,string> },
+                  ].map(({ label, value, set, key, desc }) => (
                     <div key={key}>
                       <label className="text-xs font-medium text-muted-foreground mb-1 block">{label}</label>
                       <Select value={value || 'all'} onValueChange={v => set(v === 'all' ? '' : (v ?? ''))}>
                         <SelectTrigger><SelectValue placeholder={`Cualquier ${label.toLowerCase()}`} /></SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="w-64">
                           <SelectItem value="all">Cualquier {label.toLowerCase()}</SelectItem>
-                          {items.map(i => <SelectItem key={i.v} value={i.v}>{i.l}</SelectItem>)}
+                          {Object.keys(desc).map(v => (
+                            <SelectItem key={v} value={v}>
+                              <span className="font-medium capitalize">{v.replace('_', ' ')}</span>
+                              <span className="block text-xs text-muted-foreground font-normal">{desc[v]}</span>
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
