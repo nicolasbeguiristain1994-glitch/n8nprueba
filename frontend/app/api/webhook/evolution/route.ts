@@ -357,6 +357,18 @@ export async function POST(req: NextRequest) {
           ).catch(e => console.error('[webhook/evolution] CONNECTION_UPDATE open db update failed:', e?.message))
           console.log(JSON.stringify({ ts: new Date().toISOString(), event: 'line.connected', instance: instanceName }))
           void syncLinePhoneNumber(instanceName)
+          // Ensure readStatus=true on every reconnect so MESSAGES_UPDATE ACKs keep firing
+          void (async () => {
+            const evoUrl = process.env.EVOLUTION_URL || ''
+            const apiKey = process.env.EVOLUTION_GLOBAL_API_KEY || process.env.EVOLUTION_API_KEY || ''
+            if (!evoUrl || !apiKey) return
+            await fetch(`${evoUrl}/settings/set/${encodeURIComponent(instanceName)}`, {
+              method:  'POST',
+              headers: { apikey: apiKey, 'Content-Type': 'application/json' },
+              body:    JSON.stringify({ readStatus: true }),
+              signal:  AbortSignal.timeout(5000),
+            }).catch(e => console.warn('[webhook/evolution] readStatus setup failed:', e?.message))
+          })()
         } else if (state === 'close') {
           await query(
             `UPDATE whatsapp_lines
