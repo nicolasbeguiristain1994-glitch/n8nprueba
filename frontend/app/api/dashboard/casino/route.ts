@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
-import { getAgentsSqlArray, isValidPlatform } from '@/lib/casino-agents'
+import { getAgentsSqlArray, getCanonicalAgenteExpr, isValidPlatform } from '@/lib/casino-agents'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -59,7 +59,9 @@ export async function GET(req: Request) {
       { status: 400 },
     )
   }
-  const agentsSql = getAgentsSqlArray(platformParam)
+  const agentsSql      = getAgentsSqlArray(platformParam)
+  const isConsolidado  = platformParam === 'consolidado'
+  const agenteExpr     = isConsolidado ? getCanonicalAgenteExpr() : 'agente'
 
   try {
     const [summary, agentes, vips, segActividad, segMonto] = await Promise.all([
@@ -92,9 +94,10 @@ export async function GET(req: Request) {
       `),
 
       // ── Por agente ──────────────────────────────────────────────────────────
+      // En modo consolidado agrupa por operador canónico (zeus + bet30 sumados).
       query<CasinoAgente>(`
         SELECT
-          agente,
+          ${agenteExpr}                                                              AS agente,
           COUNT(*)::int                                                              AS total,
           COUNT(*) FILTER (WHERE fecha_primera >= CURRENT_DATE - 30)::int           AS nuevos_mes,
           COUNT(*) FILTER (WHERE fecha_ultima  >= CURRENT_DATE - 30)::int           AS activos_mes,
@@ -107,7 +110,7 @@ export async function GET(req: Request) {
           ROUND(COALESCE(AVG(total_cargas), 0))::bigint                             AS avg_cargas
         FROM casino_players
         WHERE agente = ANY(${agentsSql})
-        GROUP BY agente
+        GROUP BY 1
         ORDER BY total DESC
       `),
 

@@ -141,8 +141,9 @@ function AutoRefreshToggle({ enabled, softLoading, onToggle }: AutoRefreshToggle
 // ── Platform selector ─────────────────────────────────────────────────────────
 
 const PLATFORM_LABELS: Record<Platform, string> = {
-  zeus:  'Zeus',
-  bet30: 'Bet30',
+  zeus:        'Zeus',
+  bet30:       'Bet30',
+  consolidado: 'Consolidado',
 }
 
 interface PlatformSelectorProps {

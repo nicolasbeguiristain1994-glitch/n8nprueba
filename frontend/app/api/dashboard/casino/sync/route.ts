@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkPermission } from '@/lib/permissions'
-import { isValidPlatform } from '@/lib/casino-agents'
+import { isValidSyncPlatform } from '@/lib/casino-agents'
 import { spawn } from 'child_process'
 import path from 'path'
 
@@ -43,9 +43,9 @@ export async function POST(req: NextRequest) {
   // ── Plataforma ────────────────────────────────────────────────────────────────
   const platformParam = req.nextUrl.searchParams.get('platform')?.trim() || 'zeus'
 
-  if (!isValidPlatform(platformParam)) {
+  if (!isValidSyncPlatform(platformParam)) {
     return NextResponse.json(
-      { error: `Plataforma inválida: "${platformParam}". Valores permitidos: zeus, bet30` },
+      { error: `Plataforma inválida para sync: "${platformParam}". Valores permitidos: zeus, bet30` },
       { status: 400 },
     )
   }
