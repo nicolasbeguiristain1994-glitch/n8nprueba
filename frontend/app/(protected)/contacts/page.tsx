@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   Search, Upload, RefreshCw, List, CheckSquare, X, Users, UserPlus,
-  Trash2, Download, DatabaseZap, Pencil, ChevronDown, Filter, Info,
+  Trash2, Download, DatabaseZap, Pencil, ChevronDown, Filter, Info, Scissors,
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
@@ -231,6 +231,14 @@ export default function Contacts() {
   const [editGaming, setEditGaming]       = useState('')
   const [editSaving, setEditSaving]       = useState(false)
   const [editError, setEditError]         = useState<string | null>(null)
+
+  // ── Split lista ───────────────────────────────────────────────────────────
+  const [splitSource, setSplitSource]   = useState<ContactList | null>(null)
+  const [splitParts, setSplitParts]     = useState<2 | 3>(2)
+  const [splitNames, setSplitNames]     = useState<string[]>(['', ''])
+  const [splittingList, setSplittingList] = useState(false)
+  const [splitError, setSplitError]     = useState<string | null>(null)
+  const [splitResult, setSplitResult]   = useState<{ id: string; name: string; total: number }[] | null>(null)
 
   // ── Misc ──────────────────────────────────────────────────────────────────
   const [updateError, setUpdateError]           = useState<string | null>(null)
@@ -501,6 +509,37 @@ export default function Contacts() {
       setLists(prev => prev.filter(l => l.id !== listId))
     } catch { alert('Error de conexión') }
     finally { setDeletingListId(null) }
+  }
+
+  const openSplitModal = (l: ContactList) => {
+    setSplitSource(l)
+    setSplitParts(2)
+    setSplitNames([`${l.name} (1/2)`, `${l.name} (2/2)`])
+    setSplitError(null)
+    setSplitResult(null)
+    setShowListsMenu(false)
+  }
+
+  const handleSplitPartsChange = (p: 2 | 3, sourceName: string) => {
+    setSplitParts(p)
+    setSplitNames(Array.from({ length: p }, (_, i) => `${sourceName} (${i + 1}/${p})`))
+  }
+
+  const doSplit = async () => {
+    if (!splitSource) return
+    setSplittingList(true); setSplitError(null)
+    try {
+      const res = await fetch(`/api/lists/${splitSource.id}/split`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ parts: splitParts, names: splitNames }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) { setSplitError(d.error || 'Error al dividir la lista'); return }
+      setSplitResult(d.lists)
+      reloadLists()
+    } catch { setSplitError('Error de conexión') }
+    finally { setSplittingList(false) }
   }
 
   const repopularListas = async () => {
@@ -837,6 +876,13 @@ export default function Contacts() {
                         onClick={e => { e.stopPropagation(); setDownloadList(l); setShowListsMenu(false) }}
                       >
                         <Download size={13} />
+                      </button>
+                      <button
+                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-indigo-500 p-0.5 rounded"
+                        title="Dividir lista"
+                        onClick={e => { e.stopPropagation(); openSplitModal(l) }}
+                      >
+                        <Scissors size={13} />
                       </button>
                       <button
                         className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-red-500 p-0.5 rounded"
@@ -1442,6 +1488,99 @@ export default function Contacts() {
           filenameHint={`lista-${downloadList.name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-')}`}
         />
       )}
+
+      {/* Modal dividir lista */}
+      <Dialog open={!!splitSource} onOpenChange={open => { if (!open) { setSplitSource(null); setSplitResult(null) } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Scissors size={16} className="text-indigo-600" />
+              Dividir lista
+            </DialogTitle>
+          </DialogHeader>
+
+          {splitResult ? (
+            <div className="space-y-3">
+              <p className="text-sm text-gray-600">Las listas fueron creadas correctamente:</p>
+              <div className="space-y-2">
+                {splitResult.map((l, i) => (
+                  <div key={l.id} className="flex items-center gap-2 bg-indigo-50 rounded-lg px-3 py-2">
+                    <span className="text-xs font-semibold text-indigo-700 w-5">{i + 1}.</span>
+                    <span className="text-sm font-medium text-indigo-900 flex-1 truncate">{l.name}</span>
+                    <span className="text-xs text-indigo-500 shrink-0">{l.total.toLocaleString()} contactos</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-gray-400">La lista original no fue modificada.</p>
+              <div className="flex justify-end">
+                <Button size="sm" onClick={() => { setSplitSource(null); setSplitResult(null) }}>Listo</Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm text-gray-600 mb-1">
+                  Dividir <span className="font-semibold">"{splitSource?.name}"</span>{' '}
+                  ({splitSource?.contact_count.toLocaleString()} contactos) en:
+                </p>
+                <div className="flex gap-2">
+                  {([2, 3] as const).map(p => (
+                    <button
+                      key={p}
+                      onClick={() => handleSplitPartsChange(p, splitSource?.name ?? '')}
+                      className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                        splitParts === p
+                          ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                          : 'border-gray-200 text-gray-600 hover:border-indigo-300'
+                      }`}
+                    >
+                      {p} partes
+                      {splitSource && (
+                        <span className="block text-xs font-normal text-current opacity-70">
+                          ~{Math.floor(splitSource.contact_count / p).toLocaleString()} c/u
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Nombres de las partes</p>
+                {splitNames.map((name, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 w-5 text-right">{i + 1}.</span>
+                    <Input
+                      value={name}
+                      onChange={e => setSplitNames(prev => prev.map((n, idx) => idx === i ? e.target.value : n))}
+                      placeholder={`Nombre parte ${i + 1}`}
+                      className="text-sm h-8"
+                    />
+                  </div>
+                ))}
+              </div>
+
+              {splitError && <p className="text-xs text-red-500">{splitError}</p>}
+
+              <p className="text-xs text-gray-400">
+                Los contactos se distribuyen aleatoriamente. La lista original no se modifica.
+              </p>
+
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="outline" onClick={() => setSplitSource(null)}>Cancelar</Button>
+                <Button
+                  size="sm"
+                  onClick={doSplit}
+                  disabled={splittingList || splitNames.some(n => !n.trim())}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                >
+                  {splittingList ? 'Dividiendo…' : `Crear ${splitParts} listas`}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
