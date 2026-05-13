@@ -55,8 +55,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       LEFT JOIN LATERAL (
         SELECT status, sent_at, delivered_at, read_at, failed_at, error_detail
         FROM whatsapp_messages
-        WHERE contact_id = c.id
-          AND campaign_id = camp.id
+        WHERE campaign_id = camp.id
+          AND (
+            contact_id = c.id
+            OR (contact_id IS NULL
+                AND REPLACE(phone_number, '+', '') = REPLACE(c.phone_number, '+', ''))
+          )
         ORDER BY created_at DESC
         LIMIT 1
       ) m ON true

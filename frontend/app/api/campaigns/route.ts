@@ -34,10 +34,13 @@ export async function GET(req: NextRequest) {
                COALESCE(cr.failed, 0),
                (SELECT COUNT(*)
                 FROM (
-                  SELECT DISTINCT ON (wm2.contact_id) wm2.status
+                  SELECT DISTINCT ON (
+                    COALESCE(wm2.contact_id::text, REPLACE(wm2.phone_number, '+', ''))
+                  ) wm2.status
                   FROM whatsapp_messages wm2
                   WHERE wm2.campaign_id = c.id
-                  ORDER BY wm2.contact_id, wm2.created_at DESC
+                  ORDER BY COALESCE(wm2.contact_id::text, REPLACE(wm2.phone_number, '+', '')),
+                           wm2.created_at DESC
                 ) latest_wm
                 WHERE latest_wm.status = 'failed')
              )::int                                                                 AS total_failed,
