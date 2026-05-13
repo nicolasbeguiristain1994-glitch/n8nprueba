@@ -7,7 +7,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import {
-  LayoutDashboard, RefreshCw, SlidersHorizontal, Clock, CalendarRange, Database,
+  LayoutDashboard, RefreshCw, SlidersHorizontal, Clock, CalendarRange, Database, User,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -17,7 +17,7 @@ import {
   type DateRange,
   type DateRangePreset,
 } from './types'
-import { PLATFORMS, type Platform } from '@/lib/casino-agents'
+import { PLATFORMS, getAgentsForPlatform, type Platform } from '@/lib/casino-agents'
 
 // ── "X min ago" ticker ────────────────────────────────────────────────────────
 
@@ -171,6 +171,34 @@ function PlatformSelector({ value, onChange }: PlatformSelectorProps) {
   )
 }
 
+// ── Agent selector ────────────────────────────────────────────────────────────
+
+interface AgentSelectorProps {
+  value:    string
+  platform: Platform
+  onChange: (a: string) => void
+}
+
+function AgentSelector({ value, platform, onChange }: AgentSelectorProps) {
+  const agents = getAgentsForPlatform(platform)
+  return (
+    <div className="flex items-center gap-1.5">
+      <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+      <Select value={value || '_all'} onValueChange={(v: string | null) => onChange(!v || v === '_all' ? '' : v)}>
+        <SelectTrigger size="sm" className="h-7 w-auto min-w-[90px] text-xs">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent align="end">
+          <SelectItem value="_all" className="text-xs">Todos</SelectItem>
+          {agents.map(a => (
+            <SelectItem key={a} value={a} className="text-xs capitalize">{a}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
+
 // ── Header ────────────────────────────────────────────────────────────────────
 
 export interface DashboardHeaderProps {
@@ -180,11 +208,13 @@ export interface DashboardHeaderProps {
   dateRange: DateRange
   autoRefreshEnabled: boolean
   platform: Platform
+  agent: string
   onCustomize: () => void
   onRefresh: () => void
   onDateRangeChange: (range: DateRange) => void
   onAutoRefreshToggle: () => void
   onPlatformChange: (p: Platform) => void
+  onAgentChange: (a: string) => void
 }
 
 export const DashboardHeader = memo(function DashboardHeader({
@@ -194,11 +224,13 @@ export const DashboardHeader = memo(function DashboardHeader({
   dateRange,
   autoRefreshEnabled,
   platform,
+  agent,
   onCustomize,
   onRefresh,
   onDateRangeChange,
   onAutoRefreshToggle,
   onPlatformChange,
+  onAgentChange,
 }: DashboardHeaderProps) {
   const minutesAgo = useMinutesAgo(lastUpdated)
 
@@ -224,6 +256,9 @@ export const DashboardHeader = memo(function DashboardHeader({
 
         {/* Platform selector */}
         <PlatformSelector value={platform} onChange={onPlatformChange} />
+
+        {/* Agent selector */}
+        <AgentSelector value={agent} platform={platform} onChange={onAgentChange} />
 
         <div className="flex items-center gap-1.5 ml-auto">
           {/* Soft-loading indicator */}

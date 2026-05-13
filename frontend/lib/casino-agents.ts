@@ -79,3 +79,15 @@ export function isValidPlatform(p: unknown): p is Platform {
 export function isValidSyncPlatform(p: unknown): p is 'zeus' | 'bet30' {
   return p === 'zeus' || p === 'bet30'
 }
+
+/**
+ * Devuelve la lista de nombres de agentes visibles para una plataforma.
+ * Para 'consolidado' devuelve los nombres canónicos (zeus).
+ */
+export function getAgentsForPlatform(platform: Platform): string[] {
+  switch (platform) {
+    case 'zeus':        return ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet']
+    case 'bet30':       return ['bigwin', 'zeus', 'zeusroyal', 'btcuno', 'btcdos']
+    case 'consolidado': return ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet']
+  }
+}

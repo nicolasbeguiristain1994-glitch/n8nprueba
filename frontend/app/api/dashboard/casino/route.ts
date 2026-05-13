@@ -16,15 +16,17 @@ export interface CasinoSummary {
 }
 
 export interface CasinoAgente {
-  agente:      string
-  total:       number
-  nuevos_mes:  number
-  activos_mes: number
-  vip:         number
-  en_riesgo:   number   // inactivo + en_riesgo + perdido
-  sum_cargas:  number   // Σ cargas acumuladas históricas del agente
-  sum_retiros: number   // Σ retiros acumulados históricos del agente
-  avg_cargas:  number   // promedio de cargas por jugador
+  agente:        string
+  total:         number
+  nuevos_mes:    number
+  activos_mes:   number
+  vip:           number
+  en_riesgo:     number   // inactivo + en_riesgo + perdido
+  sum_cargas:    number   // Σ cargas acumuladas históricas del agente
+  sum_retiros:   number   // Σ retiros acumulados históricos del agente
+  avg_cargas:    number   // promedio de cargas por jugador
+  response_rate: number   // % jugadores con actividad en el período (activos_mes / total)
+  reload_rate:   number   // % jugadores con al menos 1 depósito en el período
 }
 
 export interface CasinoVip {
@@ -59,9 +61,23 @@ export async function GET(req: Request) {
       { status: 400 },
     )
   }
-  const agentsSql      = getAgentsSqlArray(platformParam)
-  const isConsolidado  = platformParam === 'consolidado'
-  const agenteExpr     = isConsolidado ? getCanonicalAgenteExpr() : 'agente'
+
+  // Date range for nuevos_mes / activos_mes — defaults to trailing 30 days
+  function isoToday() { return new Date().toISOString().slice(0, 10) }
+  function iso30dAgo() {
+    const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10)
+  }
+  const fromParam  = url.searchParams.get('from')?.trim()  || iso30dAgo()
+  const toParam    = url.searchParams.get('to')?.trim()    || isoToday()
+  // Optional single-agent filter (for widget-level filtering; empty = all agents)
+  const agentParam = url.searchParams.get('agent')?.trim() || null
+
+  const agentsSql     = getAgentsSqlArray(platformParam)
+  const isConsolidado = platformParam === 'consolidado'
+  const agenteExpr    = isConsolidado ? getCanonicalAgenteExpr('cp.agente') : 'cp.agente'
+  // Extra WHERE clause and query params when a specific agent is requested
+  const agentClause  = agentParam ? 'AND cp.agente = $3' : ''
+  const agentParams  = agentParam ? [fromParam, toParam, agentParam] : [fromParam, toParam]
 
   try {
     const [summary, agentes, vips, segActividad, segMonto] = await Promise.all([
@@ -94,25 +110,45 @@ export async function GET(req: Request) {
       `),
 
       // ── Por agente ──────────────────────────────────────────────────────────
-      // En modo consolidado agrupa por operador canónico (zeus + bet30 sumados).
+      // nuevos_mes / activos_mes respetan el rango from/to del request.
+      // Los totales (sum_cargas, sum_retiros, avg_cargas) son siempre históricos.
+      // reload_rate: % jugadores con ≥1 carga en el período (via casino_transactions).
+      // response_rate: % jugadores activos en el período (activos_mes / total).
+      // agentParam (opcional) filtra a un único agente.
       query<CasinoAgente>(`
         SELECT
           ${agenteExpr}                                                              AS agente,
           COUNT(*)::int                                                              AS total,
-          COUNT(*) FILTER (WHERE fecha_primera >= CURRENT_DATE - 30)::int           AS nuevos_mes,
-          COUNT(*) FILTER (WHERE fecha_ultima  >= CURRENT_DATE - 30)::int           AS activos_mes,
-          COUNT(*) FILTER (WHERE seg_monto = 'vip')::int                            AS vip,
+          COUNT(*) FILTER (WHERE cp.fecha_primera BETWEEN $1::date AND $2::date)::int AS nuevos_mes,
+          COUNT(*) FILTER (WHERE cp.fecha_ultima  BETWEEN $1::date AND $2::date)::int AS activos_mes,
+          COUNT(*) FILTER (WHERE cp.seg_monto = 'vip')::int                         AS vip,
           COUNT(*) FILTER (
-            WHERE seg_actividad IN ('inactivo','en_riesgo','perdido')
+            WHERE cp.seg_actividad IN ('inactivo','en_riesgo','perdido')
           )::int                                                                     AS en_riesgo,
-          COALESCE(SUM(total_cargas),  0)::bigint                                   AS sum_cargas,
-          COALESCE(SUM(total_retiros), 0)::bigint                                   AS sum_retiros,
-          ROUND(COALESCE(AVG(total_cargas), 0))::bigint                             AS avg_cargas
-        FROM casino_players
-        WHERE agente = ANY(${agentsSql})
+          COALESCE(SUM(cp.total_cargas),  0)::bigint                                AS sum_cargas,
+          COALESCE(SUM(cp.total_retiros), 0)::bigint                                AS sum_retiros,
+          ROUND(COALESCE(AVG(cp.total_cargas), 0))::bigint                          AS avg_cargas,
+          ROUND(
+            100.0 * COUNT(*) FILTER (WHERE cp.fecha_ultima BETWEEN $1::date AND $2::date)
+            / NULLIF(COUNT(*), 0), 1
+          )::numeric                                                                 AS response_rate,
+          ROUND(
+            100.0 * COUNT(reloaded.uname) / NULLIF(COUNT(*), 0), 1
+          )::numeric                                                                 AS reload_rate
+        FROM casino_players cp
+        LEFT JOIN (
+          SELECT agente, LOWER(username) AS uname
+          FROM casino_transactions
+          WHERE fecha BETWEEN $1::date AND $2::date
+            AND tipo = 'carga'
+          GROUP BY agente, LOWER(username)
+        ) reloaded ON reloaded.uname = cp.username_lower
+                  AND reloaded.agente = cp.agente
+        WHERE cp.agente = ANY(${agentsSql})
+          ${agentClause}
         GROUP BY 1
         ORDER BY total DESC
-      `),
+      `, agentParams),
 
       // ── VIP / Alto — seguimiento urgencia ───────────────────────────────────
       // Ordenado: perdido → inactivo → en_riesgo → resto; luego días sin movimiento DESC,

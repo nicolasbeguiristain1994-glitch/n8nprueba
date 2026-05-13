@@ -21,11 +21,13 @@ export function Dashboard() {
     dateRange,
     autoRefreshEnabled,
     platform,
+    agent,
     toggleWidget,
     reorderByIds,
     setDateRange,
     toggleAutoRefresh,
     setPlatform,
+    setAgent,
     refresh,
   } = useDashboard()
 
@@ -50,11 +52,13 @@ export function Dashboard() {
         dateRange={dateRange}
         autoRefreshEnabled={autoRefreshEnabled}
         platform={platform}
+        agent={agent}
         onCustomize={() => setCustomizeOpen(true)}
         onRefresh={refresh}
         onDateRangeChange={setDateRange}
         onAutoRefreshToggle={toggleAutoRefresh}
         onPlatformChange={setPlatform}
+        onAgentChange={setAgent}
       />
 
       {error && (
@@ -85,6 +89,8 @@ export function Dashboard() {
           visibleWidgets={visibleWidgets}
           data={data}
           loading={loading}
+          platform={platform}
+          agent={agent}
           onReorder={reorderByIds}
           onTaskCompleted={handleTaskCompleted}
         />

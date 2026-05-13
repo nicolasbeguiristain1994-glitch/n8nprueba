@@ -21,6 +21,7 @@ import { GripVertical } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { WIDGET_REGISTRY, type WidgetId } from './types'
 import type { DashboardData } from './useDashboard'
+import type { Platform } from '@/lib/casino-agents'
 
 // ── Individual sortable item ────────────────────────────────────────────────
 interface SortableWidgetProps {
@@ -66,6 +67,8 @@ interface WidgetGridProps {
   visibleWidgets: WidgetId[]
   data: DashboardData | null
   loading: boolean
+  platform: Platform
+  agent: string
   onReorder: (ids: WidgetId[]) => void
   onTaskCompleted?: (id: string) => void
 }
@@ -83,6 +86,8 @@ export const WidgetGrid = memo(function WidgetGrid({
   visibleWidgets,
   data,
   loading,
+  platform,
+  agent,
   onReorder,
   onTaskCompleted,
 }: WidgetGridProps) {
@@ -113,7 +118,7 @@ export const WidgetGrid = memo(function WidgetGrid({
       case 'casino_kpi':
         return <CasinoKPIWidget summary={casino?.summary ?? null} loading={loading} />
       case 'agentes':
-        return <AgentesTableWidget agentes={casino?.agentes ?? []} loading={loading} />
+        return <AgentesTableWidget platform={platform} agentFilter={agent} />
       case 'vips_riesgo':
         return <VipsEnRiesgoWidget vips={casino?.vips ?? []} loading={loading} />
       case 'segmentos':

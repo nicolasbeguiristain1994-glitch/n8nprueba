@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
              c.processor_locked_at,
              c.created_at, c.owned_by, cl.name AS list_name, cl.id AS list_id,
              COALESCE(cr.sent, 0)::int                                             AS total_sent,
-             COUNT(m.id) FILTER (WHERE m.status IN ('delivered','read'))::int      AS total_delivered,
+             COUNT(m.id) FILTER (WHERE m.status IN ('sent','delivered','read'))::int AS total_delivered,
              COUNT(m.id) FILTER (WHERE m.status = 'read')::int                    AS total_read,
              COALESCE(cr.failed, 0)::int                                           AS total_failed,
              COALESCE(cr.skipped, 0)::int                                          AS total_skipped,

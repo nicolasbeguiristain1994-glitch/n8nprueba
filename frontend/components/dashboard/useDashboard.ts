@@ -5,7 +5,6 @@ import { arrayMove } from '@dnd-kit/sortable'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import type { CasinoSummary, CasinoAgente, CasinoVip, SegCount } from '@/app/api/dashboard/casino/route'
 import type { PendingTask, CrmKPIs } from '@/app/api/dashboard/crm/route'
-import { type Platform } from '@/lib/casino-agents'
 import {
   DEFAULT_DATE_RANGE,
   DEFAULT_LAYOUT,
@@ -14,6 +13,7 @@ import {
   type DashboardLayout,
   type WidgetId,
 } from './types'
+import { useDashboardFilters, type DashboardFilters } from './useDashboardFilters'
 
 // ── Combined dashboard data type ─────────────────────────────────────────────
 
@@ -45,7 +45,7 @@ const FALLBACK_KPIS: CrmKPIs = { contacts: 0, tasks_pending: 0, tasks_overdue: 0
 
 const AUTO_REFRESH_INTERVAL = 300_000
 
-interface UseDashboardReturn {
+interface UseDashboardReturn extends DashboardFilters {
   layout:             DashboardLayout
   data:               DashboardData | null
   loading:            boolean
@@ -56,13 +56,11 @@ interface UseDashboardReturn {
   visibleWidgets:     WidgetId[]
   dateRange:          DateRange
   autoRefreshEnabled: boolean
-  platform:           Platform
   moveWidget:         (from: number, to: number) => void
   toggleWidget:       (id: WidgetId) => void
   reorderByIds:       (ids: WidgetId[]) => void
   setDateRange:       (range: DateRange) => void
   toggleAutoRefresh:  () => void
-  setPlatform:        (p: Platform) => void
   refresh:            () => void
 }
 
@@ -70,7 +68,9 @@ export function useDashboard(): UseDashboardReturn {
   const [layout, setLayout] = useLocalStorage<DashboardLayout>('dashboard:layout', DEFAULT_LAYOUT)
   const [dateRange, setDateRangeStored] = useLocalStorage<DateRange>('dashboard:dateRange', DEFAULT_DATE_RANGE)
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useLocalStorage<boolean>('dashboard:autoRefresh', true)
-  const [platform, setPlatformStored] = useLocalStorage<Platform>('dashboard:platform', 'zeus')
+
+  // Platform + agent managed by focused sub-hook
+  const { platform, agent, setPlatform, setAgent } = useDashboardFilters()
 
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -84,10 +84,10 @@ export function useDashboard(): UseDashboardReturn {
   const autoRefreshEnabledRef = useRef(autoRefreshEnabled)
   const platformRef           = useRef(platform)
 
-  useEffect(() => { dateRangeRef.current = dateRange },                    [dateRange])
-  useEffect(() => { lastUpdatedRef.current = lastUpdated },                [lastUpdated])
+  useEffect(() => { dateRangeRef.current          = dateRange },           [dateRange])
+  useEffect(() => { lastUpdatedRef.current        = lastUpdated },         [lastUpdated])
   useEffect(() => { autoRefreshEnabledRef.current = autoRefreshEnabled },  [autoRefreshEnabled])
-  useEffect(() => { platformRef.current = platform },                      [platform])
+  useEffect(() => { platformRef.current           = platform },            [platform])
 
   // ── Core fetch — casino + crm + msgs in parallel ─────────────────────────────
   const fetchData = useCallback(async (_range: DateRange, soft = false) => {
@@ -187,7 +187,6 @@ export function useDashboard(): UseDashboardReturn {
 
   const setDateRange      = useCallback((range: DateRange) => { setDateRangeStored(range) }, [setDateRangeStored])
   const toggleAutoRefresh = useCallback(() => { setAutoRefreshEnabled(prev => !prev) }, [setAutoRefreshEnabled])
-  const setPlatform       = useCallback((p: Platform) => { setPlatformStored(p) }, [setPlatformStored])
   const refresh           = useCallback(() => { fetchData(dateRangeRef.current) }, [fetchData])
 
   return {
@@ -202,12 +201,14 @@ export function useDashboard(): UseDashboardReturn {
     dateRange,
     autoRefreshEnabled,
     platform,
+    agent,
     moveWidget,
     toggleWidget,
     reorderByIds,
     setDateRange,
     toggleAutoRefresh,
     setPlatform,
+    setAgent,
     refresh,
   }
 }
