@@ -78,6 +78,7 @@ import { TasksWidget } from './widgets/TasksWidget'
 import { QuickActionsWidget } from './widgets/QuickActionsWidget'
 import { CasinoKPIWidget } from './widgets/CasinoKPIWidget'
 import { AgentesTableWidget } from './widgets/AgentesTableWidget'
+import { CajaWidget } from './widgets/CajaWidget'
 import { VipsEnRiesgoWidget } from './widgets/VipsEnRiesgoWidget'
 import { SegmentosWidget } from './widgets/SegmentosWidget'
 import { MensajeriaWidget } from './widgets/MensajeriaWidget'
@@ -119,6 +120,8 @@ export const WidgetGrid = memo(function WidgetGrid({
         return <CasinoKPIWidget summary={casino?.summary ?? null} loading={loading} />
       case 'agentes':
         return <AgentesTableWidget platform={platform} agentFilter={agent} />
+      case 'caja':
+        return <CajaWidget />
       case 'vips_riesgo':
         return <VipsEnRiesgoWidget vips={casino?.vips ?? []} loading={loading} />
       case 'segmentos':

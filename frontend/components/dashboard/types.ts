@@ -65,6 +65,7 @@ export function formatCustomRange(from: string, to: string): string {
 export type WidgetId =
   | 'casino_kpi'
   | 'agentes'
+  | 'caja'
   | 'vips_riesgo'
   | 'segmentos'
   | 'mensajeria'
@@ -92,6 +93,13 @@ export const WIDGET_REGISTRY: WidgetConfig[] = [
     id:             'agentes',
     label:          'Por agente',
     description:    'Totales, VIP, en riesgo y cargas por agente',
+    defaultEnabled: true,
+    span:           2,
+  },
+  {
+    id:             'caja',
+    label:          'Caja',
+    description:    'Depósitos y retiros por período y plataforma',
     defaultEnabled: true,
     span:           2,
   },
