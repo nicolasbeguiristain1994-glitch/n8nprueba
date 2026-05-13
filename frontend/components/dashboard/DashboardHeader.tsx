@@ -7,7 +7,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import {
-  LayoutDashboard, RefreshCw, SlidersHorizontal, Clock, CalendarRange, Database, User,
+  LayoutDashboard, RefreshCw, SlidersHorizontal, Clock, CalendarRange, Database, User, CloudDownload,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -209,12 +209,14 @@ export interface DashboardHeaderProps {
   autoRefreshEnabled: boolean
   platform: Platform
   agent: string
+  syncStatus: 'idle' | 'loading'
   onCustomize: () => void
   onRefresh: () => void
   onDateRangeChange: (range: DateRange) => void
   onAutoRefreshToggle: () => void
   onPlatformChange: (p: Platform) => void
   onAgentChange: (a: string) => void
+  onSyncCasino: () => void
 }
 
 export const DashboardHeader = memo(function DashboardHeader({
@@ -225,12 +227,14 @@ export const DashboardHeader = memo(function DashboardHeader({
   autoRefreshEnabled,
   platform,
   agent,
+  syncStatus,
   onCustomize,
   onRefresh,
   onDateRangeChange,
   onAutoRefreshToggle,
   onPlatformChange,
   onAgentChange,
+  onSyncCasino,
 }: DashboardHeaderProps) {
   const minutesAgo = useMinutesAgo(lastUpdated)
 
@@ -268,6 +272,21 @@ export const DashboardHeader = memo(function DashboardHeader({
               <span className="hidden sm:inline">Actualizando…</span>
             </span>
           )}
+
+          {/* Casino sync button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onSyncCasino}
+            disabled={syncStatus === 'loading'}
+            title={platform === 'consolidado' ? 'Sincronizar casino (Zeus + Bet30)' : `Sincronizar casino (${platform})`}
+            className="h-7 text-xs gap-1.5 px-2.5"
+          >
+            <CloudDownload className={cn('w-3.5 h-3.5', syncStatus === 'loading' && 'animate-pulse')} />
+            <span className="hidden sm:inline">
+              {syncStatus === 'loading' ? 'Sincronizando…' : 'Sync casino'}
+            </span>
+          </Button>
 
           {/* Auto-refresh toggle */}
           <AutoRefreshToggle

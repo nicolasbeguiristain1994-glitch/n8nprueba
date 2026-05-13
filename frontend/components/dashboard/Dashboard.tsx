@@ -33,6 +33,29 @@ export function Dashboard() {
 
   const { toast, showToast } = useToast()
   const [customizeOpen, setCustomizeOpen] = useState(false)
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'loading'>('idle')
+
+  const handleSyncCasino = useCallback(async () => {
+    setSyncStatus('loading')
+    try {
+      const platforms = platform === 'consolidado' ? ['zeus', 'bet30'] : [platform]
+      const results = await Promise.all(
+        platforms.map(p => fetch(`/api/dashboard/casino/sync?platform=${p}`, { method: 'POST' })),
+      )
+      const allOk = results.every(r => r.ok)
+      if (allOk) {
+        showToast('Sync iniciado. Los datos se actualizarán en ~5 min.')
+      } else {
+        const failed = results.find(r => !r.ok)
+        const json = failed ? await failed.json() : {}
+        showToast(json.error ?? 'Error al iniciar el sync')
+      }
+    } catch {
+      showToast('Error de red al intentar sincronizar')
+    } finally {
+      setSyncStatus('idle')
+    }
+  }, [platform, showToast])
 
   // Mostrar toast en cada soft-refresh exitoso (softSuccessCount incrementa con cada éxito)
   useEffect(() => {
@@ -53,12 +76,14 @@ export function Dashboard() {
         autoRefreshEnabled={autoRefreshEnabled}
         platform={platform}
         agent={agent}
+        syncStatus={syncStatus}
         onCustomize={() => setCustomizeOpen(true)}
         onRefresh={refresh}
         onDateRangeChange={setDateRange}
         onAutoRefreshToggle={toggleAutoRefresh}
         onPlatformChange={setPlatform}
         onAgentChange={setAgent}
+        onSyncCasino={handleSyncCasino}
       />
 
       {error && (
