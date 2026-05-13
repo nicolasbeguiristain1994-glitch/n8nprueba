@@ -154,10 +154,10 @@ class BaseCasinoConnector {
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
            ON CONFLICT (username_lower) DO UPDATE SET
              agente        = EXCLUDED.agente,
-             total_cargas  = EXCLUDED.total_cargas,
-             total_retiros = EXCLUDED.total_retiros,
-             cant_cargas   = EXCLUDED.cant_cargas,
-             cant_retiros  = EXCLUDED.cant_retiros,
+             total_cargas  = casino_players.total_cargas  + EXCLUDED.total_cargas,
+             total_retiros = casino_players.total_retiros + EXCLUDED.total_retiros,
+             cant_cargas   = casino_players.cant_cargas   + EXCLUDED.cant_cargas,
+             cant_retiros  = casino_players.cant_retiros  + EXCLUDED.cant_retiros,
              fecha_primera = LEAST(casino_players.fecha_primera, EXCLUDED.fecha_primera),
              fecha_ultima  = GREATEST(casino_players.fecha_ultima, EXCLUDED.fecha_ultima)`,
           [

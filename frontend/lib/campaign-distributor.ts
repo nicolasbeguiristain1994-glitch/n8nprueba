@@ -1025,7 +1025,7 @@ export async function processMultiLineInBackground(
       const [current] = await query<{ status: string }>(
         'SELECT status FROM campaigns WHERE id = $1', [id]
       )
-      if (!current || current.status === 'paused' || current.status === 'cancelled') {
+      if (!current || current.status === 'paused' || current.status === 'cancelled' || current.status === 'completed') {
         delayController.abort()  // cancelar cualquier delay en curso
         break
       }
@@ -1208,6 +1208,41 @@ export async function processMultiLineInBackground(
         )
       }
     }
+
+    // Resolve any recipients stuck in 'sending' from this processor run.
+    // Promise.allSettled already resolved all promises, so there are no
+    // legitimately in-flight units. 'sending' rows at this point are artifacts
+    // of handleSuccess/handleFailure DB errors — if left unresolved they make
+    // syncCounters return pending>0 and the campaign never reaches 'completed'.
+    await query(
+      `UPDATE campaign_recipients cr
+       SET    status = 'sent', locked_at = NULL, updated_at = NOW()
+       FROM   whatsapp_messages wm
+       WHERE  cr.campaign_id = $1
+         AND  cr.status      = 'sending'
+         AND  wm.campaign_recipient_id = cr.id
+         AND  wm.status IN ('sent', 'delivered', 'read')`,
+      [id],
+    ).catch(() => {})
+    await query(
+      `UPDATE campaign_recipients cr
+       SET    status = 'failed', locked_at = NULL, updated_at = NOW(),
+              error_detail = 'stale-queued-no-resend'
+       FROM   whatsapp_messages wm
+       WHERE  cr.campaign_id = $1
+         AND  cr.status      = 'sending'
+         AND  wm.campaign_recipient_id = cr.id
+         AND  wm.status = 'queued'`,
+      [id],
+    ).catch(() => {})
+    await query(
+      `UPDATE campaign_recipients
+       SET    status = 'failed', locked_at = NULL, updated_at = NOW(),
+              error_detail = 'send-lost-processor-exit'
+       WHERE  campaign_id = $1
+         AND  status      = 'sending'`,
+      [id],
+    ).catch(() => {})
 
     // Final counter sync + mark completed if all work is done
     const { sent, failed, skipped, pending } = await syncCounters(id)

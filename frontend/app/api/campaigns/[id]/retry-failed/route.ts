@@ -66,13 +66,25 @@ export async function POST(
       [id]
     )
 
-    // 3. Pasar la campaña a 'paused' para que sea reanudable
-    //    Limpiar el lock por si quedó colgado
+    // 3. Pasar la campaña a 'paused' para que sea reanudable.
+    //    Solo limpiar el lock si ya está vencido (sin proceso activo);
+    //    si hay un proceso corriendo, detectará 'paused' en su status gate
+    //    y soltará el lock limpiamente en su bloque finally.
     await query(
       `UPDATE campaigns
        SET status                = 'paused',
-           processor_locked_at  = NULL,
-           processor_lock_token = NULL,
+           processor_locked_at  = CASE
+             WHEN processor_locked_at IS NULL
+               OR processor_locked_at < NOW() - INTERVAL '30 minutes'
+             THEN NULL
+             ELSE processor_locked_at
+           END,
+           processor_lock_token = CASE
+             WHEN processor_locked_at IS NULL
+               OR processor_locked_at < NOW() - INTERVAL '30 minutes'
+             THEN NULL
+             ELSE processor_lock_token
+           END,
            updated_at           = NOW()
        WHERE id = $1
          AND status NOT IN ('draft', 'scheduled')`,
