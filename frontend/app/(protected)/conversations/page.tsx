@@ -24,6 +24,7 @@ export default function Conversations() {
     realtimeStatus,
     notifPermission, requestNotif,
     openConv, sendReply,
+    totalConvs, hasMore, loadingMore, loadMoreConvs,
   } = useConversations()
 
   const searchRef    = useRef<HTMLInputElement>(null)
@@ -64,7 +65,7 @@ export default function Conversations() {
       <div>
         <h1 className="text-xl font-semibold">Conversaciones</h1>
         <p className="text-sm text-gray-500">
-          {convs.length} hilos · {convs.filter(c => c.last_direction === 'inbound').length} sin responder
+          {convs.length}{totalConvs > convs.length ? ` de ${totalConvs}` : ''} hilos · {convs.filter(c => c.last_direction === 'inbound').length} sin responder
         </p>
       </div>
 
@@ -86,6 +87,21 @@ export default function Conversations() {
             selected={selected}
             onSelect={openConv}
           />
+          {hasMore && (
+            <div className="border-t px-3 py-2 shrink-0">
+              <Button
+                variant="ghost" size="sm"
+                className="w-full text-xs text-gray-500 hover:text-gray-700"
+                onClick={loadMoreConvs}
+                disabled={loadingMore}
+              >
+                {loadingMore
+                  ? <><Loader2 size={11} className="animate-spin mr-1.5"/> Cargando…</>
+                  : `Cargar más · ${totalConvs - convs.length} restantes`
+                }
+              </Button>
+            </div>
+          )}
         </Card>
 
         {/* Chat */}

@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Send, Plus, Loader2, Eye, Play, BarChart2, Shield, Clock, Pause, XCircle, CheckCheck, Truck, AlertTriangle, HelpCircle, Trash2, Shuffle, UserCheck, UserX, Zap, GitBranch, RefreshCw, Ban, ImageIcon, X, Upload } from 'lucide-react'
+import { Send, Plus, Loader2, Eye, Play, BarChart2, Shield, Clock, Pause, XCircle, CheckCheck, Truck, AlertTriangle, HelpCircle, Trash2, Shuffle, UserCheck, UserX, Zap, GitBranch, RefreshCw, Ban, ImageIcon, X, Upload, ListPlus } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
@@ -79,6 +79,8 @@ export default function Campaigns() {
   const [retryingFailed, setRetryingFailed]   = useState<string | null>(null)
   const [unlocking, setUnlocking]         = useState<string | null>(null)
   const [syncing, setSyncing]             = useState<string | null>(null)
+  const [creatingFailedList, setCreatingFailedList] = useState(false)
+  const [failedListMsg, setFailedListMsg]           = useState<string | null>(null)
 
   const FORM_DEFAULT = {
     name: '', list_id: '', scheduled_at: '',
@@ -273,6 +275,32 @@ export default function Campaigns() {
     }
   }
 
+  const createListFromFailed = async (campaign: Campaign) => {
+    const failed = campContacts.filter(c => c.msg_status === 'failed')
+    if (failed.length === 0) return
+    setCreatingFailedList(true)
+    setFailedListMsg(null)
+    try {
+      const name = `Fallidos – ${campaign.name} (${new Date().toLocaleDateString('es-AR')})`
+      const res = await fetch('/api/lists', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, contact_ids: failed.map(c => c.id) }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setFailedListMsg(`Error: ${d.error || 'No se pudo crear la lista'}`)
+      } else {
+        setFailedListMsg(`Lista "${name}" creada con ${failed.length} contacto${failed.length !== 1 ? 's' : ''}.`)
+        load()
+      }
+    } catch {
+      setFailedListMsg('Error de red al crear la lista')
+    } finally {
+      setCreatingFailedList(false)
+    }
+  }
+
   const resumeProcessor = async (id: string) => {
     setResuming(id)
     setSendError(null)
@@ -331,6 +359,7 @@ export default function Campaigns() {
     setCampContacts([])
     setDetailError(null)
     setDispatch(null)
+    setFailedListMsg(null)
     setLoadingContacts(true)
 
     // Fetch contacts and (for multi-line) dispatch summary in parallel
@@ -1111,9 +1140,26 @@ export default function Campaigns() {
               {/* Detalle de fallos — visible inmediatamente si hay fallidos */}
               {selected.total_failed > 0 && (
                 <div className="border border-red-200 rounded-lg p-3 bg-red-50 space-y-2">
-                  <p className="text-sm font-medium text-red-700 flex items-center gap-1.5">
-                    <AlertTriangle size={14} /> {selected.total_failed} envío{selected.total_failed !== 1 ? 's' : ''} fallido{selected.total_failed !== 1 ? 's' : ''}
-                  </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-red-700 flex items-center gap-1.5">
+                      <AlertTriangle size={14} /> {selected.total_failed} envío{selected.total_failed !== 1 ? 's' : ''} fallido{selected.total_failed !== 1 ? 's' : ''}
+                    </p>
+                    {!loadingContacts && campContacts.filter(c => c.msg_status === 'failed').length > 0 && (
+                      <Button
+                        size="sm" variant="outline"
+                        className="border-red-300 text-red-600 hover:bg-red-100 text-xs h-7 px-2 shrink-0"
+                        onClick={() => createListFromFailed(selected)}
+                        disabled={creatingFailedList}
+                        title="Crear una nueva lista de contactos con los fallidos para volver a difundirles"
+                      >
+                        {creatingFailedList
+                          ? <Loader2 size={11} className="animate-spin mr-1" />
+                          : <ListPlus size={11} className="mr-1" />
+                        }
+                        Crear lista
+                      </Button>
+                    )}
+                  </div>
                   {loadingContacts
                     ? <p className="text-xs text-red-400 flex items-center gap-1"><Loader2 size={11} className="animate-spin"/> Cargando errores…</p>
                     : (() => {
@@ -1137,6 +1183,11 @@ export default function Campaigns() {
                         )
                       })()
                   }
+                  {failedListMsg && (
+                    <p className={`text-xs pt-1 ${failedListMsg.startsWith('Error') ? 'text-red-600' : 'text-green-700 font-medium'}`}>
+                      {failedListMsg}
+                    </p>
+                  )}
                 </div>
               )}
 

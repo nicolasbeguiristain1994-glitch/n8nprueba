@@ -24,54 +24,68 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ messages })
     }
 
+    const offsetRaw = req.nextUrl.searchParams.get('offset')
+    const offset    = Math.max(0, parseInt(offsetRaw || '0', 10) || 0)
+    const PAGE_SIZE = 200
+
+    // Total de conversaciones únicas
+    const [{ total }] = await query<{ total: string }>(
+      `SELECT COUNT(DISTINCT REPLACE(phone_number, '+', '')) AS total FROM whatsapp_messages`
+    )
+    const totalCount = parseInt(total, 10)
+
     // Lista de conversaciones — enriquecida con datos del contacto si existe
+    // Outer subquery allows proper time-based ORDER + OFFSET after DISTINCT ON
     const conversations = await query(`
-      SELECT DISTINCT ON (REPLACE(wm.phone_number, '+', ''))
-        REPLACE(wm.phone_number, '+', '')        AS phone_number,
-        wm.message_body                          AS last_message,
-        wm.direction                             AS last_direction,
-        wm.status                                AS last_status,
-        wm.created_at                            AS last_at,
-        COALESCE(cs.is_escalated, false)         AS is_escalated,
-        cs.escalation_reason,
-        cs.current_flow                          AS conv_flow,
-        EXISTS (
-          SELECT 1 FROM blacklist bl
-          WHERE bl.phone_number_normalized = REPLACE(wm.phone_number, '+', '')
-          AND   bl.removed_at IS NULL
-        )                                        AS is_blacklisted,
-        EXISTS (
-          SELECT 1 FROM conversation_notes cn
-          WHERE cn.phone = REPLACE(wm.phone_number, '+', '')
-          AND   cn.content LIKE '%Seguimiento programado%'
-        )                                        AS has_follow_up,
-        c.id                                     AS contact_id,
-        c.first_name,
-        c.last_name,
-        c.segment::text                          AS segment,
-        (SELECT REPLACE(tag, 'casino:actividad:', '')
-         FROM contact_tags
-         WHERE contact_id = c.id AND tag LIKE 'casino:actividad:%'
-         LIMIT 1)                                AS actividad,
-        (SELECT REPLACE(tag, 'casino:valor_riesgo:', '')
-         FROM contact_tags
-         WHERE contact_id = c.id AND tag LIKE 'casino:valor_riesgo:%'
-         LIMIT 1)                                AS valor_riesgo
-      FROM whatsapp_messages wm
-      LEFT JOIN conversation_state cs
-        ON cs.phone_number = REPLACE(wm.phone_number, '+', '')
-        AND cs.resolved_at IS NULL
-      LEFT JOIN contacts c
-        ON REPLACE(c.phone_number, '+', '') = REPLACE(wm.phone_number, '+', '')
-      ORDER BY REPLACE(wm.phone_number, '+', ''), wm.created_at DESC
-      LIMIT 200
-    `)
+      SELECT * FROM (
+        SELECT DISTINCT ON (REPLACE(wm.phone_number, '+', ''))
+          REPLACE(wm.phone_number, '+', '')        AS phone_number,
+          wm.message_body                          AS last_message,
+          wm.direction                             AS last_direction,
+          wm.status                                AS last_status,
+          wm.created_at                            AS last_at,
+          COALESCE(cs.is_escalated, false)         AS is_escalated,
+          cs.escalation_reason,
+          cs.current_flow                          AS conv_flow,
+          EXISTS (
+            SELECT 1 FROM blacklist bl
+            WHERE bl.phone_number_normalized = REPLACE(wm.phone_number, '+', '')
+            AND   bl.removed_at IS NULL
+          )                                        AS is_blacklisted,
+          EXISTS (
+            SELECT 1 FROM conversation_notes cn
+            WHERE cn.phone = REPLACE(wm.phone_number, '+', '')
+            AND   cn.content LIKE '%Seguimiento programado%'
+          )                                        AS has_follow_up,
+          c.id                                     AS contact_id,
+          c.first_name,
+          c.last_name,
+          c.segment::text                          AS segment,
+          (SELECT REPLACE(tag, 'casino:actividad:', '')
+           FROM contact_tags
+           WHERE contact_id = c.id AND tag LIKE 'casino:actividad:%'
+           LIMIT 1)                                AS actividad,
+          (SELECT REPLACE(tag, 'casino:valor_riesgo:', '')
+           FROM contact_tags
+           WHERE contact_id = c.id AND tag LIKE 'casino:valor_riesgo:%'
+           LIMIT 1)                                AS valor_riesgo
+        FROM whatsapp_messages wm
+        LEFT JOIN conversation_state cs
+          ON cs.phone_number = REPLACE(wm.phone_number, '+', '')
+          AND cs.resolved_at IS NULL
+        LEFT JOIN contacts c
+          ON REPLACE(c.phone_number, '+', '') = REPLACE(wm.phone_number, '+', '')
+        ORDER BY REPLACE(wm.phone_number, '+', ''), wm.created_at DESC
+      ) sub
+      ORDER BY last_at DESC
+      LIMIT $1 OFFSET $2
+    `, [PAGE_SIZE, offset])
 
-    // Ordenar por último mensaje más reciente
-    const sorted = (conversations as Array<{ last_at: string }>)
-      .sort((a, b) => new Date(b.last_at).getTime() - new Date(a.last_at).getTime())
-
-    return NextResponse.json({ conversations: sorted })
+    return NextResponse.json({
+      conversations,
+      total:    totalCount,
+      has_more: offset + PAGE_SIZE < totalCount,
+    })
   } catch (e) {
     console.error('[/api/conversations GET]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

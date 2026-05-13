@@ -295,9 +295,14 @@ const MODULES: ModuleSection[] = [
           'Si la campaña se pausa automáticamente, fijate en el motivo que aparece bajo el estado. "Sin líneas elegibles": todas tus líneas llegaron al límite diario — esperá al día siguiente o agregá más líneas. "Fuera de horario": las líneas no están en su horario activo — se reanuda sola cuando entren en horario. "Frecuencia agotada": todos los contactos ya recibieron un mensaje reciente — esperá las 24–48hs de cooldown. "Error sistémico": error técnico — avisale al administrador.',
       },
       {
+        title: 'Acciones rápidas por campaña',
+        detail:
+          'Cada campaña tiene hasta 4 botones de acción según su estado. 👁 Ver detalle: abre el panel con el desglose completo de mensajes, estados y métricas. 🚚 Sincronizar entrega/lectura: consulta Evolution y actualiza los estados "Entregado" y "Leído" de los mensajes ya enviados — útil cuando el porcentaje de entregados se ve bajo. ↺F Reintentar fallidos: aparece solo cuando hay mensajes con error; resetea únicamente esos a "pendiente" y vuelve a intentar sin tocar los ya enviados. 🔄 Resetear campaña (admin): devuelve todos los contadores a cero para poder re-probar la campaña completa — solo disponible en campañas ya procesadas.',
+      },
+      {
         title: 'Reintentar mensajes fallidos',
         detail:
-          'Si algunos mensajes fallaron (número inválido, línea caída momentáneamente), podés reintentar solo esos sin tocar los que ya llegaron. Buscá el botón "Reintentar fallidos" en la campaña. La plataforma resetea solo los fallidos a "pendiente" y vuelve a intentar — los contactos que ya recibieron el mensaje no se ven afectados.',
+          'Si algunos mensajes fallaron (número inválido, línea caída momentáneamente), podés reintentar solo esos sin tocar los que ya llegaron. El botón ↺F aparece en la fila de la campaña cuando hay al menos un mensaje fallido. La plataforma resetea solo los fallidos a "pendiente" y vuelve a intentar — los contactos que ya recibieron el mensaje no se ven afectados.',
       },
     ],
     tips: [

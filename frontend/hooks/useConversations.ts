@@ -10,6 +10,8 @@ import { useDesktopNotifications } from './useDesktopNotifications'
 
 export function useConversations() {
   const [convs, setConvs]               = useState<Conv[]>([])
+  const [totalConvs, setTotalConvs]     = useState(0)
+  const [loadingMore, setLoadingMore]   = useState(false)
   const [selected, setSelected]         = useState<string | null>(null)
   const [messages, setMessages]         = useState<Message[]>([])
   const [reply, setReply]               = useState('')
@@ -24,10 +26,31 @@ export function useConversations() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const loadConvs = useCallback(() => {
-    fetchJson<{ conversations: Conv[] }>('/api/conversations')
-      .then(d => setConvs(d.conversations || []))
+    fetchJson<{ conversations: Conv[]; total: number }>('/api/conversations')
+      .then(d => {
+        setConvs(d.conversations || [])
+        setTotalConvs(d.total || 0)
+      })
       .catch(() => {})
   }, [])
+
+  const loadMoreConvs = useCallback(() => {
+    setLoadingMore(true)
+    fetchJson<{ conversations: Conv[]; total: number; has_more: boolean }>(
+      `/api/conversations?offset=${convs.length}`
+    )
+      .then(d => {
+        const incoming = d.conversations || []
+        setConvs(prev => {
+          const existing = new Set(prev.map(c => c.phone_number))
+          const merged = [...prev, ...incoming.filter(c => !existing.has(c.phone_number))]
+          return merged
+        })
+        setTotalConvs(d.total || 0)
+      })
+      .catch(() => {})
+      .finally(() => setLoadingMore(false))
+  }, [convs.length])
 
   const loadMessages = useCallback((phone: string, scroll = false) => {
     fetchJson<{ messages: Message[] }>(`/api/conversations?phone=${phone}`)
@@ -129,6 +152,7 @@ export function useConversations() {
   }, [convs, filter, search, dateFrom, dateTo, followUpOnly])
 
   const selectedConv = convs.find(c => c.phone_number === selected)
+  const hasMore      = convs.length < totalConvs
 
   return {
     convs, visible, selected, selectedConv, messages, messagesEndRef,
@@ -139,5 +163,6 @@ export function useConversations() {
     realtimeStatus,
     notifPermission, requestNotif,
     openConv, sendReply,
+    totalConvs, hasMore, loadingMore, loadMoreConvs,
   }
 }
