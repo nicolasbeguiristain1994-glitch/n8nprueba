@@ -30,7 +30,17 @@ export async function GET(req: NextRequest) {
              COALESCE(cr.sent, 0)::int                                             AS total_sent,
              COUNT(m.id) FILTER (WHERE m.status IN ('sent','delivered','read'))::int AS total_delivered,
              COUNT(m.id) FILTER (WHERE m.status = 'read')::int                    AS total_read,
-             COALESCE(cr.failed, 0)::int                                           AS total_failed,
+             GREATEST(
+               COALESCE(cr.failed, 0),
+               (SELECT COUNT(*)
+                FROM (
+                  SELECT DISTINCT ON (wm2.contact_id) wm2.status
+                  FROM whatsapp_messages wm2
+                  WHERE wm2.campaign_id = c.id
+                  ORDER BY wm2.contact_id, wm2.created_at DESC
+                ) latest_wm
+                WHERE latest_wm.status = 'failed')
+             )::int                                                                 AS total_failed,
              COALESCE(cr.skipped, 0)::int                                          AS total_skipped,
              CASE WHEN COALESCE(cr.sent, 0) > 0
                THEN ROUND(COUNT(m.id) FILTER (WHERE m.status = 'read')::numeric /
