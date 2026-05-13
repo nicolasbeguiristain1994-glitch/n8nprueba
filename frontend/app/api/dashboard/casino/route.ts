@@ -111,39 +111,43 @@ export async function GET(req: Request) {
 
       // ── Por agente ──────────────────────────────────────────────────────────
       // nuevos_mes / activos_mes respetan el rango from/to del request.
-      // Los totales (sum_cargas, sum_retiros, avg_cargas) son siempre históricos.
-      // reload_rate: % jugadores con ≥1 carga en el período (via casino_transactions).
-      // response_rate: % jugadores activos en el período (activos_mes / total).
+      // sum_cargas / sum_retiros / avg_cargas son totales del PERÍODO (casino_transactions).
+      // en_riesgo: jugadores sin actividad (fecha_ultima) antes del inicio del período.
+      // reload_rate: % con ≥1 carga en el período.
+      // response_rate: % activos (fecha_ultima) en el período.
       // agentParam (opcional) filtra a un único agente.
       query<CasinoAgente>(`
         SELECT
-          ${agenteExpr}                                                              AS agente,
-          COUNT(*)::int                                                              AS total,
+          ${agenteExpr}                                                                AS agente,
+          COUNT(*)::int                                                                AS total,
           COUNT(*) FILTER (WHERE cp.fecha_primera BETWEEN $1::date AND $2::date)::int AS nuevos_mes,
           COUNT(*) FILTER (WHERE cp.fecha_ultima  BETWEEN $1::date AND $2::date)::int AS activos_mes,
-          COUNT(*) FILTER (WHERE cp.seg_monto = 'vip')::int                         AS vip,
+          COUNT(*) FILTER (WHERE cp.seg_monto = 'vip')::int                           AS vip,
           COUNT(*) FILTER (
-            WHERE cp.seg_actividad IN ('inactivo','en_riesgo','perdido')
-          )::int                                                                     AS en_riesgo,
-          COALESCE(SUM(cp.total_cargas),  0)::bigint                                AS sum_cargas,
-          COALESCE(SUM(cp.total_retiros), 0)::bigint                                AS sum_retiros,
-          ROUND(COALESCE(AVG(cp.total_cargas), 0))::bigint                          AS avg_cargas,
+            WHERE cp.fecha_ultima < $1::date OR cp.fecha_ultima IS NULL
+          )::int                                                                       AS en_riesgo,
+          COALESCE(SUM(ct.carga_total),  0)::bigint                                   AS sum_cargas,
+          COALESCE(SUM(ct.retiro_total), 0)::bigint                                   AS sum_retiros,
+          ROUND(COALESCE(SUM(ct.carga_total), 0)::numeric / NULLIF(COUNT(*), 0))::bigint AS avg_cargas,
           ROUND(
             100.0 * COUNT(*) FILTER (WHERE cp.fecha_ultima BETWEEN $1::date AND $2::date)
             / NULLIF(COUNT(*), 0), 1
-          )::numeric                                                                 AS response_rate,
+          )::numeric                                                                   AS response_rate,
           ROUND(
-            100.0 * COUNT(reloaded.uname) / NULLIF(COUNT(*), 0), 1
-          )::numeric                                                                 AS reload_rate
+            100.0 * COUNT(ct.uname) FILTER (WHERE ct.has_carga = 1) / NULLIF(COUNT(*), 0), 1
+          )::numeric                                                                   AS reload_rate
         FROM casino_players cp
         LEFT JOIN (
-          SELECT agente, LOWER(username) AS uname
+          SELECT
+            agente,
+            LOWER(username)                                              AS uname,
+            SUM(CASE WHEN tipo = 'carga'  THEN monto ELSE 0 END)        AS carga_total,
+            SUM(CASE WHEN tipo = 'retiro' THEN monto ELSE 0 END)        AS retiro_total,
+            MAX(CASE WHEN tipo = 'carga'  THEN 1     ELSE 0 END)        AS has_carga
           FROM casino_transactions
           WHERE fecha BETWEEN $1::date AND $2::date
-            AND tipo = 'carga'
           GROUP BY agente, LOWER(username)
-        ) reloaded ON reloaded.uname = cp.username_lower
-                  AND reloaded.agente = cp.agente
+        ) ct ON ct.uname = cp.username_lower AND ct.agente = cp.agente
         WHERE cp.agente = ANY(${agentsSql})
           ${agentClause}
         GROUP BY 1
