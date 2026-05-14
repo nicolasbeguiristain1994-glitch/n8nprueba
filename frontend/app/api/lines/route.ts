@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, withTransaction } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
-import { isUUID } from '@/lib/validate'
 import { audit } from '@/lib/audit'
+import { parseBody, handleValidationError, PatchLineSchema, CreateLineSchema, DeleteLineSchema } from '@/lib/schema'
 import { lineEligibleExpr } from '@/lib/line-eligibility'
 
 export async function GET(req: NextRequest) {
@@ -36,49 +36,20 @@ export async function PATCH(req: NextRequest) {
   const err = await checkPermission(req, 'lines', 'update')
   if (err) return err
 
-  let body: {
-    id?: string
-    sending_enabled?: boolean
-    display_name?: string
-    msg_per_day?: number
-    msg_per_hour?: number
-    priority?: number
-  }
-  try { body = await req.json() } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  }
+  const rawBody = await req.json().catch(() => null)
+  const parsed  = parseBody(PatchLineSchema, rawBody)
+  if (!parsed.ok) return handleValidationError(req, parsed.error, 'lines')
 
-  const { id, sending_enabled, display_name, msg_per_day, msg_per_hour, priority } = body
-  if (!id || !isUUID(id))
-    return NextResponse.json({ error: 'id is required and must be a valid UUID' }, { status: 400 })
+  const { id, sending_enabled, display_name, msg_per_day, msg_per_hour, priority } = parsed.data
 
-  // Build dynamic SET clause
   const sets: string[] = ['updated_at = NOW()']
   const params: unknown[] = []
 
-  if (typeof sending_enabled === 'boolean') {
-    params.push(sending_enabled); sets.push(`sending_enabled = $${params.length}`)
-  }
-  if (display_name !== undefined) {
-    const trimmed = String(display_name).trim().slice(0, 100)
-    if (!trimmed) return NextResponse.json({ error: 'display_name no puede estar vacío' }, { status: 400 })
-    params.push(trimmed); sets.push(`display_name = $${params.length}`)
-  }
-  if (msg_per_day !== undefined) {
-    const v = Number(msg_per_day)
-    if (!Number.isFinite(v) || v < 1) return NextResponse.json({ error: 'msg_per_day debe ser >= 1' }, { status: 400 })
-    params.push(v); sets.push(`msg_per_day = $${params.length}`)
-  }
-  if (msg_per_hour !== undefined) {
-    const v = Number(msg_per_hour)
-    if (!Number.isFinite(v) || v < 1) return NextResponse.json({ error: 'msg_per_hour debe ser >= 1' }, { status: 400 })
-    params.push(v); sets.push(`msg_per_hour = $${params.length}`)
-  }
-  if (priority !== undefined) {
-    const v = Number(priority)
-    if (!Number.isFinite(v)) return NextResponse.json({ error: 'priority debe ser un número' }, { status: 400 })
-    params.push(v); sets.push(`priority = $${params.length}`)
-  }
+  if (sending_enabled !== undefined) { params.push(sending_enabled); sets.push(`sending_enabled = $${params.length}`) }
+  if (display_name    !== undefined) { params.push(display_name);    sets.push(`display_name = $${params.length}`) }
+  if (msg_per_day     !== undefined) { params.push(msg_per_day);     sets.push(`msg_per_day = $${params.length}`) }
+  if (msg_per_hour    !== undefined) { params.push(msg_per_hour);    sets.push(`msg_per_hour = $${params.length}`) }
+  if (priority        !== undefined) { params.push(priority);        sets.push(`priority = $${params.length}`) }
 
   if (params.length === 0)
     return NextResponse.json({ error: 'No hay campos para actualizar' }, { status: 400 })
@@ -91,8 +62,10 @@ export async function PATCH(req: NextRequest) {
     )
     if (rows.length === 0)
       return NextResponse.json({ error: 'Line not found' }, { status: 404 })
+    const changedFields = (['sending_enabled', 'display_name', 'msg_per_day', 'msg_per_hour', 'priority'] as const)
+      .filter(k => parsed.data[k] !== undefined)
     void audit({ req, action: 'update', resource: 'lines', resource_id: id,
-      metadata: { display_name, msg_per_day, msg_per_hour, priority, sending_enabled } })
+      metadata: { changedFields } })
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[/api/lines PATCH]', e instanceof Error ? e.message : e)
@@ -106,14 +79,11 @@ export async function POST(req: NextRequest) {
   const err = await checkPermission(req, 'lines', 'manage')
   if (err) return err
 
-  let body: { evolution_instance?: string; display_name?: string; phone_number?: string }
-  try { body = await req.json() } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  }
+  const rawBody = await req.json().catch(() => null)
+  const parsedPost = parseBody(CreateLineSchema, rawBody)
+  if (!parsedPost.ok) return handleValidationError(req, parsedPost.error, 'lines')
 
-  const { evolution_instance, display_name, phone_number } = body
-  if (!evolution_instance || typeof evolution_instance !== 'string')
-    return NextResponse.json({ error: 'evolution_instance is required' }, { status: 400 })
+  const { evolution_instance, display_name, phone_number } = parsedPost.data
 
   const line_key    = evolution_instance.toLowerCase().replace(/[^a-z0-9-]/g, '-')
   const evo_url     = process.env.EVOLUTION_URL ?? 'http://evolution-api:8080'
@@ -131,7 +101,7 @@ export async function POST(req: NextRequest) {
     if (!inserted.length)
       return NextResponse.json({ error: 'Esta instancia ya existe como línea' }, { status: 409 })
 
-    void audit({ req, action: 'manage', resource: 'lines',
+    void audit({ req, action: 'create', resource: 'lines', resource_id: inserted[0].id,
       metadata: { evolution_instance, display_name } })
 
     return NextResponse.json({ ok: true, id: inserted[0].id })
@@ -148,14 +118,11 @@ export async function DELETE(req: NextRequest) {
   const err = await checkPermission(req, 'lines', 'manage')
   if (err) return err
 
-  let body: { id?: string }
-  try { body = await req.json() } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  }
+  const rawBody = await req.json().catch(() => null)
+  const parsedDel = parseBody(DeleteLineSchema, rawBody)
+  if (!parsedDel.ok) return handleValidationError(req, parsedDel.error, 'lines')
 
-  const { id } = body
-  if (!id || !isUUID(id))
-    return NextResponse.json({ error: 'id is required and must be a valid UUID' }, { status: 400 })
+  const { id } = parsedDel.data
 
   try {
     const { evolution_instance, display_name } = await withTransaction(async (client) => {
@@ -174,8 +141,8 @@ export async function DELETE(req: NextRequest) {
     })
 
 
-    void audit({ req, action: 'manage', resource: 'lines',
-      metadata: { deleted_id: id, evolution_instance, display_name } })
+    void audit({ req, action: 'delete', resource: 'lines', resource_id: id,
+      metadata: { evolution_instance, display_name } })
 
     // Best-effort: desconectar la sesión WhatsApp de la instancia al eliminar la línea.
     // No hacemos DELETE /instance/delete porque el negocio puede querer

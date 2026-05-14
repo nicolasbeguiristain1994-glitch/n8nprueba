@@ -4,6 +4,7 @@ import { isUUID } from '@/lib/validate'
 import { checkPermissionWithUser, isCampaignOwnerOrAdmin } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { clog } from '@/lib/campaign-logger'
+import { parseBody, handleValidationError, UpdateCampaignStatusSchema } from '@/lib/schema'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await checkPermissionWithUser(req, 'campaigns', 'update')
@@ -13,19 +14,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { id } = await params
   if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
-  let body: { status?: string }
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  }
+  const rawBody = await req.json().catch(() => null)
+  const parsed  = parseBody(UpdateCampaignStatusSchema, rawBody)
+  if (!parsed.ok) return handleValidationError(req, parsed.error, 'campaigns')
 
-  const { status } = body
-
-  const allowed = ['paused', 'cancelled', 'draft']
-  if (!status || !allowed.includes(status)) {
-    return NextResponse.json({ error: 'Status inválido' }, { status: 400 })
-  }
+  const { status } = parsed.data
 
   try {
     // Ownership check for non-admin users

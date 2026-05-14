@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
-import { isUUID, clampStr } from '@/lib/validate'
+import { isUUID } from '@/lib/validate'
 import { audit } from '@/lib/audit'
+import { parseBody, handleValidationError, UpdateAutomationSchema } from '@/lib/schema'
 
 // ── GET /api/automations/[id] ─────────────────────────────────────────────────
 
@@ -44,56 +45,24 @@ export async function PATCH(
   const { id } = await params
   if (!isUUID(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
 
-  let body: Record<string, unknown>
-  try { body = await req.json() } catch {
-    return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
-  }
+  const rawBody = await req.json().catch(() => null)
+  const parsed  = parseBody(UpdateAutomationSchema, rawBody)
+  if (!parsed.ok) return handleValidationError(req, parsed.error, 'automations')
+
+  const { name, description, type, trigger_type, trigger_config, action_config, is_active, priority } = parsed.data
 
   const setClauses: string[] = []
   const queryParams: unknown[] = []
   let p = 0
 
-  if ('name' in body) {
-    const name = clampStr(body.name, 200)
-    if (!name) return NextResponse.json({ error: 'Nombre inválido' }, { status: 400 })
-    setClauses.push(`name = $${++p}`)
-    queryParams.push(name)
-  }
-  if ('description' in body) {
-    setClauses.push(`description = $${++p}`)
-    queryParams.push(clampStr(body.description, 500))
-  }
-  if ('type' in body) {
-    if (!['reply', 'flow', 'handoff'].includes(body.type as string)) {
-      return NextResponse.json({ error: 'Tipo inválido' }, { status: 400 })
-    }
-    setClauses.push(`type = $${++p}`)
-    queryParams.push(body.type)
-  }
-  if ('trigger_type' in body) {
-    if (!['keyword', 'contains', 'any_inbound'].includes(body.trigger_type as string)) {
-      return NextResponse.json({ error: 'Tipo de trigger inválido' }, { status: 400 })
-    }
-    setClauses.push(`trigger_type = $${++p}`)
-    queryParams.push(body.trigger_type)
-  }
-  if ('trigger_config' in body) {
-    setClauses.push(`trigger_config = $${++p}::jsonb`)
-    queryParams.push(JSON.stringify(body.trigger_config))
-  }
-  if ('action_config' in body) {
-    setClauses.push(`action_config = $${++p}::jsonb`)
-    queryParams.push(JSON.stringify(body.action_config))
-  }
-  if ('is_active' in body) {
-    setClauses.push(`is_active = $${++p}`)
-    queryParams.push(Boolean(body.is_active))
-  }
-  if ('priority' in body) {
-    const prio = typeof body.priority === 'number' ? Math.max(1, Math.min(1000, body.priority)) : 100
-    setClauses.push(`priority = $${++p}`)
-    queryParams.push(prio)
-  }
+  if (name          !== undefined) { setClauses.push(`name = $${++p}`);                   queryParams.push(name) }
+  if (description   !== undefined) { setClauses.push(`description = $${++p}`);            queryParams.push(description) }
+  if (type          !== undefined) { setClauses.push(`type = $${++p}`);                   queryParams.push(type) }
+  if (trigger_type  !== undefined) { setClauses.push(`trigger_type = $${++p}`);           queryParams.push(trigger_type) }
+  if (trigger_config !== undefined) { setClauses.push(`trigger_config = $${++p}::jsonb`); queryParams.push(JSON.stringify(trigger_config)) }
+  if (action_config  !== undefined) { setClauses.push(`action_config = $${++p}::jsonb`);  queryParams.push(JSON.stringify(action_config)) }
+  if (is_active     !== undefined) { setClauses.push(`is_active = $${++p}`);              queryParams.push(is_active) }
+  if (priority      !== undefined) { setClauses.push(`priority = $${++p}`);               queryParams.push(priority) }
 
   if (setClauses.length === 0) {
     return NextResponse.json({ error: 'Sin campos para actualizar' }, { status: 400 })
@@ -110,7 +79,9 @@ export async function PATCH(
     if (!rows[0]) return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
 
     void audit({ req, action: 'update', resource: 'automations' as never, resource_id: id,
-      metadata: Object.fromEntries(Object.keys(body).map(k => [k, body[k]])) })
+      metadata: Object.fromEntries(
+        Object.entries(parsed.data).filter(([, v]) => v !== undefined)
+      ) })
 
     return NextResponse.json({ ok: true })
   } catch (e) {

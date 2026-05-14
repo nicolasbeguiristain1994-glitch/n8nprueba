@@ -1,5 +1,6 @@
 import { pool } from '@/lib/db'
 import { getSessionFromRequest } from '@/lib/auth'
+import { appLog } from '@/lib/security-log'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -128,7 +129,11 @@ export async function audit(event: AuditEvent): Promise<void> {
       ]
     )
   } catch (e) {
-    // Log but never re-throw — audit failure must not break the product flow
-    console.error('[audit] write failed:', e instanceof Error ? e.message : String(e))
+    // Never re-throw — audit failure must not break the product flow
+    appLog('ERROR', 'audit write failed', {
+      error:    e instanceof Error ? e.message : String(e),
+      action:   event.action,
+      resource: event.resource,
+    })
   }
 }

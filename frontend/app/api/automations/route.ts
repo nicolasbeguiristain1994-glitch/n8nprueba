@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
-import { clampStr } from '@/lib/validate'
 import { audit } from '@/lib/audit'
+import { parseBody, handleValidationError, CreateAutomationSchema } from '@/lib/schema'
 
 type AutomationRow = {
   id: string
@@ -77,28 +77,13 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response
   const session = auth.user
 
-  let body: Record<string, unknown>
-  try { body = await req.json() } catch {
-    return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
-  }
+  const rawBody = await req.json().catch(() => null)
+  const parsed  = parseBody(CreateAutomationSchema, rawBody)
+  if (!parsed.ok) return handleValidationError(req, parsed.error, 'automations')
 
-  const name = clampStr(body.name, 200)
-  if (!name) return NextResponse.json({ error: 'El nombre es requerido' }, { status: 400 })
-
-  const type = body.type as string
-  if (!['reply', 'flow', 'handoff'].includes(type)) {
-    return NextResponse.json({ error: 'Tipo inválido' }, { status: 400 })
-  }
-
-  const triggerType = body.trigger_type as string
-  if (!['keyword', 'contains', 'any_inbound'].includes(triggerType)) {
-    return NextResponse.json({ error: 'Tipo de trigger inválido' }, { status: 400 })
-  }
-
-  const triggerConfig = body.trigger_config ?? {}
-  const actionConfig  = body.action_config  ?? {}
-  const description   = clampStr(body.description, 500)
-  const priority      = typeof body.priority === 'number' ? Math.max(1, Math.min(1000, body.priority)) : 100
+  const { name, description, type, trigger_type: triggerType,
+          trigger_config: triggerConfig, action_config: actionConfig,
+          is_active, priority } = parsed.data
 
   try {
     const rows = await query<{ id: string }>(
@@ -109,7 +94,7 @@ export async function POST(req: NextRequest) {
       [
         name, description, type, triggerType,
         JSON.stringify(triggerConfig), JSON.stringify(actionConfig),
-        body.is_active !== false,
+        is_active,
         priority,
         session.user_id,
       ],

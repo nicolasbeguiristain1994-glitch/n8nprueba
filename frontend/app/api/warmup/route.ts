@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { isE164, isInstanceName } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
+import { parseBody, handleValidationError, CreateWarmupSchema } from '@/lib/schema'
 import { getAppSetting } from '@/lib/app-settings'
 import { emitWarmupChange } from '@/lib/warmup-sse'
 
@@ -39,38 +39,13 @@ export async function POST(req: NextRequest) {
   const err = await checkPermission(req, 'warmup', 'create')
   if (err) return err
 
-  let body: {
-    phone_number?: string; instance_name?: string; display_name?: string
-    target_days?: number; daily_limit?: number; notes?: string; timezone?: string
-    delay_preset?: string
-  }
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  }
+  const rawBody = await req.json().catch(() => null)
+  const parsed  = parseBody(CreateWarmupSchema, rawBody)
+  if (!parsed.ok) return handleValidationError(req, parsed.error, 'warmup')
 
-  const { phone_number, instance_name, display_name, target_days = 21, daily_limit = 10, notes, timezone, delay_preset = 'normal' } = body
-  const validPresets = ['conservadora', 'normal', 'agresiva']
-  const resolvedPreset = validPresets.includes(delay_preset) ? delay_preset : 'normal'
-
-  if (!phone_number || !instance_name) {
-    return NextResponse.json({ error: 'phone_number e instance_name son requeridos' }, { status: 400 })
-  }
-  if (!isE164(phone_number)) {
-    return NextResponse.json({ error: 'phone_number debe estar en formato E.164 (ej: +5491112345678)' }, { status: 400 })
-  }
-  if (!isInstanceName(instance_name)) {
-    return NextResponse.json({ error: 'instance_name inválido (solo letras, números, _ y -, máx 64 caracteres)' }, { status: 400 })
-  }
-  const resolvedDays  = Math.floor(Number(target_days))
-  const resolvedLimit = Math.floor(Number(daily_limit))
-  if (!Number.isFinite(resolvedDays) || resolvedDays < 1) {
-    return NextResponse.json({ error: 'target_days debe ser un entero positivo' }, { status: 400 })
-  }
-  if (!Number.isFinite(resolvedLimit) || resolvedLimit < 1) {
-    return NextResponse.json({ error: 'daily_limit debe ser un entero positivo' }, { status: 400 })
-  }
+  const { phone_number, instance_name, display_name,
+          target_days: resolvedDays, daily_limit: resolvedLimit,
+          notes, timezone, delay_preset: resolvedPreset } = parsed.data
 
   // Verificar límite global de líneas en calentamiento
   const maxWarmup = await getAppSetting<number>('limits_max_warmup_lines', 20)

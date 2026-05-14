@@ -4,6 +4,7 @@ import { query } from '@/lib/db'
 import { MetaCloudApiClient } from '@/lib/cloud-api/client'
 import { getTokenForNumber, revokeToken } from '@/lib/cloud-api/token-store'
 import { audit } from '@/lib/audit'
+import { appLog } from '@/lib/security-log'
 
 // GET  /api/cloud/numbers            — listar todos los números registrados
 // GET  /api/cloud/numbers?id=xxx     — detalle de un número
@@ -72,8 +73,8 @@ export async function POST(req: NextRequest) {
       throughputLevel: info.throughput.level,
     })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: message }, { status: 500 })
+    appLog('ERROR', '[cloud/numbers POST]', { error: err instanceof Error ? err.message : String(err) })
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 

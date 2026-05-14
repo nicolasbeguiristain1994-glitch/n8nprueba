@@ -1,14 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import bcryptjs from 'bcryptjs'
 import { type PoolClient } from 'pg'
-import { getDbClient, pool } from '@/lib/db'
+import { getDbClient } from '@/lib/db'
 import { createSessionToken, SESSION_DURATION_SECONDS } from '@/lib/auth'
 import type { SessionUser } from '@/lib/auth'
-
-// ── In-memory rate limiter (failed attempts only) ─────────────────────────────
-const failedAttempts = new Map<string, { count: number; resetAt: number }>()
-const RATE_LIMIT_MAX    = 10
-const RATE_LIMIT_WINDOW = 15 * 60 * 1000
+import { loginRateLimiter } from '@/lib/rate-limit'
+import { audit } from '@/lib/audit'
+import { securityLog, appLog } from '@/lib/security-log'
 
 function getClientIp(req: NextRequest): string {
   return (
@@ -16,26 +14,6 @@ function getClientIp(req: NextRequest): string {
     req.headers.get('x-real-ip') ||
     'unknown'
   )
-}
-
-function isRateLimited(ip: string): boolean {
-  const entry = failedAttempts.get(ip)
-  if (!entry || Date.now() > entry.resetAt) return false
-  return entry.count >= RATE_LIMIT_MAX
-}
-
-function recordFailedLogin(ip: string): void {
-  const now = Date.now()
-  const entry = failedAttempts.get(ip)
-  if (!entry || now > entry.resetAt) {
-    failedAttempts.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW })
-  } else {
-    entry.count++
-  }
-}
-
-function clearFailedLogins(ip: string): void {
-  failedAttempts.delete(ip)
 }
 
 // ── Cookie config ─────────────────────────────────────────────────────────────
@@ -57,7 +35,10 @@ type UserRow = {
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req)
 
-  if (isRateLimited(ip)) {
+  if (await loginRateLimiter.isBlocked(ip)) {
+    securityLog('rate_limit_exceeded', { ip })
+    void audit({ req, action: 'rate_limit_exceeded', resource: 'auth', status: 'denied',
+      metadata: { ip } })
     return NextResponse.json(
       { error: 'Demasiados intentos. Intentá de nuevo en 15 minutos.' },
       { status: 429 }
@@ -85,9 +66,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Auth not configured' }, { status: 500 })
   }
 
-  console.log('[login] start')
-  console.log('[login] pool before acquire — total:', pool.totalCount, 'idle:', pool.idleCount, 'waiting:', pool.waitingCount)
-
   // ── Single DB client for all queries ─────────────────────────────────────
   // Avoids pool exhaustion between consecutive queries over PgBouncer.
   let dbClient: PoolClient | undefined
@@ -96,65 +74,59 @@ export async function POST(req: NextRequest) {
 
   try {
     dbClient = await getDbClient()
-    console.log('[login] client acquired')
 
     // Step 1 — bootstrap check
-    const t1 = Date.now()
     const countResult = await dbClient.query<{ count: string }>(
       'SELECT COUNT(*)::text AS count FROM users'
     )
     userCount = parseInt(countResult.rows[0]?.count ?? '0', 10)
-    console.log('[login] step1 COUNT done in', Date.now() - t1, 'ms, count:', userCount)
 
     if (userCount > 0) {
       // Step 2 — fetch user
-      const t2 = Date.now()
       const userResult = await dbClient.query<UserRow>(
         'SELECT id, email, name, role, sectors, password_hash, is_active, session_version, can_download_contacts, allowed_agents FROM users WHERE LOWER(email) = $1',
         [email]
       )
-      console.log('[login] step2 SELECT done in', Date.now() - t2, 'ms, found:', userResult.rows.length)
       userRow = userResult.rows[0]
 
       if (!userRow || !userRow.is_active) {
-        recordFailedLogin(ip)
-        console.log('[login] returning invalid credentials (user not found or inactive)')
+        const reason = userRow ? 'account_inactive' : 'user_not_found'
+        await loginRateLimiter.increment(ip)
+        securityLog('login_failed', { ip, email, reason })
+        void audit({ req, action: 'login_failed', resource: 'auth', status: 'failure',
+          metadata: { reason, email } })
         return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
       }
 
       // Step 3 — bcrypt compare
-      const t3 = Date.now()
-      console.log('[login] step3 starting bcrypt compare...')
       const passwordMatch = await bcryptjs.compare(password, userRow.password_hash)
-      console.log('[login] step3 bcrypt done in', Date.now() - t3, 'ms, match:', passwordMatch)
 
       if (!passwordMatch) {
-        recordFailedLogin(ip)
-        console.log('[login] returning invalid credentials (password mismatch)')
+        await loginRateLimiter.increment(ip)
+        securityLog('login_failed', { ip, email: userRow.email, reason: 'password_mismatch' })
+        void audit({ req, action: 'login_failed', resource: 'auth', status: 'failure',
+          userOverride: { userId: userRow.id, email: userRow.email, role: userRow.role },
+          metadata: { reason: 'password_mismatch' } })
         return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
       }
 
       // Step 4 — update last_login_at (same client, non-fatal)
       try {
-        const t4 = Date.now()
         await dbClient.query(
           'UPDATE users SET last_login_at = NOW(), updated_at = NOW() WHERE id = $1',
           [userRow.id]
         )
-        console.log('[login] step4 last_login_at done in', Date.now() - t4, 'ms')
       } catch (e) {
-        console.error('[login] step4 last_login_at failed (non-fatal):', (e as Error).message)
+        appLog('WARN', 'login last_login_at update failed', { error: (e as Error).message })
       }
     }
 
   } catch (e) {
-    console.error('[login] DB error:', (e as Error).message)
-    console.log('[login] returning service unavailable')
+    appLog('ERROR', 'login DB error', { error: (e as Error).message, ip })
     return NextResponse.json({ error: 'Service unavailable' }, { status: 503 })
   } finally {
     if (dbClient) {
       dbClient.release()
-      console.log('[login] pool after release — total:', pool.totalCount, 'idle:', pool.idleCount, 'waiting:', pool.waitingCount)
       dbClient = undefined
     }
   }
@@ -165,7 +137,7 @@ export async function POST(req: NextRequest) {
     const bootstrapPass = process.env.AUTH_PASSWORD
 
     if (!bootstrapUser || !bootstrapPass) {
-      recordFailedLogin(ip)
+      await loginRateLimiter.increment(ip)
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
     }
 
@@ -173,11 +145,19 @@ export async function POST(req: NextRequest) {
     const passMatch  = password === bootstrapPass
 
     if (!emailMatch || !passMatch) {
-      recordFailedLogin(ip)
+      await loginRateLimiter.increment(ip)
+      securityLog('login_failed', { ip, email, reason: 'bootstrap_credentials_invalid' })
+      void audit({ req, action: 'login_failed', resource: 'auth', status: 'failure',
+        userOverride: { userId: null, email, role: null },
+        metadata: { reason: 'bootstrap_credentials_invalid' } })
       return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
     }
 
-    clearFailedLogins(ip)
+    await loginRateLimiter.reset(ip)
+    securityLog('bootstrap_login', { ip, email: bootstrapUser.toLowerCase().trim() })
+    void audit({ req, action: 'login_success', resource: 'auth',
+      userOverride: { userId: null, email: bootstrapUser.toLowerCase().trim(), role: 'admin' },
+      metadata: { bootstrap: true } })
 
     const now = Math.floor(Date.now() / 1000)
     const sessionPayload: SessionUser = {
@@ -210,7 +190,7 @@ export async function POST(req: NextRequest) {
     res.cookies.set('session', token, {
       httpOnly: true,
       secure:   process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      sameSite: 'strict',
       maxAge:   COOKIE_MAX_AGE,
       path:     '/',
     })
@@ -219,7 +199,10 @@ export async function POST(req: NextRequest) {
 
   // ── Successful DB-backed login ────────────────────────────────────────────
   const user = userRow!
-  clearFailedLogins(ip)
+  await loginRateLimiter.reset(ip)
+  securityLog('login_success', { ip, userId: user.id, email: user.email, role: user.role })
+  void audit({ req, action: 'login_success', resource: 'auth',
+    userOverride: { userId: user.id, email: user.email, role: user.role } })
 
   const now = Math.floor(Date.now() / 1000)
   const sessionPayload: SessionUser = {
@@ -237,7 +220,6 @@ export async function POST(req: NextRequest) {
   }
 
   const token = createSessionToken(sessionPayload)
-  console.log('[login] returning success')
 
   const res = NextResponse.json({
     ok: true,
@@ -252,7 +234,7 @@ export async function POST(req: NextRequest) {
   res.cookies.set('session', token, {
     httpOnly: true,
     secure:   process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    sameSite: 'strict',
     maxAge:   COOKIE_MAX_AGE,
     path:     '/',
   })

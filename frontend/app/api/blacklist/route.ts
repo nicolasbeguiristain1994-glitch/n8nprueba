@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
-import { normalizePhone, isUUID, clampStr } from '@/lib/validate'
+import { normalizePhone } from '@/lib/validate'
 import { audit } from '@/lib/audit'
+import { parseBody, handleValidationError, CreateBlacklistSchema } from '@/lib/schema'
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -112,30 +113,24 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response
   const session = auth.user
 
-  let body: { phones?: string | string[]; reason?: string }
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
-  }
+  const rawBody = await req.json().catch(() => null)
+  const parsed  = parseBody(CreateBlacklistSchema, rawBody)
+  if (!parsed.ok) return handleValidationError(req, parsed.error, 'blacklist')
 
   // Aceptar un string con varios números separados por salto de línea o un array
-  const rawInput = body.phones
   let rawPhones: string[]
-
-  if (typeof rawInput === 'string') {
-    rawPhones = rawInput.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean)
-  } else if (Array.isArray(rawInput)) {
-    rawPhones = rawInput.map(s => String(s).trim()).filter(Boolean)
+  if (typeof parsed.data.phones === 'string') {
+    rawPhones = parsed.data.phones.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean)
   } else {
-    return NextResponse.json({ error: 'El campo phones es requerido' }, { status: 400 })
+    rawPhones = parsed.data.phones.map(s => s.trim()).filter(Boolean)
   }
 
+  // Un string de solo separadores puede quedar vacío tras el split
   if (rawPhones.length === 0) {
     return NextResponse.json({ error: 'Debe ingresar al menos un número' }, { status: 400 })
   }
 
-  const reason = clampStr(body.reason, 500) ?? 'Sin motivo especificado'
+  const reason = parsed.data.reason?.trim() ?? 'Sin motivo especificado'
 
   // Normalizar y validar
   const toInsert: Array<{ raw: string; normalized: string }> = []

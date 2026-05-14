@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSessionFromRequest } from '@/lib/auth'
 import type { SessionUser } from '@/lib/auth'
 import { query } from '@/lib/db'
+import { securityLog } from '@/lib/security-log'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -133,7 +134,12 @@ export async function checkPermissionWithUser(
   action: Action,
 ): Promise<PermissionResult> {
   const session = getSessionFromRequest(req)
+  const ip = req.headers.get('x-forwarded-for')?.split(',')[0].trim()
+           || req.headers.get('x-real-ip')
+           || null
+
   if (!session) {
+    securityLog('session_invalid', { ip, reason: 'no_session', resource, action })
     return { ok: false, response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   }
 
@@ -142,9 +148,11 @@ export async function checkPermissionWithUser(
     const countRows = await query<{ count: number }>('SELECT COUNT(*)::int AS count FROM users')
     const userCount = countRows[0]?.count ?? 0
     if (userCount > 0) {
+      securityLog('session_invalid', { ip, reason: 'bootstrap_expired', resource, action })
       return { ok: false, response: NextResponse.json({ error: 'Session expired' }, { status: 401 }) }
     }
     if (!canAccess(session, resource, action)) {
+      securityLog('access_denied', { ip, userId: null, resource, action, reason: 'bootstrap_forbidden' })
       return { ok: false, response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
     }
     return { ok: true, user: session }
@@ -158,9 +166,11 @@ export async function checkPermissionWithUser(
   const dbUser = rows[0]
 
   if (!dbUser || !dbUser.is_active) {
+    securityLog('session_invalid', { ip, userId: session.user_id, reason: 'user_not_found_or_inactive', resource, action })
     return { ok: false, response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
   }
   if (dbUser.session_version !== session.session_version) {
+    securityLog('session_invalid', { ip, userId: session.user_id, reason: 'session_version_mismatch', resource, action })
     return { ok: false, response: NextResponse.json({ error: 'Session expired' }, { status: 401 }) }
   }
 
@@ -174,6 +184,7 @@ export async function checkPermissionWithUser(
   }
 
   if (!canAccess(freshUser, resource, action)) {
+    securityLog('access_denied', { ip, userId: session.user_id, role: freshUser.role, resource, action })
     return { ok: false, response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
   }
   return { ok: true, user: freshUser }

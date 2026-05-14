@@ -4,6 +4,7 @@ import { MetaCloudApiClient } from '@/lib/cloud-api/client'
 import { getTokenForNumber } from '@/lib/cloud-api/token-store'
 import { query } from '@/lib/db'
 import { audit } from '@/lib/audit'
+import { appLog } from '@/lib/security-log'
 import type { CreateTemplateRequest } from '@/lib/cloud-api/types'
 
 // GET  /api/cloud/templates?phoneNumberId=xxx  — listar plantillas del WABA
@@ -29,8 +30,8 @@ export async function GET(req: NextRequest) {
     const templates = await client.listTemplates(row.waba_id)
     return NextResponse.json(templates)
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: message }, { status: 500 })
+    appLog('ERROR', '[cloud/templates GET]', { error: err instanceof Error ? err.message : String(err) })
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
@@ -60,10 +61,9 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // CRÍTICO: solo enviar plantillas como UTILITY para mensajes transaccionales.
-  // MARKETING requiere opt-in explícito y tiene costo mayor.
+  // MARKETING requiere opt-in explícito y tiene costo mayor que UTILITY.
   if (category === 'MARKETING') {
-    console.log('[templates/create] Marketing template creation requested:', name)
+    appLog('WARN', '[cloud/templates POST] marketing template created', { name, wabaId })
   }
 
   try {
@@ -80,8 +80,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ id: result.id, status: result.status }, { status: 201 })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: message }, { status: 500 })
+    appLog('ERROR', '[cloud/templates POST]', { error: err instanceof Error ? err.message : String(err) })
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
@@ -119,7 +119,7 @@ export async function DELETE(req: NextRequest) {
 
     return NextResponse.json({ deleted: true })
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: message }, { status: 500 })
+    appLog('ERROR', '[cloud/templates DELETE]', { error: err instanceof Error ? err.message : String(err) })
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

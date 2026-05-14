@@ -2,9 +2,7 @@ import bcryptjs from 'bcryptjs'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
-
-const VALID_ROLES    = ['admin', 'operator', 'viewer'] as const
-const VALID_SECTORS  = ['dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup', 'tasks', 'estadisticas', 'automations', 'blacklist', 'templates', 'tickets', 'users', 'settings', 'lists', 'send'] as const
+import { parseBody, handleValidationError, CreateUserSchema } from '@/lib/schema'
 
 type UserRow = {
   id: string
@@ -82,54 +80,11 @@ export async function POST(req: Request) {
   if (err) return err
 
   try {
-    let body: {
-      email?: string
-      password?: string
-      name?: string
-      role?: string
-      sectors?: unknown
-      can_download_contacts?: boolean
-      allowed_agents?: unknown
-    }
-    try {
-      body = await req.json()
-    } catch {
-      return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
-    }
+    const rawBody = await req.json().catch(() => null)
+    const parsed  = parseBody(CreateUserSchema, rawBody)
+    if (!parsed.ok) return handleValidationError(req, parsed.error, 'users')
 
-    const email    = (body.email || '').toLowerCase().trim()
-    const password = body.password || ''
-    const name     = body.name?.trim() || null
-    const role     = body.role || ''
-    const sectors  = body.sectors
-
-    // Validation
-    const errs: string[] = []
-    if (!email)              errs.push('email is required')
-    if (!password)           errs.push('password is required')
-    if (password.length < 10 && password) errs.push('password must be at least 10 characters')
-    if (!VALID_ROLES.includes(role as typeof VALID_ROLES[number])) {
-      errs.push(`role must be one of: ${VALID_ROLES.join(', ')}`)
-    }
-    if (!Array.isArray(sectors)) {
-      errs.push('sectors must be an array')
-    } else {
-      const invalidSectors = (sectors as unknown[]).filter(
-        s => typeof s !== 'string' || !VALID_SECTORS.includes(s as typeof VALID_SECTORS[number])
-      )
-      if (invalidSectors.length) {
-        errs.push(`invalid sectors: ${invalidSectors.join(', ')}. Valid: ${VALID_SECTORS.join(', ')}`)
-      }
-    }
-
-    if (errs.length) {
-      return Response.json({ error: errs.join('; ') }, { status: 400 })
-    }
-
-    const can_download = body.can_download_contacts !== undefined ? Boolean(body.can_download_contacts) : true
-    const allowed_agts = Array.isArray(body.allowed_agents)
-      ? (body.allowed_agents as unknown[]).filter((a): a is string => typeof a === 'string')
-      : []
+    const { email, password, name, role, sectors, can_download_contacts, allowed_agents } = parsed.data
 
     const passwordHash = await bcryptjs.hash(password, 12)
 
@@ -138,7 +93,7 @@ export async function POST(req: Request) {
        VALUES ($1, $2, $3, $4::user_role, $5::jsonb, true, $6, $7)
        ON CONFLICT DO NOTHING
        RETURNING id`,
-      [email, passwordHash, name, role, JSON.stringify(sectors), can_download, allowed_agts]
+      [email, passwordHash, name ?? null, role, JSON.stringify(sectors), can_download_contacts, allowed_agents],
     )
 
     if (!rows[0]) {

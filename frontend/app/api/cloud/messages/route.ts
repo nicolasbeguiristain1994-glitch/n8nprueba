@@ -2,6 +2,7 @@ import { NextRequest, NextResponse }  from 'next/server'
 import { checkPermissionWithUser }    from '@/lib/permissions'
 import { sendMessageUseCase }         from '@/lib/cloud-api/use-cases/send-message.use-case'
 import { audit }                      from '@/lib/audit'
+import { appLog }                     from '@/lib/security-log'
 import type { SendMessageRequest }    from '@/lib/cloud-api/types/messages'
 import {
   OptOutError,
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: err.message, code: err.code }, { status: 502 })
     }
 
-    const message = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: message }, { status: 500 })
+    appLog('ERROR', '[cloud/messages POST]', { error: err instanceof Error ? err.message : String(err) })
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

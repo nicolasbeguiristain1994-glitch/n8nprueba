@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { isE164, isUUID, clampStr } from '@/lib/validate'
+import { isE164 } from '@/lib/validate'
 import { checkPermissionWithUser, isOwnerOrAdmin } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
+import { parseBody, handleValidationError, SendSchema } from '@/lib/schema'
 import { getEligibleLines, selectLine, sendViaEvolution, type EligibleLine } from '@/lib/campaign-distributor'
 import { sseEmitter } from '@/lib/sse-events'
 
@@ -51,37 +52,21 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response
   const session = auth.user
 
-  let body: { phones?: string[]; message?: string; campaign_id?: string; media_url?: string; media_type?: string }
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  }
-
-  const { phones, message, campaign_id, media_url } = body
-
-  if (!Array.isArray(phones) || phones.length === 0 || phones.length > 100) {
-    return NextResponse.json({ error: 'phones debe ser un array de 1 a 100 números' }, { status: 400 })
-  }
+  const rawBody = await req.json().catch(() => null)
+  const parsed  = parseBody(SendSchema, rawBody)
+  if (!parsed.ok) return handleValidationError(req, parsed.error, 'send')
+  const { phones: rawPhones, message: messageStr, campaign_id, media_url } = parsed.data
 
   // Normalize: strip spaces, dashes, parentheses then ensure + prefix for E.164.
-  const normalizedPhones = phones.map((p: unknown) => {
-    if (typeof p !== 'string') return p
+  const normalizedPhones = rawPhones.map(p => {
     const stripped = p.replace(/[\s\-().]/g, '')
     return stripped.startsWith('+') ? stripped : '+' + stripped
   })
-  const invalidPhone = normalizedPhones.find((p: unknown) => typeof p !== 'string' || !isE164(p))
+  const invalidPhone = normalizedPhones.find(p => !isE164(p))
   if (invalidPhone !== undefined) {
     return NextResponse.json({ error: `Teléfono inválido (debe ser E.164): ${invalidPhone}` }, { status: 400 })
   }
-  const uniquePhones = [...new Set(normalizedPhones as string[])]
-  const messageStr = clampStr(message, 4096)
-  if (!messageStr) {
-    return NextResponse.json({ error: 'message es requerido y no puede estar vacío' }, { status: 400 })
-  }
-  if (campaign_id !== undefined && campaign_id !== null && !isUUID(campaign_id)) {
-    return NextResponse.json({ error: 'campaign_id debe ser un UUID válido' }, { status: 400 })
-  }
+  const uniquePhones = [...new Set(normalizedPhones)]
 
   // Ownership check — prevent attaching sends to another user's campaign
   if (campaign_id) {

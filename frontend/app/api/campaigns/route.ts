@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { isUUID, clampStr } from '@/lib/validate'
 import { checkPermissionWithUser, isOwnerOrAdmin } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
+import { parseBody, handleValidationError, CreateCampaignSchema } from '@/lib/schema'
 
 export async function GET(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'campaigns', 'read')
@@ -94,63 +94,35 @@ export async function POST(req: NextRequest) {
   if (!auth.ok) return auth.response
   const session = auth.user
 
-  let body: {
-    name?: string; message?: string; messages?: string[]; media_url?: string; media_type?: string
-    list_id?: string; scheduled_at?: string; antiblock_delay_min?: number; antiblock_delay_max?: number
-    type?: string; personalize_name?: boolean; use_multi_line?: boolean
-    delay_type?: string; custom_delay_seconds?: number; daily_limit_override?: number | null
-    anti_ban_profile_id?: string | null; enable_mini_sessions?: boolean; mini_session_text?: string
-  }
-  try {
-    body = await req.json()
-  } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
-  }
+  const rawBody = await req.json().catch(() => null)
+  const parsed  = parseBody(CreateCampaignSchema, rawBody)
+  if (!parsed.ok) return handleValidationError(req, parsed.error, 'campaigns')
 
   const { name, message, messages, media_url, media_type, list_id, scheduled_at,
           antiblock_delay_min, antiblock_delay_max, type: campaignType,
           personalize_name, use_multi_line,
           delay_type, custom_delay_seconds, daily_limit_override,
-          anti_ban_profile_id, enable_mini_sessions, mini_session_text } = body
-
-  const nameStr = clampStr(name, 255)
-  if (!nameStr)
-    return NextResponse.json({ error: 'El nombre de la campaña es requerido' }, { status: 400 })
+          anti_ban_profile_id, enable_mini_sessions, mini_session_text } = parsed.data
 
   // messages[] takes priority; fall back to single message
   const rawMsgs = Array.isArray(messages) ? messages : (message ? [message] : [])
-  if (rawMsgs.length === 0 || rawMsgs.length > 10)
-    return NextResponse.json({ error: 'Se requiere entre 1 y 10 mensajes' }, { status: 400 })
-  const msgArray: string[] = rawMsgs
-    .map((m: unknown) => clampStr(m, 4096))
-    .filter((m): m is string => m !== null && m.length > 0)
+  if (rawMsgs.length === 0)
+    return NextResponse.json({ error: 'Se requiere al menos un mensaje' }, { status: 400 })
+  const msgArray = rawMsgs.filter(m => m.length > 0)
   if (msgArray.length === 0)
     return NextResponse.json({ error: 'Al menos un mensaje debe ser no vacío' }, { status: 400 })
 
-  if (list_id !== undefined && list_id !== null && !isUUID(list_id))
-    return NextResponse.json({ error: 'list_id debe ser un UUID válido' }, { status: 400 })
+  const resolvedDelayType = delay_type ?? 'gaussian'
+  const resolvedCustomDelay = custom_delay_seconds !== undefined ? Math.max(5, custom_delay_seconds) : 18
+  const resolvedDailyLimit = daily_limit_override != null ? Math.max(5, daily_limit_override) : null
 
-  if (anti_ban_profile_id !== undefined && anti_ban_profile_id !== null && !isUUID(anti_ban_profile_id))
-    return NextResponse.json({ error: 'anti_ban_profile_id debe ser un UUID válido' }, { status: 400 })
-
-  const ALLOWED_DELAY_TYPES = ['gaussian', 'human_noisy', 'uniform']
-  const resolvedDelayType = delay_type && ALLOWED_DELAY_TYPES.includes(delay_type) ? delay_type : 'gaussian'
-  const resolvedCustomDelay = custom_delay_seconds !== undefined ? Math.max(5, Number(custom_delay_seconds)) : 18
-  const resolvedDailyLimit = daily_limit_override != null ? Math.max(5, Number(daily_limit_override)) : null
-
-  const delayMin = antiblock_delay_min !== undefined ? Number(antiblock_delay_min) : 3
-  const delayMax = antiblock_delay_max !== undefined ? Number(antiblock_delay_max) : 8
-  if (!Number.isFinite(delayMin) || delayMin < 1)
-    return NextResponse.json({ error: 'antiblock_delay_min debe ser un número positivo' }, { status: 400 })
-  if (!Number.isFinite(delayMax) || delayMax < 1)
-    return NextResponse.json({ error: 'antiblock_delay_max debe ser un número positivo' }, { status: 400 })
+  const delayMin = antiblock_delay_min ?? 3
+  const delayMax = antiblock_delay_max ?? 8
   if (delayMin > delayMax)
     return NextResponse.json({ error: 'antiblock_delay_min no puede ser mayor que antiblock_delay_max' }, { status: 400 })
 
-  const ALLOWED_TYPES = ['promotion', 'retention', 'onboarding', 'support', 'survey', 'payment', 'risk_alert']
-  const resolvedType = campaignType || 'promotion'
-  if (!ALLOWED_TYPES.includes(resolvedType))
-    return NextResponse.json({ error: `Tipo de campaña inválido. Valores permitidos: ${ALLOWED_TYPES.join(', ')}` }, { status: 400 })
+  const resolvedType = campaignType ?? 'promotion'
+  const nameStr = name
 
   try {
     // List ownership check — must run before inserting the campaign.

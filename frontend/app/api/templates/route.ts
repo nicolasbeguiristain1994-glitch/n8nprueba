@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
+import { parseBody, handleValidationError, CreateTemplateSchema } from '@/lib/schema'
 
 type TemplateRow = {
   id: string
@@ -18,9 +19,6 @@ type TemplateRow = {
   created_at: string
   updated_at: string
 }
-
-const VALID_CATEGORIES = ['UTILITY', 'MARKETING', 'AUTHENTICATION'] as const
-const VALID_LANGUAGES  = ['es', 'en', 'pt_BR', 'pt', 'fr', 'de', 'it', 'ar', 'zh_CN'] as const
 
 export async function GET(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'campaigns', 'read')
@@ -52,31 +50,14 @@ export async function POST(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'settings', 'manage')
   if (!auth.ok) return auth.response
 
-  let body: {
-    name?: string
-    category?: string
-    language?: string
-    components?: unknown[]
-  }
-  try { body = await req.json() } catch {
-    return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
-  }
+  const rawBody = await req.json().catch(() => null)
+  const parsed  = parseBody(CreateTemplateSchema, rawBody)
+  if (!parsed.ok) return handleValidationError(req, parsed.error, 'templates')
 
-  const { name, category, language = 'es', components = [] } = body
+  const { name, category, language, components } = parsed.data
 
-  if (!name?.trim()) return NextResponse.json({ error: 'El nombre es requerido' }, { status: 400 })
-  if (!VALID_CATEGORIES.includes(category as typeof VALID_CATEGORIES[number])) {
-    return NextResponse.json({ error: `Categoría inválida. Valores válidos: ${VALID_CATEGORIES.join(', ')}` }, { status: 400 })
-  }
-  if (!VALID_LANGUAGES.includes(language as typeof VALID_LANGUAGES[number])) {
-    return NextResponse.json({ error: 'Idioma no soportado' }, { status: 400 })
-  }
-  if (!Array.isArray(components)) {
-    return NextResponse.json({ error: 'components debe ser un array' }, { status: 400 })
-  }
-
-  // Validar que exista un componente BODY
-  const hasBody = (components as Array<{type: string}>).some(c => c.type === 'BODY')
+  // Validar que exista un componente BODY (regla de negocio, no de schema)
+  const hasBody = components.some(c => (c as { type?: string }).type === 'BODY')
   if (!hasBody) return NextResponse.json({ error: 'La plantilla debe tener al menos un componente BODY' }, { status: 400 })
 
   try {
@@ -86,7 +67,7 @@ export async function POST(req: NextRequest) {
        RETURNING id`,
       [name.trim().toLowerCase().replace(/\s+/g, '_'), category, language, JSON.stringify(components), auth.user.user_id]
     )
-    void audit({ req, action: 'create', resource: 'campaigns', resource_id: row.id,
+    void audit({ req, action: 'create', resource: 'templates', resource_id: row.id,
       metadata: { name, category } })
     return NextResponse.json({ id: row.id }, { status: 201 })
   } catch (e: unknown) {

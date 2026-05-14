@@ -2,6 +2,7 @@ import { NextRequest, NextResponse }      from 'next/server'
 import { checkPermissionWithUser }        from '@/lib/permissions'
 import { onboardCoexistenceUseCase }      from '@/lib/cloud-api/use-cases/onboard-coexistence.use-case'
 import { audit }                          from '@/lib/audit'
+import { appLog }                         from '@/lib/security-log'
 import type { OnboardingRequest }         from '@/lib/cloud-api/types/domain'
 
 // POST /api/cloud/onboard
@@ -35,8 +36,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result)
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    console.error('[cloud/onboard]', message)
-    return NextResponse.json({ error: message }, { status: 500 })
+    appLog('ERROR', '[cloud/onboard]', { error: err instanceof Error ? err.message : String(err) })
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
