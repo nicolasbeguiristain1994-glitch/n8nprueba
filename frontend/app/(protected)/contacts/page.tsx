@@ -36,6 +36,7 @@ interface Contact {
   email: string; status: string; opt_in: boolean; created_at: string; segment: string; panel: string; gaming: string; linea: number | null
   actividad?: string; valor_riesgo?: string; antiguedad?: string
   last_deposit_at?: string | null; total_deposits?: number; total_withdrawals?: number
+  platforms?: string[]
 }
 interface ImportRow   { phone: string; name?: string; segment?: string }
 interface ContactList { id: string; name: string; contact_count: number; created_at: string }
@@ -133,10 +134,13 @@ function SegmentItem({ value, label, desc }: { value: string; label: string; des
 }
 
 const ZEUS_RE = /z(s|eus)?$/i
-function detectPlatform(first: string | null, last: string | null): 'zeus' | 'otros' | null {
-  if (ZEUS_RE.test(first || '') || ZEUS_RE.test(last || '')) return 'zeus'
-  if (first || last) return 'otros'
-  return null
+
+// Client-side fallback: only zeus can be detected without DB. bet30 requires
+// server-side verification (the `platforms` field from the API is authoritative).
+function detectClientPlatforms(first: string | null, last: string | null): string[] {
+  const platforms: string[] = []
+  if (ZEUS_RE.test(first || '') || ZEUS_RE.test(last || '')) platforms.push('zeus')
+  return platforms
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -210,7 +214,11 @@ export default function Contacts() {
 
   // ── View contact modal ────────────────────────────────────────────────────
   const [viewContact, setViewContact]   = useState<Contact | null>(null)
-  const [casinoStats, setCasinoStats]   = useState<{ monto_cargas_mes: number; monto_retiros_mes: number; last_deposit_at: string | null; mes_referencia: string | null; fuente: 'transactions' | 'historico' | null } | null>(null)
+  const [casinoStats, setCasinoStats]   = useState<{
+    monto_cargas_mes: number; monto_retiros_mes: number; last_deposit_at: string | null
+    mes_referencia: string | null; fuente: 'transactions' | 'historico' | null
+    bet30?: { monto_cargas_mes: number; monto_retiros_mes: number; last_deposit_at: string | null; mes_referencia: string | null; fuente: 'transactions' | 'historico' } | null
+  } | null>(null)
 
   const openViewContact = (c: Contact) => {
     setViewContact(c)
@@ -608,8 +616,10 @@ export default function Contacts() {
       accessorFn: (row) => [row.first_name, row.last_name].filter(Boolean).join(' '),
       header: ({ column }) => <DataTableColumnHeader column={column} title="Nombre" />,
       cell: ({ row }) => {
-        const full     = [row.original.first_name, row.original.last_name].filter(Boolean).join(' ')
-        const platform = detectPlatform(row.original.first_name, row.original.last_name)
+        const full = [row.original.first_name, row.original.last_name].filter(Boolean).join(' ')
+        // Prefer server-provided platforms (includes verified bet30); fall back to client-side zeus-only
+        const platforms = row.original.platforms ?? detectClientPlatforms(row.original.first_name, row.original.last_name)
+        const hasName   = !!(row.original.first_name || row.original.last_name)
         return (
           <div className="flex items-center gap-1.5 min-w-0">
             <EditableTextCell
@@ -624,8 +634,9 @@ export default function Contacts() {
                 if (last !== (row.original.last_name || null)) updateField(row.original.id, 'last_name', last)
               }}
             />
-            {platform === 'zeus'  && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">Zeus</span>}
-            {platform === 'otros' && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-gray-100 text-gray-500">otros</span>}
+            {platforms.includes('zeus')  && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">Zeus</span>}
+            {platforms.includes('bet30') && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700">Bet30</span>}
+            {platforms.length === 0 && hasName && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-gray-100 text-gray-500">otros</span>}
           </div>
         )
       },
@@ -1025,19 +1036,20 @@ export default function Contacts() {
 
         {/* ── Filtro plataforma ── */}
         <div className="flex items-center gap-1 border rounded-lg p-0.5 bg-muted/40">
-          {(['', 'zeus', 'otros'] as const).map(v => (
+          {(['', 'zeus', 'bet30', 'otros'] as const).map(v => (
             <button
               key={v || 'all'}
               onClick={() => { setFilterPlataforma(v); resetPage() }}
               className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
                 filterPlataforma === v
                   ? v === 'zeus'  ? 'bg-blue-600 text-white shadow-sm'
+                  : v === 'bet30' ? 'bg-orange-500 text-white shadow-sm'
                   : v === 'otros' ? 'bg-gray-600 text-white shadow-sm'
                   : 'bg-background text-foreground shadow-sm'
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              {v === '' ? 'Todos' : v === 'zeus' ? 'Zeus' : 'Otros'}
+              {v === '' ? 'Todos' : v === 'zeus' ? 'Zeus' : v === 'bet30' ? 'Bet30' : 'Otros'}
             </button>
           ))}
         </div>
@@ -1339,9 +1351,12 @@ export default function Contacts() {
                 {viewContact.actividad && <span className={`text-xs px-2 py-0.5 rounded-full ${ACTIVIDAD_STYLE[viewContact.actividad] ?? 'bg-gray-100 text-gray-600'}`}>{viewContact.actividad}</span>}
                 {viewContact.antiguedad && <span className={`text-xs px-2 py-0.5 rounded-full ${ANTIGUEDAD_STYLE[viewContact.antiguedad] ?? 'bg-gray-100 text-gray-600'}`}>{viewContact.antiguedad}</span>}
               </div>
+              {/* Zeus stats (or primary platform when contact has only one) */}
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Historial del jugador</p>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    {casinoStats?.bet30 ? 'Zeus' : 'Historial del jugador'}
+                  </p>
                   {casinoStats && (
                     <span className="text-[10px] text-gray-400 bg-white border border-gray-200 rounded px-1.5 py-0.5">
                       {casinoStats.mes_referencia ?? 'Histórico total'}
@@ -1377,6 +1392,40 @@ export default function Contacts() {
                   </div>
                 </div>
               </div>
+
+              {/* Bet30 stats — solo visible cuando el contacto tiene ambas plataformas */}
+              {casinoStats?.bet30 && (
+                <div className="rounded-lg border border-orange-200 bg-orange-50 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-semibold text-orange-600 uppercase tracking-wide">Bet30</p>
+                    <span className="text-[10px] text-gray-400 bg-white border border-gray-200 rounded px-1.5 py-0.5">
+                      {casinoStats.bet30.mes_referencia ?? 'Histórico total'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3 text-center">
+                    <div>
+                      <p className="text-xl font-bold text-gray-900">
+                        ${casinoStats.bet30.monto_cargas_mes.toLocaleString('es-AR')}
+                      </p>
+                      <p className="text-[10px] text-gray-500">{casinoStats.bet30.fuente === 'historico' ? 'Cargas total' : 'Cargas'}</p>
+                    </div>
+                    <div>
+                      <p className="text-xl font-bold text-gray-900">
+                        ${casinoStats.bet30.monto_retiros_mes.toLocaleString('es-AR')}
+                      </p>
+                      <p className="text-[10px] text-gray-500">Retiros</p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-gray-700">
+                        {casinoStats.bet30.last_deposit_at
+                          ? new Date(casinoStats.bet30.last_deposit_at).toLocaleDateString('es-AR')
+                          : '—'}
+                      </p>
+                      <p className="text-[10px] text-gray-500">Última carga</p>
+                    </div>
+                  </div>
+                </div>
+              )}
               <Button variant="outline" size="sm" className="w-full" onClick={() => { setViewContact(null); openEdit(viewContact) }}>
                 <Pencil size={13} className="mr-1.5" /> Editar contacto
               </Button>

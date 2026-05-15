@@ -6,13 +6,15 @@ import { audit } from '@/lib/audit'
 import { visibilityClause } from '@/lib/contact-visibility'
 import { getAppSetting } from '@/lib/app-settings'
 
-const ACTIVIDAD_ALLOWED   = new Set(['nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido'])
-const ANTIGUEDAD_ALLOWED  = new Set(['nuevo', 'reciente', 'establecido', 'veterano', 'leal'])
-const PLATAFORMA_ALLOWED  = new Set(['zeus', 'otros'])
+const ACTIVIDAD_ALLOWED  = new Set(['nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido'])
+const ANTIGUEDAD_ALLOWED = new Set(['nuevo', 'reciente', 'establecido', 'veterano', 'leal'])
+const PLATAFORMA_ALLOWED = new Set(['zeus', 'bet30', 'otros'])
 
-// Zeus usernames end in z, zs, or zeus (case-insensitive)
-const ZEUS_SQL  = `(first_name ~* 'z(s|eus)?$' OR last_name ~* 'z(s|eus)?$')`
-const OTROS_SQL = `NOT (first_name ~* 'z(s|eus)?$' OR last_name ~* 'z(s|eus)?$')`
+// Platform filters use the persisted `platforms` column (maintained by
+// trg_contact_platforms trigger in migration 075). GIN-indexed for fast lookups.
+const ZEUS_FILTER  = `'zeus'  = ANY(platforms)`
+const BET30_FILTER = `'bet30' = ANY(platforms)`
+const OTROS_FILTER = `NOT 'zeus' = ANY(platforms) AND NOT 'bet30' = ANY(platforms)`
 
 export async function GET(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'contacts', 'read')
@@ -47,9 +49,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: `Invalid plataforma "${plataforma}"` }, { status: 400 })
   }
 
-  // Static (enum-validated) platform filter injected into WHERE clauses
-  const plataformaFilter = plataforma === 'zeus'  ? ` AND ${ZEUS_SQL}`
-                         : plataforma === 'otros' ? ` AND ${OTROS_SQL}`
+  // Simple array checks against the stored `platforms` column (GIN index)
+  const plataformaFilter = plataforma === 'zeus'  ? ` AND ${ZEUS_FILTER}`
+                         : plataforma === 'bet30' ? ` AND ${BET30_FILTER}`
+                         : plataforma === 'otros' ? ` AND (${OTROS_FILTER})`
                          : ''
 
   // Sin movimiento: last_deposit_at nulo o anterior a hace 12 meses
@@ -142,7 +145,8 @@ export async function GET(req: NextRequest) {
              (SELECT REPLACE(tag, 'casino:antiguedad:', '')
               FROM contact_tags
               WHERE contact_id = contacts.id AND tag LIKE 'casino:antiguedad:%'
-              LIMIT 1) AS antiguedad
+              LIMIT 1) AS antiguedad,
+             platforms
       FROM contacts
       WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
         AND ($4 = '' OR segment::text = $4)

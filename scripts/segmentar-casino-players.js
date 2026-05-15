@@ -64,7 +64,7 @@ const pool = new Pool({
   idleTimeoutMillis:       60_000,
 })
 
-const AGENTES = ['bigwin','ofizeus','betcoin','royal','farabet']
+const AGENTES = ['bigwin','ofizeus','betcoin','royal','farabet','zeus','zeusroyal','btcuno','btcdos']
 
 // Umbrales de PROMEDIO MENSUAL sobre meses con actividad real (en pesos)
 const THRESHOLD_MEDIO = 250_000   // bajo  → < $250k/mes activo

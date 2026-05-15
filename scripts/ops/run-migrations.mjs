@@ -154,6 +154,9 @@ const MIGRATIONS = [
   { file: 'db/migrations/070_encrypt_tokens.sql',                   label: '070 — encrypt_tokens helpers' },
   { file: 'db/migrations/071_anti_ban_profiles.sql',                label: '071 — anti_ban_profiles table + warmup_numbers.anti_ban_profile_id' },
   { file: 'db/migrations/072_campaigns_anti_ban.sql',               label: '072 — anti-ban fields en campaigns' },
+  { file: 'db/migrations/073_line_ownership.sql',                   label: '073 — line_ownership table' },
+  { file: 'db/migrations/074_add_indexes_casino_performance.sql',   label: '074 — índices de performance casino' },
+  { file: 'db/migrations/075_contacts_platforms.sql',               label: '075 — contacts.platforms column + trigger + GIN index' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
