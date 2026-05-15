@@ -4,7 +4,7 @@ import { query } from '@/lib/db'
 import { parseInstancesResponse } from '@/lib/evolution-utils'
 
 const EVO_URL     = process.env.EVOLUTION_URL!
-const INSTANCE_RE = /^[a-zA-Z0-9_-]{1,64}$/
+const INSTANCE_RE = /^[a-zA-Z0-9_\-. ]{1,64}$/
 
 /**
  * GET /api/lines/qr/status?instance=xxx
