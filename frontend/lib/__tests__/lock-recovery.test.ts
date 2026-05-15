@@ -60,6 +60,7 @@ function makeUser(overrides: Partial<SessionUser> = {}): SessionUser {
     session_version: 1,
     can_download_contacts: true,
     allowed_agents: [],
+    is_super_admin: false,
     iat: 0,
     exp: 9999999999,
     nonce: 'test',

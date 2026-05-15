@@ -23,6 +23,7 @@ export function makeSession(override: Partial<SessionUser> = {}): SessionUser {
     session_version:       1,
     can_download_contacts: true,
     allowed_agents:        [],
+    is_super_admin:        false,
     iat:                   now,
     exp:                   now + 3600,
     nonce:                 'test-nonce',
