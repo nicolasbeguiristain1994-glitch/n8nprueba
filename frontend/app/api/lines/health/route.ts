@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser } from '@/lib/permissions'
 import { lineEligibleExpr } from '@/lib/line-eligibility'
+import { getAccessibleLineIds, lineVisibilityClause } from '@/lib/line-visibility'
 
 type LineHealthRow = {
   id:                 string
@@ -41,10 +42,13 @@ type LineHealthRow = {
 // Access: lines:read
 
 export async function GET(req: Request) {
-  const err = await checkPermission(req, 'lines', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'lines', 'read')
+  if (!auth.ok) return auth.response
 
   try {
+    const ids = await getAccessibleLineIds(auth.user)
+    const { clause, params: visParams } = lineVisibilityClause(ids, 'l', 1)
+
     const lines = await query<LineHealthRow>(`
       SELECT
         l.id,
@@ -81,8 +85,9 @@ export async function GET(req: Request) {
         WHERE line_id    = l.id
           AND created_at > NOW() - INTERVAL '24 hours'
       ) lu ON true
+      WHERE 1=1 ${clause}
       ORDER BY l.priority ASC, l.line_key ASC
-    `)
+    `, visParams)
 
     const eligible_count = lines.filter(l => l.eligible).length
 

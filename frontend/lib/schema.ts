@@ -282,6 +282,18 @@ export const DeleteLineSchema = z.object({
 })
 export type DeleteLineInput = z.infer<typeof DeleteLineSchema>
 
+export const GrantLineSchema = z.object({
+  line_id:    z.string().uuid('line_id debe ser un UUID válido'),
+  granted_to: z.string().uuid('granted_to debe ser un UUID válido'),
+})
+export type GrantLineInput = z.infer<typeof GrantLineSchema>
+
+export const RevokeGrantSchema = z.object({
+  line_id:    z.string().uuid('line_id debe ser un UUID válido'),
+  granted_to: z.string().uuid('granted_to debe ser un UUID válido'),
+})
+export type RevokeGrantInput = z.infer<typeof RevokeGrantSchema>
+
 // ── Cloud sync schemas ────────────────────────────────────────────────────────
 
 const SMB_SYNC_TYPES = ['smb_app_state_sync', 'history'] as const

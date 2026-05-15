@@ -1,28 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query, withTransaction } from '@/lib/db'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { parseBody, handleValidationError, PatchLineSchema, CreateLineSchema, DeleteLineSchema } from '@/lib/schema'
 import { lineEligibleExpr } from '@/lib/line-eligibility'
+import { getAccessibleLineIds, lineVisibilityClause } from '@/lib/line-visibility'
 
 export async function GET(req: NextRequest) {
-  const err = await checkPermission(req, 'lines', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'lines', 'read')
+  if (!auth.ok) return auth.response
 
   try {
     // Resetea contadores vencidos antes de devolver los datos
     await query(`SELECT reset_line_counters_if_due()`).catch(() => {})
+
+    const ids = await getAccessibleLineIds(auth.user)
+    const { clause, params } = lineVisibilityClause(ids, '', 1)
 
     const lines = await query(`
       SELECT id, line_key, display_name, phone_number, evolution_instance,
              status, is_connected, sending_enabled,
              msgs_sent_today, msgs_sent_hour,
              msg_per_day, msg_per_hour, total_sent, total_failed,
-             priority, last_seen_at,
+             priority, last_seen_at, owner_user_id,
              ${lineEligibleExpr()} AS eligible
       FROM whatsapp_lines
+      WHERE 1=1 ${clause}
       ORDER BY priority ASC, evolution_instance ASC
-    `)
+    `, params)
     return NextResponse.json({ lines })
   } catch (e) {
     console.error('[/api/lines GET]', e instanceof Error ? e.message : e)
@@ -31,16 +36,40 @@ export async function GET(req: NextRequest) {
 }
 
 // PATCH /api/lines — update a line's fields
-// Body: { id: string; sending_enabled?: boolean; display_name?: string; msg_per_day?: number; msg_per_hour?: number; priority?: number }
+// Body: { id, sending_enabled?, display_name?, msg_per_day?, msg_per_hour?, priority? }
+// Authorization: user must be able to access the line (accessible via ownership or grant).
+//   sending_enabled is admin-only (kill switch that affects all campaigns on that line).
 export async function PATCH(req: NextRequest) {
-  const err = await checkPermission(req, 'lines', 'update')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'lines', 'update')
+  if (!auth.ok) return auth.response
 
   const rawBody = await req.json().catch(() => null)
   const parsed  = parseBody(PatchLineSchema, rawBody)
   if (!parsed.ok) return handleValidationError(req, parsed.error, 'lines')
 
   const { id, sending_enabled, display_name, msg_per_day, msg_per_hour, priority } = parsed.data
+  const session = auth.user
+  const isAdmin = session.role === 'admin' || session.is_super_admin
+
+  // Operators can only modify their own lines (not shared/granted lines)
+  if (!isAdmin) {
+    const [line] = await query<{ owner_user_id: string | null }>(
+      'SELECT owner_user_id FROM whatsapp_lines WHERE id = $1',
+      [id],
+    )
+    if (!line) return NextResponse.json({ error: 'Line not found' }, { status: 404 })
+    if (line.owner_user_id !== session.user_id)
+      return NextResponse.json({ error: 'Forbidden: solo podés editar tus propias líneas' }, { status: 403 })
+  } else {
+    // Admin: must be an accessible line
+    const ids = await getAccessibleLineIds(session)
+    if (ids !== null && !ids.includes(id))
+      return NextResponse.json({ error: 'Line not found or not accessible' }, { status: 404 })
+  }
+
+  // sending_enabled is a global kill switch — admin only
+  if (sending_enabled !== undefined && !isAdmin)
+    return NextResponse.json({ error: 'Forbidden: solo admins pueden cambiar sending_enabled' }, { status: 403 })
 
   const sets: string[] = ['updated_at = NOW()']
   const params: unknown[] = []
@@ -75,34 +104,42 @@ export async function PATCH(req: NextRequest) {
 
 // POST /api/lines — crear una línea de producción directamente desde una instancia Evolution existente
 // Body: { evolution_instance, display_name?, phone_number? }
+// Sets owner_user_id = session.user_id (all roles can create lines; they own what they create).
 export async function POST(req: NextRequest) {
-  const err = await checkPermission(req, 'lines', 'manage')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'lines', 'manage')
+  if (!auth.ok) return auth.response
 
   const rawBody = await req.json().catch(() => null)
   const parsedPost = parseBody(CreateLineSchema, rawBody)
   if (!parsedPost.ok) return handleValidationError(req, parsedPost.error, 'lines')
 
   const { evolution_instance, display_name, phone_number } = parsedPost.data
+  const session = auth.user
 
-  const line_key    = evolution_instance.toLowerCase().replace(/[^a-z0-9-]/g, '-')
-  const evo_url     = process.env.EVOLUTION_URL ?? 'http://evolution-api:8080'
+  const line_key = evolution_instance.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+  const evo_url  = process.env.EVOLUTION_URL ?? 'http://evolution-api:8080'
+
+  // owner_user_id is always the creating user. Bootstrap sessions (user_id='bootstrap')
+  // are treated as super_admin — their lines remain ownerless (NULL) for system visibility.
+  const ownerUserId = session.user_id === 'bootstrap' ? null : session.user_id
 
   try {
     const inserted = await query<{ id: string }>(
       `INSERT INTO whatsapp_lines
-         (line_key, display_name, phone_number, evolution_instance, evolution_url, status, is_connected)
-       VALUES ($1, $2, $3, $4, $5, 'active', true)
+         (line_key, display_name, phone_number, evolution_instance, evolution_url,
+          status, is_connected, owner_user_id)
+       VALUES ($1, $2, $3, $4, $5, 'active', true, $6)
        ON CONFLICT (evolution_instance) DO NOTHING
        RETURNING id`,
-      [line_key, display_name || evolution_instance, phone_number || null, evolution_instance, evo_url]
+      [line_key, display_name || evolution_instance, phone_number || null,
+       evolution_instance, evo_url, ownerUserId]
     )
 
     if (!inserted.length)
       return NextResponse.json({ error: 'Esta instancia ya existe como línea' }, { status: 409 })
 
     void audit({ req, action: 'create', resource: 'lines', resource_id: inserted[0].id,
-      metadata: { evolution_instance, display_name } })
+      metadata: { evolution_instance, display_name, owner_user_id: ownerUserId } })
 
     return NextResponse.json({ ok: true, id: inserted[0].id })
   } catch (e) {
@@ -112,17 +149,27 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// DELETE /api/lines — eliminar una línea de la DB y su instancia de Evolution
-// Body: { id: string }
+// DELETE /api/lines — eliminar una línea de la DB y desconectar su instancia de Evolution
+// Body: { id }
+// Authorization: admin-only (manage permission). Admin must own or manage the line.
 export async function DELETE(req: NextRequest) {
-  const err = await checkPermission(req, 'lines', 'manage')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'lines', 'manage')
+  if (!auth.ok) return auth.response
 
   const rawBody = await req.json().catch(() => null)
   const parsedDel = parseBody(DeleteLineSchema, rawBody)
   if (!parsedDel.ok) return handleValidationError(req, parsedDel.error, 'lines')
 
   const { id } = parsedDel.data
+  const session = auth.user
+
+  // Verify the admin has access to this specific line before deleting it.
+  // super_admin bypasses this check (can delete any line).
+  if (!session.is_super_admin) {
+    const accessibleIds = await getAccessibleLineIds(session)
+    if (accessibleIds !== null && !accessibleIds.includes(id))
+      return NextResponse.json({ error: 'Line not found or not accessible' }, { status: 404 })
+  }
 
   try {
     const { evolution_instance, display_name } = await withTransaction(async (client) => {
@@ -140,15 +187,10 @@ export async function DELETE(req: NextRequest) {
       return res.rows[0]
     })
 
-
     void audit({ req, action: 'delete', resource: 'lines', resource_id: id,
       metadata: { evolution_instance, display_name } })
 
-    // Best-effort: desconectar la sesión WhatsApp de la instancia al eliminar la línea.
-    // No hacemos DELETE /instance/delete porque el negocio puede querer
-    // reusar la instancia en Evolution. Solo hacemos logout para liberar
-    // la sesión activa de WhatsApp sin dejar el número vinculado a una línea
-    // que ya no existe en el sistema.
+    // Best-effort: log out the WhatsApp session without destroying the Evolution instance.
     const evoUrl = process.env.EVOLUTION_URL
     const evoKey = process.env.EVOLUTION_GLOBAL_API_KEY ?? process.env.EVOLUTION_API_KEY
     if (evoUrl && evoKey && evolution_instance) {

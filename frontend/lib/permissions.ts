@@ -110,6 +110,7 @@ type FreshUserRow = {
   session_version: number
   can_download_contacts: boolean
   allowed_agents: string[]
+  is_super_admin: boolean
 }
 
 /**
@@ -160,7 +161,7 @@ export async function checkPermissionWithUser(
 
   // Fetch fresh state from DB — one query per API request
   const rows = await query<FreshUserRow>(
-    'SELECT role, sectors, is_active, session_version, can_download_contacts, allowed_agents FROM users WHERE id = $1',
+    'SELECT role, sectors, is_active, session_version, can_download_contacts, allowed_agents, is_super_admin FROM users WHERE id = $1',
     [session.user_id],
   )
   const dbUser = rows[0]
@@ -181,6 +182,7 @@ export async function checkPermissionWithUser(
     sectors:               Array.isArray(dbUser.sectors) ? dbUser.sectors : [],
     can_download_contacts: dbUser.can_download_contacts,
     allowed_agents:        Array.isArray(dbUser.allowed_agents) ? dbUser.allowed_agents : [],
+    is_super_admin:        dbUser.is_super_admin ?? false,
   }
 
   if (!canAccess(freshUser, resource, action)) {

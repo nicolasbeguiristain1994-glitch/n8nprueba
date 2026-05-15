@@ -12,6 +12,7 @@ export type SessionUser = {
   session_version: number
   can_download_contacts: boolean
   allowed_agents: string[]
+  is_super_admin: boolean
   iat: number
   exp: number
   nonce: string
@@ -77,6 +78,11 @@ export function verifySessionToken(token: string): SessionUser | null {
     // Check expiry
     if (typeof payload.exp !== 'number') return null
     if (Math.floor(Date.now() / 1000) > payload.exp) return null
+
+    // Backward compat: sessions created before migration 073 won't have is_super_admin
+    if (typeof payload.is_super_admin !== 'boolean') {
+      payload.is_super_admin = false
+    }
 
     return payload
   } catch {

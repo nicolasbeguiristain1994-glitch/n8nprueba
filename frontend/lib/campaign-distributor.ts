@@ -36,6 +36,7 @@
  */
 
 import { query } from '@/lib/db'
+import { distributorVisibilityClause } from '@/lib/line-visibility'
 import { humanLikeDelay, buildDelayConfig } from '@/lib/anti-ban-delays'
 import { clog, isAlertablePauseReason } from '@/lib/campaign-logger'
 import {
@@ -186,7 +187,11 @@ function isNetworkError(err: unknown): boolean {
  * NOTE: Counter reset is handled externally by reset_line_counters_if_due()
  * (called from WF-013). This function reads current counter values only.
  */
-export async function getEligibleLines(): Promise<EligibleLine[]> {
+export async function getEligibleLines(operatorId?: string | null): Promise<EligibleLine[]> {
+  const { clause, params } = distributorVisibilityClause(operatorId, 1)
+  // When operatorId is provided the visibility filter is injected via SQL function
+  // (no pre-fetch of IDs — avoids N+1 in the hot send loop).
+  // When operatorId is null/undefined the global pool is used (system/background jobs).
   return query<EligibleLine>(`
     SELECT
       id, evolution_instance, evolution_url,
@@ -197,12 +202,12 @@ export async function getEligibleLines(): Promise<EligibleLine[]> {
       (msg_per_day   - msgs_sent_today) AS remaining_day,
       (personality_config IS NOT NULL)  AS has_personality
     FROM whatsapp_lines
-    WHERE  ${lineEligibleExpr()}
+    WHERE  ${lineEligibleExpr()} ${clause}
     ORDER BY
       (msg_per_day - msgs_sent_today) DESC,  -- most remaining capacity first
       priority ASC,                           -- lower number = higher priority
       last_seen_at ASC NULLS LAST             -- oldest activity as tie-break
-  `)
+  `, params)
 }
 
 // ── selectLine ─────────────────────────────────────────────────────────────────
@@ -285,7 +290,7 @@ export async function createDispatchUnits(
 
 // ── getDispatchSummary ─────────────────────────────────────────────────────────
 
-export async function getDispatchSummary(campaignId: string): Promise<DispatchSummary> {
+export async function getDispatchSummary(campaignId: string, operatorId?: string | null): Promise<DispatchSummary> {
   const [counts] = await query<{
     total: string; queued: string; processing: string
     sent: string;  failed: string; skipped: string
@@ -302,7 +307,7 @@ export async function getDispatchSummary(campaignId: string): Promise<DispatchSu
     [campaignId]
   )
 
-  const eligibleLines = await getEligibleLines()
+  const eligibleLines = await getEligibleLines(operatorId)
 
   const lineUsage = await query<LineUsageSummary>(
     `SELECT
@@ -957,7 +962,7 @@ export async function processMultiLineInBackground(
 
     // ── Hydratar personalidades desde DB (evita reset a 'normal' en cada restart) ──
     try {
-      const linesToHydrate = await getEligibleLines()
+      const linesToHydrate = await getEligibleLines(campaign.owned_by)
       if (linesToHydrate.length > 0) {
         const personalityRows = await query<{ id: string; personality_config: unknown }>(
           `SELECT id, personality_config FROM whatsapp_lines WHERE id = ANY($1::uuid[])`,
@@ -1035,7 +1040,7 @@ export async function processMultiLineInBackground(
       // Con TTL 10s: ~1 query cada 10 mensajes en campañas de ritmo normal.
       const nowMs = Date.now()
       if (cachedEligibleLines.length === 0 || nowMs - eligibleLinesFetchedAt > ELIGIBLE_TTL_MS) {
-        cachedEligibleLines = await getEligibleLines()
+        cachedEligibleLines = await getEligibleLines(campaign.owned_by)
         eligibleLinesFetchedAt = nowMs
       }
       const eligibleLines = cachedEligibleLines

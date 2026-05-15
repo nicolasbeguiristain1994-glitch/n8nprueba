@@ -30,6 +30,7 @@ type UserRow = {
   session_version: number
   can_download_contacts: boolean
   allowed_agents: string[]
+  is_super_admin: boolean
 }
 
 export async function POST(req: NextRequest) {
@@ -84,7 +85,7 @@ export async function POST(req: NextRequest) {
     if (userCount > 0) {
       // Step 2 — fetch user
       const userResult = await dbClient.query<UserRow>(
-        'SELECT id, email, name, role, sectors, password_hash, is_active, session_version, can_download_contacts, allowed_agents FROM users WHERE LOWER(email) = $1',
+        'SELECT id, email, name, role, sectors, password_hash, is_active, session_version, can_download_contacts, allowed_agents, is_super_admin FROM users WHERE LOWER(email) = $1',
         [email]
       )
       userRow = userResult.rows[0]
@@ -169,6 +170,7 @@ export async function POST(req: NextRequest) {
       session_version:       1,
       can_download_contacts: true,
       allowed_agents:        [],
+      is_super_admin:        true,
       iat:                   now,
       exp:                   now + COOKIE_MAX_AGE,
       nonce:                 crypto.randomUUID(),
@@ -214,6 +216,7 @@ export async function POST(req: NextRequest) {
     session_version:       user.session_version,
     can_download_contacts: user.can_download_contacts ?? true,
     allowed_agents:        Array.isArray(user.allowed_agents) ? user.allowed_agents : [],
+    is_super_admin:        user.is_super_admin ?? false,
     iat:                   now,
     exp:                   now + COOKIE_MAX_AGE,
     nonce:                 crypto.randomUUID(),

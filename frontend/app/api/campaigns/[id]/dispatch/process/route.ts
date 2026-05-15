@@ -70,7 +70,7 @@ export async function POST(
   ).catch(() => [{ count: '0' }])
 
   if (Number(unitCount?.count || 0) === 0) {
-    const summary = await getDispatchSummary(id).catch(() => null)
+    const summary = await getDispatchSummary(id, campaign.owned_by).catch(() => null)
     return NextResponse.json({
       started: false,
       reason:  'no_pending_units',

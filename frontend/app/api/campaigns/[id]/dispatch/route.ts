@@ -42,7 +42,7 @@ export async function GET(
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    const summary = await getDispatchSummary(id)
+    const summary = await getDispatchSummary(id, campaign.owned_by)
     return NextResponse.json({ campaign_id: id, status: campaign.status, ...summary })
   } catch (e) {
     console.error('[GET /api/campaigns/[id]/dispatch]', e instanceof Error ? e.message : e)
