@@ -157,6 +157,9 @@ const MIGRATIONS = [
   { file: 'db/migrations/073_line_ownership.sql',                   label: '073 — line_ownership table' },
   { file: 'db/migrations/074_add_indexes_casino_performance.sql',   label: '074 — índices de performance casino' },
   { file: 'db/migrations/075_contacts_platforms.sql',               label: '075 — contacts.platforms column + trigger + GIN index' },
+  { file: 'db/migrations/076_contacts_platforms_bet30_regex_only.sql', label: '076 — Fix bet30 detection: regex-only (no casino_players lookup)' },
+  { file: 'db/migrations/077_contacts_platforms_zeus_fix.sql',          label: '077 — Fix Zeus detection: add ze suffix + casino_players token match' },
+  { file: 'db/migrations/078_campaigns_total_skipped.sql',              label: '078 — campaigns.total_skipped column' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
