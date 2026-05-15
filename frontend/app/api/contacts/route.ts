@@ -11,12 +11,8 @@ const ANTIGUEDAD_ALLOWED = new Set(['nuevo', 'reciente', 'establecido', 'veteran
 const PLATAFORMA_ALLOWED = new Set(['zeus', 'bet30', 'otros'])
 
 // Mapeo de nombres de agente en la UI → nombre real en la columna `panel` de la DB.
-// Los contactos se importan con el nombre interno de la plataforma (btcuno, btcdos, etc.)
-// pero la UI los muestra con el nombre del agente (betcoin, farabet, etc.).
-const PANEL_ALIAS_MAP: Record<string, string> = {
-  betcoin:  'btcuno',
-  farabet:  'btcdos',
-}
+// Si los contactos se importan con un nombre interno distinto al nombre de la UI, agregar aquí.
+const PANEL_ALIAS_MAP: Record<string, string> = {}
 
 // Platform filters use the persisted `platforms` column (maintained by
 // trg_contact_platforms trigger in migration 075). GIN-indexed for fast lookups.

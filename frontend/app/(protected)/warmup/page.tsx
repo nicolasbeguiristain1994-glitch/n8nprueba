@@ -144,6 +144,39 @@ export default function WarmupPage() {
   const [planData,    setPlanData]    = useState<{ plan: Omit<OrchestrationResult, 'lines'> & { lines: EnrichedPlanLine[] }; generatedAt: string } | null>(null)
   const [planLoading, setPlanLoading] = useState(false)
 
+  // Warmup contacts
+  const [wContacts,         setWContacts]         = useState<{ id: string; phone_number: string; is_active: boolean; message_count: number }[]>([])
+  const [showContacts,      setShowContacts]      = useState(false)
+  const [contactsInput,     setContactsInput]     = useState('')
+  const [contactsSaving,    setContactsSaving]    = useState(false)
+  const [contactsError,     setContactsError]     = useState('')
+  const [contactsLoaded,    setContactsLoaded]    = useState(false)
+
+  const loadContacts = useCallback(async () => {
+    const d = await fetchJson<{ contacts: typeof wContacts }>('/api/warmup/contacts').catch(() => ({ contacts: [] }))
+    setWContacts(d.contacts || [])
+    setContactsLoaded(true)
+  }, [])
+
+  const addContacts = async () => {
+    setContactsError('')
+    const nums = contactsInput.split(/[\n,;]+/).map(s => s.trim()).filter(Boolean)
+    if (nums.length === 0) return
+    setContactsSaving(true)
+    const r = await fetchJson<{ ok: boolean; added: number; error?: string }>(
+      '/api/warmup/contacts', { method: 'POST', body: JSON.stringify({ phone_numbers: nums }) }
+    ).catch(e => ({ ok: false, added: 0, error: e.message }))
+    setContactsSaving(false)
+    if (!r.ok) { setContactsError(r.error || 'Error al guardar'); return }
+    setContactsInput('')
+    loadContacts()
+  }
+
+  const deleteContact = async (id: string) => {
+    await fetchJson(`/api/warmup/contacts/${id}`, { method: 'DELETE' }).catch(() => null)
+    setWContacts(prev => prev.filter(c => c.id !== id))
+  }
+
   // ── Phase 3: bulk selection ────────────────────────────────────────────────
   const [selected,             setSelected]             = useState<Set<string>>(new Set())
   const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(new Set())
@@ -1104,6 +1137,85 @@ export default function WarmupPage() {
           </table>
         </CardContent>
       </Card>
+
+      {/* ── Contactos de warmup ── */}
+      <div className="mt-4">
+        <button
+          className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 font-medium"
+          onClick={() => { setShowContacts(v => !v); if (!contactsLoaded) loadContacts() }}
+        >
+          <span className={`transition-transform ${showContacts ? 'rotate-180' : ''}`}><ChevronDown size={14} /></span>
+          Contactos de calentamiento
+          {wContacts.length > 0
+            ? <span className="ml-1 text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">{wContacts.length}</span>
+            : <span className="ml-1 text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">0 — requerido para enviar</span>
+          }
+        </button>
+
+        {showContacts && (
+          <Card className="mt-2">
+            <CardContent className="p-4 space-y-3">
+              <p className="text-xs text-gray-500">
+                Son los números que <em>reciben</em> los mensajes de prueba. Usá números propios o de confianza (formato E.164, ej: +5491112345678).
+              </p>
+
+              {/* Add form */}
+              <div className="flex gap-2">
+                <textarea
+                  className="flex-1 text-xs border border-gray-200 rounded-md p-2 resize-none h-16 focus:outline-none focus:ring-1 focus:ring-orange-400"
+                  placeholder={"+5491112345678\n+5491187654321\n(uno por línea o separados por coma)"}
+                  value={contactsInput}
+                  onChange={e => setContactsInput(e.target.value)}
+                />
+                <Button
+                  size="sm"
+                  className="bg-orange-500 hover:bg-orange-600 self-start"
+                  disabled={contactsSaving || !contactsInput.trim()}
+                  onClick={addContacts}
+                >
+                  {contactsSaving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                  <span className="ml-1">Agregar</span>
+                </Button>
+              </div>
+              {contactsError && <p className="text-xs text-red-600">{contactsError}</p>}
+
+              {/* List */}
+              {wContacts.length > 0 && (
+                <div className="border border-gray-100 rounded-md overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-100">
+                        <th className="text-left px-3 py-2 font-medium text-gray-500">Número</th>
+                        <th className="text-right px-3 py-2 font-medium text-gray-500">Usos</th>
+                        <th className="w-8 px-2" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {wContacts.map(c => (
+                        <tr key={c.id} className="border-b border-gray-50 last:border-0">
+                          <td className="px-3 py-1.5 font-mono text-gray-700">{c.phone_number}</td>
+                          <td className="px-3 py-1.5 text-right text-gray-400">{c.message_count}</td>
+                          <td className="px-2 py-1.5 text-right">
+                            <button onClick={() => deleteContact(c.id)} className="text-gray-300 hover:text-red-500 transition-colors">
+                              <Trash2 size={12} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {wContacts.length === 0 && contactsLoaded && (
+                <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                  Sin contactos de calentamiento → el procesador no puede enviar mensajes. Agregá al menos un número arriba.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+      </div>
 
       {/* ── Modal agregar ── */}
       <Dialog open={showAdd} onOpenChange={open => { if (!open) closeAdd() }}>
