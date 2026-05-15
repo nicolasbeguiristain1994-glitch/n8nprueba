@@ -34,7 +34,7 @@ export async function getAccessibleLineIds(
   if (user.is_super_admin) return null
 
   const rows = await query<{ id: string }>(
-    `SELECT id FROM get_accessible_line_ids($1)`,
+    `SELECT id FROM get_accessible_line_ids($1) AS t(id)`,
     [user.user_id],
   )
   return rows.map(r => r.id)
