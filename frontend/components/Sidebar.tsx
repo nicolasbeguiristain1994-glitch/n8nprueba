@@ -1,13 +1,14 @@
 'use client'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Users, Megaphone, MessageSquare, Activity, Flame, LogOut, UserCog, Settings, FileText, BarChart2, ShieldOff, Bot, ClipboardList } from 'lucide-react'
+import { LayoutDashboard, Users, Megaphone, MessageSquare, Activity, Flame, LogOut, UserCog, Settings, FileText, BarChart2, ShieldOff, Bot, ClipboardList, TrendingUp } from 'lucide-react'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
 const BASE_NAV = [
   { href: '/',               label: 'Dashboard',      icon: LayoutDashboard, sector: 'dashboard' },
   { href: '/contacts',       label: 'Contactos',       icon: Users,           sector: 'contacts' },
   { href: '/campaigns',      label: 'Campañas',        icon: Megaphone,       sector: 'campaigns' },
+  { href: '/prioridades',    label: 'Prioridades',     icon: TrendingUp,      sector: 'contacts' },
   { href: '/conversations',  label: 'Conversaciones',  icon: MessageSquare,   sector: 'conversations' },
   { href: '/lines',          label: 'Líneas',          icon: Activity,        sector: 'lines' },
   { href: '/warmup',         label: 'Calentamiento',   icon: Flame,           sector: 'warmup' },
