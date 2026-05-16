@@ -124,7 +124,7 @@ export default function PrioridadesPage() {
     setLoading(true)
     try {
       const params = new URLSearchParams({ page: String(p), pageSize: String(PAGE_SIZE) })
-      params.set('broadcasted', t === 'broadcasted' ? 'true' : 'false')
+      if (t === 'broadcasted') params.set('broadcasted', 'true')
       if (seg !== 'todos') params.set('reactivationSegment', seg)
       if (tr  !== 'todos') params.set('valueTier', tr)
       if (ag  !== 'todos') params.set('agent', ag)
