@@ -34,7 +34,7 @@ interface PrioritizedDbRow {
   last_name:               string | null
   segment:                 string | null
   platforms:               string[]
-  agente:                  string | null
+  panel:                   string | null
   last_deposit_at:         Date | null
   total_deposit_amount:    string | null
   priority_score:          string
@@ -260,7 +260,7 @@ export class UserPrioritizationRepository {
       params.push(filters.platform)
     }
     if (filters.agent) {
-      conditions.push(`cp.agente = $${p++}`)
+      conditions.push(`c.panel = $${p++}`)
       params.push(filters.agent)
     }
     if (filters.minDaysInactive !== undefined) {
@@ -282,7 +282,6 @@ export class UserPrioritizationRepository {
       `SELECT COUNT(*) AS total
        FROM contact_priority_scores cps
        JOIN contacts c ON c.id = cps.contact_id
-       LEFT JOIN casino_players cp ON cp.username_lower = LOWER(c.first_name)
        ${where}`,
       params,
     )
@@ -296,7 +295,7 @@ export class UserPrioritizationRepository {
         c.last_name,
         c.segment,
         c.platforms,
-        cp.agente,
+        c.panel,
         c.last_deposit_at,
         cps.is_broadcasted,
         cps.broadcasted_at,
@@ -311,7 +310,6 @@ export class UserPrioritizationRepository {
         )::int AS days_since_last_message
       FROM contact_priority_scores cps
       JOIN contacts c ON c.id = cps.contact_id
-      LEFT JOIN casino_players cp ON cp.username_lower = LOWER(c.first_name)
       LEFT JOIN LATERAL (
         SELECT sent_at AS last_sent
         FROM contact_send_history
@@ -516,7 +514,7 @@ function mapPrioritized(row: PrioritizedDbRow): PrioritizedContact {
     lastName:            row.last_name,
     segment:             row.segment,
     platforms:           row.platforms ?? [],
-    agent:               row.agente ?? null,
+    agent:               row.panel ?? null,
     lastDepositAt:       row.last_deposit_at ? new Date(row.last_deposit_at) : null,
     totalDepositAmount:  row.total_deposit_amount ? parseFloat(row.total_deposit_amount) : null,
     priorityScore:       parseFloat(row.priority_score),
