@@ -23,6 +23,8 @@ const FilterSchema = z.object({
   reactivationSegment:  z.enum(REACTIVATION_SEGMENTS).optional(),
   valueTier:            z.enum(['vip', 'alto', 'medio', 'bajo']).optional(),
   platform:             z.string().max(50).optional(),
+  agent:                z.string().max(50).optional(),
+  broadcasted:          z.coerce.boolean().default(false),
   minDaysInactive:      z.coerce.number().int().min(0).optional(),
   maxDaysInactive:      z.coerce.number().int().min(0).optional(),
   // true → muestra todos los runs (útil para debugging de corridas fallidas)
@@ -46,6 +48,8 @@ export async function GET(req: NextRequest) {
     reactivationSegment: parsed.data.reactivationSegment as ReactivationSegment | undefined,
     valueTier:           parsed.data.valueTier as ValueTier | undefined,
     platform:            parsed.data.platform,
+    agent:               parsed.data.agent,
+    broadcasted:         parsed.data.broadcasted,
     minDaysInactive:     parsed.data.minDaysInactive,
     maxDaysInactive:     parsed.data.maxDaysInactive,
     includePreviousRuns: parsed.data.includePreviousRuns,

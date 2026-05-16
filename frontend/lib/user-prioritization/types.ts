@@ -65,6 +65,7 @@ export interface PrioritizedContact {
   lastName:            string | null
   segment:             string | null
   platforms:           string[]
+  agent:               string | null
   lastDepositAt:       Date | null
   totalDepositAmount:  number | null
   priorityScore:       number
@@ -72,6 +73,9 @@ export interface PrioritizedContact {
   valueTier:           import('./config').ValueTier
   daysInactive:        number | null
   daysSinceLastMessage: number | null
+  isBroadcasted:       boolean
+  broadcastedAt:       Date | null
+  broadcastedBy:       string | null
 }
 
 // ── Filtros para la consulta de operadores ────────────────────────────────────
@@ -80,6 +84,8 @@ export interface PriorityFilters {
   reactivationSegment?: import('./config').ReactivationSegment
   valueTier?:           import('./config').ValueTier
   platform?:            string
+  agent?:               string
+  broadcasted?:         boolean
   minDaysInactive?:     number
   maxDaysInactive?:     number
   // Consistencia de corrida: por defecto solo muestra el último run completo.

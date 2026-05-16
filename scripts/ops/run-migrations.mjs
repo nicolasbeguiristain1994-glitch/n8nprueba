@@ -160,6 +160,15 @@ const MIGRATIONS = [
   { file: 'db/migrations/076_contacts_platforms_bet30_regex_only.sql', label: '076 — Fix bet30 detection: regex-only (no casino_players lookup)' },
   { file: 'db/migrations/077_contacts_platforms_zeus_fix.sql',          label: '077 — Fix Zeus detection: add ze suffix + casino_players token match' },
   { file: 'db/migrations/078_campaigns_total_skipped.sql',              label: '078 — campaigns.total_skipped column' },
+  { file: 'db/migrations/079_contact_priority_scores.sql',              label: '079 — contact_priority_scores table + indexes' },
+  { file: 'db/migrations/080_contacts_deposit_amounts.sql',             label: '080 — contacts.total_deposit_amount + last_deposit_amount' },
+  { file: 'db/migrations/082_system_jobs.sql',                          label: '082 — system_jobs locking table' },
+  { file: 'db/migrations/083_cps_add_fria_alto_valor_segment.sql',      label: '083 — reactivation_segment CHECK: add FRIA_ALTO_VALOR' },
+  { file: 'db/migrations/084_system_jobs_lock_token.sql',               label: '084 — system_jobs.lock_token column' },
+  { file: 'db/migrations/085_cps_operator_indexes.sql',                 label: '085 — CPS operator indexes (tier, days_inactive, platforms GIN)' },
+  { file: 'db/migrations/086_cps_run_id.sql',                           label: '086 — contact_priority_scores.run_id + system_jobs.last_complete_run_id' },
+  { file: 'db/migrations/087_recompute_runs.sql',                       label: '087 — recompute_runs history table' },
+  { file: 'db/migrations/088_cps_broadcasted.sql',                      label: '088 — contact_priority_scores.is_broadcasted + broadcasted_at' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

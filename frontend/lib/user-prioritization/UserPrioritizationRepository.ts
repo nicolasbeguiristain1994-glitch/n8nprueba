@@ -34,6 +34,7 @@ interface PrioritizedDbRow {
   last_name:               string | null
   segment:                 string | null
   platforms:               string[]
+  agente:                  string | null
   last_deposit_at:         Date | null
   total_deposit_amount:    string | null
   priority_score:          string
@@ -41,6 +42,9 @@ interface PrioritizedDbRow {
   value_tier:              string
   days_inactive:           string | null
   days_since_last_message: string | null
+  is_broadcasted:          boolean
+  broadcasted_at:          Date | null
+  broadcasted_by:          string | null
 }
 
 interface CountRow { total: string }
@@ -235,7 +239,11 @@ export class UserPrioritizationRepository {
     const pageSize = filters.pageSize ?? 50
     const offset   = (page - 1) * pageSize
 
-    const conditions: string[] = ['cps.is_eligible = true']
+    const broadcasted = filters.broadcasted ?? false
+    const conditions: string[] = [
+      'cps.is_eligible = true',
+      `cps.is_broadcasted = ${broadcasted}`,
+    ]
     const params: unknown[]    = []
     let   p = 1
 
@@ -250,6 +258,10 @@ export class UserPrioritizationRepository {
     if (filters.platform) {
       conditions.push(`$${p++} = ANY(c.platforms)`)
       params.push(filters.platform)
+    }
+    if (filters.agent) {
+      conditions.push(`cp.agente = $${p++}`)
+      params.push(filters.agent)
     }
     if (filters.minDaysInactive !== undefined) {
       conditions.push(`cps.days_inactive >= $${p++}`)
@@ -270,6 +282,7 @@ export class UserPrioritizationRepository {
       `SELECT COUNT(*) AS total
        FROM contact_priority_scores cps
        JOIN contacts c ON c.id = cps.contact_id
+       LEFT JOIN casino_players cp ON cp.username_lower = LOWER(c.first_name)
        ${where}`,
       params,
     )
@@ -283,7 +296,11 @@ export class UserPrioritizationRepository {
         c.last_name,
         c.segment,
         c.platforms,
+        cp.agente,
         c.last_deposit_at,
+        cps.is_broadcasted,
+        cps.broadcasted_at,
+        cps.broadcasted_by,
         c.total_deposit_amount,
         cps.priority_score,
         cps.reactivation_segment,
@@ -294,6 +311,7 @@ export class UserPrioritizationRepository {
         )::int AS days_since_last_message
       FROM contact_priority_scores cps
       JOIN contacts c ON c.id = cps.contact_id
+      LEFT JOIN casino_players cp ON cp.username_lower = LOWER(c.first_name)
       LEFT JOIN LATERAL (
         SELECT sent_at AS last_sent
         FROM contact_send_history
@@ -426,6 +444,28 @@ export class UserPrioritizationRepository {
    * Persiste el resultado de una corrida en la tabla de historial (append-only).
    * Se llama tanto en éxito como en fallo/revocación para tener trazabilidad completa.
    */
+  async markBroadcasted(contactId: string, userName: string): Promise<boolean> {
+    const rows = await query<{ contact_id: string }>(
+      `UPDATE contact_priority_scores
+       SET is_broadcasted = true, broadcasted_at = NOW(), broadcasted_by = $2
+       WHERE contact_id = $1 AND is_eligible = true
+       RETURNING contact_id`,
+      [contactId, userName],
+    )
+    return rows.length > 0
+  }
+
+  async unmarkBroadcasted(contactId: string): Promise<boolean> {
+    const rows = await query<{ contact_id: string }>(
+      `UPDATE contact_priority_scores
+       SET is_broadcasted = false, broadcasted_at = NULL, broadcasted_by = NULL
+       WHERE contact_id = $1
+       RETURNING contact_id`,
+      [contactId],
+    )
+    return rows.length > 0
+  }
+
   async insertRecomputeRun(run: RecomputeRunRecord): Promise<void> {
     const sql = `
       INSERT INTO recompute_runs (
@@ -476,6 +516,7 @@ function mapPrioritized(row: PrioritizedDbRow): PrioritizedContact {
     lastName:            row.last_name,
     segment:             row.segment,
     platforms:           row.platforms ?? [],
+    agent:               row.agente ?? null,
     lastDepositAt:       row.last_deposit_at ? new Date(row.last_deposit_at) : null,
     totalDepositAmount:  row.total_deposit_amount ? parseFloat(row.total_deposit_amount) : null,
     priorityScore:       parseFloat(row.priority_score),
@@ -485,5 +526,8 @@ function mapPrioritized(row: PrioritizedDbRow): PrioritizedContact {
     daysSinceLastMessage: row.days_since_last_message !== null && row.days_since_last_message !== undefined
       ? parseInt(String(row.days_since_last_message), 10)
       : null,
+    isBroadcasted:       row.is_broadcasted,
+    broadcastedAt:       row.broadcasted_at ? new Date(row.broadcasted_at) : null,
+    broadcastedBy:       row.broadcasted_by ?? null,
   }
 }

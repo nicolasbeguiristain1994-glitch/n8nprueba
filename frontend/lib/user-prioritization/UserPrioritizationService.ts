@@ -210,6 +210,14 @@ export class UserPrioritizationService {
     return this.repo.getPrioritizedContacts(filters)
   }
 
+  async markBroadcasted(contactId: string, userName: string): Promise<boolean> {
+    return this.repo.markBroadcasted(contactId, userName)
+  }
+
+  async unmarkBroadcasted(contactId: string): Promise<boolean> {
+    return this.repo.unmarkBroadcasted(contactId)
+  }
+
   // ── Lógica de scoring por contacto ───────────────────────────────────────────
 
   private scoreContact(

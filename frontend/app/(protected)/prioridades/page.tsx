@@ -1,6 +1,9 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
-import { TrendingUp, RefreshCw, ChevronLeft, ChevronRight, Filter, AlertCircle } from 'lucide-react'
+import {
+  TrendingUp, RefreshCw, ChevronLeft, ChevronRight,
+  Filter, AlertCircle, CheckCircle2, RotateCcw,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { fetchJson } from '@/lib/fetchJson'
@@ -15,6 +18,7 @@ interface PrioritizedContact {
   lastName:            string | null
   segment:             string | null
   platforms:           string[]
+  agent:               string | null
   lastDepositAt:       string | null
   totalDepositAmount:  number | null
   priorityScore:       number
@@ -22,6 +26,9 @@ interface PrioritizedContact {
   valueTier:           string
   daysInactive:        number | null
   daysSinceLastMessage: number | null
+  isBroadcasted:       boolean
+  broadcastedAt:       string | null
+  broadcastedBy:       string | null
 }
 
 interface PaginatedResult {
@@ -38,6 +45,8 @@ interface RecomputeResult {
   skipped:    number
   durationMs: number
 }
+
+type Tab = 'pending' | 'broadcasted'
 
 // ── Constantes de UI ──────────────────────────────────────────────────────────
 
@@ -65,10 +74,26 @@ const TIER_STYLE: Record<string, string> = {
 }
 
 const TIER_LABEL: Record<string, string> = {
-  vip: 'VIP', alto: 'Alto', medio: 'Medio', bajo: 'Bajo',
+  vip:   'Super Vip',
+  alto:  'Vip',
+  medio: 'Medio',
+  bajo:  'Bajo',
 }
 
+const AGENTS    = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
+const PLATFORMS = ['betcoin', 'bet30', 'zeus', 'royal', 'bigwin']
 const PAGE_SIZE = 50
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function contactName(c: PrioritizedContact) {
+  return [c.firstName, c.lastName].filter(Boolean).join(' ') || '—'
+}
+
+function formatDate(iso: string | null) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' })
+}
 
 // ── Componente ────────────────────────────────────────────────────────────────
 
@@ -76,20 +101,34 @@ export default function PrioridadesPage() {
   const { user } = useCurrentUser()
   const isAdmin  = user?.role === 'admin'
 
+  const [tab, setTab]                     = useState<Tab>('pending')
   const [result, setResult]               = useState<PaginatedResult | null>(null)
   const [loading, setLoading]             = useState(false)
   const [recomputing, setRecomputing]     = useState(false)
   const [recomputeMsg, setRecomputeMsg]   = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
+  const [pendingAction, setPendingAction] = useState<string | null>(null) // contactId en proceso
   const [page, setPage]                   = useState(1)
   const [segment, setSegment]             = useState('todos')
   const [tier, setTier]                   = useState('todos')
+  const [agent, setAgent]                 = useState('todos')
+  const [platform, setPlatform]           = useState('todos')
 
-  const load = useCallback(async (p = page, seg = segment, tr = tier) => {
+  const load = useCallback(async (
+    p   = page,
+    seg = segment,
+    tr  = tier,
+    ag  = agent,
+    plt = platform,
+    t   = tab,
+  ) => {
     setLoading(true)
     try {
       const params = new URLSearchParams({ page: String(p), pageSize: String(PAGE_SIZE) })
+      params.set('broadcasted', t === 'broadcasted' ? 'true' : 'false')
       if (seg !== 'todos') params.set('reactivationSegment', seg)
       if (tr  !== 'todos') params.set('valueTier', tr)
+      if (ag  !== 'todos') params.set('agent', ag)
+      if (plt !== 'todos') params.set('platform', plt)
       const data = await fetchJson<PaginatedResult>(`/api/contacts/prioritized?${params}`)
       setResult(data)
     } catch {
@@ -97,15 +136,23 @@ export default function PrioridadesPage() {
     } finally {
       setLoading(false)
     }
-  }, [page, segment, tier])
+  }, [page, segment, tier, agent, platform, tab])
 
   useEffect(() => { load() }, [load])
 
-  const handleFilter = (newSeg: string, newTier: string) => {
+  const switchTab = (t: Tab) => {
+    setTab(t)
+    setPage(1)
+    load(1, segment, tier, agent, platform, t)
+  }
+
+  const handleFilter = (newSeg: string, newTier: string, newAgent: string, newPlatform: string) => {
     setPage(1)
     setSegment(newSeg)
     setTier(newTier)
-    load(1, newSeg, newTier)
+    setAgent(newAgent)
+    setPlatform(newPlatform)
+    load(1, newSeg, newTier, newAgent, newPlatform, tab)
   }
 
   const handleRecompute = async () => {
@@ -113,18 +160,36 @@ export default function PrioridadesPage() {
     setRecomputeMsg(null)
     try {
       const res = await fetchJson<RecomputeResult>('/api/contacts/recompute-priorities', { method: 'POST' })
-      setRecomputeMsg({ type: 'ok', text: `Recompute completado: ${res.eligible} elegibles de ${res.processed} contactos (${(res.durationMs / 1000).toFixed(1)}s)` })
-      load(1, segment, tier)
+      setRecomputeMsg({
+        type: 'ok',
+        text: `Recompute completado: ${res.eligible} elegibles de ${res.processed} contactos (${(res.durationMs / 1000).toFixed(1)}s)`,
+      })
+      load(1, segment, tier, agent, platform, tab)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Error al recomputar'
-      setRecomputeMsg({ type: 'error', text: msg })
+      setRecomputeMsg({ type: 'error', text: err instanceof Error ? err.message : 'Error al recomputar' })
     } finally {
       setRecomputing(false)
     }
   }
 
-  const name = (c: PrioritizedContact) =>
-    [c.firstName, c.lastName].filter(Boolean).join(' ') || '—'
+  const toggleBroadcasted = async (contactId: string, markAs: boolean) => {
+    setPendingAction(contactId)
+    try {
+      await fetchJson(`/api/contacts/prioritized/${contactId}/broadcast`, {
+        method: 'PATCH',
+        body: JSON.stringify({ broadcasted: markAs }),
+      })
+      // Recarga la misma tab para reflejar el cambio
+      load(1, segment, tier, agent, platform, tab)
+      setPage(1)
+    } catch {
+      // no-op: el botón vuelve a su estado
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  const hasFilters = segment !== 'todos' || tier !== 'todos' || agent !== 'todos' || platform !== 'todos'
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
@@ -140,31 +205,21 @@ export default function PrioridadesPage() {
             </div>
             {result && (
               <span className="ml-2 text-sm text-gray-400 font-normal">
-                {result.total.toLocaleString()} elegibles
+                {result.total.toLocaleString()} {tab === 'pending' ? 'a difundir' : 'difundidos'}
               </span>
             )}
           </div>
-
           {isAdmin && (
-            <Button
-              onClick={handleRecompute}
-              disabled={recomputing}
-              size="sm"
-              variant="outline"
-              className="gap-2"
-            >
+            <Button onClick={handleRecompute} disabled={recomputing} size="sm" variant="outline" className="gap-2">
               <RefreshCw size={14} className={recomputing ? 'animate-spin' : ''} />
               {recomputing ? 'Calculando…' : 'Recomputar'}
             </Button>
           )}
         </div>
 
-        {/* Mensaje de recompute */}
         {recomputeMsg && (
           <div className={`mt-3 flex items-center gap-2 text-sm px-3 py-2 rounded-lg ${
-            recomputeMsg.type === 'ok'
-              ? 'bg-green-50 text-green-700'
-              : 'bg-red-50 text-red-700'
+            recomputeMsg.type === 'ok' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
           }`}>
             <AlertCircle size={14} />
             {recomputeMsg.text}
@@ -172,12 +227,32 @@ export default function PrioridadesPage() {
         )}
       </div>
 
+      {/* Tabs */}
+      <div className="bg-white border-b border-gray-200 px-6 flex gap-1">
+        {([
+          { key: 'pending',     label: 'A difundir' },
+          { key: 'broadcasted', label: 'Difundidos' },
+        ] as { key: Tab; label: string }[]).map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => switchTab(key)}
+            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+              tab === key
+                ? 'border-green-600 text-green-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* Filtros */}
-      <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-3">
+      <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-3 flex-wrap">
         <Filter size={14} className="text-gray-400 shrink-0" />
 
-        <Select value={segment} onValueChange={v => handleFilter(v ?? 'todos', tier)}>
-          <SelectTrigger className="w-48 h-8 text-sm">
+        <Select value={segment} onValueChange={v => handleFilter(v ?? 'todos', tier, agent, platform)}>
+          <SelectTrigger className="w-44 h-8 text-sm">
             <SelectValue placeholder="Segmento" />
           </SelectTrigger>
           <SelectContent>
@@ -190,22 +265,46 @@ export default function PrioridadesPage() {
           </SelectContent>
         </Select>
 
-        <Select value={tier} onValueChange={v => handleFilter(segment, v ?? 'todos')}>
-          <SelectTrigger className="w-36 h-8 text-sm">
-            <SelectValue placeholder="Tier" />
+        <Select value={tier} onValueChange={v => handleFilter(segment, v ?? 'todos', agent, platform)}>
+          <SelectTrigger className="w-32 h-8 text-sm">
+            <SelectValue placeholder="Nivel" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="todos">Todos los tiers</SelectItem>
-            <SelectItem value="vip">VIP</SelectItem>
-            <SelectItem value="alto">Alto</SelectItem>
+            <SelectItem value="todos">Todos los niveles</SelectItem>
+            <SelectItem value="vip">Super Vip</SelectItem>
+            <SelectItem value="alto">Vip</SelectItem>
             <SelectItem value="medio">Medio</SelectItem>
             <SelectItem value="bajo">Bajo</SelectItem>
           </SelectContent>
         </Select>
 
-        {(segment !== 'todos' || tier !== 'todos') && (
+        <Select value={agent} onValueChange={v => handleFilter(segment, tier, v ?? 'todos', platform)}>
+          <SelectTrigger className="w-36 h-8 text-sm">
+            <SelectValue placeholder="Agente" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todos los agentes</SelectItem>
+            {AGENTS.map(a => (
+              <SelectItem key={a} value={a}>{a}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Select value={platform} onValueChange={v => handleFilter(segment, tier, agent, v ?? 'todos')}>
+          <SelectTrigger className="w-36 h-8 text-sm">
+            <SelectValue placeholder="Plataforma" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos">Todas las plataformas</SelectItem>
+            {PLATFORMS.map(p => (
+              <SelectItem key={p} value={p}>{p}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        {hasFilters && (
           <button
-            onClick={() => handleFilter('todos', 'todos')}
+            onClick={() => handleFilter('todos', 'todos', 'todos', 'todos')}
             className="text-xs text-gray-400 hover:text-gray-600 underline"
           >
             Limpiar filtros
@@ -222,12 +321,23 @@ export default function PrioridadesPage() {
         ) : !result || result.data.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-48 text-center gap-3">
             <TrendingUp size={32} className="text-gray-300" />
-            <p className="text-gray-500 text-sm font-medium">No hay contactos elegibles</p>
-            <p className="text-gray-400 text-xs max-w-sm">
-              {isAdmin
-                ? 'Hacé clic en "Recomputar" para calcular las prioridades de reactivación.'
-                : 'Aún no hay contactos priorizados. Pedile a un administrador que ejecute el recompute.'}
-            </p>
+            {tab === 'pending' ? (
+              <>
+                <p className="text-gray-500 text-sm font-medium">No hay contactos a difundir</p>
+                <p className="text-gray-400 text-xs max-w-sm">
+                  {isAdmin
+                    ? 'Hacé clic en "Recomputar" para calcular las prioridades.'
+                    : 'Aún no hay contactos priorizados.'}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-gray-500 text-sm font-medium">Aún no hay contactos difundidos</p>
+                <p className="text-gray-400 text-xs max-w-sm">
+                  Marcá contactos como difundidos desde la pestaña "A difundir".
+                </p>
+              </>
+            )}
           </div>
         ) : (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -236,58 +346,56 @@ export default function PrioridadesPage() {
                 <tr className="border-b border-gray-100 bg-gray-50 text-xs text-gray-500 uppercase tracking-wide">
                   <th className="px-4 py-3 text-right w-16">Score</th>
                   <th className="px-4 py-3 text-left">Contacto</th>
+                  <th className="px-4 py-3 text-left w-24">Agente</th>
                   <th className="px-4 py-3 text-left">Segmento</th>
-                  <th className="px-4 py-3 text-left w-20">Tier</th>
+                  <th className="px-4 py-3 text-left w-24">Nivel</th>
                   <th className="px-4 py-3 text-right w-28">Días inactivo</th>
-                  <th className="px-4 py-3 text-right w-28">Último msg</th>
                   <th className="px-4 py-3 text-left">Plataformas</th>
+                  {tab === 'broadcasted' && (
+                    <th className="px-4 py-3 text-left w-32">Difundido</th>
+                  )}
+                  <th className="px-4 py-3 w-10" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {result.data.map(c => (
                   <tr key={c.id} className="hover:bg-gray-50 transition-colors">
-                    {/* Score */}
                     <td className="px-4 py-3 text-right">
                       <span className="font-semibold text-gray-900 tabular-nums">
                         {Math.round(c.priorityScore)}
                       </span>
                     </td>
 
-                    {/* Contacto */}
                     <td className="px-4 py-3">
-                      <div className="font-medium text-gray-900">{name(c)}</div>
+                      <div className="font-medium text-gray-900">{contactName(c)}</div>
                       <div className="text-xs text-gray-400">{c.phoneNumber}</div>
                     </td>
 
-                    {/* Segmento */}
+                    <td className="px-4 py-3">
+                      {c.agent
+                        ? <span className="text-xs font-medium text-gray-700 capitalize">{c.agent}</span>
+                        : <span className="text-gray-300 text-xs">—</span>
+                      }
+                    </td>
+
                     <td className="px-4 py-3">
                       {c.reactivationSegment ? (
                         <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${SEGMENT_STYLE[c.reactivationSegment] ?? 'bg-gray-100 text-gray-600'}`}>
                           {SEGMENT_LABEL[c.reactivationSegment] ?? c.reactivationSegment}
                         </span>
-                      ) : (
-                        <span className="text-gray-300">—</span>
-                      )}
+                      ) : <span className="text-gray-300">—</span>}
                     </td>
 
-                    {/* Tier */}
                     <td className="px-4 py-3">
                       <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${TIER_STYLE[c.valueTier] ?? 'bg-gray-100 text-gray-500'}`}>
                         {TIER_LABEL[c.valueTier] ?? c.valueTier}
                       </span>
                     </td>
 
-                    {/* Días inactivo */}
                     <td className="px-4 py-3 text-right tabular-nums text-gray-600">
                       {c.daysInactive != null ? `${c.daysInactive}d` : '—'}
                     </td>
 
-                    {/* Último mensaje */}
-                    <td className="px-4 py-3 text-right tabular-nums text-gray-400 text-xs">
-                      {c.daysSinceLastMessage != null ? `hace ${c.daysSinceLastMessage}d` : 'nunca'}
-                    </td>
-
-                    {/* Plataformas */}
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-1">
                         {c.platforms.length > 0
@@ -299,6 +407,45 @@ export default function PrioridadesPage() {
                           : <span className="text-gray-300 text-xs">—</span>
                         }
                       </div>
+                    </td>
+
+                    {/* Columna fecha difusión — solo en tab Difundidos */}
+                    {tab === 'broadcasted' && (
+                      <td className="px-4 py-3 text-xs text-gray-500">
+                        <div>{formatDate(c.broadcastedAt)}</div>
+                        {c.broadcastedBy && (
+                          <div className="text-gray-400">{c.broadcastedBy}</div>
+                        )}
+                      </td>
+                    )}
+
+                    {/* Acción */}
+                    <td className="px-4 py-3 text-right">
+                      {tab === 'pending' ? (
+                        <button
+                          onClick={() => toggleBroadcasted(c.id, true)}
+                          disabled={pendingAction === c.id}
+                          title="Marcar como difundido"
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors disabled:opacity-40"
+                        >
+                          {pendingAction === c.id
+                            ? <RefreshCw size={14} className="animate-spin" />
+                            : <CheckCircle2 size={14} />
+                          }
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => toggleBroadcasted(c.id, false)}
+                          disabled={pendingAction === c.id}
+                          title="Volver a A difundir"
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 transition-colors disabled:opacity-40"
+                        >
+                          {pendingAction === c.id
+                            ? <RefreshCw size={14} className="animate-spin" />
+                            : <RotateCcw size={14} />
+                          }
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -316,7 +463,7 @@ export default function PrioridadesPage() {
           </span>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => { setPage(p => p - 1); load(page - 1, segment, tier) }}
+              onClick={() => { setPage(p => p - 1); load(page - 1, segment, tier, agent, platform, tab) }}
               disabled={page <= 1}
               className="p-1 rounded hover:bg-gray-100 disabled:opacity-30"
             >
@@ -324,7 +471,7 @@ export default function PrioridadesPage() {
             </button>
             <span className="text-xs">Pág. {page} de {result.totalPages}</span>
             <button
-              onClick={() => { setPage(p => p + 1); load(page + 1, segment, tier) }}
+              onClick={() => { setPage(p => p + 1); load(page + 1, segment, tier, agent, platform, tab) }}
               disabled={page >= result.totalPages}
               className="p-1 rounded hover:bg-gray-100 disabled:opacity-30"
             >

@@ -20,7 +20,7 @@ import {
   LayoutDashboard, Users, Megaphone, MessageSquare,
   Activity, Flame, UserCog, Settings, FileText,
   BarChart2, ShieldOff, Bot, ChevronLeft, LogOut, X,
-  ClipboardList, CheckSquare, CalendarDays, HelpCircle,
+  ClipboardList, CheckSquare, CalendarDays, HelpCircle, TrendingUp,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useSidebar } from './sidebar-context'
@@ -42,6 +42,7 @@ const BASE_NAV: NavItem[] = [
   { href: '/',               label: 'Dashboard',       icon: LayoutDashboard, sector: 'dashboard' },
   { href: '/contacts',       label: 'Contactos',        icon: Users,           sector: 'contacts' },
   { href: '/campaigns',      label: 'Campañas',         icon: Megaphone,       sector: 'campaigns' },
+  { href: '/prioridades',    label: 'Prioridades',      icon: TrendingUp,      sector: 'contacts' },
   { href: '/conversations',  label: 'Conversaciones',   icon: MessageSquare,   sector: 'conversations' },
   { href: '/lines',          label: 'Líneas',           icon: Activity,        sector: 'lines' },
   { href: '/warmup',         label: 'Calentamiento',    icon: Flame,           sector: 'warmup' },
