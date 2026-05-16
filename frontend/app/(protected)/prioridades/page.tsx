@@ -46,7 +46,8 @@ interface RecomputeResult {
   durationMs: number
 }
 
-type Tab = 'pending' | 'broadcasted'
+type Tab      = 'pending' | 'broadcasted'
+type Platform = 'todas' | 'betcoin' | 'bet30' | 'zeus' | 'royal' | 'bigwin'
 
 // ── Constantes de UI ──────────────────────────────────────────────────────────
 
@@ -80,8 +81,17 @@ const TIER_LABEL: Record<string, string> = {
   bajo:  'Bajo',
 }
 
-const AGENTS    = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
-const PLATFORMS = ['betcoin', 'bet30', 'zeus', 'royal', 'bigwin']
+const AGENTS: string[] = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
+
+const PLATFORMS: { key: Platform; label: string }[] = [
+  { key: 'todas',   label: 'Todas' },
+  { key: 'betcoin', label: 'Betcoin' },
+  { key: 'bet30',   label: 'Bet30' },
+  { key: 'zeus',    label: 'Zeus' },
+  { key: 'royal',   label: 'Royal' },
+  { key: 'bigwin',  label: 'Bigwin' },
+]
+
 const PAGE_SIZE = 50
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -102,16 +112,16 @@ export default function PrioridadesPage() {
   const isAdmin  = user?.role === 'admin'
 
   const [tab, setTab]                     = useState<Tab>('pending')
+  const [platform, setPlatform]           = useState<Platform>('todas')
   const [result, setResult]               = useState<PaginatedResult | null>(null)
   const [loading, setLoading]             = useState(false)
   const [recomputing, setRecomputing]     = useState(false)
   const [recomputeMsg, setRecomputeMsg]   = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
-  const [pendingAction, setPendingAction] = useState<string | null>(null) // contactId en proceso
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [page, setPage]                   = useState(1)
   const [segment, setSegment]             = useState('todos')
   const [tier, setTier]                   = useState('todos')
   const [agent, setAgent]                 = useState('todos')
-  const [platform, setPlatform]           = useState('todos')
 
   const load = useCallback(async (
     p   = page,
@@ -128,7 +138,7 @@ export default function PrioridadesPage() {
       if (seg !== 'todos') params.set('reactivationSegment', seg)
       if (tr  !== 'todos') params.set('valueTier', tr)
       if (ag  !== 'todos') params.set('agent', ag)
-      if (plt !== 'todos') params.set('platform', plt)
+      if (plt !== 'todas') params.set('platform', plt)
       const data = await fetchJson<PaginatedResult>(`/api/contacts/prioritized?${params}`)
       setResult(data)
     } catch {
@@ -141,23 +151,22 @@ export default function PrioridadesPage() {
   useEffect(() => { load() }, [load])
 
   const switchTab = (t: Tab) => {
-    setTab(t)
-    setPage(1)
+    setTab(t); setPage(1)
     load(1, segment, tier, agent, platform, t)
   }
 
-  const handleFilter = (newSeg: string, newTier: string, newAgent: string, newPlatform: string) => {
-    setPage(1)
-    setSegment(newSeg)
-    setTier(newTier)
-    setAgent(newAgent)
-    setPlatform(newPlatform)
-    load(1, newSeg, newTier, newAgent, newPlatform, tab)
+  const switchPlatform = (plt: Platform) => {
+    setPlatform(plt); setPage(1)
+    load(1, segment, tier, agent, plt, tab)
+  }
+
+  const handleFilter = (newSeg: string, newTier: string, newAgent: string) => {
+    setPage(1); setSegment(newSeg); setTier(newTier); setAgent(newAgent)
+    load(1, newSeg, newTier, newAgent, platform, tab)
   }
 
   const handleRecompute = async () => {
-    setRecomputing(true)
-    setRecomputeMsg(null)
+    setRecomputing(true); setRecomputeMsg(null)
     try {
       const res = await fetchJson<RecomputeResult>('/api/contacts/recompute-priorities', { method: 'POST' })
       setRecomputeMsg({
@@ -179,17 +188,14 @@ export default function PrioridadesPage() {
         method: 'PATCH',
         body: JSON.stringify({ broadcasted: markAs }),
       })
-      // Recarga la misma tab para reflejar el cambio
       load(1, segment, tier, agent, platform, tab)
       setPage(1)
-    } catch {
-      // no-op: el botón vuelve a su estado
-    } finally {
+    } catch { /* no-op */ } finally {
       setPendingAction(null)
     }
   }
 
-  const hasFilters = segment !== 'todos' || tier !== 'todos' || agent !== 'todos' || platform !== 'todos'
+  const hasFilters = segment !== 'todos' || tier !== 'todos' || agent !== 'todos'
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
@@ -216,7 +222,6 @@ export default function PrioridadesPage() {
             </Button>
           )}
         </div>
-
         {recomputeMsg && (
           <div className={`mt-3 flex items-center gap-2 text-sm px-3 py-2 rounded-lg ${
             recomputeMsg.type === 'ok' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
@@ -227,7 +232,7 @@ export default function PrioridadesPage() {
         )}
       </div>
 
-      {/* Tabs */}
+      {/* Tab principal: A difundir / Difundidos */}
       <div className="bg-white border-b border-gray-200 px-6 flex gap-1">
         {([
           { key: 'pending',     label: 'A difundir' },
@@ -247,64 +252,79 @@ export default function PrioridadesPage() {
         ))}
       </div>
 
-      {/* Filtros */}
-      <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-3 flex-wrap">
+      {/* Tab de plataforma */}
+      <div className="bg-white border-b border-gray-200 px-6 py-2 flex items-center gap-1 overflow-x-auto">
+        <span className="text-xs text-gray-400 mr-1 shrink-0">Plataforma:</span>
+        {PLATFORMS.map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => switchPlatform(key)}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 ${
+              platform === key
+                ? 'bg-green-100 text-green-700'
+                : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Filtros: segmento, nivel, agente */}
+      <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-4 flex-wrap">
         <Filter size={14} className="text-gray-400 shrink-0" />
 
-        <Select value={segment} onValueChange={v => handleFilter(v ?? 'todos', tier, agent, platform)}>
-          <SelectTrigger className="w-44 h-8 text-sm">
-            <SelectValue placeholder="Segmento" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Todos los segmentos</SelectItem>
-            <SelectItem value="REACTIVACION_URGENTE">Urgente</SelectItem>
-            <SelectItem value="REACTIVACION_PRIORITARIA">Prioritaria</SelectItem>
-            <SelectItem value="REACTIVACION_ESTANDAR">Estándar</SelectItem>
-            <SelectItem value="REACTIVACION_FRIA_ALTO_VALOR">Fría alto valor</SelectItem>
-            <SelectItem value="REACTIVACION_FRIA">Fría</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-gray-400 shrink-0">Segmento:</span>
+          <Select value={segment} onValueChange={v => handleFilter(v ?? 'todos', tier, agent)}>
+            <SelectTrigger className="w-40 h-8 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos</SelectItem>
+              <SelectItem value="REACTIVACION_URGENTE">Urgente</SelectItem>
+              <SelectItem value="REACTIVACION_PRIORITARIA">Prioritaria</SelectItem>
+              <SelectItem value="REACTIVACION_ESTANDAR">Estándar</SelectItem>
+              <SelectItem value="REACTIVACION_FRIA_ALTO_VALOR">Fría alto valor</SelectItem>
+              <SelectItem value="REACTIVACION_FRIA">Fría</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
 
-        <Select value={tier} onValueChange={v => handleFilter(segment, v ?? 'todos', agent, platform)}>
-          <SelectTrigger className="w-32 h-8 text-sm">
-            <SelectValue placeholder="Nivel" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Todos los niveles</SelectItem>
-            <SelectItem value="vip">Super Vip</SelectItem>
-            <SelectItem value="alto">Vip</SelectItem>
-            <SelectItem value="medio">Medio</SelectItem>
-            <SelectItem value="bajo">Bajo</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-gray-400 shrink-0">Nivel:</span>
+          <Select value={tier} onValueChange={v => handleFilter(segment, v ?? 'todos', agent)}>
+            <SelectTrigger className="w-28 h-8 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos</SelectItem>
+              <SelectItem value="vip">Super Vip</SelectItem>
+              <SelectItem value="alto">Vip</SelectItem>
+              <SelectItem value="medio">Medio</SelectItem>
+              <SelectItem value="bajo">Bajo</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
 
-        <Select value={agent} onValueChange={v => handleFilter(segment, tier, v ?? 'todos', platform)}>
-          <SelectTrigger className="w-36 h-8 text-sm">
-            <SelectValue placeholder="Agente" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Todos los agentes</SelectItem>
-            {AGENTS.map(a => (
-              <SelectItem key={a} value={a}>{a}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Select value={platform} onValueChange={v => handleFilter(segment, tier, agent, v ?? 'todos')}>
-          <SelectTrigger className="w-36 h-8 text-sm">
-            <SelectValue placeholder="Plataforma" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos">Todas las plataformas</SelectItem>
-            {PLATFORMS.map(p => (
-              <SelectItem key={p} value={p}>{p}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-gray-400 shrink-0">Agente:</span>
+          <Select value={agent} onValueChange={v => handleFilter(segment, tier, v ?? 'todos')}>
+            <SelectTrigger className="w-32 h-8 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="todos">Todos</SelectItem>
+              {AGENTS.map(a => (
+                <SelectItem key={a} value={a}>{a}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
         {hasFilters && (
           <button
-            onClick={() => handleFilter('todos', 'todos', 'todos', 'todos')}
+            onClick={() => handleFilter('todos', 'todos', 'todos')}
             className="text-xs text-gray-400 hover:text-gray-600 underline"
           >
             Limpiar filtros
@@ -409,7 +429,6 @@ export default function PrioridadesPage() {
                       </div>
                     </td>
 
-                    {/* Columna fecha difusión — solo en tab Difundidos */}
                     {tab === 'broadcasted' && (
                       <td className="px-4 py-3 text-xs text-gray-500">
                         <div>{formatDate(c.broadcastedAt)}</div>
@@ -419,7 +438,6 @@ export default function PrioridadesPage() {
                       </td>
                     )}
 
-                    {/* Acción */}
                     <td className="px-4 py-3 text-right">
                       {tab === 'pending' ? (
                         <button
