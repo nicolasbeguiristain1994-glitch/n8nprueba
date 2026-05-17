@@ -61,8 +61,9 @@ export type CandidateLine = {
   line_key:              string
   display_name:          string
   phone_number:          string
-  evolution_instance:    string
-  evolution_url:         string
+  line_type:             string   // 'evolution' | 'cloud' — used by hardFilter to exclude cloud lines
+  evolution_instance:    string | null
+  evolution_url:         string | null
   status:                string
   is_connected:          boolean
   sending_enabled:       boolean
@@ -180,12 +181,16 @@ export function scoreCandidate(line: CandidateLine): AssignmentScore {
 // ── Hard filter ───────────────────────────────────────────────────────────────
 
 /**
- * Remove lines that cannot receive any messages right now.
+ * Remove lines that cannot participate in Evolution-based sends right now.
  * Does NOT exclude lines with unhealthy proxies — those are handled by scoring
  * and proxy replacement logic.
+ *
+ * Cloud lines (line_type = 'cloud') are excluded because they have NULL
+ * evolution_instance / evolution_url and cannot be used by the Evolution send path.
  */
 export function hardFilter(lines: CandidateLine[]): CandidateLine[] {
   return lines.filter(l =>
+    l.line_type === 'evolution' &&
     l.status === 'active' &&
     l.is_connected &&
     l.sending_enabled &&
@@ -362,6 +367,7 @@ export async function intelligentAssign(req: AssignRequest = {}): Promise<Assign
       wl.line_key,
       wl.display_name,
       wl.phone_number,
+      wl.line_type,
       wl.evolution_instance,
       wl.evolution_url,
       wl.status,
@@ -389,7 +395,7 @@ export async function intelligentAssign(req: AssignRequest = {}): Promise<Assign
     LEFT JOIN proxies p ON p.id = wl.proxy_id
     GROUP BY
       wl.id, wl.line_key, wl.display_name, wl.phone_number,
-      wl.evolution_instance, wl.evolution_url,
+      wl.line_type, wl.evolution_instance, wl.evolution_url,
       wl.status, wl.is_connected, wl.sending_enabled,
       wl.msgs_sent_hour, wl.msgs_sent_today,
       wl.msg_per_hour, wl.msg_per_day,
@@ -559,8 +565,10 @@ export async function getDistributorStats(): Promise<DistributorStats> {
   const lineRows = await query<{ total: number; eligible: number; with_proxy: number }>(`
     SELECT
       COUNT(*)::int AS total,
+      -- eligible: only evolution lines (cloud lines cannot use Evolution send path)
       COUNT(*) FILTER (
-        WHERE status         = 'active'
+        WHERE line_type      = 'evolution'
+          AND status         = 'active'
           AND is_connected   = true
           AND sending_enabled = true
           AND msgs_sent_hour  < msg_per_hour

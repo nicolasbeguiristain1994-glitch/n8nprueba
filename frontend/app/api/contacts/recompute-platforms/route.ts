@@ -1,48 +1,54 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
-import { getAgentsForPlatform } from '@/lib/casino-agents'
 
 // POST /api/contacts/recompute-platforms
 //
 // Recalculates the `platforms` column for all contacts in a single batch query.
 // Only updates rows where the computed value differs from the stored value.
 //
-// When to call:
-//   After a casino sync that may have added new bet30 players to casino_players,
-//   because the trigger only fires on INSERT/UPDATE of contacts — it doesn't
-//   react to changes in casino_players.
+// Zeus detection:
+//   1. Regex: first_name or last_name ends in z / ze / zs / zeus
+//   2. OR: any token in the name field exists in casino_players with a Zeus agent
+//      (catches f/ff suffix users and multi-username fields like "User99z Surname")
+// Bet30 detection:
+//   Regex only: first_name or last_name ends in b / bt
+//   (casino_players has no bet30 agent data)
 //
 // Access: admin only.
+
+const ZEUS_AGENTS = ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet']
 
 export async function POST(req: NextRequest) {
   const err = await checkPermission(req, 'contacts', 'manage')
   if (err) return err
 
   try {
-    const bet30Agents = getAgentsForPlatform('bet30')
-
     const result = await query<{ updated: string }>(`
       WITH computed AS (
         SELECT
-          id,
+          c.id,
           ARRAY_REMOVE(ARRAY[
-            CASE WHEN first_name ~* 'z(s|eus)?$' OR last_name ~* 'z(s|eus)?$'
-                 THEN 'zeus' END,
-            CASE WHEN (first_name ~* 'b(t)?$' OR last_name ~* 'b(t)?$')
-                 AND EXISTS (
-                   SELECT 1 FROM casino_players cp
-                   WHERE cp.username_lower = ANY(ARRAY[
-                     LOWER(TRIM(COALESCE(first_name, ''))),
-                     REGEXP_REPLACE(LOWER(TRIM(COALESCE(first_name, ''))), '^[a-z]+/\\s*', ''),
-                     LOWER(TRIM(COALESCE(last_name,  ''))),
-                     REGEXP_REPLACE(LOWER(TRIM(COALESCE(last_name,  ''))), '^[a-z]+/\\s*', '')
-                   ])
-                   AND cp.agente = ANY($1::text[])
-                 )
+            CASE WHEN
+              c.first_name ~* 'z(e|s|eus)?$' OR c.last_name ~* 'z(e|s|eus)?$'
+              OR EXISTS (
+                SELECT 1
+                FROM casino_players cp
+                JOIN LATERAL unnest(
+                  regexp_split_to_array(
+                    COALESCE(c.first_name,'') || ' ' || COALESCE(c.last_name,''),
+                    '[\\s/\\\\|,;]+'
+                  )
+                ) AS tok ON true
+                WHERE LENGTH(tok) > 2
+                  AND cp.username_lower = LOWER(tok)
+                  AND cp.agente = ANY($1::text[])
+              )
+            THEN 'zeus' END,
+            CASE WHEN c.first_name ~* 'b(t)?$' OR c.last_name ~* 'b(t)?$'
                  THEN 'bet30' END
           ], NULL) AS new_platforms
-        FROM contacts
+        FROM contacts c
       ),
       updated AS (
         UPDATE contacts c
@@ -54,7 +60,7 @@ export async function POST(req: NextRequest) {
         RETURNING c.id
       )
       SELECT COUNT(*)::text AS updated FROM updated
-    `, [bet30Agents])
+    `, [ZEUS_AGENTS])
 
     const updated = Number(result[0]?.updated ?? 0)
     console.log(`[recompute-platforms] Updated ${updated} contacts`)

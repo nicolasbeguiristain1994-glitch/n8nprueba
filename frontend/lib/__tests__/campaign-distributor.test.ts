@@ -228,13 +228,16 @@ describe('getDispatchSummary', () => {
   it('maps DB counts correctly', async () => {
     const { getDispatchSummary } = await import('@/lib/campaign-distributor')
     vi.mocked(db.query)
-      .mockResolvedValueOnce([{
+      .mockResolvedValueOnce([{           // counts query
         total: '100', queued: '40', processing: '2',
         sent: '50', failed: '5', skipped: '3',
       }])
       .mockResolvedValueOnce([makeLine()])  // getEligibleLines
       .mockResolvedValueOnce([             // lineUsage
         { line_id: 'l1', line_key: 'line_01', display_name: 'Línea 01', sent: 45, failed: 5 },
+      ])
+      .mockResolvedValueOnce([             // topErrors (4th query)
+        { error: 'Evolution 429: Too Many Requests', count: 3 },
       ])
 
     const summary = await getDispatchSummary('campaign-uuid')
@@ -247,6 +250,8 @@ describe('getDispatchSummary', () => {
     expect(summary.eligible_lines).toBe(1)
     expect(summary.line_usage).toHaveLength(1)
     expect(summary.line_usage[0].sent).toBe(45)
+    expect(summary.top_errors).toHaveLength(1)
+    expect(summary.top_errors[0].count).toBe(3)
   })
 })
 
@@ -429,5 +434,49 @@ describe('sendViaEvolution — API key fallback', () => {
     })
     const result = await sendViaEvolution(evoLine, '+5491100000', 'hola')
     expect(result.messageId).toBeNull()
+  })
+})
+
+// ── Cloud line exclusion — lineEligibleExpr ────────────────────────────────────
+// Verifica que el SQL generado por lineEligibleExpr excluye cloud lines correctamente.
+// La función es importada por getEligibleLines() y el health endpoint.
+
+describe('cloud line exclusion — lineEligibleExpr in getEligibleLines', () => {
+  beforeEach(() => { vi.resetAllMocks() })
+
+  it('getEligibleLines usa una query que incluye line_type = evolution', async () => {
+    const { getEligibleLines } = await import('@/lib/campaign-distributor')
+    vi.mocked(db.query).mockResolvedValueOnce([])
+
+    await getEligibleLines()
+
+    const sqlCalled = vi.mocked(db.query).mock.calls[0][0] as string
+    // La expresión de elegibilidad generada por lineEligibleExpr() debe filtrar por line_type
+    expect(sqlCalled).toContain("line_type = 'evolution'")
+  })
+
+  it('una línea cloud no aparece en getEligibleLines aunque pase todos los demás criterios', async () => {
+    const { getEligibleLines } = await import('@/lib/campaign-distributor')
+
+    // DB devuelve vacío porque la query incluye line_type = 'evolution',
+    // y las líneas cloud no son retornadas por el WHERE clause.
+    vi.mocked(db.query).mockResolvedValueOnce([])
+
+    const result = await getEligibleLines()
+    expect(result).toHaveLength(0)
+  })
+
+  it('getEligibleLines incluye evolution lines normalmente', async () => {
+    const { getEligibleLines } = await import('@/lib/campaign-distributor')
+    const evolutionLine = makeLine({
+      id: 'evo-line-001',
+      evolution_instance: 'wa-evo-01',
+      evolution_url: 'http://evo:8080',
+    })
+    vi.mocked(db.query).mockResolvedValueOnce([evolutionLine])
+
+    const result = await getEligibleLines()
+    expect(result).toHaveLength(1)
+    expect(result[0].id).toBe('evo-line-001')
   })
 })

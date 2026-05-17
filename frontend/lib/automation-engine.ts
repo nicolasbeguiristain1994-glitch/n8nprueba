@@ -123,11 +123,16 @@ async function sendAutoMessage(
   message: string,
   automationId: string,
 ): Promise<boolean> {
-  // Elegir línea activa aleatoria para distribuir carga
+  // Elegir línea Evolution activa aleatoria para distribuir carga.
+  // Cloud lines (line_type = 'cloud') se excluyen porque no tienen
+  // evolution_instance / evolution_url y no pueden usar el send path de Evolution.
   const lines = await query<{ id: string; evolution_url: string; evolution_instance: string }>(
     `SELECT id, evolution_url, evolution_instance
      FROM whatsapp_lines
-     WHERE active = true AND status = 'connected'
+     WHERE line_type = 'evolution'
+       AND is_connected = true
+       AND status = 'active'
+       AND sending_enabled = true
      ORDER BY RANDOM()
      LIMIT 1`,
   )

@@ -12,7 +12,9 @@ type LineHealthRow = {
   is_connected:       boolean
   sending_enabled:    boolean
   phone_number:       string | null
-  evolution_instance: string
+  /** 'evolution' or 'cloud'. Cloud lines are never eligible for Evolution campaign sends. */
+  line_type:          string
+  evolution_instance: string | null
   msg_per_hour:       number
   msg_per_day:        number
   msgs_sent_hour:     number
@@ -28,6 +30,11 @@ type LineHealthRow = {
   // Aggregated from line_usage_log
   recent_sent:        number
   recent_failed:      number
+  /**
+   * Eligible for Evolution-based campaign sends.
+   * Cloud lines (line_type = 'cloud') are always false here — they are handled
+   * by the Cloud API send path which has its own eligibility criteria.
+   */
   eligible:           boolean
 }
 
@@ -36,7 +43,9 @@ type LineHealthRow = {
 // campaign distribution. Includes:
 //   - Current counters (hourly + daily sent, remaining capacity)
 //   - Connection and send-enabled status
-//   - Whether the line is currently eligible for campaign sends
+//   - line_type ('evolution' | 'cloud')
+//   - Whether the line is currently eligible for Evolution campaign sends
+//     (cloud lines always return eligible=false — they use a different send path)
 //   - Recent send/fail counts from line_usage_log (last 24h)
 //
 // Access: lines:read
@@ -58,6 +67,7 @@ export async function GET(req: Request) {
         l.is_connected,
         l.sending_enabled,
         l.phone_number,
+        l.line_type,
         l.evolution_instance,
         l.msg_per_hour,
         l.msg_per_day,

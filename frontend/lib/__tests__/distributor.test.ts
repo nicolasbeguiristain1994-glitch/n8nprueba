@@ -33,6 +33,7 @@ function makeLine(overrides: Partial<CandidateLine> = {}): CandidateLine {
     line_key:              'line_01',
     display_name:          'Test Line 1',
     phone_number:          '+5491100000001',
+    line_type:             'evolution',  // default: evolution (cloud lines are filtered out)
     evolution_instance:    'wa-instance-01',
     evolution_url:         'http://evolution:8080',
     status:                'active',
@@ -160,6 +161,39 @@ describe('hardFilter', () => {
 
   it('empty input → empty output', () => {
     expect(hardFilter([])).toHaveLength(0)
+  })
+
+  // ── Cloud line exclusion ───────────────────────────────────────────────────
+
+  it('removes cloud lines even when all other criteria pass', () => {
+    const cloudLine = makeLine({
+      line_type:          'cloud',
+      evolution_instance: null,
+      evolution_url:      null,
+    })
+    expect(hardFilter([cloudLine])).toHaveLength(0)
+  })
+
+  it('keeps evolution lines and removes cloud lines from a mixed fleet', () => {
+    const evoLine   = makeLine({ id: 'evo-1', line_type: 'evolution' })
+    const cloudLine = makeLine({ id: 'cloud-1', line_type: 'cloud', evolution_instance: null, evolution_url: null })
+    const result = hardFilter([evoLine, cloudLine])
+    expect(result).toHaveLength(1)
+    expect(result[0].id).toBe('evo-1')
+  })
+
+  it('a fully healthy cloud line is still excluded (cannot send via Evolution)', () => {
+    const cloudLine = makeLine({
+      line_type:          'cloud',
+      evolution_instance: null,
+      evolution_url:      null,
+      status:             'active',
+      is_connected:       true,
+      sending_enabled:    true,
+      msgs_sent_hour:     0,
+      msgs_sent_today:    0,
+    })
+    expect(hardFilter([cloudLine])).toHaveLength(0)
   })
 })
 

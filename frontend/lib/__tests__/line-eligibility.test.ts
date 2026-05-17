@@ -3,13 +3,15 @@
  * @vitest-environment node
  *
  * Verifica que lineEligibleExpr() produce la expresión SQL correcta,
- * con y sin alias de tabla.
+ * con y sin alias de tabla. La expresión es Evolution-only:
+ * incluye el filtro line_type = 'evolution' para excluir cloud lines.
  */
 
 import { describe, it, expect } from 'vitest'
 import { lineEligibleExpr } from '@/lib/line-eligibility'
 
 const CRITERIA = [
+  "line_type = 'evolution'",   // ← cloud lines quedan excluidas
   "status = 'active'",
   'is_connected = true',
   'sending_enabled = true',
@@ -22,10 +24,14 @@ const CRITERIA = [
 describe('lineEligibleExpr — sin alias', () => {
   const expr = lineEligibleExpr()
 
-  it('contiene todos los criterios de elegibilidad', () => {
+  it('contiene todos los criterios de elegibilidad incluyendo line_type', () => {
     for (const criterion of CRITERIA) {
       expect(expr).toContain(criterion)
     }
+  })
+
+  it('excluye explícitamente cloud lines con line_type = evolution', () => {
+    expect(expr).toContain("line_type = 'evolution'")
   })
 
   it('no contiene prefijos de tabla', () => {
@@ -39,7 +45,8 @@ describe('lineEligibleExpr — sin alias', () => {
 describe('lineEligibleExpr — con alias "l"', () => {
   const expr = lineEligibleExpr('l')
 
-  it('prefija todas las columnas con el alias', () => {
+  it('prefija todas las columnas con el alias, incluyendo line_type', () => {
+    expect(expr).toContain("l.line_type = 'evolution'")
     expect(expr).toContain("l.status = 'active'")
     expect(expr).toContain('l.is_connected = true')
     expect(expr).toContain('l.sending_enabled = true')
@@ -62,8 +69,21 @@ describe('lineEligibleExpr — alias personalizado "wl"', () => {
   const expr = lineEligibleExpr('wl')
 
   it('usa el alias proporcionado en todos los campos', () => {
+    expect(expr).toContain("wl.line_type = 'evolution'")
     expect(expr).toContain("wl.status = 'active'")
     expect(expr).toContain('wl.is_connected = true')
     expect(expr).toContain('wl.msgs_sent_hour < wl.msg_per_hour')
+  })
+})
+
+describe('lineEligibleExpr — cloud lines excluidas', () => {
+  it('la expresión no puede ser verdadera para una línea cloud (verificación estructural)', () => {
+    // Una línea con line_type = 'cloud' NUNCA puede satisfacer la condición
+    // line_type = 'evolution', por lo que esta prueba documenta la garantía.
+    const expr = lineEligibleExpr()
+    expect(expr).toContain("line_type = 'evolution'")
+    // Nunca debería aparecer un OR que permita cloud
+    expect(expr).not.toContain("line_type = 'cloud'")
+    expect(expr).not.toMatch(/line_type\s*(!=|<>)\s*'cloud'/)
   })
 })

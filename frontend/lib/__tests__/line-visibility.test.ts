@@ -80,7 +80,7 @@ describe('getAccessibleLineIds — admin (non-super)', () => {
     const result = await getAccessibleLineIds(ADMIN)
 
     expect(vi.mocked(db.query)).toHaveBeenCalledWith(
-      'SELECT id FROM get_accessible_line_ids($1)',
+      'SELECT id FROM get_accessible_line_ids($1) AS t(id)',
       ['admin-uuid'],
     )
     expect(result).toEqual([LINE_A, LINE_B])
@@ -103,7 +103,7 @@ describe('getAccessibleLineIds — operator', () => {
     const result = await getAccessibleLineIds(OPERATOR)
 
     expect(vi.mocked(db.query)).toHaveBeenCalledWith(
-      'SELECT id FROM get_accessible_line_ids($1)',
+      'SELECT id FROM get_accessible_line_ids($1) AS t(id)',
       ['operator-uuid'],
     )
     expect(result).toEqual([LINE_A])
