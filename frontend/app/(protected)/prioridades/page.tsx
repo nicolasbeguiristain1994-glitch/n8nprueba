@@ -47,7 +47,7 @@ interface RecomputeResult {
 }
 
 type Tab      = 'pending' | 'broadcasted'
-type Platform = 'todas' | 'betcoin' | 'bet30' | 'zeus' | 'royal' | 'bigwin'
+type Platform = 'todas' | 'zeus' | 'bet30'
 
 // ── Constantes de UI ──────────────────────────────────────────────────────────
 
@@ -84,12 +84,9 @@ const TIER_LABEL: Record<string, string> = {
 const AGENTS: string[] = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
 
 const PLATFORMS: { key: Platform; label: string }[] = [
-  { key: 'todas',   label: 'Todas' },
-  { key: 'betcoin', label: 'Betcoin' },
-  { key: 'bet30',   label: 'Bet30' },
-  { key: 'zeus',    label: 'Zeus' },
-  { key: 'royal',   label: 'Royal' },
-  { key: 'bigwin',  label: 'Bigwin' },
+  { key: 'todas', label: 'Todas' },
+  { key: 'zeus',  label: 'Zeus' },
+  { key: 'bet30', label: 'Bet30' },
 ]
 
 const PAGE_SIZE = 50
