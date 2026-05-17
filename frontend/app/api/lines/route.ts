@@ -18,15 +18,22 @@ export async function GET(req: NextRequest) {
     const { clause, params } = lineVisibilityClause(ids, '', 1)
 
     const lines = await query(`
-      SELECT id, line_key, display_name, phone_number, evolution_instance,
-             status, is_connected, sending_enabled,
-             msgs_sent_today, msgs_sent_hour,
-             msg_per_day, msg_per_hour, total_sent, total_failed,
-             priority, last_seen_at, owner_user_id,
-             ${lineEligibleExpr()} AS eligible
-      FROM whatsapp_lines
+      SELECT l.id, l.line_key, l.display_name, l.phone_number, l.evolution_instance,
+             l.status, l.is_connected, l.sending_enabled, l.line_type,
+             l.msgs_sent_today, l.msgs_sent_hour,
+             l.msg_per_day, l.msg_per_hour, l.total_sent, l.total_failed,
+             l.priority, l.last_seen_at, l.owner_user_id,
+             ${lineEligibleExpr('l')} AS eligible,
+             cn.phone_number_id AS cloud_phone_number_id,
+             cn.waba_id         AS cloud_waba_id,
+             cn.quality_rating  AS cloud_quality_rating,
+             cn.chatwoot_inbox_id,
+             cn.chatwoot_inbox_name,
+             cn.status          AS cloud_status
+      FROM whatsapp_lines l
+      LEFT JOIN cloud_numbers cn ON cn.whatsapp_line_id = l.id
       WHERE 1=1 ${clause}
-      ORDER BY priority ASC, evolution_instance ASC
+      ORDER BY l.priority ASC, l.evolution_instance ASC
     `, params)
     return NextResponse.json({ lines })
   } catch (e) {

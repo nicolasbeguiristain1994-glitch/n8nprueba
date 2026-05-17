@@ -19,6 +19,9 @@ type CloudNumberRow = {
   quality_rating:      QualityRating
   messaging_limit_tier: string
   whatsapp_line_id:    string | null
+  chatwoot_inbox_id:   string | null
+  chatwoot_inbox_name: string | null
+  chatwoot_created_at: Date | null
   onboarded_at:        Date | null
   created_at:          Date
   updated_at:          Date
@@ -40,6 +43,9 @@ function mapRow(r: CloudNumberRow): CloudNumber {
     qualityRating:      r.quality_rating,
     messagingLimitTier: r.messaging_limit_tier as CloudNumber['messagingLimitTier'],
     whatsappLineId:     r.whatsapp_line_id,
+    chatwootInboxId:    r.chatwoot_inbox_id,
+    chatwootInboxName:  r.chatwoot_inbox_name,
+    chatwootCreatedAt:  r.chatwoot_created_at,
     onboardedAt:        r.onboarded_at,
     createdAt:          r.created_at,
     updatedAt:          r.updated_at,
@@ -50,7 +56,8 @@ const SELECT_COLS = `
   id, waba_id, phone_number_id, display_phone, verified_name,
   token_expires_at, status, coexistence_enabled, contacts_synced,
   history_synced, history_sync_days, quality_rating, messaging_limit_tier,
-  whatsapp_line_id, onboarded_at, created_at, updated_at`
+  whatsapp_line_id, chatwoot_inbox_id, chatwoot_inbox_name, chatwoot_created_at,
+  onboarded_at, created_at, updated_at`
 
 export const cloudNumberRepository = {
 
@@ -148,6 +155,22 @@ export const cloudNumberRepository = {
        ON CONFLICT (phone_number_id) DO UPDATE SET sync_error = $2, updated_at = NOW()`,
       [phoneNumberId, `[${syncType}] ${error}`],
     ).catch(() => {})
+  },
+
+  async linkToLine(cloudNumberId: string, lineId: string): Promise<void> {
+    await query(
+      `UPDATE cloud_numbers SET whatsapp_line_id = $1, updated_at = NOW() WHERE id = $2`,
+      [lineId, cloudNumberId],
+    )
+  },
+
+  async setChatwootInbox(phoneNumberId: string, inboxId: string, inboxName: string): Promise<void> {
+    await query(
+      `UPDATE cloud_numbers
+       SET chatwoot_inbox_id = $1, chatwoot_inbox_name = $2, chatwoot_created_at = NOW(), updated_at = NOW()
+       WHERE phone_number_id = $3`,
+      [inboxId, inboxName, phoneNumberId],
+    )
   },
 
   async upsertForReOnboarding(data: {

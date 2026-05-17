@@ -13,6 +13,7 @@ import type { OnboardingRequest, CloudNumberStatus } from '../types/domain'
 import { CloudApiError }                   from '../errors'
 import { createLogger }                    from '../infrastructure/logger'
 import { createCorrelationId }             from '../correlation'
+import { query }                           from '@/lib/db'
 
 export interface OnboardingResult {
   cloudNumberId: string
@@ -54,9 +55,11 @@ export class OnboardCoexistenceUseCase {
     // 4. Persistir o actualizar en DB
     const existing = await cloudNumberRepository.findByPhoneNumberId(req.phoneNumberId)
     let cloudNumberId: string
+    let resolvedLineId = req.whatsappLineId
 
     if (existing) {
-      cloudNumberId = existing.id
+      cloudNumberId  = existing.id
+      resolvedLineId = resolvedLineId ?? existing.whatsappLineId ?? undefined
       await cloudNumberRepository.upsertForReOnboarding({
         id: cloudNumberId, wabaId: req.wabaId,
         displayPhone:  phoneInfo.display_phone_number,
@@ -71,10 +74,29 @@ export class OnboardCoexistenceUseCase {
         verifiedName:  phoneInfo.verified_name,
         plainToken:    finalToken,
         tokenExpiresAt,
-        whatsappLineId: req.whatsappLineId,
+        whatsappLineId: resolvedLineId,
         onboardedBy:   initiatedByUserId,
         encryptionKey:  encKey,
       })
+    }
+
+    // 4b. Si no hay línea vinculada, crear una línea cloud nativa automáticamente
+    if (!resolvedLineId) {
+      const lineName  = phoneInfo.verified_name || phoneInfo.display_phone_number
+      const ownerUid  = initiatedByUserId === 'bootstrap' ? null : initiatedByUserId
+      // line_key máximo 20 chars hasta que corra migración 092 (VARCHAR(50))
+      const lineKey   = `cld_${req.phoneNumberId}`.slice(0, 20)
+      const newLines  = await query<{ id: string }>(
+        `INSERT INTO whatsapp_lines
+           (line_key, display_name, phone_number, line_type, status, is_connected, owner_user_id)
+         VALUES ($1, $2, $3, 'cloud', 'active', true, $4)
+         RETURNING id`,
+        [lineKey, lineName, phoneInfo.display_phone_number, ownerUid],
+      )
+      if (newLines.length > 0) {
+        resolvedLineId = newLines[0].id
+        await cloudNumberRepository.linkToLine(cloudNumberId, resolvedLineId)
+      }
     }
 
     // 5. Si el número ya está verificado (re-onboarding), activar directamente

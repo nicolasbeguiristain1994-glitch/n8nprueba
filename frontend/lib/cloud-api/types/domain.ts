@@ -26,6 +26,9 @@ export interface CloudNumber {
   qualityRating:      QualityRating
   messagingLimitTier: MessagingLimitTier
   whatsappLineId:     string | null
+  chatwootInboxId:    string | null
+  chatwootInboxName:  string | null
+  chatwootCreatedAt:  Date | null
   onboardedAt:        Date | null
   createdAt:          Date
   updatedAt:          Date

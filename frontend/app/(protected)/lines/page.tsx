@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, LogOut, Plus, RotateCcw, Pencil } from 'lucide-react'
+import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, LogOut, Plus, RotateCcw, Pencil, Cloud, MessageSquare } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
@@ -31,11 +31,17 @@ declare global {
 interface Line {
   id: string; line_key: string; display_name: string; phone_number: string
   evolution_instance: string; status: string; is_connected: boolean
-  sending_enabled: boolean; eligible: boolean
+  sending_enabled: boolean; eligible: boolean; line_type: string
   msgs_sent_today: number; msgs_sent_hour: number
   msg_per_day: number; msg_per_hour: number
   total_sent: number; total_failed: number
   priority: number; last_seen_at: string
+  cloud_phone_number_id: string | null
+  cloud_waba_id: string | null
+  cloud_quality_rating: string | null
+  chatwoot_inbox_id: string | null
+  chatwoot_inbox_name: string | null
+  cloud_status: string | null
 }
 
 // connecting = QR escaneado, handshake en curso — NO regenerar QR en este estado
@@ -188,6 +194,35 @@ export default function Lines() {
   const closeCloudOnboard = () => {
     setCloudOnboardOpen(false); setCloudResult(null); setCloudError(null)
     setCloudLineId(''); setSdkReady(false); load()
+  }
+
+  // Chatwoot inbox creation
+  const [chatwootTarget, setChatwootTarget]     = useState<Line | null>(null)
+  const [chatwootLoading, setChatwootLoading]   = useState(false)
+  const [chatwootError, setChatwootError]       = useState<string | null>(null)
+  const [chatwootSuccess, setChatwootSuccess]   = useState<string | null>(null)
+
+  const createChatwootInbox = async (line: Line) => {
+    if (!line.cloud_phone_number_id) return
+    setChatwootLoading(true); setChatwootError(null); setChatwootSuccess(null)
+    try {
+      const res  = await fetch('/api/cloud/chatwoot-inbox', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phoneNumberId: line.cloud_phone_number_id }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setChatwootError(data.error || 'Error al crear inbox'); return }
+      setChatwootSuccess(`Inbox "${data.inboxName}" creado (ID: ${data.inboxId})`)
+      load()
+    } catch {
+      setChatwootError('Error de conexión')
+    } finally {
+      setChatwootLoading(false)
+    }
+  }
+
+  const closeChatwootModal = () => {
+    setChatwootTarget(null); setChatwootError(null); setChatwootSuccess(null)
   }
 
   const [addOpen, setAddOpen]               = useState(false)
@@ -544,7 +579,22 @@ export default function Lines() {
                             }
                           </div>
                         </td>
-                        <td className="px-4 py-3 font-mono text-xs text-gray-500">{l.evolution_instance}</td>
+                        <td className="px-4 py-3 text-xs text-gray-500">
+                          {l.line_type === 'cloud'
+                            ? <span className="flex items-center gap-1.5">
+                                <Cloud size={12} className="text-blue-500" />
+                                <span className="text-blue-600 font-medium">Cloud API</span>
+                                {l.cloud_quality_rating && (
+                                  <span className={`ml-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                                    l.cloud_quality_rating === 'GREEN'  ? 'bg-green-100 text-green-700' :
+                                    l.cloud_quality_rating === 'YELLOW' ? 'bg-yellow-100 text-yellow-700' :
+                                    'bg-red-100 text-red-700'
+                                  }`}>{l.cloud_quality_rating}</span>
+                                )}
+                              </span>
+                            : <span className="font-mono">{l.evolution_instance}</span>
+                          }
+                        </td>
                         <td className="px-4 py-3">
                           <Badge
                             variant={l.status === 'active' && l.is_connected ? 'default' : 'secondary'}
@@ -593,25 +643,43 @@ export default function Lines() {
                           </button>
                         </td>
                         <td className="px-4 py-3">
-                          {l.is_connected
-                            ? <span className="text-xs text-green-600 flex items-center gap-1">
-                                <CheckCircle size={12}/> Conectada
-                              </span>
-                            : <div className="flex items-center gap-1.5">
-                                <Button size="sm" variant="outline"
-                                  className="text-xs border-orange-200 text-orange-700 hover:bg-orange-50"
-                                  onClick={() => openQrModal(l)}>
-                                  <QrCode size={13} className="mr-1" /> Vincular QR
-                                </Button>
-                                <button
-                                  onClick={() => syncStatus(l)}
-                                  disabled={syncing === l.id}
-                                  title="Verificar estado de conexión en Evolution"
-                                  className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50"
-                                >
-                                  <RotateCcw size={13} className={syncing === l.id ? 'animate-spin' : ''} />
-                                </button>
+                          {l.line_type === 'cloud'
+                            ? <div className="flex flex-col gap-1.5">
+                                <span className="text-xs text-blue-600 flex items-center gap-1">
+                                  <Cloud size={12}/> Activa (Cloud)
+                                </span>
+                                {isAdmin && !l.chatwoot_inbox_id && l.cloud_phone_number_id && (
+                                  <Button size="sm" variant="outline"
+                                    className="text-xs border-violet-200 text-violet-700 hover:bg-violet-50 h-6 px-2"
+                                    onClick={() => { setChatwootTarget(l); setChatwootError(null); setChatwootSuccess(null) }}>
+                                    <MessageSquare size={11} className="mr-1" /> Crear Inbox Chatwoot
+                                  </Button>
+                                )}
+                                {l.chatwoot_inbox_id && (
+                                  <span className="text-xs text-violet-600 flex items-center gap-1">
+                                    <MessageSquare size={11}/> Inbox #{l.chatwoot_inbox_id}
+                                  </span>
+                                )}
                               </div>
+                            : l.is_connected
+                              ? <span className="text-xs text-green-600 flex items-center gap-1">
+                                  <CheckCircle size={12}/> Conectada
+                                </span>
+                              : <div className="flex items-center gap-1.5">
+                                  <Button size="sm" variant="outline"
+                                    className="text-xs border-orange-200 text-orange-700 hover:bg-orange-50"
+                                    onClick={() => openQrModal(l)}>
+                                    <QrCode size={13} className="mr-1" /> Vincular QR
+                                  </Button>
+                                  <button
+                                    onClick={() => syncStatus(l)}
+                                    disabled={syncing === l.id}
+                                    title="Verificar estado de conexión en Evolution"
+                                    className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50"
+                                  >
+                                    <RotateCcw size={13} className={syncing === l.id ? 'animate-spin' : ''} />
+                                  </button>
+                                </div>
                           }
                         </td>
                         {isAdmin && (
@@ -694,6 +762,46 @@ export default function Lines() {
                 Guardar
               </Button>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Modal crear inbox Chatwoot ── */}
+      <Dialog open={!!chatwootTarget} onOpenChange={open => { if (!open) closeChatwootModal() }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-violet-700">
+              <MessageSquare size={16} /> Crear Inbox en Chatwoot
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {chatwootSuccess
+              ? <div className="space-y-3">
+                  <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded p-3">{chatwootSuccess}</p>
+                  <Button className="w-full" onClick={closeChatwootModal}>Cerrar</Button>
+                </div>
+              : <>
+                  <p className="text-sm text-gray-700">
+                    Se creará un inbox de <span className="font-semibold">WhatsApp Cloud</span> en Chatwoot para{' '}
+                    <span className="font-semibold">{chatwootTarget?.display_name || chatwootTarget?.phone_number}</span>.
+                  </p>
+                  {chatwootError && (
+                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{chatwootError}</p>
+                  )}
+                  <div className="flex gap-2">
+                    <Button variant="outline" className="flex-1" disabled={chatwootLoading} onClick={closeChatwootModal}>
+                      Cancelar
+                    </Button>
+                    <Button
+                      className="flex-1 bg-violet-600 hover:bg-violet-700 text-white"
+                      disabled={chatwootLoading}
+                      onClick={() => chatwootTarget && createChatwootInbox(chatwootTarget)}>
+                      {chatwootLoading ? <Loader2 size={14} className="animate-spin mr-1" /> : <MessageSquare size={14} className="mr-1" />}
+                      Crear Inbox
+                    </Button>
+                  </div>
+                </>
+            }
           </div>
         </DialogContent>
       </Dialog>
