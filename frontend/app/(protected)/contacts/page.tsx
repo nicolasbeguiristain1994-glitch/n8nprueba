@@ -379,6 +379,9 @@ export default function Contacts() {
         q: search, segment, gaming: filterGaming, panel: filterPanel.trim(),
         linea: filterLinea, actividad: filterActividad, antiguedad: filterAntiguedad,
         select_all: 'true',
+        ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
+        ...(filterList          ? { list_id: filterList }          : {}),
+        ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
       })
       const d = await fetchJson<{ ids: string[] }>(`/api/contacts?${q}`)
       const next: RowSelectionState = {}
