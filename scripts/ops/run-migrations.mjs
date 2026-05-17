@@ -169,6 +169,9 @@ const MIGRATIONS = [
   { file: 'db/migrations/086_cps_run_id.sql',                           label: '086 — contact_priority_scores.run_id + system_jobs.last_complete_run_id' },
   { file: 'db/migrations/087_recompute_runs.sql',                       label: '087 — recompute_runs history table' },
   { file: 'db/migrations/088_cps_broadcasted.sql',                      label: '088 — contact_priority_scores.is_broadcasted + broadcasted_at' },
+  { file: 'db/migrations/089_line_type_cloud.sql',                      label: '089 — whatsapp_lines.line_type (evolution | cloud)' },
+  { file: 'db/migrations/090_cloud_chatwoot_inbox.sql',                 label: '090 — cloud_numbers campos chatwoot_inbox_*' },
+  { file: 'db/migrations/091_prospects.sql',                            label: '091 — Base de Difusión: prospects + prospect_import_batches + prospect_id en campaign_recipients' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -15,6 +15,7 @@ import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 import { DownloadContactsModal } from '@/components/contacts/DownloadContactsModal'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { ProspectsTab } from '@/components/prospects/ProspectsTab'
 import {
   DataTable,
   DataTableColumnHeader,
@@ -148,6 +149,9 @@ function detectClientPlatforms(first: string | null, last: string | null): strin
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function Contacts() {
+  // ── Tab activo ────────────────────────────────────────────────────────────
+  const [activeTab, setActiveTab] = useState<'contacts' | 'prospects'>('contacts')
+
   // ── Datos ─────────────────────────────────────────────────────────────────
   const [contacts, setContacts] = useState<Contact[]>([])
   const [total, setTotal]       = useState(0)
@@ -821,6 +825,33 @@ export default function Contacts() {
 
   return (
     <div className="space-y-5">
+      {/* ── Tab switcher ── */}
+      <div className="flex gap-1 border-b pb-0">
+        <button
+          onClick={() => setActiveTab('contacts')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'contacts'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          Contactos
+        </button>
+        <button
+          onClick={() => setActiveTab('prospects')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'prospects'
+              ? 'border-emerald-600 text-emerald-600'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          Base de Difusión
+        </button>
+      </div>
+
+      {activeTab === 'prospects' && <ProspectsTab />}
+
+      {activeTab === 'contacts' && <>
       <PageHeader
         title="Contactos"
         count={total}
@@ -1630,6 +1661,7 @@ export default function Contacts() {
           )}
         </DialogContent>
       </Dialog>
+      </> /* fin activeTab === 'contacts' */}
     </div>
   )
 }

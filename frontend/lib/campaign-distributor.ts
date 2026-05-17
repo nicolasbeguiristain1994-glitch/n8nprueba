@@ -99,7 +99,8 @@ export type CampaignForDispatch = {
 
 type DispatchUnit = {
   id:           string
-  contact_id:   string
+  contact_id:   string | null   // null when recipient is a prospect
+  prospect_id:  string | null   // null when recipient is a contact
   phone_number: string
   first_name:   string
   attempts:     number
@@ -500,15 +501,17 @@ async function claimNextUnit(
          LIMIT  1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, contact_id, phone_number, attempts
+       RETURNING id, contact_id, prospect_id, phone_number, attempts
      )
      SELECT cl.id,
             cl.contact_id,
+            cl.prospect_id,
             cl.phone_number,
             cl.attempts,
-            COALESCE(c.first_name, '') AS first_name
+            COALESCE(c.first_name, p.first_name, '') AS first_name
      FROM   claimed cl
-     LEFT JOIN contacts c ON c.id = cl.contact_id`,
+     LEFT JOIN contacts  c ON c.id = cl.contact_id
+     LEFT JOIN prospects p ON p.id = cl.prospect_id`,
     [campaignId, lineId]
   )
   return rows[0] ?? null
@@ -760,39 +763,39 @@ async function sendOneUnit(
   // ALLOW  → sin restricciones activas; flujo normal.
   let freqDecision: 'ALLOW' | 'DELAY' | 'BLOCK' = 'ALLOW'
   let freqReason   = ''
-  try {
-    const freqResult = await ContactFrequencyEngine.atomicEvaluateAndRecord(
-      {
-        contactId:    unit.contact_id,
-        operatorId:   campaign.owned_by,
+  // Frequency engine only applies to contacts (casino players).
+  // Prospects don't have frequency rules — skip the check entirely.
+  if (unit.contact_id) {
+    try {
+      const freqResult = await ContactFrequencyEngine.atomicEvaluateAndRecord(
+        {
+          contactId:    unit.contact_id,
+          operatorId:   campaign.owned_by,
+          campaignId,
+          segMonto:     null,
+          segActividad: null,
+        },
+        {
+          contactId:           unit.contact_id,
+          campaignId,
+          operatorId:          campaign.owned_by,
+          phoneNumber:         unit.phone_number,
+          campaignRecipientId: unit.id,
+        },
+      )
+      freqDecision = freqResult.decision
+      freqReason   = freqResult.reason
+    } catch (freqErr) {
+      clog.error({
+        event:       'freq.engine.error',
         campaignId,
-        // segMonto / segActividad: null → aplica la regla global DEFAULT.
-        // Para reglas por segmento, extender DispatchUnit con estos campos
-        // y pasarlos aquí desde la query de claimNextUnit.
-        segMonto:     null,
-        segActividad: null,
-      },
-      {
-        contactId:           unit.contact_id,
-        campaignId,
-        operatorId:          campaign.owned_by,
-        phoneNumber:         unit.phone_number,
-        campaignRecipientId: unit.id,
-      },
-    )
-    freqDecision = freqResult.decision
-    freqReason   = freqResult.reason
-  } catch (freqErr) {
-    // Fail-open: log error pero continuar. Ver comentario de política arriba.
-    clog.error({
-      event:       'freq.engine.error',
-      campaignId,
-      mode:        'multi-line',
-      recipientId: unit.id,
-      contactId:   unit.contact_id,
-      error:       freqErr instanceof Error ? freqErr.message : String(freqErr),
-    })
-    opts.onFreqFailOpen?.()
+        mode:        'multi-line',
+        recipientId: unit.id,
+        contactId:   unit.contact_id,
+        error:       freqErr instanceof Error ? freqErr.message : String(freqErr),
+      })
+      opts.onFreqFailOpen?.()
+    }
   }
 
   if (freqDecision === 'BLOCK') {
