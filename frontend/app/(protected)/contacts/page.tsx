@@ -192,6 +192,9 @@ export default function Contacts() {
   const [importProgress, setImportProgress] = useState(0)
   const [importResult, setImportResult] = useState<{ inserted: number; updated: number; skipped: number } | null>(null)
   const [importError, setImportError]   = useState<string | null>(null)
+  const [importCheck, setImportCheck]   = useState<{ total: number; by_panel: Record<string, number> } | null>(null)
+  const [checkLoading, setCheckLoading] = useState(false)
+  const [skipExisting, setSkipExisting] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   // ── Add contact modal ─────────────────────────────────────────────────────
@@ -444,6 +447,22 @@ export default function Contacts() {
         }).filter(r => r.phone)
       }
       setImportRows(rows)
+      setImportCheck(null)
+      setSkipExisting(false)
+      // Verificar cuántos ya existen en la DB
+      if (rows.length > 0) {
+        setCheckLoading(true)
+        const phones = rows.map(r => r.phone).filter(Boolean)
+        fetch('/api/contacts/import/check', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phones }),
+        })
+          .then(r => r.json())
+          .then(data => setImportCheck(data))
+          .catch(() => setImportCheck(null))
+          .finally(() => setCheckLoading(false))
+      }
     }
     if (file.name.endsWith('.csv') || file.name.endsWith('.vcf')) reader.readAsText(file)
     else reader.readAsBinaryString(file)
@@ -464,7 +483,7 @@ export default function Contacts() {
       for (let i = 0; i < chunks.length; i++) {
         const res = await fetch('/api/contacts/import', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contacts: chunks[i], panel, linea }),
+          body: JSON.stringify({ contacts: chunks[i], panel, linea, skip_existing: skipExisting }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) { setImportError(data.error || 'Error al importar'); return }
@@ -1178,7 +1197,7 @@ export default function Contacts() {
       <Dialog open={showImport} onOpenChange={v => {
         if (importing) return
         setShowImport(v)
-        if (!v) { setImportRows([]); setImportResult(null); setImporting(false); setImportError(null); setImportPanel(''); setImportLinea('') }
+        if (!v) { setImportRows([]); setImportResult(null); setImporting(false); setImportError(null); setImportPanel(''); setImportLinea(''); setImportCheck(null); setSkipExisting(false) }
       }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
@@ -1217,6 +1236,49 @@ export default function Contacts() {
                   </tbody>
                 </table>
               </div>
+              {/* Panel de conflictos */}
+              {checkLoading && (
+                <p className="text-xs text-muted-foreground">Verificando contactos existentes…</p>
+              )}
+              {!checkLoading && importCheck && importCheck.total > 0 && (
+                <div className="border border-amber-200 bg-amber-50 rounded-lg p-3 space-y-2">
+                  <p className="text-sm font-medium text-amber-800">
+                    ⚠️ {importCheck.total.toLocaleString()} contactos ya existen en la base de datos
+                  </p>
+                  <div className="text-xs text-amber-700 space-y-0.5">
+                    {Object.entries(importCheck.by_panel).map(([panel, count]) => (
+                      <div key={panel} className="flex justify-between">
+                        <span>{panel}</span>
+                        <span className="font-medium">{count.toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex gap-3 pt-1">
+                    <label className="flex items-center gap-2 cursor-pointer text-sm">
+                      <input
+                        type="radio"
+                        checked={!skipExisting}
+                        onChange={() => setSkipExisting(false)}
+                        className="accent-amber-600"
+                      />
+                      <span>Actualizar existentes (cambiar agente/nivel)</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-sm">
+                      <input
+                        type="radio"
+                        checked={skipExisting}
+                        onChange={() => setSkipExisting(true)}
+                        className="accent-amber-600"
+                      />
+                      <span>Omitir existentes (solo nuevos)</span>
+                    </label>
+                  </div>
+                </div>
+              )}
+              {!checkLoading && importCheck && importCheck.total === 0 && (
+                <p className="text-xs text-emerald-600">✓ Todos los contactos son nuevos</p>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">Agente (opcional)</label>

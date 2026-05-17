@@ -9,9 +9,10 @@ export async function POST(req: NextRequest) {
   if (err) return err
 
   let body: {
-    contacts?: Array<{ phone: string; name?: string; segment?: string; casino_username?: string }>
-    panel?: string
-    linea?: number
+    contacts?:      Array<{ phone: string; name?: string; segment?: string; casino_username?: string }>
+    panel?:         string
+    linea?:         number
+    skip_existing?: boolean
   }
   try {
     body = await req.json()
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { contacts, panel, linea } = body
+  const { contacts, panel, linea, skip_existing = false } = body
   if (!contacts?.length) return NextResponse.json({ error: 'No contacts provided' }, { status: 400 })
   if (!Array.isArray(contacts) || contacts.length > 10_000) {
     return NextResponse.json({ error: 'contacts debe ser un array de máximo 10.000 filas por chunk' }, { status: 400 })
@@ -80,12 +81,12 @@ export async function POST(req: NextRequest) {
            $3,
            'active', true, true, 'import', NOW(), NOW()
          FROM input
-         ON CONFLICT (phone_number) DO UPDATE
+         ON CONFLICT (phone_number) DO ${ skip_existing ? 'NOTHING' : `UPDATE
            SET first_name = COALESCE(EXCLUDED.first_name, contacts.first_name),
                segment    = COALESCE(EXCLUDED.segment,    contacts.segment),
                panel      = COALESCE(EXCLUDED.panel,      contacts.panel),
                linea      = COALESCE(EXCLUDED.linea,      contacts.linea),
-               updated_at = NOW()
+               updated_at = NOW()`}
          RETURNING id, xmax::text
        )
        SELECT
