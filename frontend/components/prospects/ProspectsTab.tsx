@@ -59,11 +59,24 @@ function detectColumns(headers: string[]): { phone: number; firstName: number; l
   const h = headers.map(s => s.toLowerCase().replace(/[^a-z0-9]/g, ''))
   const find = (...keys: string[]) => h.findIndex(col => keys.some(k => col.includes(k)))
   return {
-    phone:     find('phone', 'telefono', 'tel', 'celular', 'numero', 'number', 'movil', 'mobile'),
+    phone:     find('phone', 'whatsapp', 'wpp', 'telefono', 'tel', 'celular', 'numero', 'nro', 'number', 'movil', 'mobile', 'contacto', 'cel'),
     firstName: find('firstname', 'nombre', 'name', 'first'),
     lastName:  find('lastname', 'apellido', 'last'),
     email:     find('email', 'correo', 'mail'),
   }
+}
+
+// Detecta cuál columna de la primera fila parece un número de teléfono
+function detectPhoneColumnByContent(rows: string[][]): number {
+  const phoneRe = /^\+?[\d\s\-().]{7,}$/
+  if (!rows.length) return 0
+  const sample = rows.slice(0, Math.min(5, rows.length))
+  const colCount = Math.max(...sample.map(r => r.length))
+  for (let col = 0; col < colCount; col++) {
+    const matches = sample.filter(r => phoneRe.test((r[col] ?? '').trim())).length
+    if (matches >= Math.ceil(sample.length * 0.6)) return col
+  }
+  return 0
 }
 
 // ── Componente principal ──────────────────────────────────────────────────────
@@ -174,13 +187,17 @@ export function ProspectsTab() {
       const cols    = detectColumns(headers)
 
       if (cols.phone === -1) {
-        // Sin encabezado — asumir primera columna = teléfono
-        rows = lines.map(line => {
+        // Headers no reconocidos — detectar por contenido y tratar primera línea como header
+        const dataLines = lines.slice(1)
+        const sampleRows = dataLines.slice(0, 5).map(l => parseCSVLine(l))
+        const phoneCol = detectPhoneColumnByContent(sampleRows)
+        const nameCol  = phoneCol === 0 ? 1 : 0
+        rows = dataLines.map(line => {
           const parts = parseCSVLine(line)
           return {
-            phone:      normalizePhone(parts[0] || ''),
-            first_name: parts[1]?.trim() || null,
-            last_name:  parts[2]?.trim() || null,
+            phone:      normalizePhone(parts[phoneCol] || ''),
+            first_name: parts[nameCol]?.trim() || null,
+            last_name:  null,
             email:      null,
             raw:        line,
           }
@@ -208,10 +225,14 @@ export function ProspectsTab() {
       const cols    = detectColumns(headers)
 
       if (cols.phone === -1) {
-        rows = data.map(r => ({
-          phone:      normalizePhone(String(r[0] || '')),
-          first_name: String(r[1] || '').trim() || null,
-          last_name:  String(r[2] || '').trim() || null,
+        // Headers no reconocidos — detectar por contenido
+        const dataRows = data.slice(1).map(r => r.map(String))
+        const phoneCol = detectPhoneColumnByContent(dataRows.slice(0, 5))
+        const nameCol  = phoneCol === 0 ? 1 : 0
+        rows = dataRows.map(r => ({
+          phone:      normalizePhone(String(r[phoneCol] || '')),
+          first_name: String(r[nameCol] || '').trim() || null,
+          last_name:  null,
           email:      null,
           raw:        r.join(','),
         }))
