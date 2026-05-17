@@ -95,12 +95,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     )
     if (!contact) return NextResponse.json({ error: 'Contact not found' }, { status: 404 })
 
-    // Build candidates: raw lowercase + prefix-stripped version for each name field
+    // Build candidates: tokenize by common separators (spaces, //, |, etc.)
+    // so compound first_names like "dani457zzz (Chantaaa)" or "user//alias" work correctly.
     const raw = [contact.first_name, contact.last_name]
     const candidates = [...new Set(
       raw
         .filter(Boolean)
-        .flatMap(s => [s!.trim().toLowerCase(), extractUsername(s!)])
+        .flatMap(s => {
+          const clean = s!.trim().toLowerCase()
+          const tokens = clean.split(/[\s/|,;.()\[\]]+/).filter(t => t.length > 0)
+          return [clean, extractUsername(s!), ...tokens]
+        })
         .filter(s => s.length > 0)
     )]
 
