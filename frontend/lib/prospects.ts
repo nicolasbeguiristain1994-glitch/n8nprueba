@@ -30,7 +30,7 @@ export interface ProspectImportBatch {
 }
 
 export interface ProspectImportResult {
-  batch_id:                 string
+  batch_id:                 string | null
   imported:                 number
   skipped_duplicates:       number
   skipped_invalid:          number
