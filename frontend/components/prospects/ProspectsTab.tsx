@@ -103,6 +103,7 @@ export function ProspectsTab() {
   const [parsedRows, setParsedRows]       = useState<ParsedRow[]>([])
   const [importFilename, setImportFilename] = useState('')
   const [importing, setImporting]         = useState(false)
+  const [importProgress, setImportProgress] = useState(0)   // 0-100
   const [importResult, setImportResult]   = useState<ProspectImportResult | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -255,25 +256,56 @@ export function ProspectsTab() {
     setImportOpen(true)
   }
 
-  // ── Confirmar importación ─────────────────────────────────────────────────
+  // ── Confirmar importación (chunked para archivos grandes) ────────────────────
+
+  const CHUNK_SIZE = 5_000
 
   const confirmImport = async () => {
     if (!parsedRows.length) return
     setImporting(true)
+    setImportProgress(0)
+
+    const allRows = parsedRows.map(r => ({ phone: r.phone, first_name: r.first_name, last_name: r.last_name, email: r.email }))
+    const chunks: typeof allRows[] = []
+    for (let i = 0; i < allRows.length; i += CHUNK_SIZE) chunks.push(allRows.slice(i, i + CHUNK_SIZE))
+
+    let batchId: string | null = null
+    let totalImported = 0, totalDuplicates = 0, totalInvalid = 0
+
     try {
-      const result = await fetchJson<ProspectImportResult>('/api/prospects/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          rows:     parsedRows.map(r => ({ phone: r.phone, first_name: r.first_name, last_name: r.last_name, email: r.email })),
-          filename: importFilename,
-        }),
-      })
-      setImportResult(result)
-      setBatches(prev => result.batch_id
-        ? [{ id: result.batch_id, filename: importFilename, total_rows: result.total_rows,
-             imported: result.imported, skipped_duplicates: result.skipped_duplicates,
-             skipped_invalid: result.skipped_invalid, warned_existing_contacts: result.warned_existing_contacts,
+      for (let i = 0; i < chunks.length; i++) {
+        const isFirst = i === 0
+        const body = isFirst
+          ? { rows: chunks[i], filename: importFilename, total_rows: allRows.length }
+          : { rows: chunks[i], batch_id: batchId }
+
+        const result = await fetchJson<ProspectImportResult>('/api/prospects/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+
+        if (isFirst) batchId = result.batch_id
+        totalImported   += result.imported
+        totalDuplicates += result.skipped_duplicates
+        totalInvalid    += result.skipped_invalid
+        setImportProgress(Math.round(((i + 1) / chunks.length) * 100))
+      }
+
+      const finalResult: ProspectImportResult = {
+        batch_id: batchId,
+        imported: totalImported,
+        skipped_duplicates: totalDuplicates,
+        skipped_invalid: totalInvalid,
+        warned_existing_contacts: 0,
+        total_rows: allRows.length,
+        warnings: [],
+      }
+      setImportResult(finalResult)
+      setBatches(prev => batchId
+        ? [{ id: batchId!, filename: importFilename, total_rows: allRows.length,
+             imported: totalImported, skipped_duplicates: totalDuplicates,
+             skipped_invalid: totalInvalid, warned_existing_contacts: 0,
              notes: null, created_at: new Date().toISOString() }, ...prev]
         : prev
       )
@@ -532,6 +564,17 @@ export function ProspectsTab() {
                 )}
               </div>
 
+              {importing && (
+                <div className="px-1 pb-2 space-y-1">
+                  <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-emerald-500 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${importProgress}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground text-center">{importProgress}% — procesando {parsedRows.length.toLocaleString()} registros…</p>
+                </div>
+              )}
               <DialogFooter>
                 <Button variant="outline" onClick={() => setImportOpen(false)} disabled={importing}>Cancelar</Button>
                 <Button
@@ -539,7 +582,7 @@ export function ProspectsTab() {
                   disabled={importing || !parsedRows.length}
                   className="bg-emerald-600 hover:bg-emerald-700 text-white"
                 >
-                  {importing ? 'Importando…' : `Importar ${parsedRows.length.toLocaleString()} registros`}
+                  {importing ? `Importando… ${importProgress}%` : `Importar ${parsedRows.length.toLocaleString()} registros`}
                 </Button>
               </DialogFooter>
             </>
