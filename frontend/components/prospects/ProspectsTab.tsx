@@ -187,21 +187,20 @@ export function ProspectsTab() {
       const cols    = detectColumns(headers)
 
       if (cols.phone === -1) {
-        // Headers no reconocidos — detectar por contenido y tratar primera línea como header
-        const dataLines = lines.slice(1)
-        const sampleRows = dataLines.slice(0, 5).map(l => parseCSVLine(l))
-        const phoneCol = detectPhoneColumnByContent(sampleRows)
-        const nameCol  = phoneCol === 0 ? 1 : 0
-        rows = dataLines.map(line => {
-          const parts = parseCSVLine(line)
-          return {
-            phone:      normalizePhone(parts[phoneCol] || ''),
-            first_name: parts[nameCol]?.trim() || null,
-            last_name:  null,
-            email:      null,
-            raw:        line,
-          }
-        })
+        // Detectar por contenido usando todas las líneas
+        const allParsed = lines.map(l => parseCSVLine(l))
+        const phoneCol  = detectPhoneColumnByContent(allParsed.slice(0, 6))
+        const nameCol   = phoneCol === 0 ? 1 : 0
+        const phoneRe   = /^\+?[\d\s\-().]{7,}$/
+        const firstIsHeader = !phoneRe.test((allParsed[0][phoneCol] ?? '').trim())
+        const dataRows  = firstIsHeader ? allParsed.slice(1) : allParsed
+        rows = dataRows.map(parts => ({
+          phone:      normalizePhone(parts[phoneCol] || ''),
+          first_name: parts[nameCol]?.trim() || null,
+          last_name:  null,
+          email:      null,
+          raw:        parts.join(','),
+        }))
       } else {
         rows = lines.slice(1).map(line => {
           const parts = parseCSVLine(line)
@@ -218,30 +217,35 @@ export function ProspectsTab() {
       const buffer = await file.arrayBuffer()
       const wb = XLSX.read(buffer, { type: 'array' })
       const ws = wb.Sheets[wb.SheetNames[0]]
-      const data: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
-      if (!data.length) return
+      const allData: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+      if (!allData.length) return
 
-      const headers = data[0].map(String)
+      const allRows = allData.map(r => (r as unknown[]).map(String))
+      const headers = allRows[0]
       const cols    = detectColumns(headers)
 
-      if (cols.phone === -1) {
-        // Headers no reconocidos — detectar por contenido
-        const dataRows = data.slice(1).map(r => r.map(String))
-        const phoneCol = detectPhoneColumnByContent(dataRows.slice(0, 5))
-        const nameCol  = phoneCol === 0 ? 1 : 0
-        rows = dataRows.map(r => ({
-          phone:      normalizePhone(String(r[phoneCol] || '')),
-          first_name: String(r[nameCol] || '').trim() || null,
-          last_name:  null,
-          email:      null,
+      if (cols.phone !== -1) {
+        // Headers reconocidos — primera fila es header
+        rows = allRows.slice(1).map(r => ({
+          phone:      normalizePhone(r[cols.phone] || ''),
+          first_name: cols.firstName >= 0 ? r[cols.firstName]?.trim() || null : null,
+          last_name:  cols.lastName  >= 0 ? r[cols.lastName ]?.trim() || null : null,
+          email:      cols.email     >= 0 ? r[cols.email    ]?.trim() || null : null,
           raw:        r.join(','),
         }))
       } else {
-        rows = data.slice(1).map(r => ({
-          phone:      normalizePhone(String(r[cols.phone] || '')),
-          first_name: cols.firstName >= 0 ? String(r[cols.firstName] || '').trim() || null : null,
-          last_name:  cols.lastName  >= 0 ? String(r[cols.lastName ] || '').trim() || null : null,
-          email:      cols.email     >= 0 ? String(r[cols.email    ] || '').trim() || null : null,
+        // Detectar columna de teléfono por contenido usando todas las filas
+        const phoneCol = detectPhoneColumnByContent(allRows.slice(0, 6))
+        const nameCol  = phoneCol === 0 ? 1 : 0
+        // Determinar si la primera fila es header (valor en phoneCol no es teléfono)
+        const phoneRe  = /^\+?[\d\s\-().]{7,}$/
+        const firstIsHeader = !phoneRe.test((allRows[0][phoneCol] ?? '').trim())
+        const dataRows = firstIsHeader ? allRows.slice(1) : allRows
+        rows = dataRows.map(r => ({
+          phone:      normalizePhone(r[phoneCol] || ''),
+          first_name: r[nameCol]?.trim() || null,
+          last_name:  null,
+          email:      null,
           raw:        r.join(','),
         }))
       }
