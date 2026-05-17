@@ -21,8 +21,8 @@ export async function POST(req: NextRequest) {
 
   const { contacts, panel, linea } = body
   if (!contacts?.length) return NextResponse.json({ error: 'No contacts provided' }, { status: 400 })
-  if (!Array.isArray(contacts) || contacts.length > 5000) {
-    return NextResponse.json({ error: 'contacts debe ser un array de máximo 5000 filas' }, { status: 400 })
+  if (!Array.isArray(contacts) || contacts.length > 10_000) {
+    return NextResponse.json({ error: 'contacts debe ser un array de máximo 10.000 filas por chunk' }, { status: 400 })
   }
 
   const panelValue = panel?.trim() || null

@@ -189,6 +189,7 @@ export default function Contacts() {
   const [importPanel, setImportPanel]   = useState('')
   const [importLinea, setImportLinea]   = useState('')
   const [importing, setImporting]       = useState(false)
+  const [importProgress, setImportProgress] = useState(0)
   const [importResult, setImportResult] = useState<{ inserted: number; updated: number; skipped: number } | null>(null)
   const [importError, setImportError]   = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -449,18 +450,36 @@ export default function Contacts() {
   }
 
   const confirmImport = async () => {
-    setImporting(true); setImportError(null)
-    let res: Response
+    setImporting(true); setImportError(null); setImportProgress(0)
+
+    const CHUNK_SIZE = 5_000
+    const panel  = importPanel || undefined
+    const linea  = importLinea ? Number(importLinea) : undefined
+    const chunks: ImportRow[][] = []
+    for (let i = 0; i < importRows.length; i += CHUNK_SIZE) chunks.push(importRows.slice(i, i + CHUNK_SIZE))
+
+    let totalInserted = 0, totalUpdated = 0, totalSkipped = 0
+
     try {
-      res = await fetch('/api/contacts/import', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contacts: importRows, panel: importPanel || undefined, linea: importLinea ? Number(importLinea) : undefined }),
-      })
-    } catch { setImporting(false); setImportError('Error de red al importar'); return }
-    const data = await res.json().catch(() => ({}))
-    setImporting(false)
-    if (!res.ok) { setImportError(data.error || 'Error al importar'); return }
-    setImportResult(data); load()
+      for (let i = 0; i < chunks.length; i++) {
+        const res = await fetch('/api/contacts/import', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contacts: chunks[i], panel, linea }),
+        })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) { setImportError(data.error || 'Error al importar'); return }
+        totalInserted += data.inserted || 0
+        totalUpdated  += data.updated  || 0
+        totalSkipped  += data.skipped  || 0
+        setImportProgress(Math.round(((i + 1) / chunks.length) * 100))
+      }
+      setImportResult({ inserted: totalInserted, updated: totalUpdated, skipped: totalSkipped })
+      load()
+    } catch {
+      setImportError('Error de red al importar')
+    } finally {
+      setImporting(false)
+    }
   }
 
   // ── Export ────────────────────────────────────────────────────────────────
@@ -1223,10 +1242,18 @@ export default function Contacts() {
                 </div>
               </div>
               {importError && <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded px-3 py-2">{importError}</p>}
+              {importing && (
+                <div className="space-y-1">
+                  <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                    <div className="bg-green-500 h-2 rounded-full transition-all duration-300" style={{ width: `${importProgress}%` }} />
+                  </div>
+                  <p className="text-xs text-muted-foreground text-center">{importProgress}% — procesando {importRows.length.toLocaleString()} contactos…</p>
+                </div>
+              )}
               <div className="flex gap-2">
                 <Button variant="outline" className="flex-1" onClick={() => setShowImport(false)} disabled={importing}>Cancelar</Button>
                 <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={confirmImport} disabled={importing}>
-                  {importing ? 'Importando…' : `Importar ${importRows.length} contactos`}
+                  {importing ? `Importando… ${importProgress}%` : `Importar ${importRows.length.toLocaleString()} contactos`}
                 </Button>
               </div>
             </div>
