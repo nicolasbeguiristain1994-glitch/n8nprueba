@@ -60,7 +60,7 @@ function detectColumns(headers: string[]): { phone: number; firstName: number; l
   const find = (...keys: string[]) => h.findIndex(col => keys.some(k => col.includes(k)))
   return {
     phone:     find('phone', 'whatsapp', 'wpp', 'telefono', 'tel', 'celular', 'numero', 'nro', 'number', 'movil', 'mobile', 'contacto', 'cel'),
-    firstName: find('firstname', 'nombre', 'name', 'first'),
+    firstName: find('firstname', 'nombre', 'name', 'first', 'usuario', 'user', 'cliente', 'jugador'),
     lastName:  find('lastname', 'apellido', 'last'),
     email:     find('email', 'correo', 'mail'),
   }
