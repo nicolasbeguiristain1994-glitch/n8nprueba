@@ -275,7 +275,7 @@ export function ProspectsTab() {
     try {
       for (let i = 0; i < chunks.length; i++) {
         const isFirst = i === 0
-        const body = isFirst
+        const body: Record<string, unknown> = isFirst
           ? { rows: chunks[i], filename: importFilename, total_rows: allRows.length }
           : { rows: chunks[i], batch_id: batchId }
 
