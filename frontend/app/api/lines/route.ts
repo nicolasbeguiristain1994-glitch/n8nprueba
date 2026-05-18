@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
     await query(`SELECT reset_line_counters_if_due()`).catch(() => {})
 
     const ids = await getAccessibleLineIds(auth.user)
-    const { clause, params } = lineVisibilityClause(ids, '', 1)
+    const { clause, params } = lineVisibilityClause(ids, 'l', 1)
 
     const lines = await query(`
       SELECT l.id, l.line_key, l.display_name, l.phone_number, l.evolution_instance,
