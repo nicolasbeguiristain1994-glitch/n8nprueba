@@ -127,7 +127,13 @@ export class RedisRateLimiter implements RateLimiterAdapter {
 
   private getClient(): RedisClient {
     if (!this.client) {
-      this.client = createClient({ url: process.env.REDIS_URL ?? 'redis://localhost:6379' })
+      this.client = createClient({
+        url: process.env.REDIS_URL ?? 'redis://localhost:6379',
+        socket: {
+          connectTimeout:    3000,  // fail fast if Redis unreachable
+          reconnectStrategy: false, // don't retry — fail-open immediately
+        },
+      })
       this.client.connect().catch(err =>
         appLog('ERROR', 'redis rate-limiter connect failed', {
           error: err instanceof Error ? err.message : String(err),
