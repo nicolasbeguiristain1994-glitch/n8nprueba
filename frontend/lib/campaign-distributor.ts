@@ -270,7 +270,7 @@ export async function createDispatchUnits(
          WHERE bl.phone_number_normalized = regexp_replace(c.phone_number, '[^0-9]', '', 'g')
            AND bl.removed_at IS NULL
        )
-     ON CONFLICT (campaign_id, contact_id) DO NOTHING`,
+     ON CONFLICT (campaign_id, contact_id) WHERE contact_id IS NOT NULL DO NOTHING`,
     [campaignId, listId]
   )
 
