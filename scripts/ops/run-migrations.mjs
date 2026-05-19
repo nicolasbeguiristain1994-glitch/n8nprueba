@@ -173,6 +173,7 @@ const MIGRATIONS = [
   { file: 'db/migrations/090_cloud_chatwoot_inbox.sql',                 label: '090 — cloud_numbers campos chatwoot_inbox_*' },
   { file: 'db/migrations/091_prospects.sql',                            label: '091 — Base de Difusión: prospects + prospect_import_batches + prospect_id en campaign_recipients' },
   { file: 'db/migrations/092_whatsapp_lines_cloud_schema.sql',          label: '092 — whatsapp_lines: line_key VARCHAR(50), evolution_instance/url nullable para líneas cloud' },
+  { file: 'db/migrations/093_campaigns_message_type.sql',               label: '093 — campaigns.message_type (text | template)' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
