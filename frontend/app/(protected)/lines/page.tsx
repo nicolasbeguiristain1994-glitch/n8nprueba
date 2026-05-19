@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, LogOut, Plus, RotateCcw, Pencil, Cloud, MessageSquare } from 'lucide-react'
+import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Check, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, LogOut, Plus, RotateCcw, Pencil, Cloud, MessageSquare, Zap, Info } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
@@ -36,18 +36,31 @@ interface Line {
   msg_per_day: number; msg_per_hour: number
   total_sent: number; total_failed: number
   priority: number; last_seen_at: string
-  cloud_phone_number_id: string | null
-  cloud_waba_id: string | null
-  cloud_quality_rating: string | null
-  chatwoot_inbox_id: string | null
-  chatwoot_inbox_name: string | null
-  cloud_status: string | null
+  cloud_phone_number_id:       string | null
+  cloud_waba_id:               string | null
+  cloud_quality_rating:        string | null
+  cloud_messaging_limit_tier:  string | null
+  cloud_coexistence_enabled:   boolean | null
+  chatwoot_inbox_id:           string | null
+  chatwoot_inbox_name:         string | null
+  cloud_status:                string | null
 }
 
 // connecting = QR escaneado, handshake en curso — NO regenerar QR en este estado
 type QrState = 'idle' | 'loading' | 'not-found' | 'creating' | 'qr' | 'connecting' | 'connected' | 'error'
+type AddStep = 'choose-type' | 'evolution' | 'cloud-mode' | 'cloud-signup'
 
 const EVO_MANAGER  = process.env.NEXT_PUBLIC_EVOLUTION_MANAGER_URL ?? ''
+
+function formatTier(tier: string | null): string {
+  switch (tier) {
+    case 'TIER_1K':    return '1K / día'
+    case 'TIER_10K':   return '10K / día'
+    case 'TIER_100K':  return '100K / día'
+    case 'UNLIMITED':  return 'Sin límite'
+    default:           return '—'
+  }
+}
 
 function ineligibilityReason(l: Line): string | null {
   if (l.eligible) return null
@@ -86,6 +99,9 @@ export default function Lines() {
   const [unlinkTarget, setUnlinkTarget]   = useState<Line | null>(null)
   const [unlinkLoading, setUnlinkLoading] = useState(false)
   const [unlinkError, setUnlinkError]     = useState<string | null>(null)
+
+  // Detail modal
+  const [detailLine, setDetailLine] = useState<Line | null>(null)
 
   // Edit line modal
   const [editTarget, setEditTarget]         = useState<Line | null>(null)
@@ -130,17 +146,18 @@ export default function Lines() {
     }
   }
 
-  // Cloud API onboarding modal
-  const [cloudOnboardOpen, setCloudOnboardOpen]   = useState(false)
-  const [sdkReady,         setSdkReady]           = useState(false)
+  // Flujo unificado "Agregar línea": choose-type → evolution | cloud-mode → cloud-signup
+  const [addStep,   setAddStep]   = useState<AddStep | null>(null)
+  const [cloudMode, setCloudMode] = useState<'official' | 'coexistence' | null>(null)
+  const [sdkReady,  setSdkReady]  = useState(false)
   const [cloudLoading,     setCloudLoading]       = useState(false)
   const [cloudResult,      setCloudResult]        = useState<OnboardResult | null>(null)
   const [cloudError,       setCloudError]         = useState<string | null>(null)
   const [cloudLineId,      setCloudLineId]        = useState('')
 
-  // Cargar FB SDK cuando se abre el modal (una sola vez)
+  // Cargar FB SDK al llegar al paso de Cloud Signup (una sola vez por sesión)
   useEffect(() => {
-    if (!cloudOnboardOpen) return
+    if (addStep !== 'cloud-signup') return
     const appId = process.env.NEXT_PUBLIC_META_APP_ID
     if (!appId) { setCloudError('NEXT_PUBLIC_META_APP_ID no está configurado'); return }
     if (document.getElementById('fb-sdk')) { setSdkReady(true); return }
@@ -152,7 +169,7 @@ export default function Lines() {
     script.id = 'fb-sdk'; script.src = 'https://connect.facebook.net/es_LA/sdk.js'
     script.async = true; script.defer = true
     document.head.appendChild(script)
-  }, [cloudOnboardOpen])
+  }, [addStep])
 
   const startEmbeddedSignup = useCallback(() => {
     if (!sdkReady) return
@@ -167,8 +184,11 @@ export default function Lines() {
         try {
           const res  = await fetch('/api/cloud/onboard', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ code, wabaId: waba_id, phoneNumberId: phone_number_id,
-              whatsappLineId: cloudLineId || undefined }),
+            body: JSON.stringify({
+              code, wabaId: waba_id, phoneNumberId: phone_number_id,
+              whatsappLineId:      cloudLineId || undefined,
+              coexistenceEnabled:  cloudMode === 'coexistence',
+            }),
           })
           const data: OnboardResult & { error?: string } = await res.json()
           if (!res.ok || data.error) setCloudError(data.error ?? 'Error al procesar el onboarding')
@@ -189,11 +209,13 @@ export default function Lines() {
         },
       },
     )
-  }, [sdkReady, cloudLineId])
+  }, [sdkReady, cloudLineId, cloudMode])
 
-  const closeCloudOnboard = () => {
-    setCloudOnboardOpen(false); setCloudResult(null); setCloudError(null)
-    setCloudLineId(''); setSdkReady(false); load()
+  const closeAddFlow = () => {
+    setAddStep(null); setCloudMode(null)
+    setAddInstance(''); setAddDisplayName(''); setAddPhone(''); setAddError(null); setAddLoading(false)
+    setCloudResult(null); setCloudError(null); setCloudLineId(''); setSdkReady(false); setCloudLoading(false)
+    load()
   }
 
   // Chatwoot inbox creation
@@ -225,7 +247,6 @@ export default function Lines() {
     setChatwootTarget(null); setChatwootError(null); setChatwootSuccess(null)
   }
 
-  const [addOpen, setAddOpen]               = useState(false)
   const [addInstance, setAddInstance]       = useState('')
   const [addDisplayName, setAddDisplayName] = useState('')
   const [addPhone, setAddPhone]             = useState('')
@@ -274,10 +295,8 @@ export default function Lines() {
   const syncStatus = async (line: Line) => {
     setSyncing(line.id)
     try {
-      const res  = await fetch(`/api/lines/qr/status?instance=${encodeURIComponent(line.evolution_instance)}`)
-      const data = await res.json()
-      if (data.connected || data.state === 'open') load()
-      else load() // reload anyway to show current state
+      await fetch(`/api/lines/qr/status?instance=${encodeURIComponent(line.evolution_instance)}`)
+      load()
     } catch { /* ignore */ } finally {
       setSyncing(null)
     }
@@ -470,8 +489,7 @@ export default function Lines() {
       })
       const data = await res.json()
       if (!res.ok) { setAddError(data.error || 'Error al agregar'); return }
-      setAddOpen(false); setAddInstance(''); setAddDisplayName(''); setAddPhone('')
-      load()
+      closeAddFlow()
     } catch {
       setAddError('Error de conexión')
     } finally {
@@ -479,9 +497,32 @@ export default function Lines() {
     }
   }
 
-  const connected = lines.filter(l => l.is_connected).length
-  const active    = lines.filter(l => l.status === 'active').length
-  const eligible  = lines.filter(l => l.eligible).length
+  const connected      = lines.filter(l => l.is_connected).length
+  const active         = lines.filter(l => l.status === 'active').length
+  const eligible       = lines.filter(l => l.eligible).length
+  const cloudLines     = lines.filter(l => l.line_type === 'cloud').length
+  const evolutionLines = lines.filter(l => l.line_type === 'evolution').length
+
+  // NEXT_PUBLIC_* se resuelve en build time — si no estaba definida al compilar, es undefined.
+  const metaConfigured = !!process.env.NEXT_PUBLIC_META_CONFIG_ID
+
+  // Stepper: pasos y posición actual — se adapta a la rama elegida
+  const stepperSteps: string[] = addStep === 'evolution'
+    ? ['Tipo de línea', 'Configurar instancia']
+    : ['Tipo de línea', 'Modo de conexión', 'Conectar con Meta']
+  const stepperIndex =
+    addStep === 'evolution'    ? 1 :
+    addStep === 'cloud-mode'   ? 1 :
+    addStep === 'cloud-signup' ? 2 : 0
+
+  const handleStepperBack = (targetIdx: number) => {
+    if (targetIdx >= stepperIndex) return
+    if (targetIdx === 0) {
+      setAddStep('choose-type'); setCloudMode(null); setAddError(null); setCloudError(null)
+    } else if (targetIdx === 1 && addStep === 'cloud-signup') {
+      setAddStep('cloud-mode'); setCloudError(null)
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -494,15 +535,8 @@ export default function Lines() {
         </div>
         <div className="flex gap-2">
           {isAdmin && (
-            <Button size="sm" variant="outline"
-              className="border-green-600 text-green-700 hover:bg-green-50"
-              onClick={() => setCloudOnboardOpen(true)}>
-              <Plus size={14} className="mr-1" /> Agregar línea API
-            </Button>
-          )}
-          {isAdmin && (
             <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white"
-              onClick={() => { setAddOpen(true); setAddError(null) }}>
+              onClick={() => setAddStep('choose-type')}>
               <Plus size={14} className="mr-1" /> Agregar línea
             </Button>
           )}
@@ -527,8 +561,24 @@ export default function Lines() {
           <p className="text-2xl font-bold">{lines.reduce((a, l) => a + l.msgs_sent_today, 0).toLocaleString()}</p>
         </CardContent></Card>
         <Card><CardContent className="pt-4">
-          <p className="text-xs text-gray-500 mb-1">Capacidad diaria</p>
-          <p className="text-2xl font-bold">{lines.reduce((a, l) => a + l.msg_per_day, 0).toLocaleString()}</p>
+          <p className="text-xs text-gray-500 mb-2">Por proveedor</p>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-blue-100">
+                <Cloud size={10} className="text-blue-600" />
+              </span>
+              <span className="text-xl font-bold text-blue-600">{cloudLines}</span>
+              <span className="text-xs text-gray-400">Cloud</span>
+            </div>
+            <div className="w-px h-6 bg-gray-200" />
+            <div className="flex items-center gap-1.5">
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-100">
+                <Zap size={10} className="text-slate-500" />
+              </span>
+              <span className="text-xl font-bold text-slate-500">{evolutionLines}</span>
+              <span className="text-xs text-gray-400">Evo</span>
+            </div>
+          </div>
         </CardContent></Card>
       </div>
 
@@ -539,7 +589,7 @@ export default function Lines() {
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Línea</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Instancia</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-600">Proveedor</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Elegible</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Hoy</th>
@@ -547,52 +597,100 @@ export default function Lines() {
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Total enviados</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Envíos</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-600">Acción</th>
-                {isAdmin && <th className="px-4 py-3" />}
+                <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody>
               {lines.length === 0
-                ? <tr><td colSpan={isAdmin ? 10 : 9} className="text-center py-10 text-gray-400">
+                ? <tr><td colSpan={10} className="text-center py-10 text-gray-400">
                     {loading ? 'Cargando…' : 'Sin líneas configuradas'}
                   </td></tr>
                 : lines.map(l => {
-                    const pctDay  = l.msg_per_day  ? (l.msgs_sent_today / l.msg_per_day)  * 100 : 0
-                    const pctHour = l.msg_per_hour ? (l.msgs_sent_hour  / l.msg_per_hour) * 100 : 0
+                    const pctDay      = l.msg_per_day  ? (l.msgs_sent_today / l.msg_per_day)  * 100 : 0
+                    const pctHour     = l.msg_per_hour ? (l.msgs_sent_hour  / l.msg_per_hour) * 100 : 0
+                    const ineligReason = !l.eligible ? (ineligibilityReason(l) ?? 'No elegible') : null
                     return (
-                      <tr key={l.id} className="border-b border-gray-100 hover:bg-gray-50">
+                      <tr key={l.id} className={`border-b border-gray-100 transition-colors ${
+                        l.line_type === 'cloud' ? 'hover:bg-blue-50/40' : 'hover:bg-gray-50'
+                      }`}>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             {l.is_connected
-                              ? <Wifi size={14} className="text-green-500" />
-                              : <WifiOff size={14} className="text-gray-300" />
+                              ? <Wifi size={14} className="text-green-500 flex-shrink-0" />
+                              : <WifiOff size={14} className="text-gray-300 flex-shrink-0" />
                             }
-                            {isAdmin
-                              ? <button
-                                  onClick={() => openEdit(l)}
-                                  className="font-medium hover:text-indigo-600 flex items-center gap-1 group"
-                                  title="Editar línea"
-                                >
-                                  {l.display_name || l.line_key}
-                                  <Pencil size={11} className="text-gray-300 group-hover:text-indigo-400 transition-colors" />
-                                </button>
-                              : <span className="font-medium">{l.display_name || l.line_key}</span>
-                            }
+                            <div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {isAdmin
+                                  ? <button
+                                      onClick={() => openEdit(l)}
+                                      className="font-medium hover:text-indigo-600 flex items-center gap-1 group"
+                                      title="Editar línea"
+                                    >
+                                      {l.display_name || l.line_key}
+                                      <Pencil size={11} className="text-gray-300 group-hover:text-indigo-400 transition-colors" />
+                                    </button>
+                                  : <span className="font-medium">{l.display_name || l.line_key}</span>
+                                }
+                                {l.line_type === 'cloud'
+                                  ? <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-600 border border-blue-100">
+                                      <Cloud size={8} /> Cloud
+                                    </span>
+                                  : <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+                                      <Zap size={8} /> Evolution
+                                    </span>
+                                }
+                              </div>
+                              {l.phone_number && (
+                                <div className="text-[10px] text-gray-400 mt-0.5">{l.phone_number}</div>
+                              )}
+                            </div>
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-xs text-gray-500">
+                        <td className="px-4 py-3 text-xs">
                           {l.line_type === 'cloud'
-                            ? <span className="flex items-center gap-1.5">
-                                <Cloud size={12} className="text-blue-500" />
-                                <span className="text-blue-600 font-medium">Cloud API</span>
-                                {l.cloud_quality_rating && (
-                                  <span className={`ml-1 px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                                    l.cloud_quality_rating === 'GREEN'  ? 'bg-green-100 text-green-700' :
-                                    l.cloud_quality_rating === 'YELLOW' ? 'bg-yellow-100 text-yellow-700' :
-                                    'bg-red-100 text-red-700'
-                                  }`}>{l.cloud_quality_rating}</span>
+                            ? <div className="flex flex-col gap-1">
+                                {l.cloud_quality_rating
+                                  ? <span className={`flex items-center gap-1.5 font-medium ${
+                                      l.cloud_quality_rating === 'GREEN'  ? 'text-green-700' :
+                                      l.cloud_quality_rating === 'YELLOW' ? 'text-yellow-700' :
+                                      'text-red-700'
+                                    }`}>
+                                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                                        l.cloud_quality_rating === 'GREEN'  ? 'bg-green-500' :
+                                        l.cloud_quality_rating === 'YELLOW' ? 'bg-yellow-400' :
+                                        'bg-red-500'
+                                      }`} />
+                                      {l.cloud_quality_rating === 'GREEN'  ? 'Calidad alta' :
+                                       l.cloud_quality_rating === 'YELLOW' ? 'Calidad media' :
+                                       'Calidad baja'}
+                                    </span>
+                                  : <span className="text-gray-400">Sin rating</span>
+                                }
+                                {l.cloud_coexistence_enabled && (
+                                  <span className="flex items-center gap-1 text-violet-700 font-medium">
+                                    <Zap size={9} className="flex-shrink-0" />
+                                    App + API
+                                  </span>
                                 )}
-                              </span>
-                            : <span className="font-mono">{l.evolution_instance}</span>
+                                {l.chatwoot_inbox_id
+                                  ? <span className="flex items-center gap-1 text-violet-600">
+                                      <MessageSquare size={10} className="flex-shrink-0" />
+                                      <span className="truncate max-w-[140px]" title={l.chatwoot_inbox_name || ''}>
+                                        {l.chatwoot_inbox_name || `Inbox #${l.chatwoot_inbox_id}`}
+                                      </span>
+                                    </span>
+                                  : <span className="text-gray-400">Sin inbox</span>
+                                }
+                                <span className={`self-start inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                                  l.cloud_messaging_limit_tier === 'UNLIMITED' ? 'bg-indigo-100 text-indigo-700' :
+                                  l.cloud_messaging_limit_tier               ? 'bg-slate-100 text-slate-600' :
+                                                                               'bg-gray-50  text-gray-400'
+                                }`}>
+                                  {formatTier(l.cloud_messaging_limit_tier)}
+                                </span>
+                              </div>
+                            : <span className="font-mono text-[11px] text-gray-500">{l.evolution_instance}</span>
                           }
                         </td>
                         <td className="px-4 py-3">
@@ -605,11 +703,8 @@ export default function Lines() {
                         <td className="px-4 py-3">
                           {l.eligible
                             ? <span className="flex items-center gap-1 text-xs text-green-600"><ShieldCheck size={13}/> Sí</span>
-                            : <span
-                                className="flex items-center gap-1 text-xs text-red-400"
-                                title={ineligibilityReason(l) ?? 'No elegible'}
-                              >
-                                <ShieldOff size={13}/> {ineligibilityReason(l) ?? 'No'}
+                            : <span className="flex items-center gap-1 text-xs text-red-400" title={ineligReason ?? undefined}>
+                                <ShieldOff size={13}/> No
                               </span>
                           }
                         </td>
@@ -631,33 +726,38 @@ export default function Lines() {
                         </td>
                         <td className="px-4 py-3 text-gray-500">{l.total_sent.toLocaleString()}</td>
                         <td className="px-4 py-3">
-                          <button
-                            onClick={() => toggleSending(l)}
-                            disabled={toggling === l.id}
-                            title={l.sending_enabled ? 'Desactivar envíos de campaña' : 'Activar envíos de campaña'}
-                            className={`relative inline-flex w-9 h-5 rounded-full transition-colors focus:outline-none ${
-                              l.sending_enabled ? 'bg-green-500' : 'bg-gray-300'
-                            } ${toggling === l.id ? 'opacity-50' : ''}`}
-                          >
-                            <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${l.sending_enabled ? 'translate-x-4' : ''}`} />
-                          </button>
+                          {isAdmin
+                            ? <button
+                                onClick={() => toggleSending(l)}
+                                disabled={toggling === l.id}
+                                title={l.sending_enabled ? 'Desactivar envíos de campaña' : 'Activar envíos de campaña'}
+                                className={`relative inline-flex w-9 h-5 rounded-full transition-colors focus:outline-none ${
+                                  l.sending_enabled ? 'bg-green-500' : 'bg-gray-300'
+                                } ${toggling === l.id ? 'opacity-50' : ''}`}
+                              >
+                                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${l.sending_enabled ? 'translate-x-4' : ''}`} />
+                              </button>
+                            : <span className={`inline-block w-9 h-5 rounded-full ${l.sending_enabled ? 'bg-green-400' : 'bg-gray-200'}`} />
+                          }
                         </td>
                         <td className="px-4 py-3">
                           {l.line_type === 'cloud'
-                            ? <div className="flex flex-col gap-1.5">
-                                <span className="text-xs text-blue-600 flex items-center gap-1">
-                                  <Cloud size={12}/> Activa (Cloud)
-                                </span>
+                            ? <div className="flex items-center gap-1.5">
                                 {isAdmin && !l.chatwoot_inbox_id && l.cloud_phone_number_id && (
                                   <Button size="sm" variant="outline"
-                                    className="text-xs border-violet-200 text-violet-700 hover:bg-violet-50 h-6 px-2"
+                                    className="text-xs border-violet-200 text-violet-700 hover:bg-violet-50 h-7 px-2"
                                     onClick={() => { setChatwootTarget(l); setChatwootError(null); setChatwootSuccess(null) }}>
-                                    <MessageSquare size={11} className="mr-1" /> Crear Inbox Chatwoot
+                                    <MessageSquare size={11} className="mr-1" /> Crear Inbox
                                   </Button>
                                 )}
                                 {l.chatwoot_inbox_id && (
-                                  <span className="text-xs text-violet-600 flex items-center gap-1">
-                                    <MessageSquare size={11}/> Inbox #{l.chatwoot_inbox_id}
+                                  <span className="text-xs text-green-600 flex items-center gap-1">
+                                    <CheckCircle size={12}/> Conectada
+                                  </span>
+                                )}
+                                {!l.chatwoot_inbox_id && (!isAdmin || !l.cloud_phone_number_id) && (
+                                  <span className="text-xs text-blue-500 flex items-center gap-1">
+                                    <CheckCircle size={12}/> Activa
                                   </span>
                                 )}
                               </div>
@@ -682,9 +782,16 @@ export default function Lines() {
                                 </div>
                           }
                         </td>
-                        {isAdmin && (
-                          <td className="px-4 py-3">
-                            {l.is_connected && (
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-0.5">
+                            <button
+                              onClick={() => setDetailLine(l)}
+                              title="Ver detalle"
+                              className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                            >
+                              <Info size={14} />
+                            </button>
+                            {isAdmin && l.is_connected && l.line_type !== 'cloud' && (
                               <button
                                 onClick={() => { setUnlinkTarget(l); setUnlinkError(null) }}
                                 title="Desvincular línea"
@@ -693,8 +800,8 @@ export default function Lines() {
                                 <LogOut size={14} />
                               </button>
                             )}
-                          </td>
-                        )}
+                          </div>
+                        </td>
                       </tr>
                     )
                   })
@@ -703,6 +810,221 @@ export default function Lines() {
           </table>
         </CardContent>
       </Card>
+
+      {/* ── Modal detalle de línea ── */}
+      <Dialog open={!!detailLine} onOpenChange={open => { if (!open) setDetailLine(null) }}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2.5">
+              {detailLine?.line_type === 'cloud'
+                ? <span className="p-1.5 rounded-lg bg-blue-50"><Cloud size={15} className="text-blue-500" /></span>
+                : <span className="p-1.5 rounded-lg bg-slate-100"><Zap  size={15} className="text-slate-500" /></span>
+              }
+              <div>
+                <span className="text-base font-semibold">{detailLine?.display_name || detailLine?.line_key}</span>
+                {detailLine?.phone_number && (
+                  <p className="text-xs font-normal text-gray-400 mt-0.5">{detailLine.phone_number}</p>
+                )}
+              </div>
+            </DialogTitle>
+          </DialogHeader>
+
+          {detailLine && (
+            <div className="space-y-3 py-1 max-h-[70vh] overflow-y-auto pr-1">
+
+              {/* ── Badges de estado ── */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {detailLine.line_type === 'cloud'
+                  ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-600 border border-blue-100">
+                      <Cloud size={9} /> Cloud API
+                    </span>
+                  : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+                      <Zap size={9} /> Evolution
+                    </span>
+                }
+                <Badge
+                  variant={detailLine.status === 'active' && detailLine.is_connected ? 'default' : 'secondary'}
+                  className={`text-xs ${detailLine.status === 'active' && detailLine.is_connected ? 'bg-green-100 text-green-700' : ''}`}>
+                  {detailLine.is_connected ? detailLine.status : 'desconectada'}
+                </Badge>
+                {detailLine.eligible
+                  ? <span className="flex items-center gap-1 text-xs text-green-600"><ShieldCheck size={12}/> Elegible</span>
+                  : <span className="flex items-center gap-1 text-xs text-red-400" title={ineligibilityReason(detailLine) ?? ''}>
+                      <ShieldOff size={12}/> {ineligibilityReason(detailLine) ?? 'No elegible'}
+                    </span>
+                }
+              </div>
+
+              {/* ── Sección Cloud ── */}
+              {detailLine.line_type === 'cloud' && (
+                <>
+                  <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-4 space-y-3">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Calidad y límites</p>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-gray-400">Quality Rating</p>
+                        {detailLine.cloud_quality_rating
+                          ? <span className={`flex items-center gap-1.5 text-sm font-semibold ${
+                              detailLine.cloud_quality_rating === 'GREEN'  ? 'text-green-700' :
+                              detailLine.cloud_quality_rating === 'YELLOW' ? 'text-yellow-700' : 'text-red-700'
+                            }`}>
+                              <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
+                                detailLine.cloud_quality_rating === 'GREEN'  ? 'bg-green-500' :
+                                detailLine.cloud_quality_rating === 'YELLOW' ? 'bg-yellow-400' : 'bg-red-500'
+                              }`} />
+                              {detailLine.cloud_quality_rating === 'GREEN'  ? 'Alta — sin restricciones' :
+                               detailLine.cloud_quality_rating === 'YELLOW' ? 'Media — monitorear' :
+                               'Baja — envíos limitados'}
+                            </span>
+                          : <span className="text-sm text-gray-400">Sin datos</span>
+                        }
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-gray-400">Tier de envíos</p>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${
+                          detailLine.cloud_messaging_limit_tier === 'UNLIMITED' ? 'bg-indigo-100 text-indigo-700' :
+                          detailLine.cloud_messaging_limit_tier                 ? 'bg-slate-100 text-slate-700' :
+                                                                                  'bg-gray-100  text-gray-400'
+                        }`}>
+                          {formatTier(detailLine.cloud_messaging_limit_tier)}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="space-y-1 pt-1 border-t border-gray-100">
+                      <p className="text-[10px] text-gray-400">Modo de conexión</p>
+                      {detailLine.cloud_coexistence_enabled
+                        ? <span className="flex items-center gap-1.5 text-sm font-semibold text-violet-700">
+                            <Zap size={13} /> Coexistencia — WhatsApp App + API simultáneamente
+                          </span>
+                        : <span className="flex items-center gap-1.5 text-sm font-semibold text-blue-700">
+                            <Cloud size={13} /> API Oficial — solo Cloud API
+                          </span>
+                      }
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-4 space-y-2.5">
+                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Chatwoot</p>
+                    {detailLine.chatwoot_inbox_id
+                      ? <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <MessageSquare size={15} className="text-violet-500" />
+                            <div>
+                              <p className="text-sm font-medium text-violet-700">
+                                {detailLine.chatwoot_inbox_name || `Inbox #${detailLine.chatwoot_inbox_id}`}
+                              </p>
+                              <p className="text-[10px] text-gray-400">ID: {detailLine.chatwoot_inbox_id}</p>
+                            </div>
+                          </div>
+                          <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
+                            <CheckCircle size={12} /> Conectado
+                          </span>
+                        </div>
+                      : <div className="flex items-center justify-between">
+                          <span className="text-sm text-gray-400">Sin inbox vinculado</span>
+                          {isAdmin && detailLine.cloud_phone_number_id && (
+                            <Button size="sm" variant="outline"
+                              className="text-xs border-violet-200 text-violet-700 hover:bg-violet-50 h-7 px-2.5"
+                              onClick={() => {
+                                setDetailLine(null)
+                                setChatwootTarget(detailLine)
+                                setChatwootError(null); setChatwootSuccess(null)
+                              }}>
+                              <MessageSquare size={11} className="mr-1" /> Crear Inbox
+                            </Button>
+                          )}
+                        </div>
+                    }
+                  </div>
+                </>
+              )}
+
+              {/* ── Sección Evolution ── */}
+              {detailLine.line_type === 'evolution' && (
+                <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-4 space-y-2">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Instancia Evolution</p>
+                  <p className="font-mono text-sm text-gray-700 select-all">{detailLine.evolution_instance}</p>
+                  {detailLine.last_seen_at && (
+                    <p className="text-[10px] text-gray-400">
+                      Último contacto: {new Date(detailLine.last_seen_at).toLocaleString('es-AR')}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* ── Estadísticas ── */}
+              <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-4 space-y-3">
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Estadísticas de uso</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] text-gray-400">Hoy</p>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 bg-gray-200 rounded-full h-1.5">
+                        <div className="bg-green-500 h-1.5 rounded-full transition-all" style={{
+                          width: `${Math.min(detailLine.msg_per_day ? (detailLine.msgs_sent_today / detailLine.msg_per_day) * 100 : 0, 100)}%`
+                        }} />
+                      </div>
+                      <span className="text-xs text-gray-600 font-medium whitespace-nowrap tabular-nums">
+                        {detailLine.msgs_sent_today.toLocaleString()} / {detailLine.msg_per_day.toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] text-gray-400">Esta hora</p>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 bg-gray-200 rounded-full h-1.5">
+                        <div className="bg-blue-400 h-1.5 rounded-full transition-all" style={{
+                          width: `${Math.min(detailLine.msg_per_hour ? (detailLine.msgs_sent_hour / detailLine.msg_per_hour) * 100 : 0, 100)}%`
+                        }} />
+                      </div>
+                      <span className="text-xs text-gray-600 font-medium whitespace-nowrap tabular-nums">
+                        {detailLine.msgs_sent_hour} / {detailLine.msg_per_hour}
+                      </span>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-gray-400 mb-0.5">Total enviados</p>
+                    <p className="text-2xl font-bold text-gray-800 tabular-nums">{detailLine.total_sent.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-gray-400 mb-0.5">Total fallidos</p>
+                    <p className={`text-2xl font-bold tabular-nums ${detailLine.total_failed > 0 ? 'text-red-500' : 'text-gray-300'}`}>
+                      {detailLine.total_failed.toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+                <div className="pt-1 border-t border-gray-100 text-[10px] text-gray-400">
+                  Prioridad de despacho: {detailLine.priority} · Envíos: {detailLine.sending_enabled ? 'habilitados' : 'deshabilitados'}
+                </div>
+              </div>
+
+              {/* ── Acciones ── */}
+              {isAdmin && (
+                <div className="flex gap-2 pt-1 flex-wrap border-t border-gray-100">
+                  <Button size="sm" variant="outline" className="text-xs h-8"
+                    onClick={() => { setDetailLine(null); openEdit(detailLine) }}>
+                    <Pencil size={12} className="mr-1" /> Editar límites
+                  </Button>
+                  {detailLine.line_type === 'evolution' && !detailLine.is_connected && (
+                    <Button size="sm" variant="outline"
+                      className="text-xs h-8 border-orange-200 text-orange-700 hover:bg-orange-50"
+                      onClick={() => { setDetailLine(null); openQrModal(detailLine) }}>
+                      <QrCode size={12} className="mr-1" /> Vincular QR
+                    </Button>
+                  )}
+                  {detailLine.is_connected && detailLine.line_type !== 'cloud' && (
+                    <Button size="sm" variant="outline"
+                      className="text-xs h-8 border-orange-200 text-orange-700 hover:bg-orange-50"
+                      onClick={() => { setDetailLine(null); setUnlinkTarget(detailLine); setUnlinkError(null) }}>
+                      <LogOut size={12} className="mr-1" /> Desvincular
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ── Modal editar línea ── */}
       <Dialog open={!!editTarget} onOpenChange={open => { if (!open) { setEditTarget(null); setEditError(null) } }}>
@@ -837,163 +1159,340 @@ export default function Lines() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Modal agregar línea existente ── */}
-      <Dialog open={addOpen} onOpenChange={open => { if (!open) { setAddOpen(false); setAddError(null) } }}>
-        <DialogContent className="max-w-sm">
+      {/* ── Modal agregar línea (flujo unificado) ── */}
+      <Dialog open={addStep !== null} onOpenChange={open => { if (!open) closeAddFlow() }}>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Plus size={16} /> Agregar línea existente
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
-            <p className="text-xs text-gray-500">
-              Registrá una instancia de Evolution que ya existe como línea de producción.
-            </p>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-gray-700">Nombre de instancia <span className="text-red-500">*</span></label>
-              <Input placeholder="ej: wa-instance-01" value={addInstance}
-                onChange={e => setAddInstance(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && addLine()} />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-gray-700">Nombre para mostrar</label>
-              <Input placeholder="ej: Línea 01" value={addDisplayName}
-                onChange={e => setAddDisplayName(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && addLine()} />
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-gray-700">Teléfono (opcional)</label>
-              <Input placeholder="ej: +5491168618237" value={addPhone}
-                onChange={e => setAddPhone(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && addLine()} />
-            </div>
-            {addError && (
-              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{addError}</p>
-            )}
-            <div className="flex gap-2 pt-1">
-              <Button variant="outline" className="flex-1" disabled={addLoading}
-                onClick={() => { setAddOpen(false); setAddError(null) }}>
-                Cancelar
-              </Button>
-              <Button className="flex-1 bg-indigo-600 hover:bg-indigo-700" disabled={addLoading || !addInstance.trim()}
-                onClick={addLine}>
-                {addLoading ? <Loader2 size={14} className="animate-spin mr-1" /> : <Plus size={14} className="mr-1" />}
-                Agregar
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* ── Modal Cloud API onboarding ── */}
-      <Dialog open={cloudOnboardOpen} onOpenChange={open => { if (!open) closeCloudOnboard() }}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Plus size={16} className="text-green-600" /> Conectar número oficial de WhatsApp
+              {addStep === 'choose-type'  && <><Plus  size={16} /> Agregar línea</>}
+              {addStep === 'evolution'    && <><Zap   size={16} className="text-slate-500" /> Agregar línea Evolution</>}
+              {addStep === 'cloud-mode'   && <><Cloud size={16} className="text-blue-500"  /> WhatsApp Cloud API</>}
+              {addStep === 'cloud-signup' && <><Cloud size={16} className="text-blue-500"  /> Conectar número de WhatsApp</>}
             </DialogTitle>
           </DialogHeader>
 
-          <div className="space-y-4 py-1">
-            <p className="text-sm text-gray-500">
-              Registrá un número en la API oficial de Meta.
-              Con <strong>Coexistence</strong> el número puede seguir usando la WhatsApp Business App al mismo tiempo.
-            </p>
-
-            {/* Línea a vincular (opcional) */}
-            {!cloudResult && (
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-700">Línea existente a vincular (opcional)</label>
-                <Input
-                  placeholder="UUID de la línea en la plataforma"
-                  value={cloudLineId}
-                  onChange={e => setCloudLineId(e.target.value)}
-                />
-              </div>
-            )}
-
-            {/* Botón principal */}
-            {!cloudResult && (
-              <button
-                onClick={startEmbeddedSignup}
-                disabled={!sdkReady || cloudLoading || !!cloudError?.includes('META_APP_ID')}
-                className="w-full bg-green-600 text-white font-semibold py-3 rounded-xl
-                           hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed
-                           flex items-center justify-center gap-2 text-sm"
-              >
-                {cloudLoading ? (
-                  <><Loader2 size={14} className="animate-spin" /> Procesando...</>
-                ) : !sdkReady && !cloudError ? (
-                  <><Loader2 size={14} className="animate-spin" /> Cargando SDK de Meta...</>
-                ) : (
-                  'Conectar con Meta Business'
-                )}
-              </button>
-            )}
-
-            {/* Error */}
-            {cloudError && (
-              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                <strong>Error:</strong> {cloudError}
-              </div>
-            )}
-
-            {/* Éxito */}
-            {cloudResult && (
-              <div className="space-y-3">
-                <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                  <h3 className="font-semibold text-green-800 mb-2">Número registrado</h3>
-                  <dl className="text-sm space-y-1">
-                    <div className="flex gap-2">
-                      <dt className="text-gray-500 w-24">Número:</dt>
-                      <dd className="font-mono font-medium">{cloudResult.displayPhone}</dd>
-                    </div>
-                    <div className="flex gap-2">
-                      <dt className="text-gray-500 w-24">Estado:</dt>
-                      <dd>
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                          cloudResult.status === 'active'
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-yellow-100 text-yellow-800'
-                        }`}>
-                          {cloudResult.status}
-                        </span>
-                      </dd>
-                    </div>
-                  </dl>
-                  <p className="mt-2 text-sm text-gray-600">{cloudResult.message}</p>
-                </div>
-
-                {cloudResult.status === 'code_sent' && (
-                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-                    <strong>Próximo paso:</strong> El cliente debe ingresar el código en su <strong>WhatsApp Business App</strong>.
-                    Una vez verificado, la sincronización comenzará automáticamente (hasta 15 minutos).
+          {/* ── Stepper — visible desde el paso 2 (una vez elegido el tipo) ── */}
+          {addStep !== null && addStep !== 'choose-type' && (
+            <div className="flex items-start justify-center pb-3 border-b border-gray-100">
+              {stepperSteps.map((label, i) => {
+                const done     = i < stepperIndex
+                const current  = i === stepperIndex
+                const clickable = done
+                return (
+                  <div key={i} className="flex items-center">
+                    <button
+                      type="button"
+                      disabled={!clickable}
+                      onClick={() => handleStepperBack(i)}
+                      className={`flex flex-col items-center gap-1.5 w-20 ${
+                        clickable ? 'cursor-pointer' : 'cursor-default'
+                      }`}
+                    >
+                      <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold transition-all ${
+                        done    ? 'bg-green-500 text-white' :
+                        current ? 'bg-indigo-600 text-white ring-4 ring-indigo-100' :
+                                  'bg-gray-100 text-gray-400'
+                      }`}>
+                        {done ? <Check size={11} /> : i + 1}
+                      </span>
+                      <span className={`text-[10px] font-medium text-center leading-tight ${
+                        current ? 'text-indigo-600' :
+                        done    ? 'text-gray-500'   :
+                                  'text-gray-400'
+                      }`}>
+                        {label}
+                      </span>
+                    </button>
+                    {i < stepperSteps.length - 1 && (
+                      <div className={`h-px w-8 flex-shrink-0 mb-5 ${
+                        i < stepperIndex ? 'bg-green-400' : 'bg-gray-200'
+                      }`} />
+                    )}
                   </div>
-                )}
+                )
+              })}
+            </div>
+          )}
 
-                <div className="flex gap-2">
-                  <Button variant="outline" className="flex-1 text-sm"
-                    onClick={() => { setCloudResult(null); setCloudError(null) }}>
-                    Conectar otro número
-                  </Button>
-                  <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm"
-                    onClick={closeCloudOnboard}>
-                    Cerrar
-                  </Button>
+          {/* ── Paso 1: Elegir tipo ───────────────────────────────────────── */}
+          {addStep === 'choose-type' && (
+            <div className="space-y-4 py-1">
+              <p className="text-sm text-gray-500">Elegí el tipo de línea que querés agregar a la plataforma.</p>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  onClick={() => setAddStep('evolution')}
+                  className="flex flex-col gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-indigo-400 hover:bg-indigo-50/40 text-left transition-all group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="p-2 rounded-lg bg-slate-100 group-hover:bg-indigo-100 transition-colors">
+                      <Zap size={16} className="text-slate-500 group-hover:text-indigo-600 transition-colors" />
+                    </span>
+                    <span className="font-semibold text-sm">Evolution</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-gray-600">WhatsApp via código QR</p>
+                    <p className="text-xs text-gray-400 leading-relaxed">Ideal para números de empresa o personales ya activos. Configuración en minutos.</p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => setAddStep('cloud-mode')}
+                  className="flex flex-col gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-blue-400 hover:bg-blue-50/40 text-left transition-all group"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span className="p-2 rounded-lg bg-blue-50 group-hover:bg-blue-100 transition-colors">
+                      <Cloud size={16} className="text-blue-500" />
+                    </span>
+                    <div>
+                      <p className="font-semibold text-sm leading-tight">WhatsApp Cloud</p>
+                      <span className="text-[10px] font-semibold text-green-600">Recomendado</span>
+                    </div>
+                  </div>
+                  <div className="space-y-1.5">
+                    <p className="text-xs font-medium text-gray-600">API oficial de Meta</p>
+                    <p className="text-xs text-gray-400 leading-relaxed">Mayor confiabilidad para campañas masivas, plantillas y automatización.</p>
+                  </div>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Paso 2a: Línea Evolution ──────────────────────────────────── */}
+          {addStep === 'evolution' && (
+            <div className="space-y-3 py-1">
+              <p className="text-xs text-gray-500">
+                Registrá una instancia de Evolution que ya existe como línea de producción.
+              </p>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-gray-700">Nombre de instancia <span className="text-red-500">*</span></label>
+                <Input placeholder="ej: wa-instance-01" value={addInstance}
+                  onChange={e => setAddInstance(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addLine()} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-gray-700">Nombre para mostrar</label>
+                <Input placeholder="ej: Línea 01" value={addDisplayName}
+                  onChange={e => setAddDisplayName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addLine()} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-gray-700">Teléfono <span className="text-gray-400 font-normal">(opcional)</span></label>
+                <Input placeholder="ej: +5491168618237" value={addPhone}
+                  onChange={e => setAddPhone(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addLine()} />
+              </div>
+              {addError && (
+                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{addError}</p>
+              )}
+              <div className="flex gap-2 pt-1">
+                <Button variant="outline" className="flex-1" disabled={addLoading}
+                  onClick={() => { setAddStep('choose-type'); setAddError(null) }}>
+                  ← Atrás
+                </Button>
+                <Button className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white"
+                  disabled={addLoading || !addInstance.trim()} onClick={addLine}>
+                  {addLoading ? <Loader2 size={14} className="animate-spin mr-1" /> : <Plus size={14} className="mr-1" />}
+                  Agregar
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* ── Paso 2b: Elegir modo Cloud ────────────────────────────────── */}
+          {addStep === 'cloud-mode' && (
+            <div className="space-y-4 py-1">
+              {/* Advertencia: NEXT_PUBLIC_META_CONFIG_ID no configurada */}
+              {!metaConfigured && (
+                <div className="flex gap-2.5 items-start p-3 rounded-lg bg-amber-50 border border-amber-200">
+                  <AlertCircle size={15} className="flex-shrink-0 mt-0.5 text-amber-500" />
+                  <div className="space-y-1">
+                    <p className="text-xs font-semibold text-amber-800">Configuración requerida</p>
+                    <p className="text-xs text-amber-700 leading-relaxed">
+                      La variable de entorno{' '}
+                      <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-[11px]">
+                        NEXT_PUBLIC_META_CONFIG_ID
+                      </code>{' '}
+                      no está configurada. Sin ella, el Embedded Signup de Meta no puede iniciarse.
+                    </p>
+                    <p className="text-xs text-amber-600">
+                      Configurala en el servidor y volvé a desplegar la aplicación para habilitar esta opción.
+                    </p>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Info Coexistence */}
-            {!cloudResult && (
-              <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg text-xs text-gray-500 space-y-1">
-                <p className="font-semibold text-gray-700 mb-1">¿Qué es Coexistence?</p>
-                <p>• El número puede usar la API oficial <strong>y</strong> la app simultáneamente</p>
-                <p>• Los mensajes desde la app se sincronizan en la plataforma</p>
-                <p>• Historial de hasta 180 días sincronizado automáticamente</p>
+              <p className="text-sm text-gray-500">¿Cómo querés usar este número de WhatsApp?</p>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  disabled={!metaConfigured}
+                  onClick={() => { setCloudMode('official'); setAddStep('cloud-signup') }}
+                  className={`flex flex-col gap-3 p-4 rounded-xl border-2 text-left transition-all ${
+                    metaConfigured
+                      ? 'border-gray-200 hover:border-blue-400 hover:bg-blue-50/40 cursor-pointer'
+                      : 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 rounded-lg bg-blue-50">
+                      <Cloud size={15} className="text-blue-500" />
+                    </span>
+                    <div>
+                      <p className="font-semibold text-sm leading-tight">API Oficial</p>
+                      <span className="text-[10px] font-semibold text-blue-600">Recomendado</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-400 leading-relaxed">Solo Cloud API. Máxima velocidad para campañas, bots y automatización sin límites de app.</p>
+                  <div className="space-y-0.5">
+                    <p className="text-[11px] text-green-600">✓ Plantillas Meta aprobadas</p>
+                    <p className="text-[11px] text-green-600">✓ Tiers de hasta 100K/día</p>
+                  </div>
+                </button>
+
+                <button
+                  disabled={!metaConfigured}
+                  onClick={() => { setCloudMode('coexistence'); setAddStep('cloud-signup') }}
+                  className={`flex flex-col gap-3 p-4 rounded-xl border-2 text-left transition-all ${
+                    metaConfigured
+                      ? 'border-gray-200 hover:border-violet-400 hover:bg-violet-50/40 cursor-pointer'
+                      : 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="p-1.5 rounded-lg bg-violet-50">
+                      <MessageSquare size={15} className="text-violet-500" />
+                    </span>
+                    <p className="font-semibold text-sm">Coexistencia</p>
+                  </div>
+                  <p className="text-xs text-gray-400 leading-relaxed">API + WhatsApp Business App al mismo tiempo. Ideal si el cliente sigue usando la app.</p>
+                  <div className="space-y-0.5">
+                    <p className="text-[11px] text-green-600">✓ Seguís usando la app</p>
+                    <p className="text-[11px] text-green-600">✓ Historial hasta 180 días</p>
+                  </div>
+                </button>
               </div>
-            )}
-          </div>
+              <button onClick={() => setAddStep('choose-type')}
+                className="text-xs text-gray-400 hover:text-gray-600 underline underline-offset-2 transition-colors">
+                ← Volver a elegir tipo
+              </button>
+            </div>
+          )}
+
+          {/* ── Paso 3: Cloud Signup ──────────────────────────────────────── */}
+          {addStep === 'cloud-signup' && (
+            <div className="space-y-4 py-1">
+              {/* Badge modo seleccionado */}
+              {cloudMode && !cloudResult && (
+                <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium border ${
+                  cloudMode === 'official'
+                    ? 'bg-blue-50 text-blue-700 border-blue-100'
+                    : 'bg-violet-50 text-violet-700 border-violet-100'
+                }`}>
+                  {cloudMode === 'official'
+                    ? <><Cloud size={13} /> Modo: API Oficial</>
+                    : <><MessageSquare size={13} /> Modo: Coexistencia — el número seguirá funcionando en la app al mismo tiempo</>
+                  }
+                </div>
+              )}
+
+              <p className="text-sm text-gray-500">
+                Autorizá tu cuenta de Meta Business para conectar el número a la plataforma.
+              </p>
+
+              {/* Línea existente a vincular */}
+              {!cloudResult && (
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-gray-700">
+                    Línea existente a vincular <span className="text-gray-400 font-normal">(opcional)</span>
+                  </label>
+                  <Input
+                    placeholder="UUID de la línea en la plataforma"
+                    value={cloudLineId}
+                    onChange={e => setCloudLineId(e.target.value)}
+                  />
+                </div>
+              )}
+
+              {/* Botón principal */}
+              {!cloudResult && (
+                <button
+                  onClick={startEmbeddedSignup}
+                  disabled={!sdkReady || cloudLoading || !!cloudError?.includes('META_APP_ID')}
+                  className="w-full bg-green-600 text-white font-semibold py-3 rounded-xl
+                             hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed
+                             flex items-center justify-center gap-2 text-sm"
+                >
+                  {cloudLoading ? (
+                    <><Loader2 size={14} className="animate-spin" /> Procesando...</>
+                  ) : !sdkReady && !cloudError ? (
+                    <><Loader2 size={14} className="animate-spin" /> Cargando SDK de Meta...</>
+                  ) : (
+                    'Conectar con Meta Business'
+                  )}
+                </button>
+              )}
+
+              {/* Error */}
+              {cloudError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                  <strong>Error:</strong> {cloudError}
+                </div>
+              )}
+
+              {/* Éxito */}
+              {cloudResult && (
+                <div className="space-y-3">
+                  <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                    <h3 className="font-semibold text-green-800 mb-2">Número registrado</h3>
+                    <dl className="text-sm space-y-1">
+                      <div className="flex gap-2">
+                        <dt className="text-gray-500 w-24">Número:</dt>
+                        <dd className="font-mono font-medium">{cloudResult.displayPhone}</dd>
+                      </div>
+                      <div className="flex gap-2">
+                        <dt className="text-gray-500 w-24">Estado:</dt>
+                        <dd>
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                            cloudResult.status === 'active'
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-yellow-100 text-yellow-800'
+                          }`}>
+                            {cloudResult.status}
+                          </span>
+                        </dd>
+                      </div>
+                    </dl>
+                    <p className="mt-2 text-sm text-gray-600">{cloudResult.message}</p>
+                  </div>
+
+                  {cloudResult.status === 'code_sent' && (
+                    <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+                      <strong>Próximo paso:</strong> El cliente debe ingresar el código en su <strong>WhatsApp Business App</strong>.
+                      Una vez verificado, la sincronización comenzará automáticamente (hasta 15 minutos).
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <Button variant="outline" className="flex-1 text-sm"
+                      onClick={() => { setCloudResult(null); setCloudError(null) }}>
+                      Conectar otro número
+                    </Button>
+                    <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm"
+                      onClick={closeAddFlow}>
+                      Cerrar
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Volver atrás */}
+              {!cloudResult && (
+                <button onClick={() => { setAddStep('cloud-mode'); setCloudError(null) }}
+                  className="text-xs text-gray-400 hover:text-gray-600 underline underline-offset-2 transition-colors">
+                  ← Volver a elegir modo
+                </button>
+              )}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

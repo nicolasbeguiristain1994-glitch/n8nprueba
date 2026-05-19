@@ -1,44 +1,39 @@
 /**
  * campaign-distributor.ts
  *
- * Multi-line campaign distribution domain logic.
+ * Multi-line, multi-provider campaign distribution domain logic.
  *
  * Source of truth: campaign_recipients
  *   Each row is one dispatch unit. Status lifecycle:
- *   pending → sending → sent | failed
+ *   pending → sending → sent | failed | skipped
  *   Retryable failures reset to pending (line_id cleared) up to MAX_RETRIES.
  *
- * Send path: direct Evolution API (not via n8n), using line.evolution_url and
- *   line.evolution_instance. This gives full per-line control. The existing
- *   /api/campaigns/[id]/send route (n8n path) is unchanged.
+ * Send paths:
+ *   - line_type = 'evolution': direct Evolution API (per-line URL + instance key).
+ *     POST {line.evolution_url}/message/sendText/{line.evolution_instance}
+ *     Body: { number, text } | { number, mediaMessage: { mediatype, media, caption } }
  *
- * Concurrency: same atomic claim pattern as the existing single-line processor —
+ *   - line_type = 'cloud': WhatsApp Cloud API (Graph API) via MessageSenderService.
+ *     Requires a phone_number_id and an encrypted per-number access token.
+ *     Rate limited to 20 msg/s per number (enforced by enforceRateLimit).
+ *
+ * Concurrency: same atomic claim pattern for both providers —
  *   UPDATE … WHERE status='pending' … FOR UPDATE SKIP LOCKED RETURNING.
  *   Only one processor can claim a given unit at a time.
  *
  * Double-send protection:
- *   1. Claim atomically — unit moves to 'sending' before Evolution call.
- *   2. Pre-insert 'queued' row in whatsapp_messages before the Evolution call.
+ *   1. Claim atomically — unit moves to 'sending' before any API call.
+ *   2. Pre-insert 'queued' row in whatsapp_messages before the provider call.
  *   3. On success: UPDATE whatsapp_messages WHERE status='queued' → 'sent'.
  *      campaign_recipients marked 'sent' only after this succeeds.
  *   4. Stale recovery (recoverStaleUnits) resolves any half-sent state on restart.
  *   5. A 'sent' recipient can never be claimed again (claimNextUnit filters pending).
- *
- * Evolution API format (v2 sendText):
- *   POST {line.evolution_url}/message/sendText/{line.evolution_instance}
- *   Headers: apikey: EVOLUTION_API_KEY
- *   Body:    { number: "<phone>", text: "<message>" }
- *            { number: "<phone>", mediaMessage: { mediatype, media, caption } }
- *   Response: { key: { id: "<messageId>" }, ... }
- *
- *   NOTE: If your Evolution instance uses a different endpoint path, body schema,
- *   or response shape, update sendViaEvolution() accordingly.
  */
 
 import { query } from '@/lib/db'
 import { distributorVisibilityClause } from '@/lib/line-visibility'
 import { humanLikeDelay, buildDelayConfig } from '@/lib/anti-ban-delays'
-import { clog, isAlertablePauseReason } from '@/lib/campaign-logger'
+import { clog } from '@/lib/campaign-logger'
 import {
   getLinePersonality,
   getLoadedPersonality,
@@ -49,7 +44,6 @@ import {
   savePersonalityToDB,
   evictPersonality,
   getLoadedLineIds,
-  type LinePersonality,
 } from '@/lib/line-personality'
 import {
   getProxyForLine,
@@ -57,21 +51,36 @@ import {
   flushExpiredBlacklist,
 } from '@/lib/proxy-manager'
 import { ContactFrequencyEngine } from '@/lib/contact-frequency/ContactFrequencyEngine'
-import { lineEligibleExpr } from '@/lib/line-eligibility'
+import { lineEligibleExpr, cloudEligibleExpr } from '@/lib/line-eligibility'
+import { enforceRateLimit } from '@/lib/cloud-api/rate-limiter'
+import { getTokenForNumber } from '@/lib/cloud-api/token-store'
+import { MessageSenderService } from '@/lib/cloud-api/infrastructure/message-sender.service'
+import { CloudApiError } from '@/lib/cloud-api/errors'
+import type { SendMessageRequest, TemplateContent, TemplateParameter } from '@/lib/cloud-api/types/messages'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const MAX_RETRIES            = 3   // permanent failure after this many attempts
 const STALE_SENDING_MINUTES  = 15  // reclaim stuck 'sending' rows after this
 const PROCESSOR_LOCK_MINUTES = 30  // stale processor lock timeout
+
 const LOCK_HEARTBEAT_EVERY   = 50  // refresh processor_locked_at every N sends
+
+// Cloud API error codes that are contact-level and non-retryable → 'skipped'.
+// These come from MetaHttpGateway as CloudApiError, not from the use-case layer.
+// 131021: number not on WhatsApp
+// 131026: recipient opted out of business messages
+// 131047: 24h conversation window closed (free-form text requires open session)
+const CLOUD_SKIP_CODES = new Set([131021, 131026, 131047])
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 export type EligibleLine = {
   id:                 string
-  evolution_instance: string
-  evolution_url:      string
+  line_type:          'evolution' | 'cloud'
+  phone_number_id:    string | null   // cloud lines only
+  evolution_instance: string | null   // evolution lines only
+  evolution_url:      string | null   // evolution lines only
   msgs_sent_hour:     number
   msgs_sent_today:    number
   msg_per_hour:       number
@@ -81,6 +90,14 @@ export type EligibleLine = {
   remaining_hour:     number
   remaining_day:      number
   has_personality:    boolean
+}
+
+// Schema del JSONB campaigns.template_params.
+// Los valores de body pueden contener {{first_name}} o {{phone_number}}.
+export type CampaignTemplateParams = {
+  body?:    string[]   // vars posicionales → {{1}}, {{2}} … del componente body
+  header?:  { type: 'image' | 'video' | 'document'; link: string }
+  buttons?: Array<{ index: number; sub_type: 'url' | 'quick_reply'; payload: string }>
 }
 
 export type CampaignForDispatch = {
@@ -95,7 +112,19 @@ export type CampaignForDispatch = {
   personalize_name:    boolean
   status:              string
   owned_by:            string | null
+  // Template support (message_type = 'template' → Cloud API únicamente)
+  message_type:      'text' | 'template'
+  template_id:       string | null
+  template_name:     string | null     // denormalizado del JOIN con whatsapp_templates
+  template_language: string | null
+  template_params:   CampaignTemplateParams | null
 }
+
+// Payload discriminado para sendViaCloud — separa texto de plantilla
+// sin sobrecargar la firma con parámetros opcionales ambiguos.
+type CloudSendPayload =
+  | { kind: 'text';     body: string; mediaUrl: string | null }
+  | { kind: 'template'; content: TemplateContent }
 
 type DispatchUnit = {
   id:           string
@@ -144,6 +173,65 @@ function personalize(raw: string, firstName: string, campaign: CampaignForDispat
 
 // antiblockDelay reemplazada por humanLikeDelay — ver anti-ban-delays.ts
 
+// ── Template helpers ───────────────────────────────────────────────────────────
+
+// Resuelve placeholders de contacto en los valores de template_params.
+// Soportados: {{first_name}}, {{phone_number}}.
+// Cualquier otro placeholder se deja intacto — Meta los recibirá literalmente.
+function resolveTemplateVar(value: string, unit: DispatchUnit): string {
+  return value
+    .replace(/\{\{first_name\}\}/gi,    unit.first_name   || '')
+    .replace(/\{\{phone_number\}\}/gi,  unit.phone_number || '')
+}
+
+/**
+ * Construye el TemplateContent para la Graph API a partir de los datos de la
+ * campaña y el destinatario. No hace ninguna llamada a DB — todo viene en
+ * CampaignForDispatch (template_name, template_language, template_params) que
+ * se cargó con JOIN en el inicio del dispatch.
+ *
+ * Lanza si template_name está vacío — el caller debe validar antes.
+ */
+function buildTemplatePayload(
+  campaign: CampaignForDispatch,
+  unit:     DispatchUnit,
+): TemplateContent {
+  const name     = campaign.template_name!
+  const language = campaign.template_language ?? 'es'
+  const params   = campaign.template_params ?? {}
+
+  const components: TemplateContent['components'] = []
+
+  if (params.header) {
+    const mediaType = params.header.type
+    const headerParam: TemplateParameter =
+      mediaType === 'image'  ? { type: 'image',    image:    { link: params.header.link } } :
+      mediaType === 'video'  ? { type: 'video',    video:    { link: params.header.link } } :
+                               { type: 'document', document: { link: params.header.link } }
+    components.push({ type: 'header', parameters: [headerParam] })
+  }
+
+  if (params.body && params.body.length > 0) {
+    components.push({
+      type:       'body',
+      parameters: params.body.map(v => ({ type: 'text' as const, text: resolveTemplateVar(v, unit) })),
+    })
+  }
+
+  if (params.buttons && params.buttons.length > 0) {
+    for (const btn of params.buttons) {
+      components.push({
+        type:       'button',
+        sub_type:   btn.sub_type,
+        index:      String(btn.index),
+        parameters: [{ type: 'payload', payload: btn.payload }],
+      })
+    }
+  }
+
+  return { name, language: { code: language }, components }
+}
+
 // ── isNetworkError ─────────────────────────────────────────────────────────────
 
 /**
@@ -189,25 +277,31 @@ function isNetworkError(err: unknown): boolean {
  * (called from WF-013). This function reads current counter values only.
  */
 export async function getEligibleLines(operatorId?: string | null): Promise<EligibleLine[]> {
-  const { clause, params } = distributorVisibilityClause(operatorId, 1)
-  // When operatorId is provided the visibility filter is injected via SQL function
-  // (no pre-fetch of IDs — avoids N+1 in the hot send loop).
-  // When operatorId is null/undefined the global pool is used (system/background jobs).
+  const { clause, params } = distributorVisibilityClause(operatorId, 1, 'wl')
+  // Table alias 'wl' is required to avoid column ambiguity with the cloud_numbers JOIN.
+  // Visibility clause uses wl.id so it doesn't collide with cn.id.
   return query<EligibleLine>(`
     SELECT
-      id, evolution_instance, evolution_url,
-      msgs_sent_hour, msgs_sent_today,
-      msg_per_hour,   msg_per_day,
-      priority,       last_seen_at,
-      (msg_per_hour  - msgs_sent_hour)  AS remaining_hour,
-      (msg_per_day   - msgs_sent_today) AS remaining_day,
-      (personality_config IS NOT NULL)  AS has_personality
-    FROM whatsapp_lines
-    WHERE  ${lineEligibleExpr()} ${clause}
+      wl.id,
+      wl.line_type,
+      cn.phone_number_id,
+      wl.evolution_instance,
+      wl.evolution_url,
+      wl.msgs_sent_hour,  wl.msgs_sent_today,
+      wl.msg_per_hour,    wl.msg_per_day,
+      wl.priority,        wl.last_seen_at,
+      (wl.msg_per_hour  - wl.msgs_sent_hour)  AS remaining_hour,
+      (wl.msg_per_day   - wl.msgs_sent_today) AS remaining_day,
+      (wl.personality_config IS NOT NULL)      AS has_personality
+    FROM whatsapp_lines wl
+    LEFT JOIN cloud_numbers cn
+      ON cn.whatsapp_line_id = wl.id AND cn.status = 'active'
+    WHERE (${lineEligibleExpr('wl')} OR (${cloudEligibleExpr('wl')} AND cn.id IS NOT NULL))
+      ${clause}
     ORDER BY
-      (msg_per_day - msgs_sent_today) DESC,  -- most remaining capacity first
-      priority ASC,                           -- lower number = higher priority
-      last_seen_at ASC NULLS LAST             -- oldest activity as tie-break
+      (wl.msg_per_day - wl.msgs_sent_today) DESC,
+      wl.priority ASC,
+      wl.last_seen_at ASC NULLS LAST
   `, params)
 }
 
@@ -416,6 +510,52 @@ export async function sendViaEvolution(
   return { messageId }
 }
 
+// ── sendViaCloud ───────────────────────────────────────────────────────────────
+
+/**
+ * Sends a campaign message via WhatsApp Cloud API (Graph API).
+ *
+ * Accepts a discriminated CloudSendPayload:
+ *   - kind='text'     → texto libre o imagen (requiere ventana de 24h abierta)
+ *   - kind='template' → plantilla pre-aprobada por Meta (no requiere ventana)
+ *
+ * Reuses token management (getTokenForNumber) and HTTP layer (MessageSenderService)
+ * without going through SendMessageUseCase — the use-case's window check does
+ * not apply to campaigns, and its DB persistence conflicts with our pre-insert fence.
+ *
+ * Rate limiting (20 msg/s) is enforced via enforceRateLimit().
+ * Pacing between messages is handled by the distributor's humanLikeDelay.
+ */
+export async function sendViaCloud(
+  line:      EligibleLine,
+  phone:     string,
+  payload:   CloudSendPayload,
+  campaignId?: string,
+): Promise<{ messageId: string | null }> {
+  const phoneNumberId = line.phone_number_id
+  if (!phoneNumberId) throw new Error(`No phone_number_id for cloud line ${line.id}`)
+
+  await enforceRateLimit(phoneNumberId)
+
+  const accessToken = await getTokenForNumber(phoneNumberId)
+  const sender      = new MessageSenderService(accessToken, phoneNumberId)
+
+  // Cloud API expects E.164 format (with leading +)
+  const to = phone.startsWith('+') ? phone : `+${phone}`
+
+  let req: SendMessageRequest
+  if (payload.kind === 'template') {
+    req = { phoneNumberId, to, type: 'template', template: payload.content, campaignId }
+  } else if (payload.mediaUrl) {
+    req = { phoneNumberId, to, type: 'image', image: { link: payload.mediaUrl, caption: payload.body }, campaignId }
+  } else {
+    req = { phoneNumberId, to, type: 'text', text: { body: payload.body }, campaignId }
+  }
+
+  const { wamid } = await sender.send(req)
+  return { messageId: wamid || null }
+}
+
 // ── Stale recovery ─────────────────────────────────────────────────────────────
 
 /**
@@ -524,7 +664,9 @@ async function handleSuccess(
   unit: DispatchUnit,
   line: EligibleLine,
   messageId: string | null,
-  personalizedMsg: string,
+  messageBody: string,
+  messageKind: 'text' | 'template' = 'text',
+  templateName?: string,
 ): Promise<void> {
   // Queries 1 + 2: críticas, independientes entre sí → paralelo
   await Promise.all([
@@ -547,7 +689,7 @@ async function handleSuccess(
            evolution_message_id = $2,
            updated_at           = NOW()
        WHERE id = $3`,
-      [personalizedMsg, messageId, unit.id]
+      [messageBody, messageId, unit.id]
     ),
   ])
 
@@ -563,7 +705,7 @@ async function handleSuccess(
        status               = CASE WHEN whatsapp_messages.status IN ('delivered','read') THEN whatsapp_messages.status ELSE 'sent' END,
        evolution_message_id = COALESCE(whatsapp_messages.evolution_message_id, EXCLUDED.evolution_message_id),
        updated_at           = NOW()`,
-    [unit.contact_id, campaignId, unit.phone_number, personalizedMsg, messageId, unit.id]
+    [unit.contact_id, campaignId, unit.phone_number, messageBody, messageId, unit.id]
   ).catch(e =>
     clog.warn({
       event: 'sent.fallback.insert.error', campaignId, mode: 'multi-line',
@@ -593,7 +735,9 @@ async function handleSuccess(
     recipientId: unit.id,
     contactId:   unit.contact_id,
     lineId:      line.id,
-    provider:    'evolution',
+    provider:    line.line_type,
+    messageKind,
+    ...(templateName ? { templateName } : {}),
   })
 }
 
@@ -605,6 +749,8 @@ async function handleFailure(
   line: EligibleLine,
   errDetail: string,
   maxRetries = MAX_RETRIES,
+  messageKind: 'text' | 'template' = 'text',
+  templateName?: string,
 ): Promise<void> {
   // Update queued → failed in whatsapp_messages (only if still queued)
   await query(
@@ -618,7 +764,7 @@ async function handleFailure(
     [errDetail, unit.id]
   ).catch(() => {})
 
-  // Ensure a failed message row exists even if Evolution rejected before pre-insert
+  // Ensure a failed message row exists even if the provider rejected before pre-insert ran
   await query(
     `INSERT INTO whatsapp_messages
        (contact_id, campaign_id, phone_number, message_body, direction, status,
@@ -673,9 +819,11 @@ async function handleFailure(
     contactId:   unit.contact_id,
     lineId:      line.id,
     attempt:     unit.attempts,
-    provider:    'evolution',
+    provider:    line.line_type,
     error:       errDetail,
     permanent:   unit.attempts >= maxRetries,
+    messageKind,
+    ...(templateName ? { templateName } : {}),
   })
 }
 
@@ -721,7 +869,7 @@ async function syncCounters(
 /**
  * Reclama y envía una unidad pendiente para una línea específica.
  *
- * Encapsula: claim atómico → pre-insert → send Evolution → handleSuccess/Failure.
+ * Encapsula: claim atómico → pre-insert → send (Evolution o Cloud) → handleSuccess/Failure.
  * Diseñado para ser llamado en paralelo desde Promise.allSettled sobre
  * múltiples líneas activas, una unidad por línea por ciclo.
  *
@@ -729,7 +877,7 @@ async function syncCounters(
  *   'sent'    — mensaje enviado y confirmado en DB
  *   'failed'  — envío fallido (registrado en handleFailure)
  *   'no-unit' — no había unidades pendientes para esta línea
- *   'skipped' — contacto bloqueado por frecuencia (BLOCK); no se envía
+ *   'skipped' — contacto bloqueado por frecuencia o error Cloud no-reintentable
  */
 type SendOneUnitOptions = {
   // Called each time the frequency engine throws and the send continues anyway
@@ -755,7 +903,6 @@ async function sendOneUnit(
   // Graceful degradation (fail-open): si el motor falla (timeout de DB, error
   // transitorio), el envío CONTINÚA. La disponibilidad de la campaña tiene prioridad
   // sobre el control de frecuencia estricto ante fallos de infraestructura.
-  // Política explícita — ver FREQ_ENGINE_FAIL_OPEN en campaign-distributor.ts.
   // Para cambiar a fail-closed, lanzar aquí en lugar de continuar.
   //
   // BLOCK  → el contacto superó sus límites; se marca 'skipped' sin reintentos.
@@ -763,8 +910,7 @@ async function sendOneUnit(
   // ALLOW  → sin restricciones activas; flujo normal.
   let freqDecision: 'ALLOW' | 'DELAY' | 'BLOCK' = 'ALLOW'
   let freqReason   = ''
-  // Frequency engine only applies to contacts (casino players).
-  // Prospects don't have frequency rules — skip the check entirely.
+  // Frequency engine only applies to contacts. Prospects don't have frequency rules.
   if (unit.contact_id) {
     try {
       const freqResult = await ContactFrequencyEngine.atomicEvaluateAndRecord(
@@ -801,7 +947,6 @@ async function sendOneUnit(
   if (freqDecision === 'BLOCK') {
     // Límite de frecuencia superado: marcar como 'skipped' sin reintentar.
     // La ventana de frecuencia es rolling (24h/7d), no de calendario.
-    // El contacto puede ser elegible en la siguiente campaña o ventana.
     await query(
       `UPDATE campaign_recipients
        SET status       = 'skipped',
@@ -833,7 +978,17 @@ async function sendOneUnit(
   // transacción atómica. Continuamos el envío — el humanLikeDelay del loop
   // principal ya introduce separación temporal entre mensajes del mismo ciclo.
 
-  const personalizedMsg = personalize(pickMessage(campaign), unit.first_name, campaign)
+  // Para campañas de texto: mensaje aleatorio del pool, personalizado con el nombre.
+  // Para campañas de plantilla: marcador legible; el contenido real lo define Meta.
+  const messageBody = campaign.message_type === 'template'
+    ? `[template:${campaign.template_name!}]`
+    : personalize(pickMessage(campaign), unit.first_name, campaign)
+
+  // lineLabel: identificador legible del provider para todos los logs de este ciclo.
+  // Definido antes del pre-insert para que esté disponible en su log de error.
+  const lineLabel = line.line_type === 'cloud'
+    ? `cloud:${line.phone_number_id}`
+    : `evo:${line.evolution_instance}`
 
   // Pre-insert idempotency fence
   await query(
@@ -848,48 +1003,92 @@ async function sendOneUnit(
        message_body = EXCLUDED.message_body,
        updated_at   = NOW()
      WHERE whatsapp_messages.status NOT IN ('sent', 'delivered', 'read')`,
-    [unit.contact_id, campaignId, unit.phone_number, personalizedMsg, unit.id]
+    [unit.contact_id, campaignId, unit.phone_number, messageBody, unit.id]
   ).catch(e =>
     clog.warn({
       event: 'pre.insert.queued.error', campaignId, mode: 'multi-line',
-      instance: line.evolution_instance, error: e instanceof Error ? e.message : String(e),
+      lineLabel, error: e instanceof Error ? e.message : String(e),
     })
   )
 
-  const proxy = await getProxyForLine(line.id).catch(() => null)
+  // Proxy: Evolution-only. Cloud lines call Graph API directly — no proxy involved.
+  const proxy = line.line_type === 'evolution'
+    ? await getProxyForLine(line.id).catch(() => null)
+    : null
 
-  if (proxy) {
-    clog.info({
-      event: 'unit.send.start', campaignId, mode: 'multi-line',
-      instance: line.evolution_instance,
-      proxy: proxy.label, proxyType: proxy.proxyType, country: proxy.country ?? 'unknown',
-    })
+  // ── Send-start log ──────────────────────────────────────────────────────────
+  if (line.line_type === 'evolution') {
+    if (proxy) {
+      clog.info({
+        event: 'unit.send.start', campaignId, mode: 'multi-line',
+        lineLabel, proxy: proxy.label, proxyType: proxy.proxyType, country: proxy.country ?? 'unknown',
+      })
+    } else {
+      clog.warn({
+        event: 'unit.send.no_proxy', campaignId, mode: 'multi-line',
+        lineLabel, lineId: line.id,
+        detail: 'línea sin proxy asignado o unhealthy — enviando directo',
+      })
+    }
   } else {
-    clog.warn({
-      event: 'unit.send.no_proxy', campaignId, mode: 'multi-line',
-      instance: line.evolution_instance, lineId: line.id,
-      detail: 'línea sin proxy asignado o unhealthy — enviando directo',
-    })
+    clog.info({ event: 'unit.send.start', campaignId, mode: 'multi-line', lineLabel })
   }
 
   try {
-    const { messageId } = await sendViaEvolution(
-      line, unit.phone_number, personalizedMsg, campaign.media_url
-    )
-    await handleSuccess(campaignId, unit, line, messageId, personalizedMsg)
+    const { messageId } = line.line_type === 'cloud'
+      ? await sendViaCloud(
+          line, unit.phone_number,
+          campaign.message_type === 'template'
+            ? { kind: 'template', content: buildTemplatePayload(campaign, unit) }
+            : { kind: 'text', body: messageBody, mediaUrl: campaign.media_url },
+          campaignId,
+        )
+      : await sendViaEvolution(line, unit.phone_number, messageBody, campaign.media_url)
+
+    await handleSuccess(campaignId, unit, line, messageId, messageBody,
+      campaign.message_type, campaign.template_name ?? undefined)
     updateLastActiveAt(line.id)
     return 'sent'
   } catch (err) {
+    // Cloud API: contact-level non-retryable errors (see CLOUD_SKIP_CODES).
+    // These come from MetaHttpGateway as CloudApiError — not from the use-case layer.
+    // Marking as 'skipped' avoids wasting MAX_RETRIES on structurally unsendable recipients.
+    if (err instanceof CloudApiError && CLOUD_SKIP_CODES.has(err.code ?? -1)) {
+      const reason = err.code === 131047 ? 'cloud-no-window'
+                   : err.code === 131026 ? 'cloud-opted-out'
+                   : 'cloud-non-retryable'
+      await query(
+        `UPDATE campaign_recipients
+         SET status       = 'skipped',
+             error_detail = $1,
+             failed_at    = NOW(),
+             locked_at    = NULL,
+             updated_at   = NOW()
+         WHERE id = $2`,
+        [`[${reason}] ${err.message}`, unit.id],
+      ).catch(() => {})
+      clog.warn({
+        event:       'recipient.skipped',
+        campaignId,
+        mode:        'multi-line',
+        recipientId: unit.id,
+        contactId:   unit.contact_id,
+        lineId:      line.id,
+        reason,
+        errorCode:   err.code,
+      })
+      return 'skipped'
+    }
+
     const errMsg = err instanceof Error ? err.message : String(err)
-    const maskedPhone = `***${unit.phone_number.slice(-4)}`
     console.error(
-      `[distributor ${campaignId}] send failed ${maskedPhone} ` +
-      `via ${line.evolution_instance}:`, errMsg
+      `[distributor ${campaignId}] send failed ***${unit.phone_number.slice(-4)} via ${lineLabel}:`, errMsg
     )
     if (proxy && isNetworkError(err)) {
       await reportProxySendFailure(proxy.id, line.id, errMsg).catch(() => {})
     }
-    await handleFailure(campaignId, unit, line, errMsg, maxRetries)
+    await handleFailure(campaignId, unit, line, errMsg, maxRetries,
+      campaign.message_type, campaign.template_name ?? undefined)
     return 'failed'
   }
 }
@@ -903,7 +1102,7 @@ async function sendOneUnit(
  *
  * Key differences:
  *  - Re-evaluates eligible lines on each iteration (respects updated counters)
- *  - Calls Evolution API directly (per-line URL + instance)
+ *  - Routes per line_type: Evolution (per-instance URL) or Cloud API (Graph API)
  *  - Pauses the campaign automatically if no eligible lines remain
  *  - Clears the unit's line_id on retryable failure (allows line re-selection)
  *
@@ -926,15 +1125,45 @@ export async function processMultiLineInBackground(
 
   try {
     // ── Guard temprano de API key ─────────────────────────────────────────────
-    // Detectar configuración faltante antes de iniciar el procesador.
-    // Acepta EVOLUTION_GLOBAL_API_KEY o EVOLUTION_API_KEY (igual que QR routes).
-    // Sin una de estas claves ningún envío puede completarse — mejor pausar
-    // explícitamente que dejar la campaña en 'running' con recipients 'failed'.
+    // Solo pausar si falta EVOLUTION_API_KEY Y no hay líneas Cloud disponibles
+    // que puedan cubrir la campaña. Un setup cloud-only no necesita la key de Evolution.
     const evolutionApiKey = process.env.EVOLUTION_GLOBAL_API_KEY || process.env.EVOLUTION_API_KEY
     if (!evolutionApiKey) {
+      const [{ hasCloud }] = await query<{ hasCloud: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM cloud_numbers cn
+           JOIN whatsapp_lines wl ON wl.id = cn.whatsapp_line_id
+           WHERE cn.status = 'active' AND wl.status = 'active' AND wl.sending_enabled = true
+         ) AS "hasCloud"`,
+      ).catch(() => [{ hasCloud: false }])
+
+      if (!hasCloud) {
+        clog.critical({
+          event: 'config.missing', campaignId: id, mode: 'multi-line',
+          detail: 'EVOLUTION_API_KEY not set and no active Cloud lines — pausing campaign',
+        })
+        await query(
+          `UPDATE campaigns
+           SET status = 'paused', pause_reason = 'config_missing',
+               processor_locked_at = NULL, processor_lock_token = NULL
+           WHERE id = $1`,
+          [id],
+        ).catch(() => {})
+        return
+      }
+      clog.warn({
+        event: 'config.evolution_key_missing', campaignId: id, mode: 'multi-line',
+        detail: 'EVOLUTION_API_KEY not set — campaign will use Cloud API lines only',
+      })
+    }
+
+    // Template campaigns require a resolved template_name (denormalized via JOIN in dispatch
+    // routes). Fail fast here so the whole campaign pauses immediately rather than producing
+    // per-recipient silent fallbacks or errors at scale.
+    if (campaign.message_type === 'template' && !campaign.template_name) {
       clog.critical({
         event: 'config.missing', campaignId: id, mode: 'multi-line',
-        detail: 'EVOLUTION_API_KEY (or EVOLUTION_GLOBAL_API_KEY) not set — pausing campaign to avoid mass failures',
+        detail: 'message_type=template pero template_name es null — verificar JOIN en dispatch routes',
       })
       await query(
         `UPDATE campaigns
@@ -1089,7 +1318,12 @@ export async function processMultiLineInBackground(
       // Solo las líneas dentro de su ventana participan en este ciclo.
       // getLoadedPersonality() es O(1) — todas las personalidades ya están en memoria
       // desde la fase de hidratación del inicio del ciclo (hydratePersonalityFromRecord).
+      //
+      // Template gate: las campañas de tipo 'template' solo pueden enviarse por
+      // Cloud API (Meta requiere plantillas aprobadas para mensajes proactivos).
+      // Las líneas Evolution se excluyen para evitar 'skipped' masivos innecesarios.
       const activeLines = eligibleLines.filter(l => {
+        if (campaign.message_type === 'template' && l.line_type !== 'cloud') return false
         if (!l.has_personality) return true
         const personality = getLoadedPersonality(l.id)
         return !personality || shouldLineBeActiveNow(personality)
@@ -1119,7 +1353,7 @@ export async function processMultiLineInBackground(
         activeLines.map(line => sendOneUnit(id, line, campaign, maxRetries, {
           onFreqFailOpen: () => {
             freqEngineFailOpenCount++
-            if (freqEngineFailOpenCount === FREQ_FAIL_OPEN_WARN_THRESHOLD) {
+            if (freqEngineFailOpenCount >= FREQ_FAIL_OPEN_WARN_THRESHOLD) {
               clog.warn({
                 event: 'freq.engine.failopen.accumulated', campaignId: id, mode: 'multi-line',
                 count: freqEngineFailOpenCount,

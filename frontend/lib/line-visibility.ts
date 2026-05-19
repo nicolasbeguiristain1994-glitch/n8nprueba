@@ -84,14 +84,17 @@ export function lineVisibilityClause(
  *
  * @param operatorId - campaign.owned_by (null = no restriction)
  * @param startAt    - $N index for the bind parameter
+ * @param tableAlias - SQL table alias to qualify the id column (e.g. 'wl' when JOIN is present)
  */
 export function distributorVisibilityClause(
   operatorId: string | null | undefined,
   startAt:    number = 1,
+  tableAlias: string = '',
 ): { clause: string; params: unknown[] } {
   if (!operatorId) return { clause: '', params: [] }
+  const col = tableAlias ? `${tableAlias}.id` : 'id'
   return {
-    clause: `AND id = ANY(get_accessible_line_ids($${startAt}::uuid))`,
+    clause: `AND ${col} = ANY(get_accessible_line_ids($${startAt}::uuid))`,
     params: [operatorId],
   }
 }

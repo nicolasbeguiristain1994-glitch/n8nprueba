@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
 
-  const { code, wabaId, phoneNumberId, whatsappLineId } = body
+  const { code, wabaId, phoneNumberId, whatsappLineId, coexistenceEnabled } = body
 
   if (!code || !wabaId || !phoneNumberId) {
     return NextResponse.json({ error: 'Se requieren: code, wabaId, phoneNumberId' }, { status: 400 })
@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await onboardCoexistenceUseCase.execute(
-      { code, wabaId, phoneNumberId, whatsappLineId },
+      { code, wabaId, phoneNumberId, whatsappLineId, coexistenceEnabled: coexistenceEnabled === true },
       auth.user.user_id,
     )
 

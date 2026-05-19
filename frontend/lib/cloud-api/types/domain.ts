@@ -57,10 +57,11 @@ export interface SmbSyncRequest {
 }
 
 export interface OnboardingRequest {
-  code:            string
-  wabaId:          string
-  phoneNumberId:   string
-  whatsappLineId?: string
+  code:                 string
+  wabaId:               string
+  phoneNumberId:        string
+  whatsappLineId?:      string
+  coexistenceEnabled?:  boolean
 }
 
 export interface OTPVerificationRequest {

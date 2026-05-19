@@ -57,6 +57,8 @@ export class OnboardCoexistenceUseCase {
     let cloudNumberId: string
     let resolvedLineId = req.whatsappLineId
 
+    const coexistenceEnabled = req.coexistenceEnabled ?? false
+
     if (existing) {
       cloudNumberId  = existing.id
       resolvedLineId = resolvedLineId ?? existing.whatsappLineId ?? undefined
@@ -65,6 +67,7 @@ export class OnboardCoexistenceUseCase {
         displayPhone:  phoneInfo.display_phone_number,
         verifiedName:  phoneInfo.verified_name,
         plainToken:    finalToken, tokenExpiresAt, encryptionKey: encKey,
+        coexistenceEnabled,
       })
     } else {
       cloudNumberId = await cloudNumberRepository.insert({
@@ -77,6 +80,7 @@ export class OnboardCoexistenceUseCase {
         whatsappLineId: resolvedLineId,
         onboardedBy:   initiatedByUserId,
         encryptionKey:  encKey,
+        coexistenceEnabled,
       })
     }
 

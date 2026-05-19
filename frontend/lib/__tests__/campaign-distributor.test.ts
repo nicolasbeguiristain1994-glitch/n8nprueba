@@ -37,6 +37,8 @@ vi.stubGlobal('fetch', mockFetch)
 function makeLine(overrides: Partial<EligibleLine> = {}): EligibleLine {
   return {
     id:                 '00000000-0000-0000-0000-000000000001',
+    line_type:          'evolution',
+    phone_number_id:    null,
     evolution_instance: 'wa-instance-01',
     evolution_url:      'http://evolution:8080',
     msgs_sent_hour:     0,
@@ -437,46 +439,63 @@ describe('sendViaEvolution — API key fallback', () => {
   })
 })
 
-// ── Cloud line exclusion — lineEligibleExpr ────────────────────────────────────
-// Verifica que el SQL generado por lineEligibleExpr excluye cloud lines correctamente.
-// La función es importada por getEligibleLines() y el health endpoint.
+// ── Line eligibility SQL — evolution + cloud ───────────────────────────────────
+// Verifica que la query de getEligibleLines incluye ambos tipos de línea.
 
-describe('cloud line exclusion — lineEligibleExpr in getEligibleLines', () => {
+describe('getEligibleLines — SQL eligibility', () => {
   beforeEach(() => { vi.resetAllMocks() })
 
-  it('getEligibleLines usa una query que incluye line_type = evolution', async () => {
+  it('la query incluye la expresión de elegibilidad evolution', async () => {
     const { getEligibleLines } = await import('@/lib/campaign-distributor')
     vi.mocked(db.query).mockResolvedValueOnce([])
 
     await getEligibleLines()
 
     const sqlCalled = vi.mocked(db.query).mock.calls[0][0] as string
-    // La expresión de elegibilidad generada por lineEligibleExpr() debe filtrar por line_type
     expect(sqlCalled).toContain("line_type = 'evolution'")
   })
 
-  it('una línea cloud no aparece en getEligibleLines aunque pase todos los demás criterios', async () => {
+  it('la query incluye la expresión de elegibilidad cloud', async () => {
     const { getEligibleLines } = await import('@/lib/campaign-distributor')
-
-    // DB devuelve vacío porque la query incluye line_type = 'evolution',
-    // y las líneas cloud no son retornadas por el WHERE clause.
     vi.mocked(db.query).mockResolvedValueOnce([])
 
-    const result = await getEligibleLines()
-    expect(result).toHaveLength(0)
+    await getEligibleLines()
+
+    const sqlCalled = vi.mocked(db.query).mock.calls[0][0] as string
+    expect(sqlCalled).toContain("line_type = 'cloud'")
   })
 
-  it('getEligibleLines incluye evolution lines normalmente', async () => {
+  it('incluye evolution lines normalmente', async () => {
     const { getEligibleLines } = await import('@/lib/campaign-distributor')
     const evolutionLine = makeLine({
-      id: 'evo-line-001',
+      id:                 'evo-line-001',
+      line_type:          'evolution',
       evolution_instance: 'wa-evo-01',
-      evolution_url: 'http://evo:8080',
+      evolution_url:      'http://evo:8080',
     })
     vi.mocked(db.query).mockResolvedValueOnce([evolutionLine])
 
     const result = await getEligibleLines()
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe('evo-line-001')
+    expect(result[0].line_type).toBe('evolution')
+  })
+
+  it('incluye cloud lines cuando la DB las retorna', async () => {
+    const { getEligibleLines } = await import('@/lib/campaign-distributor')
+    const cloudLine = makeLine({
+      id:              'cloud-line-001',
+      line_type:       'cloud',
+      phone_number_id: '1234567890',
+      evolution_instance: null,
+      evolution_url:      null,
+    })
+    vi.mocked(db.query).mockResolvedValueOnce([cloudLine])
+
+    const result = await getEligibleLines()
+    expect(result).toHaveLength(1)
+    expect(result[0].id).toBe('cloud-line-001')
+    expect(result[0].line_type).toBe('cloud')
+    expect(result[0].phone_number_id).toBe('1234567890')
   })
 })

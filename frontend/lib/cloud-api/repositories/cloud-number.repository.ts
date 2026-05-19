@@ -89,27 +89,29 @@ export const cloudNumberRepository = {
   },
 
   async insert(data: {
-    wabaId:          string
-    phoneNumberId:   string
-    displayPhone:    string
-    verifiedName:    string | null
-    plainToken:      string
-    tokenExpiresAt:  Date | null
-    whatsappLineId?: string
-    onboardedBy:     string
-    encryptionKey:   string
+    wabaId:               string
+    phoneNumberId:        string
+    displayPhone:         string
+    verifiedName:         string | null
+    plainToken:           string
+    tokenExpiresAt:       Date | null
+    whatsappLineId?:      string
+    onboardedBy:          string
+    encryptionKey:        string
+    coexistenceEnabled?:  boolean
   }): Promise<string> {
     const rows = await query<{ id: string }>(
       `INSERT INTO cloud_numbers
          (waba_id, phone_number_id, display_phone, verified_name,
           access_token_enc, access_token, token_expires_at,
           status, coexistence_enabled, whatsapp_line_id, onboarded_by, onboarded_at)
-       VALUES ($1, $2, $3, $4, pgp_sym_encrypt($5, $6), '', $7, 'pending', true, $8, $9, NOW())
+       VALUES ($1, $2, $3, $4, pgp_sym_encrypt($5, $6), '', $7, 'pending', $8, $9, $10, NOW())
        RETURNING id`,
       [
         data.wabaId, data.phoneNumberId, data.displayPhone, data.verifiedName,
         data.plainToken, data.encryptionKey, data.tokenExpiresAt,
-        data.whatsappLineId ?? null, data.onboardedBy, new Date(),
+        data.coexistenceEnabled ?? false,
+        data.whatsappLineId ?? null, data.onboardedBy,
       ],
     )
     return rows[0].id
@@ -174,23 +176,26 @@ export const cloudNumberRepository = {
   },
 
   async upsertForReOnboarding(data: {
-    id:            string
-    wabaId:        string
-    displayPhone:  string
-    verifiedName:  string | null
-    plainToken:    string
-    tokenExpiresAt: Date | null
-    encryptionKey: string
+    id:                   string
+    wabaId:               string
+    displayPhone:         string
+    verifiedName:         string | null
+    plainToken:           string
+    tokenExpiresAt:       Date | null
+    encryptionKey:        string
+    coexistenceEnabled?:  boolean
   }): Promise<void> {
     await query(
       `UPDATE cloud_numbers
        SET waba_id = $1, access_token_enc = pgp_sym_encrypt($2, $3), access_token = '',
            token_expires_at = $4, verified_name = $5, display_phone = $6,
+           coexistence_enabled = $7,
            status = 'pending', contacts_synced = false, history_synced = false, updated_at = NOW()
-       WHERE id = $7`,
+       WHERE id = $8`,
       [
         data.wabaId, data.plainToken, data.encryptionKey,
-        data.tokenExpiresAt, data.verifiedName, data.displayPhone, data.id,
+        data.tokenExpiresAt, data.verifiedName, data.displayPhone,
+        data.coexistenceEnabled ?? false, data.id,
       ],
     )
   },

@@ -7,6 +7,7 @@ export function Footer() {
           target="_blank"
           rel="noopener noreferrer"
           className="hover:text-foreground transition-colors"
+          aria-label="Ver Política de Privacidad"
         >
           Política de Privacidad
         </a>
@@ -16,6 +17,7 @@ export function Footer() {
           target="_blank"
           rel="noopener noreferrer"
           className="hover:text-foreground transition-colors"
+          aria-label="Ver Términos y Condiciones"
         >
           Términos y Condiciones
         </a>

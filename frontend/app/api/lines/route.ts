@@ -24,12 +24,14 @@ export async function GET(req: NextRequest) {
              l.msg_per_day, l.msg_per_hour, l.total_sent, l.total_failed,
              l.priority, l.last_seen_at, l.owner_user_id,
              ${lineEligibleExpr('l')} AS eligible,
-             cn.phone_number_id AS cloud_phone_number_id,
-             cn.waba_id         AS cloud_waba_id,
-             cn.quality_rating  AS cloud_quality_rating,
+             cn.phone_number_id       AS cloud_phone_number_id,
+             cn.waba_id               AS cloud_waba_id,
+             cn.quality_rating        AS cloud_quality_rating,
+             cn.messaging_limit_tier  AS cloud_messaging_limit_tier,
+             cn.coexistence_enabled   AS cloud_coexistence_enabled,
              cn.chatwoot_inbox_id,
              cn.chatwoot_inbox_name,
-             cn.status          AS cloud_status
+             cn.status                AS cloud_status
       FROM whatsapp_lines l
       LEFT JOIN cloud_numbers cn ON cn.whatsapp_line_id = l.id
       WHERE 1=1 ${clause}

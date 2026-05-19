@@ -79,7 +79,13 @@ export async function POST(
 
   let campaign: CampaignForDispatch | undefined
   try {
-    const rows = await query<CampaignForDispatch>('SELECT * FROM campaigns WHERE id = $1', [id])
+    const rows = await query<CampaignForDispatch>(
+      `SELECT c.*, wt.name AS template_name, wt.language AS template_language
+       FROM campaigns c
+       LEFT JOIN whatsapp_templates wt ON wt.id = c.template_id
+       WHERE c.id = $1`,
+      [id]
+    )
     campaign = rows[0]
   } catch (e) {
     console.error('[POST /api/campaigns/[id]/dispatch] fetch error:', e instanceof Error ? e.message : e)
