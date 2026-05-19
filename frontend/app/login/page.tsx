@@ -110,6 +110,27 @@ export default function LoginPage() {
             </button>
           </form>
         </div>
+
+        {/* Legal links */}
+        <div className="flex items-center justify-center gap-4 mt-6 text-xs text-gray-400">
+          <a
+            href="/politica-de-privacidad"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-gray-600 transition-colors"
+          >
+            Política de Privacidad
+          </a>
+          <span className="select-none">·</span>
+          <a
+            href="/terminos-y-condiciones"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-gray-600 transition-colors"
+          >
+            Términos y Condiciones
+          </a>
+        </div>
       </div>
     </div>
   )
