@@ -204,6 +204,84 @@ async function main() {
   `)
   const syncedContacts = syncRes.rowCount ?? 0
 
+  // ── Paso 3: Sincronizar contact_tags de segmento desde casino_players ────────
+  // Borra tags obsoletos y re-inserta los actuales para casino:actividad,
+  // casino:antiguedad y casino:valor_riesgo. Esto corrige el drift que ocurre
+  // cuando el segmento cambia pero los tags importados originalmente no se actualizan.
+  await pool.query(`
+    DELETE FROM contact_tags ct
+    WHERE (ct.tag LIKE 'casino:actividad:%'
+        OR ct.tag LIKE 'casino:antiguedad:%'
+        OR ct.tag LIKE 'casino:valor_riesgo:%')
+      AND ct.contact_id IN (
+        SELECT c.id
+        FROM contacts c
+        JOIN casino_players cp ON LOWER(TRIM(c.first_name)) = cp.username_lower
+        WHERE cp.agente = ANY($1::text[])
+          AND cp.seg_monto IS NOT NULL
+          AND cp.seg_actividad IS NOT NULL
+      )
+  `, [AGENTES])
+
+  const tagsRes = await pool.query(`
+    INSERT INTO contact_tags (id, contact_id, tag, added_by, added_at)
+    SELECT
+      gen_random_uuid(),
+      c.id,
+      unnest(array_remove(ARRAY[
+        'casino:actividad:' || cp.seg_actividad,
+        CASE
+          WHEN cp.fecha_primera IS NULL                             THEN NULL
+          WHEN (CURRENT_DATE - cp.fecha_primera) <  30             THEN 'casino:antiguedad:nuevo'
+          WHEN (CURRENT_DATE - cp.fecha_primera) <  90             THEN 'casino:antiguedad:reciente'
+          WHEN (CURRENT_DATE - cp.fecha_primera) < 150             THEN 'casino:antiguedad:establecido'
+          WHEN (CURRENT_DATE - cp.fecha_primera) < 270             THEN 'casino:antiguedad:veterano'
+          ELSE                                                           'casino:antiguedad:leal'
+        END,
+        CASE
+          WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
+            AND cp.seg_monto IN ('vip','alto')                     THEN 'casino:valor_riesgo:critico'
+          WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
+            AND cp.seg_monto = 'medio'                             THEN 'casino:valor_riesgo:medio'
+          WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
+            AND cp.seg_monto = 'bajo'                              THEN 'casino:valor_riesgo:bajo'
+          ELSE NULL
+        END
+      ], NULL)),
+      'segmentar',
+      NOW()
+    FROM contacts c
+    JOIN casino_players cp ON LOWER(TRIM(c.first_name)) = cp.username_lower
+    WHERE cp.agente = ANY($1::text[])
+      AND cp.seg_monto IS NOT NULL
+      AND cp.seg_actividad IS NOT NULL
+    ON CONFLICT (contact_id, tag) DO NOTHING
+  `, [AGENTES])
+  const syncedTags = tagsRes.rowCount ?? 0
+
+  // ── Paso 4: Sincronizar contadores de depósitos en contacts ──────────────────
+  // contacts.total_deposits y last_deposit_at se inicializan en 0/NULL y nunca
+  // se actualizan automáticamente. Sin esta sincronización, el badge
+  // "1er dep. · 10d+" puede aparecer en contactos que ya tienen muchos depósitos.
+  const depositSyncRes = await pool.query(`
+    UPDATE contacts c
+    SET
+      total_deposits    = cp.cant_cargas,
+      total_withdrawals = cp.cant_retiros,
+      last_deposit_at   = cp.fecha_ultima::timestamptz,
+      updated_at        = NOW()
+    FROM casino_players cp
+    WHERE LOWER(TRIM(c.first_name)) = cp.username_lower
+      AND cp.agente = ANY($1::text[])
+      AND cp.fecha_ultima IS NOT NULL
+      AND (
+        c.total_deposits    IS DISTINCT FROM cp.cant_cargas
+        OR c.total_withdrawals IS DISTINCT FROM cp.cant_retiros
+        OR c.last_deposit_at::date IS DISTINCT FROM cp.fecha_ultima
+      )
+  `, [AGENTES])
+  const syncedDeposits = depositSyncRes.rowCount ?? 0
+
   // ── Resultado ─────────────────────────────────────────────────────────────────
   const resultRes = await pool.query(`
     SELECT
@@ -237,6 +315,8 @@ async function main() {
   console.log('═══════════════════════════════════════════════════════════════')
   console.log(`  casino_players actualizados: ${Number(updatedPlayers).toLocaleString('es-AR')}`)
   console.log(`  contacts sincronizados:      ${Number(syncedContacts).toLocaleString('es-AR')}`)
+  console.log(`  contact_tags resincronizados: ${Number(syncedTags).toLocaleString('es-AR')}`)
+  console.log(`  contadores depósito sync'd:  ${Number(syncedDeposits).toLocaleString('es-AR')}`)
   console.log('  ✓  Segmentación completada.')
   console.log('')
 

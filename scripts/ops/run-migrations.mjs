@@ -174,6 +174,8 @@ const MIGRATIONS = [
   { file: 'db/migrations/091_prospects.sql',                            label: '091 — Base de Difusión: prospects + prospect_import_batches + prospect_id en campaign_recipients' },
   { file: 'db/migrations/092_whatsapp_lines_cloud_schema.sql',          label: '092 — whatsapp_lines: line_key VARCHAR(50), evolution_instance/url nullable para líneas cloud' },
   { file: 'db/migrations/093_campaigns_message_type.sql',               label: '093 — campaigns.message_type (text | template)' },
+  { file: 'db/migrations/094_enable_rls_missing_tables.sql',            label: '094 — Habilitar RLS en ~40 tablas creadas después de 032' },
+  { file: 'db/migrations/095_fix_security_definer_functions.sql',       label: '095 — Fijar search_path en 5 funciones SECURITY DEFINER' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
