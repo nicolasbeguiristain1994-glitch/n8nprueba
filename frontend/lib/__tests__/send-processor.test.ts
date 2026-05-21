@@ -51,6 +51,7 @@ function makeCampaign(overrides: Partial<CampaignRow> = {}): CampaignRow {
     messages:            null,
     media_url:           '',
     list_id:             'list-uuid',
+    prospect_list_id:    null,
     antiblock_delay_min: 0,
     antiblock_delay_max: 0,
     personalize_name:    true,

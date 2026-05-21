@@ -16,9 +16,9 @@ export const LOCK_HEARTBEAT_EVERY   = 50
 // ── Types ────────────────────────────────────────────────────────────────────
 export type CampaignRow = {
   id: string; name: string; message: string; messages: string[] | null
-  media_url: string; list_id: string; antiblock_delay_min: number
-  antiblock_delay_max: number; personalize_name: boolean; status: string
-  owned_by: string | null
+  media_url: string; list_id: string | null; prospect_list_id: string | null
+  antiblock_delay_min: number; antiblock_delay_max: number
+  personalize_name: boolean; status: string; owned_by: string | null
 }
 
 export type RecipientRow = {
