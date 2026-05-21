@@ -110,10 +110,14 @@ async function main() {
   runScript('Paso 2: Sync Bet30', 'sync-casino-players-live.js', ['--platform=bet30', '--auto'], { failOk: true })
 
   // Paso 3: calcular segmentos y sincronizar contacts.last_deposit_at
-  runScript('Paso 3: Segmentar jugadores', 'segmentar-casino-players.js')
+  runScript('Paso 3: Segmentar jugadores', 'segmentar-casino-players.js', [], { failOk: true })
 
   // Paso 4: recalcular scores de prioridad
-  await recomputePriorities()
+  try {
+    await recomputePriorities()
+  } catch (err) {
+    log(`⚠  Paso 4: Recompute falló (continuando): ${err.message}`)
+  }
 
   const mins = ((Date.now() - startMs) / 60_000).toFixed(1)
   log(`\n${SEP}`)
