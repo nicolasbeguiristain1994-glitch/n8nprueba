@@ -8,6 +8,12 @@
       "baseUrlEnvVar": "ZEUS_API_BASE",
       "apiKeyEnvVar": "ZEUS_API_KEY",
       "playerTokenEnvVar": "ZEUS_PLAYER_TOKEN",
+      "adminUserEnvVar": "ZEUS_ADMIN_USER",
+      "adminPasswordEnvVar": "ZEUS_ADMIN_PASSWORD",
+      "loginUrl": "https://admin.zeuscasino.fun/oauth/v2/token",
+      "loginClientId": "1_5l50wo24kpcscc0okw0ww4gsc8kwg0k8gs0ok44skooww4swcg",
+      "loginClientSecret": "18qxs6584gw08scg8wsk8gow44oc4gcw40c4o8w44880g0gkcg",
+      "loginPanelOrigin": "https://panel-skin5.zeuscasino.fun",
       "endpoint": "/api/records/movimiento-fichas",
       "timezone": "-03",
       "responseMapping": {
@@ -18,8 +24,7 @@
         "detailsField": "detalles",
         "dateField": "fecha"
       }
-    }
-    ,
+    },
     {
       "name": "bet30",
       "type": "bet30",
@@ -27,6 +32,12 @@
       "baseUrlEnvVar": "BET30_API_BASE",
       "apiKeyEnvVar": "BET30_API_KEY",
       "playerTokenEnvVar": "BET30_PLAYER_TOKEN",
+      "adminUserEnvVar": "BET30_ADMIN_USER",
+      "adminPasswordEnvVar": "BET30_ADMIN_PASSWORD",
+      "loginUrl": "https://admin.bet30.world/oauth/v2/token",
+      "loginClientId": "1_5l50wo24kpcscc0okw0ww4gsc8kwg0k8gs0ok44skooww4swcg",
+      "loginClientSecret": "18qxs6584gw08scg8wsk8gow44oc4gcw40c4o8w44880g0gkcg",
+      "loginPanelOrigin": "https://panel-skin5.bet30.world",
       "endpoint": "/api/records/movimiento-fichas",
       "timezone": "-03",
       "responseMapping": {

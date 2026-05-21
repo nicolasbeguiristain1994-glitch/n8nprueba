@@ -9,6 +9,13 @@ const { BaseCasinoConnector } = require('../base/BaseCasinoConnector')
  * Endpoint: GET /api/records/movimiento-fichas
  * Auth:     X-Api-Key + X-Player-Token headers
  *
+ * Token refresh (preferred): set ZEUS_ADMIN_USER + ZEUS_ADMIN_PASSWORD in env.
+ *   authenticate() will call the OAuth2 password-grant endpoint on startup and
+ *   obtain a fresh token automatically — no manual rotation needed.
+ *
+ * Token static (fallback): set ZEUS_PLAYER_TOKEN instead. The token expires
+ *   every 24–48 h and must be updated manually in Railway.
+ *
  * Transaction types are inferred from the `detalles` field:
  *   - contains "carga"   → tipo = 'carga'
  *   - contains "retiro"  → tipo = 'retiro'
@@ -18,13 +25,74 @@ class ZeusConnector extends BaseCasinoConnector {
   constructor(config, pool) {
     super(config, pool)
 
-    // Fail fast: surface missing credentials before any API call is attempted
-    this._validateEnvVars([config.apiKeyEnvVar, config.playerTokenEnvVar])
+    this.baseUrl = (process.env[config.baseUrlEnvVar] || config.baseUrl).trim()
 
-    // env var ZEUS_API_BASE overrides the base URL defined in config (optional)
-    this.baseUrl     = (process.env[config.baseUrlEnvVar] || config.baseUrl).trim()
-    this.apiKey      = process.env[config.apiKeyEnvVar].trim()
-    this.playerToken = process.env[config.playerTokenEnvVar].trim()
+    this._validateEnvVars([config.apiKeyEnvVar])
+    this.apiKey = process.env[config.apiKeyEnvVar].trim()
+
+    const hasAutoLogin =
+      config.adminUserEnvVar     && process.env[config.adminUserEnvVar]?.trim() &&
+      config.adminPasswordEnvVar && process.env[config.adminPasswordEnvVar]?.trim()
+
+    if (!hasAutoLogin) {
+      // Fall back to static token — must be set manually in Railway
+      this._validateEnvVars([config.playerTokenEnvVar])
+      this.playerToken = process.env[config.playerTokenEnvVar].trim()
+    } else {
+      // Will be set by authenticate() before any API call
+      this.playerToken = null
+    }
+  }
+
+  /**
+   * Logs in to the casino panel and obtains a fresh X-Player-Token.
+   * Called once by the sync orchestrator before the agent loop starts.
+   * No-op if ZEUS_ADMIN_USER / ZEUS_ADMIN_PASSWORD are not configured
+   * (falls back to the static ZEUS_PLAYER_TOKEN).
+   */
+  async authenticate() {
+    const adminUser     = process.env[this.config.adminUserEnvVar]?.trim()
+    const adminPassword = process.env[this.config.adminPasswordEnvVar]?.trim()
+
+    if (!adminUser || !adminPassword || !this.config.loginUrl) return
+
+    const params = new URLSearchParams({
+      username:      adminUser,
+      password:      adminPassword,
+      client_id:     this.config.loginClientId,
+      client_secret: this.config.loginClientSecret,
+      grant_type:    'password',
+      source:        'pn',
+    })
+
+    const url = `${this.config.loginUrl}?${params}`
+
+    let res
+    try {
+      res = await fetch(url, {
+        headers: {
+          'Accept':  'application/json, text/plain, */*',
+          'Origin':  this.config.loginPanelOrigin,
+          'Referer': `${this.config.loginPanelOrigin}/`,
+        },
+        signal: AbortSignal.timeout(30_000),
+      })
+    } catch (err) {
+      throw new Error(`${this.config.name} auto-login network error: ${err.message}`)
+    }
+
+    if (!res.ok) {
+      throw new Error(`${this.config.name} auto-login failed: HTTP ${res.status}`)
+    }
+
+    const body  = await res.json()
+    const token = body.access_token
+    if (!token) {
+      throw new Error(`${this.config.name} auto-login: response missing access_token`)
+    }
+
+    this.playerToken = token
+    this.log.info({ platform: this.config.name }, 'Player token refreshed via auto-login')
   }
 
   // ── API ───────────────────────────────────────────────────────────────────
