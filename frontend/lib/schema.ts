@@ -158,6 +158,7 @@ export const CreateCampaignSchema = z.object({
   media_url:            z.string().max(2048).optional().nullable(),
   media_type:           z.string().max(50).optional().nullable(),
   list_id:              z.string().uuid('list_id debe ser un UUID válido').optional().nullable(),
+  prospect_list_id:     z.string().uuid('prospect_list_id debe ser un UUID válido').optional().nullable(),
   scheduled_at:         z.string().optional().nullable(),
   antiblock_delay_min:  z.number().min(1).optional(),
   antiblock_delay_max:  z.number().min(1).optional(),
@@ -324,6 +325,39 @@ export const CreateWarmupSchema = z.object({
   delay_preset:  z.enum(WARMUP_DELAY_PRESETS).optional().default('normal'),
 })
 export type CreateWarmupInput = z.infer<typeof CreateWarmupSchema>
+
+// ── Prospect list schemas ─────────────────────────────────────────────────────
+
+export const CreateProspectListSchema = z.object({
+  name:        z.string().min(1, 'El nombre es requerido').max(255),
+  description: z.string().max(1000).optional().nullable(),
+})
+export type CreateProspectListInput = z.infer<typeof CreateProspectListSchema>
+
+export const AddProspectListMembersSchema = z.object({
+  prospect_ids: z
+    .array(z.string().uuid('ID de prospecto inválido'))
+    .min(1, 'Se requiere al menos un prospecto')
+    .max(5000, 'No se pueden agregar más de 5000 prospectos a la vez'),
+})
+export type AddProspectListMembersInput = z.infer<typeof AddProspectListMembersSchema>
+
+export const CreateListFromSelectionSchema = z.object({
+  name:        z.string().min(1, 'El nombre es requerido').max(255),
+  description: z.string().max(1000).optional().nullable(),
+  // IDs explícitos O criterios de filtro (al menos uno debe estar presente)
+  prospect_ids: z.array(z.string().uuid()).optional(),
+  filters: z.object({
+    q:        z.string().max(200).optional(),
+    status:   z.enum(['active', 'unsubscribed']).optional(),
+    batch_id: z.string().uuid().optional(),
+    opt_in:   z.boolean().optional(),
+  }).optional(),
+}).refine(
+  d => (d.prospect_ids && d.prospect_ids.length > 0) || d.filters !== undefined,
+  { message: 'Se requieren prospect_ids o filtros para crear la lista' }
+)
+export type CreateListFromSelectionInput = z.infer<typeof CreateListFromSelectionSchema>
 
 export const PatchWarmupSchema = z.object({
   warmup_status:        z.enum(WARMUP_STATUSES).optional(),

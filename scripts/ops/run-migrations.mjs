@@ -176,6 +176,9 @@ const MIGRATIONS = [
   { file: 'db/migrations/093_campaigns_message_type.sql',               label: '093 — campaigns.message_type (text | template)' },
   { file: 'db/migrations/094_enable_rls_missing_tables.sql',            label: '094 — Habilitar RLS en ~40 tablas creadas después de 032' },
   { file: 'db/migrations/095_fix_security_definer_functions.sql',       label: '095 — Fijar search_path en 5 funciones SECURITY DEFINER' },
+  { file: 'db/migrations/096_prospect_lists.sql',                       label: '096 — Listas de Difusión: prospect_lists + prospect_list_members' },
+  { file: 'db/migrations/097_campaigns_prospect_list.sql',              label: '097 — campaigns.prospect_list_id FK a prospect_lists' },
+  { file: 'db/migrations/098_prospect_conversion.sql',                  label: '098 — Conversión de prospects a contactos' },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

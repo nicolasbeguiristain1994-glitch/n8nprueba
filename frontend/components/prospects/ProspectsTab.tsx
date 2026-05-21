@@ -12,8 +12,9 @@ import {
 } from '@/components/ui/select'
 import {
   Upload, RefreshCw, Trash2, Search, Send, History, AlertTriangle,
-  CheckCircle, XCircle, ChevronLeft, ChevronRight,
+  CheckCircle, XCircle, ChevronLeft, ChevronRight, Eye, UserPlus,
 } from 'lucide-react'
+import { Textarea } from '@/components/ui/textarea'
 import { fetchJson } from '@/lib/fetchJson'
 import type { Prospect, ProspectImportBatch, ProspectImportResult } from '@/lib/prospects'
 
@@ -92,6 +93,7 @@ export function ProspectsTab() {
   // ── Filtros / paginación
   const [search, setSearch]         = useState('')
   const [filterBatch, setFilterBatch] = useState('')
+  const [filterStatus, setFilterStatus] = useState('')   // '' = todos
   const [page, setPage]             = useState(1)
   const limit = 50
 
@@ -116,6 +118,13 @@ export function ProspectsTab() {
   // ── Modal historial de batches
   const [batchHistoryOpen, setBatchHistoryOpen] = useState(false)
 
+  // ── Modal detalle + conversión
+  const [detailProspect, setDetailProspect]   = useState<Prospect | null>(null)
+  const [convertStep, setConvertStep]         = useState<'idle' | 'confirm' | 'done'>('idle')
+  const [convertNotes, setConvertNotes]       = useState('')
+  const [converting, setConverting]           = useState(false)
+  const [convertResult, setConvertResult]     = useState<{ contact_id: string; warning?: string } | null>(null)
+
   // ── Carga ─────────────────────────────────────────────────────────────────
 
   const load = useCallback(async () => {
@@ -127,6 +136,7 @@ export function ProspectsTab() {
         page:     String(page),
         limit:    String(limit),
         batch_id: filterBatch,
+        status:   filterStatus,
       })
       const data = await fetchJson<{ prospects: Prospect[]; total: number }>(`/api/prospects?${q}`)
       setProspects(data.prospects ?? [])
@@ -134,7 +144,7 @@ export function ProspectsTab() {
     } finally {
       setLoading(false)
     }
-  }, [search, page, filterBatch])
+  }, [search, page, filterBatch, filterStatus])
 
   useEffect(() => { load() }, [load])
 
@@ -346,6 +356,44 @@ export function ProspectsTab() {
     }
   }
 
+  // ── Conversión prospect → contacto ────────────────────────────────────────
+
+  const openDetail = (e: React.MouseEvent, p: Prospect) => {
+    e.stopPropagation()
+    setDetailProspect(p)
+    setConvertStep('idle')
+    setConvertNotes('')
+    setConvertResult(null)
+  }
+
+  const closeDetail = () => {
+    setDetailProspect(null)
+    setConvertStep('idle')
+    setConvertNotes('')
+    setConvertResult(null)
+  }
+
+  const confirmConvert = async () => {
+    if (!detailProspect) return
+    setConverting(true)
+    try {
+      const res = await fetchJson<{ contact_id: string; warning?: string }>(
+        `/api/prospects/${detailProspect.id}/convert`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notes: convertNotes.trim() || null }) }
+      )
+      setConvertResult(res)
+      setConvertStep('done')
+      // Refrescar la lista para que el badge cambie
+      load()
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Error desconocido'
+      alert(`Error al convertir: ${msg}`)
+    } finally {
+      setConverting(false)
+    }
+  }
+
   // ── UI ────────────────────────────────────────────────────────────────────
 
   const totalPages = Math.ceil(total / limit)
@@ -365,6 +413,18 @@ export function ProspectsTab() {
             className="pl-9"
           />
         </div>
+
+        <Select value={filterStatus || 'all'} onValueChange={v => { setFilterStatus(!v || v === 'all' ? '' : v); setPage(1) }}>
+          <SelectTrigger className="w-36">
+            <SelectValue placeholder="Todos" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos</SelectItem>
+            <SelectItem value="active">Activos</SelectItem>
+            <SelectItem value="converted">Convertidos</SelectItem>
+            <SelectItem value="unsubscribed">Dados de baja</SelectItem>
+          </SelectContent>
+        </Select>
 
         {batches.length > 0 && (
           <Select value={filterBatch} onValueChange={v => { setFilterBatch(v === 'all' || !v ? '' : v); setPage(1) }}>
@@ -442,19 +502,20 @@ export function ProspectsTab() {
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">Estado</th>
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">Origen</th>
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">Alta</th>
+              <th className="w-10 px-3 py-2" />
             </tr>
           </thead>
           <tbody className="divide-y">
             {loading && (
               <tr>
-                <td colSpan={7} className="py-12 text-center text-muted-foreground">
+                <td colSpan={8} className="py-12 text-center text-muted-foreground">
                   Cargando…
                 </td>
               </tr>
             )}
             {!loading && !prospects.length && (
               <tr>
-                <td colSpan={7} className="py-12 text-center text-muted-foreground">
+                <td colSpan={8} className="py-12 text-center text-muted-foreground">
                   No hay prospectos.{' '}
                   <button
                     className="text-emerald-600 underline"
@@ -487,13 +548,25 @@ export function ProspectsTab() {
                 </td>
                 <td className="px-3 py-2 text-muted-foreground">{p.email ?? '—'}</td>
                 <td className="px-3 py-2">
-                  <Badge variant={p.status === 'active' ? 'default' : 'secondary'} className="text-xs">
-                    {p.status === 'active' ? 'Activo' : 'Dado de baja'}
+                  <Badge
+                    variant={p.status === 'active' ? 'default' : 'secondary'}
+                    className={`text-xs ${p.status === 'converted' ? 'bg-blue-100 text-blue-700 border-blue-200' : ''}`}
+                  >
+                    {p.status === 'active' ? 'Activo' : p.status === 'converted' ? 'Convertido' : 'Dado de baja'}
                   </Badge>
                 </td>
                 <td className="px-3 py-2 text-xs text-muted-foreground">{p.source}</td>
                 <td className="px-3 py-2 text-xs text-muted-foreground">
                   {new Date(p.created_at).toLocaleDateString('es-AR')}
+                </td>
+                <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
+                  <Button
+                    variant="ghost" size="sm"
+                    className="h-7 w-7 p-0"
+                    onClick={e => openDetail(e, p)}
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                  </Button>
                 </td>
               </tr>
             ))}
@@ -733,6 +806,166 @@ export function ProspectsTab() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setBatchHistoryOpen(false)}>Cerrar</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Modal detalle + conversión ── */}
+      <Dialog open={!!detailProspect} onOpenChange={open => { if (!open && !converting) closeDetail() }}>
+        <DialogContent className="max-w-md">
+          {detailProspect && convertStep === 'idle' && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Detalle del prospecto</DialogTitle>
+              </DialogHeader>
+
+              <div className="space-y-3 py-2 text-sm">
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                  <span className="text-muted-foreground">Teléfono</span>
+                  <span className="font-mono">{detailProspect.phone_number}</span>
+
+                  <span className="text-muted-foreground">Nombre</span>
+                  <span>{[detailProspect.first_name, detailProspect.last_name].filter(Boolean).join(' ') || '—'}</span>
+
+                  <span className="text-muted-foreground">Email</span>
+                  <span>{detailProspect.email ?? '—'}</span>
+
+                  <span className="text-muted-foreground">Estado</span>
+                  <span>
+                    <Badge
+                      variant={detailProspect.status === 'active' ? 'default' : 'secondary'}
+                      className={`text-xs ${detailProspect.status === 'converted' ? 'bg-blue-100 text-blue-700 border-blue-200' : ''}`}
+                    >
+                      {detailProspect.status === 'active' ? 'Activo'
+                        : detailProspect.status === 'converted' ? 'Convertido' : 'Dado de baja'}
+                    </Badge>
+                  </span>
+
+                  <span className="text-muted-foreground">Opt-in</span>
+                  <span>{detailProspect.opt_in ? 'Sí' : 'No'}</span>
+
+                  <span className="text-muted-foreground">Origen</span>
+                  <span>{detailProspect.source}</span>
+
+                  <span className="text-muted-foreground">Batch</span>
+                  <span className="font-mono text-xs text-muted-foreground truncate">
+                    {detailProspect.import_batch_id ?? '—'}
+                  </span>
+
+                  <span className="text-muted-foreground">Alta</span>
+                  <span>{new Date(detailProspect.created_at).toLocaleString('es-AR')}</span>
+                </div>
+
+                {detailProspect.notes && (
+                  <div className="rounded-md bg-muted/50 px-3 py-2 text-sm">
+                    <span className="text-muted-foreground block text-xs mb-1">Notas</span>
+                    {detailProspect.notes}
+                  </div>
+                )}
+
+                {detailProspect.converted_to_contact_id && (
+                  <div className="rounded-md bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-700">
+                    Convertido al contacto{' '}
+                    <span className="font-mono text-xs">{detailProspect.converted_to_contact_id}</span>
+                  </div>
+                )}
+
+                {detailProspect.tags?.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {detailProspect.tags.map(t => (
+                      <Badge key={t} variant="outline" className="text-xs">{t}</Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter className="gap-2">
+                <Button variant="outline" onClick={closeDetail}>Cerrar</Button>
+                {detailProspect.status === 'active' && !detailProspect.converted_to_contact_id && (
+                  <Button
+                    onClick={() => setConvertStep('confirm')}
+                    className="bg-blue-600 hover:bg-blue-700 text-white"
+                  >
+                    <UserPlus className="h-4 w-4 mr-1" /> Convertir a contacto
+                  </Button>
+                )}
+              </DialogFooter>
+            </>
+          )}
+
+          {detailProspect && convertStep === 'confirm' && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Convertir a contacto</DialogTitle>
+              </DialogHeader>
+
+              <div className="space-y-4 py-2">
+                <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-3 text-sm text-amber-800 flex gap-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span>
+                    Esta acción es <strong>irreversible</strong>. El prospecto pasará a estado{' '}
+                    <em>Convertido</em> y se creará un contacto en el CRM con su número de teléfono.
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <p className="text-sm font-medium">Notas para el nuevo contacto (opcional)</p>
+                  <Textarea
+                    placeholder="Ej: Convertido desde campaña de captación Q2..."
+                    value={convertNotes}
+                    onChange={e => setConvertNotes(e.target.value)}
+                    rows={3}
+                  />
+                </div>
+
+                <div className="text-sm text-muted-foreground">
+                  <span className="font-medium">Prospecto:</span>{' '}
+                  {[detailProspect.first_name, detailProspect.last_name].filter(Boolean).join(' ') || detailProspect.phone_number}
+                </div>
+              </div>
+
+              <DialogFooter className="gap-2">
+                <Button variant="outline" onClick={() => setConvertStep('idle')} disabled={converting}>
+                  Volver
+                </Button>
+                <Button
+                  onClick={confirmConvert}
+                  disabled={converting}
+                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  {converting ? 'Convirtiendo…' : 'Confirmar conversión'}
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+
+          {detailProspect && convertStep === 'done' && convertResult && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Conversión completada</DialogTitle>
+              </DialogHeader>
+
+              <div className="space-y-3 py-2">
+                <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-emerald-700">
+                  <CheckCircle className="h-5 w-5 shrink-0" />
+                  <div>
+                    <p className="font-medium">Contacto creado exitosamente</p>
+                    <p className="text-xs font-mono mt-0.5 opacity-70">{convertResult.contact_id}</p>
+                  </div>
+                </div>
+
+                {convertResult.warning && (
+                  <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-3 text-amber-800 text-sm">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    {convertResult.warning}
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter>
+                <Button onClick={closeDetail}>Cerrar</Button>
+              </DialogFooter>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 

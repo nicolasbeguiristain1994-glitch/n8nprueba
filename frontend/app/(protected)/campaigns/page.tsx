@@ -11,6 +11,7 @@ import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
 interface CampaignList { id: string; name: string; contact_count: number }
+interface ProspectListOption { id: string; name: string; member_count: number }
 interface AntiBanProfile { id: string; profile_name: string; is_default: boolean; timing_mode: string; risk_tolerance: string; recommended_for: string | null }
 interface CampaignContact {
   id: string; first_name: string; last_name: string; phone_number: string
@@ -24,7 +25,8 @@ interface Campaign {
   total_targets: number; total_sent: number; total_delivered: number
   total_read: number; total_failed: number; total_skipped: number
   read_rate: number; delivery_rate: number
-  list_name: string; list_id: string | null
+  list_name: string | null; list_id: string | null
+  prospect_list_id: string | null; prospect_list_name: string | null
   antiblock_delay_min: number; antiblock_delay_max: number
   personalize_name: boolean; use_multi_line: boolean; created_at: string
   pause_reason: 'manual' | 'no_eligible_lines' | 'all_lines_outside_schedule' | 'systemic_error' | 'config_missing' | 'frequency_exhausted' | 'unknown' | null
@@ -62,6 +64,7 @@ export default function Campaigns() {
 
   const [campaigns, setCampaigns]         = useState<Campaign[]>([])
   const [lists, setLists]                 = useState<CampaignList[]>([])
+  const [prospectLists, setProspectLists] = useState<ProspectListOption[]>([])
   const [antiBanProfiles, setAntiBanProfiles] = useState<AntiBanProfile[]>([])
   const [showNew, setShowNew]             = useState(false)
   const [selected, setSelected]       = useState<Campaign | null>(null)
@@ -83,7 +86,8 @@ export default function Campaigns() {
   const [failedListMsg, setFailedListMsg]           = useState<string | null>(null)
 
   const FORM_DEFAULT = {
-    name: '', list_id: '', scheduled_at: '',
+    name: '', list_id: '', prospect_list_id: '', audience_type: 'contacts' as 'contacts' | 'prospects',
+    scheduled_at: '',
     media_url: '', antiblock_delay_min: 3, antiblock_delay_max: 8,
     type: 'promotion', personalize_name: true, use_multi_line: false,
     delay_type: 'gaussian', custom_delay_seconds: 18,
@@ -138,6 +142,9 @@ export default function Campaigns() {
     fetchJson<{ lists: CampaignList[] }>('/api/lists')
       .then(d => setLists(d.lists || []))
       .catch(() => setLists([]))
+    fetchJson<{ lists: ProspectListOption[] }>('/api/prospect-lists?limit=100')
+      .then(d => setProspectLists(d.lists || []))
+      .catch(() => setProspectLists([]))
     fetchJson<{ profiles: AntiBanProfile[] }>('/api/anti-ban-profiles')
       .then(d => setAntiBanProfiles(d.profiles || []))
       .catch(() => setAntiBanProfiles([]))
@@ -162,6 +169,9 @@ export default function Campaigns() {
         message: validMsgs[0],
         daily_limit_override: form.daily_limit_override === '' ? null : Number(form.daily_limit_override),
         anti_ban_profile_id: form.anti_ban_profile_id === '' ? null : form.anti_ban_profile_id,
+        // Audiencia: solo uno de los dos debe ir en el payload
+        list_id:          form.audience_type === 'contacts'  ? (form.list_id          || null) : null,
+        prospect_list_id: form.audience_type === 'prospects' ? (form.prospect_list_id || null) : null,
       }
       if (useTemplate && selectedTemplate) {
         payload.template_id = selectedTemplate
@@ -462,7 +472,9 @@ export default function Campaigns() {
                         )}
                       </div>
                       <div className="flex items-center gap-3 mt-2 text-xs text-gray-400">
-                        {c.list_name && <span>Lista: <b className="text-gray-600">{c.list_name}</b></span>}
+                        {(c.list_name || c.prospect_list_name) && (
+                          <span>Lista: <b className="text-gray-600">{c.list_name || c.prospect_list_name}</b></span>
+                        )}
                         <span>{c.total_targets} dest.</span>
                         <span className="flex items-center gap-1"><Shield size={10}/> {c.antiblock_delay_min}-{c.antiblock_delay_max}s</span>
                         {c.personalize_name
@@ -489,7 +501,7 @@ export default function Campaigns() {
                       </Button>
 
                       {/* Enviar: draft, scheduled */}
-                      {(c.status === 'draft' || c.status === 'scheduled') && c.list_name && (
+                      {(c.status === 'draft' || c.status === 'scheduled') && (c.list_name || c.prospect_list_name) && (
                         <Button size="sm" className="bg-green-600 hover:bg-green-700"
                                 onClick={() => sendNow(c)} disabled={sending === c.id}>
                           {sending === c.id
@@ -499,7 +511,7 @@ export default function Campaigns() {
                       )}
 
                       {/* Reanudar: paused */}
-                      {c.status === 'paused' && c.list_name && (
+                      {c.status === 'paused' && (c.list_name || c.prospect_list_name) && (
                         <Button size="sm" className="bg-green-600 hover:bg-green-700"
                                 onClick={() => c.use_multi_line ? resumeProcessor(c.id) : sendNow(c)}
                                 disabled={sending === c.id || resuming === c.id}>
@@ -737,27 +749,69 @@ export default function Campaigns() {
 
             <div className="col-span-2">
               <label className="text-xs font-medium text-gray-600 mb-1 block">Tipo de campaña</label>
-              <Select value={form.name} onValueChange={v => setForm(f => ({ ...f, name: v ?? '' }))}>
+              <Select value={form.type} onValueChange={v => setForm(f => ({ ...f, type: v ?? 'promotion' }))}>
                 <SelectTrigger>
                   <SelectValue placeholder="Seleccioná el tipo de campaña" />
                 </SelectTrigger>
                 <SelectContent>
-                  {['adquisición','promoción','retención','reactivación','gamificación'].map(n => (
-                    <SelectItem key={n} value={n} className="capitalize">{n}</SelectItem>
-                  ))}
+                  <SelectItem value="promotion">Promoción</SelectItem>
+                  <SelectItem value="retention">Retención</SelectItem>
+                  <SelectItem value="onboarding">Onboarding</SelectItem>
+                  <SelectItem value="support">Soporte</SelectItem>
+                  <SelectItem value="survey">Encuesta</SelectItem>
+                  <SelectItem value="payment">Pago</SelectItem>
+                  <SelectItem value="risk_alert">Alerta de riesgo</SelectItem>
                 </SelectContent>
               </Select>
             </div>
 
             <div>
-              <label className="text-xs font-medium text-gray-600 mb-1 block">Lista de distribución</label>
-              <Select value={form.list_id} onValueChange={v => setForm(f=>({...f,list_id:v ?? ''}))}>
-                <SelectTrigger><SelectValue placeholder="Seleccioná una lista" /></SelectTrigger>
-                <SelectContent>
-                  {lists.map(l => <SelectItem key={l.id} value={l.id}>{l.name} ({l.contact_count} contactos)</SelectItem>)}
-                </SelectContent>
-              </Select>
-              {lists.length === 0 && <p className="text-xs text-orange-500 mt-1">Creá primero una lista en Contactos</p>}
+              <label className="text-xs font-medium text-gray-600 mb-1 block">Tipo de audiencia</label>
+              <div className="flex gap-2 mb-2">
+                <button
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, audience_type: 'contacts', prospect_list_id: '' }))}
+                  className={`flex-1 py-1.5 text-xs rounded-md border transition-colors font-medium ${
+                    form.audience_type === 'contacts'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                  }`}
+                >
+                  Contactos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, audience_type: 'prospects', list_id: '' }))}
+                  className={`flex-1 py-1.5 text-xs rounded-md border transition-colors font-medium ${
+                    form.audience_type === 'prospects'
+                      ? 'border-violet-500 bg-violet-50 text-violet-700'
+                      : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                  }`}
+                >
+                  Listas de Difusión
+                </button>
+              </div>
+              {form.audience_type === 'contacts' ? (
+                <>
+                  <Select value={form.list_id} onValueChange={v => setForm(f=>({...f,list_id:v ?? ''}))}>
+                    <SelectTrigger><SelectValue placeholder="Seleccioná una lista de contactos" /></SelectTrigger>
+                    <SelectContent>
+                      {lists.map(l => <SelectItem key={l.id} value={l.id}>{l.name} ({l.contact_count} contactos)</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  {lists.length === 0 && <p className="text-xs text-orange-500 mt-1">Creá primero una lista en Contactos</p>}
+                </>
+              ) : (
+                <>
+                  <Select value={form.prospect_list_id} onValueChange={v => setForm(f=>({...f,prospect_list_id:v ?? ''}))}>
+                    <SelectTrigger><SelectValue placeholder="Seleccioná una lista de difusión" /></SelectTrigger>
+                    <SelectContent>
+                      {prospectLists.map(l => <SelectItem key={l.id} value={l.id}>{l.name} ({l.member_count.toLocaleString()} prospectos)</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  {prospectLists.length === 0 && <p className="text-xs text-orange-500 mt-1">Creá primero una lista en Contactos › Listas de Difusión</p>}
+                </>
+              )}
             </div>
 
             <div>
@@ -1214,7 +1268,9 @@ export default function Campaigns() {
               </div>
 
               <div className="text-xs text-gray-400 space-y-1">
-                {selected.list_name && <p>Lista: <b className="text-gray-600">{selected.list_name}</b></p>}
+                {(selected.list_name || selected.prospect_list_name) && (
+                  <p>Lista: <b className="text-gray-600">{selected.list_name || selected.prospect_list_name}</b></p>
+                )}
                 {selected.scheduled_at && <p>Programado: {new Date(selected.scheduled_at).toLocaleString('es-AR')}</p>}
                 {selected.completed_at && <p>Completado: {new Date(selected.completed_at).toLocaleString('es-AR')}</p>}
                 <p>Antibloqueo: {selected.antiblock_delay_min}–{selected.antiblock_delay_max} seg entre mensajes</p>

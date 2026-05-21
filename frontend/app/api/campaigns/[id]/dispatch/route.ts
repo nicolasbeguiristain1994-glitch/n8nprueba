@@ -6,6 +6,7 @@ import { audit } from '@/lib/audit'
 import { clog } from '@/lib/campaign-logger'
 import {
   createDispatchUnits,
+  createDispatchUnitsFromProspectList,
   acquireProcessorLock,
   processMultiLineInBackground,
   getDispatchSummary,
@@ -106,14 +107,22 @@ export async function POST(
     )
   }
 
-  if (!campaign.list_id) {
-    return NextResponse.json({ error: 'Campaign has no contact list' }, { status: 400 })
+  const campaignExt = campaign as CampaignForDispatch & { prospect_list_id?: string | null }
+  const hasContactList  = !!campaign.list_id
+  const hasProspectList = !!campaignExt.prospect_list_id
+
+  if (!hasContactList && !hasProspectList) {
+    return NextResponse.json({ error: 'Campaign has no contact list or prospect list' }, { status: 400 })
   }
 
   // ── Seed recipients (idempotent) ────────────────────────────────────────────
   let unitCounts: { total: number; queued: number }
   try {
-    unitCounts = await createDispatchUnits(id, campaign.list_id)
+    if (hasProspectList) {
+      unitCounts = await createDispatchUnitsFromProspectList(id, campaignExt.prospect_list_id!)
+    } else {
+      unitCounts = await createDispatchUnits(id, campaign.list_id)
+    }
   } catch (e) {
     console.error('[POST /api/campaigns/[id]/dispatch] seed error:', e instanceof Error ? e.message : e)
     if (campaign.status !== 'running') {
@@ -123,13 +132,19 @@ export async function POST(
   }
 
   if (unitCounts.total === 0 && campaign.status !== 'running') {
-    const breakdown = await getContactEligibilityBreakdown(campaign.list_id).catch(() => null)
-    const errMsg = breakdown ? formatEligibilityError(breakdown) : 'No hay contactos elegibles en la lista.'
-    console.warn(
-      `[POST /api/campaigns/[id]/dispatch] 0 contactos elegibles campaign=${id}:`,
-      breakdown ?? 'breakdown unavailable',
+    if (hasContactList) {
+      const breakdown = await getContactEligibilityBreakdown(campaign.list_id).catch(() => null)
+      const errMsg = breakdown ? formatEligibilityError(breakdown) : 'No hay contactos elegibles en la lista.'
+      console.warn(
+        `[POST /api/campaigns/[id]/dispatch] 0 contactos elegibles campaign=${id}:`,
+        breakdown ?? 'breakdown unavailable',
+      )
+      return NextResponse.json({ error: errMsg, breakdown }, { status: 400 })
+    }
+    return NextResponse.json(
+      { error: 'No hay prospectos elegibles en la lista de difusión.' },
+      { status: 400 }
     )
-    return NextResponse.json({ error: errMsg, breakdown }, { status: 400 })
   }
 
   // All recipients already processed (none pending) — covers campaigns stuck in
@@ -171,6 +186,15 @@ export async function POST(
     void audit({ req, action: 'send', resource: 'campaigns', resource_id: id,
       metadata: { mode: 'multi_line', alreadyProcessing: true } })
     return NextResponse.json({ started: false, alreadyProcessing: true })
+  }
+
+  // Marcar la lista de difusión como usada ahora que el procesador arrancó.
+  // Fire-and-forget: una falla aquí no debe bloquear el dispatch.
+  if (campaignExt.prospect_list_id) {
+    void query(
+      `UPDATE prospect_lists SET last_used_at = NOW() WHERE id = $1`,
+      [campaignExt.prospect_list_id]
+    ).catch(e => console.warn('[dispatch] last_used_at update failed:', (e as Error)?.message))
   }
 
   if (campaign.status === 'paused') {

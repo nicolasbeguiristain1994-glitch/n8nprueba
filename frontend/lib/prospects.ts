@@ -9,12 +9,13 @@ export interface Prospect {
   tags:            string[]
   source:          string
   import_batch_id: string | null
-  status:          'active' | 'unsubscribed'
-  opt_in:          boolean
-  consent_source:  string | null
-  notes:           string | null
-  created_at:      string
-  updated_at:      string
+  status:                 'active' | 'unsubscribed' | 'converted'
+  opt_in:                 boolean
+  consent_source:         string | null
+  notes:                  string | null
+  converted_to_contact_id: string | null
+  created_at:             string
+  updated_at:             string
 }
 
 export interface ProspectImportBatch {
@@ -44,4 +45,33 @@ export interface ProspectListResponse {
   total:     number
   page:      number
   limit:     number
+}
+
+// ── Listas de Difusión ─────────────────────────────────────────────────────────
+
+export interface ProspectList {
+  id:             string
+  name:           string
+  description:    string | null
+  member_count:   number
+  last_used_at:   string | null
+  campaign_count: number
+  created_by:     string | null
+  created_at:     string
+  updated_at:     string
+}
+
+export interface ProspectListMember {
+  id:               string
+  prospect_list_id: string
+  prospect_id:      string
+  added_at:         string
+  added_by:         string | null
+  // joined from prospects
+  phone_number:     string
+  first_name:       string | null
+  last_name:        string | null
+  email:            string | null
+  status:           'active' | 'unsubscribed' | 'converted'
+  opt_in:           boolean
 }

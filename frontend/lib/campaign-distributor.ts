@@ -383,6 +383,66 @@ export async function createDispatchUnits(
   }
 }
 
+// ── createDispatchUnitsFromProspectList ───────────────────────────────────────
+
+/**
+ * Idempotently seeds campaign_recipients from a prospect list.
+ * Mirrors createDispatchUnits() but resolves recipients via prospect_list_members
+ * instead of contact_list_members.
+ *
+ * Decisión de diseño — resolución lazy en tiempo de dispatch:
+ *   Los recipients no se cargan al crear la campaña sino cuando el procesador
+ *   arranca (acquireProcessorLock → createDispatchUnitsFromProspectList).
+ *   Esto tiene dos ventajas:
+ *     1. La lista puede crecer entre la creación de la campaña y el envío;
+ *        los prospectos agregados después también quedan incluidos.
+ *     2. Es idempotente: relanzar el procesador no duplica recipients gracias
+ *        al partial unique index idx_cr_unique_prospect y ON CONFLICT DO NOTHING.
+ *
+ * Eligibilidad (mismos criterios que createDispatchUnits):
+ *   - prospect.status = 'active'
+ *   - prospect.opt_in = true
+ *   - teléfono no está en blacklist activa
+ *
+ * first_name no se almacena en campaign_recipients; el distribuidor lo resuelve
+ * via LEFT JOIN a prospects en claimNextUnit() en tiempo de envío.
+ */
+export async function createDispatchUnitsFromProspectList(
+  campaignId: string,
+  prospectListId: string,
+): Promise<{ total: number; queued: number }> {
+  await query(
+    `INSERT INTO campaign_recipients (campaign_id, prospect_id, phone_number)
+     SELECT $1, p.id, p.phone_number
+     FROM prospect_list_members plm
+     JOIN prospects p ON p.id = plm.prospect_id
+     WHERE plm.prospect_list_id = $2
+       AND p.status  = 'active'
+       AND p.opt_in  = true
+       AND NOT EXISTS (
+         SELECT 1 FROM blacklist bl
+         WHERE bl.phone_number_normalized = regexp_replace(p.phone_number, '[^0-9]', '', 'g')
+           AND bl.removed_at IS NULL
+       )
+     ON CONFLICT (campaign_id, prospect_id) WHERE prospect_id IS NOT NULL DO NOTHING`,
+    [campaignId, prospectListId]
+  )
+
+  const [row] = await query<{ total: string; queued: string }>(
+    `SELECT
+       COUNT(*)::text                                    AS total,
+       COUNT(*) FILTER (WHERE status = 'pending')::text AS queued
+     FROM campaign_recipients
+     WHERE campaign_id = $1`,
+    [campaignId]
+  )
+
+  return {
+    total:  Number(row?.total  || 0),
+    queued: Number(row?.queued || 0),
+  }
+}
+
 // ── getDispatchSummary ─────────────────────────────────────────────────────────
 
 export async function getDispatchSummary(campaignId: string, operatorId?: string | null): Promise<DispatchSummary> {

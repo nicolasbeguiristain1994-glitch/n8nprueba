@@ -16,6 +16,7 @@ import { useCurrentUser } from '@/lib/useCurrentUser'
 import { DownloadContactsModal } from '@/components/contacts/DownloadContactsModal'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { ProspectsTab } from '@/components/prospects/ProspectsTab'
+import { ProspectListsTab } from '@/components/prospects/ProspectListsTab'
 import {
   DataTable,
   DataTableColumnHeader,
@@ -150,7 +151,7 @@ function detectClientPlatforms(first: string | null, last: string | null): strin
 
 export default function Contacts() {
   // ── Tab activo ────────────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<'contacts' | 'prospects'>('contacts')
+  const [activeTab, setActiveTab] = useState<'contacts' | 'prospects' | 'prospect-lists'>('contacts')
 
   // ── Datos ─────────────────────────────────────────────────────────────────
   const [contacts, setContacts] = useState<Contact[]>([])
@@ -888,9 +889,20 @@ export default function Contacts() {
         >
           Base de Difusión
         </button>
+        <button
+          onClick={() => setActiveTab('prospect-lists')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'prospect-lists'
+              ? 'border-violet-600 text-violet-600'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          Listas de Difusión
+        </button>
       </div>
 
       {activeTab === 'prospects' && <ProspectsTab />}
+      {activeTab === 'prospect-lists' && <ProspectListsTab />}
 
       {activeTab === 'contacts' && <>
       <PageHeader

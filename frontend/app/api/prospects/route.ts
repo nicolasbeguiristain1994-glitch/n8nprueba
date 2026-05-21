@@ -17,25 +17,49 @@ export async function GET(req: NextRequest) {
   const limit    = Math.min(200, Math.max(1, Number(sp.get('limit') || 50)))
   const offset   = (page - 1) * limit
 
-  if (status && !['active', 'unsubscribed'].includes(status)) {
+  if (status && !['active', 'unsubscribed', 'converted'].includes(status)) {
     return NextResponse.json({ error: `Invalid status "${status}"` }, { status: 400 })
   }
 
   try {
-    const rows = await query(`
-      SELECT
-        p.id, p.phone_number, p.first_name, p.last_name, p.email,
-        p.tags, p.source, p.import_batch_id, p.status, p.opt_in,
-        p.consent_source, p.notes, p.created_at, p.updated_at,
-        pib.filename AS batch_filename
-      FROM prospects p
-      LEFT JOIN prospect_import_batches pib ON pib.id = p.import_batch_id
-      WHERE ($1 = '' OR p.phone_number ILIKE $1 OR p.first_name ILIKE $1 OR p.last_name ILIKE $1)
-        AND ($2 = '' OR p.status = $2)
-        AND ($3 = '' OR p.import_batch_id::text = $3)
-      ORDER BY p.created_at DESC
-      LIMIT $4 OFFSET $5
-    `, [`%${search}%`, status, batchId, limit, offset])
+    let rows: unknown[]
+    try {
+      rows = await query(`
+        SELECT
+          p.id, p.phone_number, p.first_name, p.last_name, p.email,
+          p.tags, p.source, p.import_batch_id, p.status, p.opt_in,
+          p.consent_source, p.notes, p.converted_to_contact_id, p.created_at, p.updated_at,
+          pib.filename AS batch_filename
+        FROM prospects p
+        LEFT JOIN prospect_import_batches pib ON pib.id = p.import_batch_id
+        WHERE ($1 = '' OR p.phone_number ILIKE $1 OR p.first_name ILIKE $1 OR p.last_name ILIKE $1)
+          AND ($2 = '' OR p.status = $2)
+          AND ($3 = '' OR p.import_batch_id::text = $3)
+        ORDER BY p.created_at DESC
+        LIMIT $4 OFFSET $5
+      `, [`%${search}%`, status, batchId, limit, offset])
+    } catch (e) {
+      // Fallback: migración 098 (converted_to_contact_id) no aplicada aún
+      const msg = e instanceof Error ? e.message : ''
+      if (msg.includes('converted_to_contact_id')) {
+        rows = await query(`
+          SELECT
+            p.id, p.phone_number, p.first_name, p.last_name, p.email,
+            p.tags, p.source, p.import_batch_id, p.status, p.opt_in,
+            p.consent_source, p.notes, NULL::uuid AS converted_to_contact_id, p.created_at, p.updated_at,
+            pib.filename AS batch_filename
+          FROM prospects p
+          LEFT JOIN prospect_import_batches pib ON pib.id = p.import_batch_id
+          WHERE ($1 = '' OR p.phone_number ILIKE $1 OR p.first_name ILIKE $1 OR p.last_name ILIKE $1)
+            AND ($2 = '' OR p.status = $2)
+            AND ($3 = '' OR p.import_batch_id::text = $3)
+          ORDER BY p.created_at DESC
+          LIMIT $4 OFFSET $5
+        `, [`%${search}%`, status, batchId, limit, offset])
+      } else {
+        throw e
+      }
+    }
 
     const [{ count }] = await query<{ count: string }>(
       `SELECT COUNT(*) FROM prospects p

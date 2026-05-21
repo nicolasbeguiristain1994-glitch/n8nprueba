@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
     const ownerClause = isAdmin ? '' : 'WHERE c.owned_by = $1'
     const params      = isAdmin ? [] : [session.user_id]
 
-    const campaignSql = (includePauseReason: boolean) => `
+    const campaignSql = (includePauseReason: boolean, includeProspectList: boolean) => `
       SELECT c.id, c.name, c.message, c.messages, c.status, c.scheduled_at,
              c.started_at, c.completed_at,
              c.total_targets, c.personalize_name,
@@ -27,6 +27,7 @@ export async function GET(req: NextRequest) {
              ${includePauseReason ? 'c.pause_reason,' : 'NULL::text AS pause_reason,'}
              c.processor_locked_at,
              c.created_at, c.owned_by, cl.name AS list_name, cl.id AS list_id,
+             ${includeProspectList ? 'c.prospect_list_id, pl.name AS prospect_list_name,' : 'NULL::uuid AS prospect_list_id, NULL::text AS prospect_list_name,'}
              COALESCE(cr.sent, 0)::int                                             AS total_sent,
              COUNT(m.id) FILTER (WHERE m.status IN ('sent','delivered','read'))::int AS total_delivered,
              COUNT(m.id) FILTER (WHERE m.status = 'read')::int                    AS total_read,
@@ -54,6 +55,7 @@ export async function GET(req: NextRequest) {
                ELSE 0 END AS delivery_rate
       FROM campaigns c
       LEFT JOIN contact_lists cl ON cl.id = c.list_id
+      ${includeProspectList ? 'LEFT JOIN prospect_lists pl ON pl.id = c.prospect_list_id' : ''}
       LEFT JOIN whatsapp_messages m ON m.campaign_id = c.id
       LEFT JOIN (
         SELECT campaign_id,
@@ -64,19 +66,38 @@ export async function GET(req: NextRequest) {
         GROUP BY campaign_id
       ) cr ON cr.campaign_id = c.id
       ${ownerClause}
-      GROUP BY c.id, cl.id, cr.sent, cr.failed, cr.skipped
+      GROUP BY c.id, cl.id, ${includeProspectList ? 'pl.id,' : ''} cr.sent, cr.failed, cr.skipped
       ORDER BY c.created_at DESC
     `
 
     let campaigns
     try {
-      campaigns = await query(campaignSql(true), params)
+      campaigns = await query(campaignSql(true, true), params)
     } catch (e) {
-      // Fallback: migración 054 (pause_reason) no aplicada aún en producción
       const msg = e instanceof Error ? e.message : ''
-      if (msg.includes('pause_reason') || msg.includes('column')) {
+      // Fallback 1: prospect_lists table missing (migración 096/097 no aplicada)
+      if (msg.includes('prospect_list') || msg.includes('relation "prospect_lists"')) {
+        console.warn('[/api/campaigns GET] prospect_lists missing — running without it. Apply migrations 096/097.')
+        try {
+          campaigns = await query(campaignSql(true, false), params)
+        } catch (e2) {
+          const msg2 = e2 instanceof Error ? e2.message : ''
+          // Fallback 2: pause_reason missing (migración 054 no aplicada)
+          if (msg2.includes('pause_reason') || msg2.includes('column')) {
+            console.warn('[/api/campaigns GET] pause_reason column missing — running without it. Apply migration 054.')
+            campaigns = await query(campaignSql(false, false), params)
+          } else {
+            throw e2
+          }
+        }
+      // Fallback 2: pause_reason missing (migración 054 no aplicada)
+      } else if (msg.includes('pause_reason') || msg.includes('column')) {
         console.warn('[/api/campaigns GET] pause_reason column missing — running without it. Apply migration 054.')
-        campaigns = await query(campaignSql(false), params)
+        try {
+          campaigns = await query(campaignSql(false, true), params)
+        } catch {
+          campaigns = await query(campaignSql(false, false), params)
+        }
       } else {
         throw e
       }
@@ -98,11 +119,19 @@ export async function POST(req: NextRequest) {
   const parsed  = parseBody(CreateCampaignSchema, rawBody)
   if (!parsed.ok) return handleValidationError(req, parsed.error, 'campaigns')
 
-  const { name, message, messages, media_url, media_type, list_id, scheduled_at,
+  const { name, message, messages, media_url, media_type, list_id, prospect_list_id, scheduled_at,
           antiblock_delay_min, antiblock_delay_max, type: campaignType,
           personalize_name, use_multi_line,
           delay_type, custom_delay_seconds, daily_limit_override,
           anti_ban_profile_id, enable_mini_sessions, mini_session_text } = parsed.data
+
+  // list_id y prospect_list_id son mutuamente excluyentes
+  if (list_id && prospect_list_id) {
+    return NextResponse.json(
+      { error: 'No se puede usar list_id y prospect_list_id al mismo tiempo' },
+      { status: 400 }
+    )
+  }
 
   // messages[] takes priority; fall back to single message
   const rawMsgs = Array.isArray(messages) ? messages : (message ? [message] : [])
@@ -138,25 +167,45 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
+    if (prospect_list_id) {
+      const [pl] = await query<{ id: string }>(
+        'SELECT id FROM prospect_lists WHERE id = $1', [prospect_list_id]
+      )
+      if (!pl)
+        return NextResponse.json({ error: 'Prospect list not found' }, { status: 404 })
+    }
+
     let total_targets = 0
     if (list_id) {
       const [r] = await query<{ count: string }>(
         'SELECT COUNT(*)::int AS count FROM contact_list_members WHERE list_id = $1', [list_id]
       )
       total_targets = Number(r?.count || 0)
+    } else if (prospect_list_id) {
+      const [r] = await query<{ count: string }>(
+        `SELECT COUNT(*)::int AS count
+         FROM prospect_list_members plm
+         JOIN prospects p ON p.id = plm.prospect_id
+         WHERE plm.prospect_list_id = $1
+           AND p.status = 'active' AND p.opt_in = true`,
+        [prospect_list_id]
+      )
+      total_targets = Number(r?.count || 0)
     }
 
     const [campaign] = await query<{ id: string }>(
       `INSERT INTO campaigns
-         (name, message, messages, media_url, media_type, list_id, type, status, scheduled_at,
+         (name, message, messages, media_url, media_type, list_id, prospect_list_id,
+          type, status, scheduled_at,
           total_targets, antiblock_delay_min, antiblock_delay_max, personalize_name,
           use_multi_line, delay_type, custom_delay_seconds, daily_limit_override,
           anti_ban_profile_id, enable_mini_sessions, mini_session_text,
           owned_by, updated_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$21)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$22)
        RETURNING id`,
       [nameStr, msgArray[0], JSON.stringify(msgArray), media_url || null, media_type || null,
-       list_id || null, resolvedType,
+       list_id || null, prospect_list_id || null,
+       resolvedType,
        scheduled_at ? 'scheduled' : 'draft',
        scheduled_at || null, total_targets,
        delayMin, delayMax,
