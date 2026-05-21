@@ -16,8 +16,8 @@ type Params = { params: Promise<{ id: string }> }
 //
 // Respuestas:
 //   201 { contact_id }           — conversión exitosa, contacto creado
-//   409 { error, contact_id }    — número ya existe en contacts; prospect se marca igualmente
-//   409 { error }                — prospect ya fue convertido anteriormente
+//   200 { contact_id, warning }  — número ya existía en contacts; prospect vinculado al contacto existente
+//   409 { error, contact_id }    — prospect ya fue convertido anteriormente
 //   400 / 403 / 404              — validación / permisos / no encontrado
 
 export async function POST(req: NextRequest, { params }: Params) {
@@ -37,20 +37,23 @@ export async function POST(req: NextRequest, { params }: Params) {
       const { rows: pRows } = await client.query<{
         id: string; phone_number: string; first_name: string | null;
         last_name: string | null; email: string | null;
-        status: string; converted_to_contact_id: string | null
+        status: string; stage: string; converted_to_contact_id: string | null
       }>(
-        `SELECT id, phone_number, first_name, last_name, email, status, converted_to_contact_id
+        `SELECT id, phone_number, first_name, last_name, email, status, stage, converted_to_contact_id
          FROM prospects WHERE id = $1 FOR UPDATE`,
         [id]
       )
       if (!pRows.length) return { notFound: true } as const
 
       const prospect = pRows[0]
-      if (prospect.status === 'converted' && prospect.converted_to_contact_id) {
+      if (prospect.status === 'converted' || prospect.converted_to_contact_id) {
         return { alreadyConverted: true, contact_id: prospect.converted_to_contact_id } as const
       }
       if (prospect.status === 'unsubscribed') {
         return { unsubscribed: true } as const
+      }
+      if (prospect.stage === 'descartado') {
+        return { discarded: true } as const
       }
 
       // 2. Insertar contacto
@@ -104,6 +107,12 @@ export async function POST(req: NextRequest, { params }: Params) {
       return NextResponse.json(
         { error: 'No se puede convertir un prospect dado de baja' },
         { status: 400 }
+      )
+    }
+    if ('discarded' in result && result.discarded) {
+      return NextResponse.json(
+        { error: 'No se puede convertir un prospect descartado' },
+        { status: 409 }
       )
     }
 

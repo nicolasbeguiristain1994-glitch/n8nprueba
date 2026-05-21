@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermissionWithUser } from '@/lib/permissions'
+import { checkPermissionWithUser, isOwnerOrAdmin } from '@/lib/permissions'
 import { isUUID } from '@/lib/validate'
 import { audit } from '@/lib/audit'
 
@@ -18,13 +18,22 @@ export async function DELETE(
     return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   try {
-    const [row] = await query<{ id: string }>(
-      `DELETE FROM prospect_list_members
-       WHERE id = $1 AND prospect_list_id = $2
-       RETURNING id`,
+    const [member] = await query<{ id: string; owned_by: string | null }>(
+      `SELECT plm.id, pl.owned_by
+       FROM prospect_list_members plm
+       JOIN prospect_lists pl ON pl.id = plm.prospect_list_id
+       WHERE plm.id = $1 AND plm.prospect_list_id = $2`,
       [memberId, id]
     )
-    if (!row) return NextResponse.json({ error: 'Member not found' }, { status: 404 })
+    if (!member) return NextResponse.json({ error: 'Member not found' }, { status: 404 })
+    if (!isOwnerOrAdmin(auth.user, member.owned_by)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    await query(
+      `DELETE FROM prospect_list_members WHERE id = $1`,
+      [memberId]
+    )
 
     void audit({ req, action: 'delete', resource: 'prospect-list-members', resource_id: memberId,
       metadata: { list_id: id } })

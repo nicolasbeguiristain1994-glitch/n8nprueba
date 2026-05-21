@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import type { ProspectList, ProspectListMember, Prospect } from '@/lib/prospects'
+import { PROSPECT_STAGE_LABELS } from '@/lib/prospects'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -78,6 +79,10 @@ export function ProspectListsTab() {
   const [savingSelection, setSavingSelection]       = useState(false)
   const [selectionError, setSelectionError]         = useState<string | null>(null)
 
+  // ── Errores de carga ──────────────────────────────────────────────────────
+  const [listLoadError, setListLoadError]     = useState<string | null>(null)
+  const [detailLoadError, setDetailLoadError] = useState<string | null>(null)
+
   // ── Modal agregar prospectos a lista existente ────────────────────────────
   const [showAddToList, setShowAddToList]     = useState(false)
   const [addSearch, setAddSearch]             = useState('')
@@ -92,13 +97,15 @@ export function ProspectListsTab() {
   // ── Carga principal ────────────────────────────────────────────────────────
   const loadLists = useCallback(async () => {
     setLoading(true)
+    setListLoadError(null)
     try {
       const q = new URLSearchParams({ q: search, page: String(page), limit: String(LIMIT) })
       const data = await fetchJson<{ lists: ProspectList[]; total: number }>(`/api/prospect-lists?${q}`)
       setLists(data.lists || [])
       setTotal(data.total || 0)
-    } catch {
+    } catch (e) {
       setLists([])
+      setListLoadError(e instanceof Error ? e.message : 'Error al cargar las listas')
     } finally {
       setLoading(false)
     }
@@ -109,14 +116,16 @@ export function ProspectListsTab() {
   // ── Detalle de lista ───────────────────────────────────────────────────────
   const loadDetail = useCallback(async (listId: string) => {
     setLoadingDetail(true)
+    setDetailLoadError(null)
     try {
       const q = new URLSearchParams({ q: memberSearch, page: String(memberPage), limit: '50' })
       const data = await fetchJson<ListDetailResponse>(`/api/prospect-lists/${listId}?${q}`)
       setSelectedList(data.list)
       setMembers(data.members || [])
       setMembersTotal(data.total || 0)
-    } catch {
+    } catch (e) {
       setMembers([])
+      setDetailLoadError(e instanceof Error ? e.message : 'Error al cargar la lista')
     } finally {
       setLoadingDetail(false)
     }
@@ -140,17 +149,30 @@ export function ProspectListsTab() {
     if (!confirm(`¿Eliminar la lista "${name}"? Esta acción no se puede deshacer.`)) return
     try {
       const res = await fetch(`/api/prospect-lists/${id}`, { method: 'DELETE' })
-      if (res.ok) loadLists()
-    } catch { /* silencioso */ }
+      if (res.ok) {
+        loadLists()
+      } else {
+        const d = await res.json().catch(() => ({}))
+        alert(d.error || 'Error al eliminar la lista')
+      }
+    } catch {
+      alert('Error de red al eliminar la lista')
+    }
   }
 
   // ── Eliminar miembro ───────────────────────────────────────────────────────
   const deleteMember = async (memberId: string) => {
     if (!selectedList) return
+    if (!confirm('¿Quitar este prospecto de la lista?')) return
     setDeletingMemberId(memberId)
     try {
-      await fetch(`/api/prospect-lists/${selectedList.id}/members/${memberId}`, { method: 'DELETE' })
-      loadDetail(selectedList.id)
+      const res = await fetch(`/api/prospect-lists/${selectedList.id}/members/${memberId}`, { method: 'DELETE' })
+      if (res.ok) {
+        loadDetail(selectedList.id)
+      } else {
+        const d = await res.json().catch(() => ({}))
+        alert(d.error || 'Error al quitar el miembro')
+      }
     } finally {
       setDeletingMemberId(null)
     }
@@ -188,6 +210,9 @@ export function ProspectListsTab() {
       const data = await fetchJson<{ prospects: Prospect[]; total: number }>(`/api/prospects?${q}`)
       setData(data.prospects || [])
       setTotalData(data.total || 0)
+    } catch {
+      setData([])
+      setTotalData(0)
     } finally {
       setLoadingData(false)
     }
@@ -275,6 +300,7 @@ export function ProspectListsTab() {
         memberSearch={memberSearch}
         setMemberSearch={v => { setMemberSearch(v); setMemberPage(1) }}
         loading={loadingDetail}
+        loadError={detailLoadError}
         deletingMemberId={deletingMemberId}
         onDelete={deleteMember}
         onBack={() => { setView('list'); setSelectedList(null) }}
@@ -349,6 +375,10 @@ export function ProspectListsTab() {
         />
       </div>
 
+      {listLoadError && (
+        <p className="text-xs text-red-500 py-2">{listLoadError}</p>
+      )}
+
       {/* Tabla de listas */}
       {loading ? (
         <div className="text-sm text-gray-400 py-8 text-center">Cargando…</div>
@@ -369,7 +399,8 @@ export function ProspectListsTab() {
                 <th className="px-4 py-2.5 font-medium text-right">Prospectos</th>
                 <th className="px-4 py-2.5 font-medium text-right">Campañas</th>
                 <th className="px-4 py-2.5 font-medium">Último uso</th>
-                <th className="px-4 py-2.5 font-medium">Creada</th>
+                <th className="px-4 py-2.5 font-medium">Creada por</th>
+                <th className="px-4 py-2.5 font-medium">Fecha</th>
                 <th className="px-4 py-2.5" />
               </tr>
             </thead>
@@ -400,6 +431,9 @@ export function ProspectListsTab() {
                   </td>
                   <td className="px-4 py-3 text-gray-500 text-[12px]">
                     {l.last_used_at ? formatDate(l.last_used_at) : <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 text-[12px]">
+                    {l.owner_name ?? <span className="text-gray-300 italic">—</span>}
                   </td>
                   <td className="px-4 py-3 text-gray-500 text-[12px]">{formatDate(l.created_at)}</td>
                   <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
@@ -602,6 +636,7 @@ interface DetailViewProps {
   memberSearch:   string
   setMemberSearch:(s: string) => void
   loading:        boolean
+  loadError:      string | null
   deletingMemberId: string | null
   onDelete:       (id: string) => void
   onBack:         () => void
@@ -628,7 +663,7 @@ interface DetailViewProps {
 
 function DetailView({
   list, members, membersTotal, memberPage, setMemberPage, memberSearch, setMemberSearch,
-  loading, deletingMemberId, onDelete, onBack, onRefresh, onAddProspects,
+  loading, loadError, deletingMemberId, onDelete, onBack, onRefresh, onAddProspects,
   showAddToList, setShowAddToList, addSearch, setAddSearch, addPage, setAddPage,
   addProspects, addProspectsTotal, loadingAdd, selectedAdd, onToggleAdd,
   onSelectAllAdd, onDeselectAllAdd, adding, addError, onSubmitAdd,
@@ -689,6 +724,10 @@ function DetailView({
         />
       </div>
 
+      {loadError && (
+        <p className="text-xs text-red-500 py-2">{loadError}</p>
+      )}
+
       {/* Tabla de miembros */}
       {loading ? (
         <div className="text-sm text-gray-400 py-8 text-center">Cargando…</div>
@@ -711,6 +750,7 @@ function DetailView({
                 <th className="px-4 py-2.5 font-medium">Nombre</th>
                 <th className="px-4 py-2.5 font-medium">Email</th>
                 <th className="px-4 py-2.5 font-medium">Estado</th>
+                <th className="px-4 py-2.5 font-medium">Etapa</th>
                 <th className="px-4 py-2.5 font-medium">Opt-in</th>
                 <th className="px-4 py-2.5 font-medium">Agregado</th>
                 <th className="px-4 py-2.5" />
@@ -731,6 +771,9 @@ function DetailView({
                     >
                       {m.status === 'active' ? 'activo' : 'baja'}
                     </Badge>
+                  </td>
+                  <td className="px-4 py-2.5 text-[12px] text-gray-500">
+                    {PROSPECT_STAGE_LABELS[m.stage] ?? m.stage}
                   </td>
                   <td className="px-4 py-2.5">
                     <span className={`text-[11px] font-medium ${m.opt_in ? 'text-green-600' : 'text-red-400'}`}>

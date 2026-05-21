@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermissionWithUser } from '@/lib/permissions'
+import { checkPermissionWithUser, isOwnerOrAdmin } from '@/lib/permissions'
 import { isUUID } from '@/lib/validate'
 import { audit } from '@/lib/audit'
 
 // GET /api/prospect-lists/[id]?page=1&limit=50&q=search
-// Devuelve el detalle de la lista + sus miembros paginados
+// Devuelve el detalle de la lista + sus miembros paginados.
+// Solo el propietario (owned_by) o un admin pueden acceder.
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -24,19 +25,27 @@ export async function GET(
 
   try {
     const [list] = await query(
-      `SELECT id, name, description, member_count, last_used_at,
-              campaign_count, created_by, created_at, updated_at
-       FROM prospect_lists WHERE id = $1`,
+      `SELECT pl.id, pl.name, pl.description, pl.member_count, pl.last_used_at,
+              (SELECT COUNT(*)::int FROM campaigns c WHERE c.prospect_list_id = pl.id) AS campaign_count,
+              pl.created_by, pl.owned_by, u.name AS owner_name, pl.created_at, pl.updated_at
+       FROM prospect_lists pl
+       LEFT JOIN users u ON u.id = pl.owned_by
+       WHERE pl.id = $1`,
       [id]
     )
     if (!list) return NextResponse.json({ error: 'List not found' }, { status: 404 })
+
+    // Verificar que el usuario tiene acceso a esta lista específica
+    if (!isOwnerOrAdmin(auth.user, (list as { owned_by: string | null }).owned_by)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
 
     const members = await query(`
       SELECT
         plm.id, plm.prospect_list_id, plm.prospect_id,
         plm.added_at, plm.added_by,
         p.phone_number, p.first_name, p.last_name, p.email,
-        p.status, p.opt_in
+        p.status, p.stage, p.opt_in
       FROM prospect_list_members plm
       JOIN prospects p ON p.id = plm.prospect_id
       WHERE plm.prospect_list_id = $1
@@ -64,6 +73,7 @@ export async function GET(
 }
 
 // DELETE /api/prospect-lists/[id]
+// Solo el propietario (owned_by) o un admin pueden eliminar la lista.
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -75,6 +85,16 @@ export async function DELETE(
   if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   try {
+    const [existing] = await query<{ owned_by: string | null }>(
+      `SELECT owned_by FROM prospect_lists WHERE id = $1`,
+      [id]
+    )
+    if (!existing) return NextResponse.json({ error: 'List not found' }, { status: 404 })
+
+    if (!isOwnerOrAdmin(auth.user, existing.owned_by)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
     const [row] = await query<{ id: string; name: string }>(
       `DELETE FROM prospect_lists WHERE id = $1 RETURNING id, name`,
       [id]

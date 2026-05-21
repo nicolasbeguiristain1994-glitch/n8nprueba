@@ -44,6 +44,7 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS prospect_lists_updated_at ON prospect_lists;
 CREATE TRIGGER prospect_lists_updated_at
   BEFORE UPDATE ON prospect_lists
   FOR EACH ROW EXECUTE FUNCTION set_prospect_lists_updated_at();
@@ -85,6 +86,7 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS prospect_list_members_count ON prospect_list_members;
 CREATE TRIGGER prospect_list_members_count
   AFTER INSERT OR DELETE ON prospect_list_members
   FOR EACH ROW EXECUTE FUNCTION update_prospect_list_member_count();

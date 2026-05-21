@@ -401,6 +401,7 @@ export async function createDispatchUnits(
  *
  * Eligibilidad (mismos criterios que createDispatchUnits):
  *   - prospect.status = 'active'
+ *   - prospect.stage  != 'descartado'  (migración 099 — pipeline de estados)
  *   - prospect.opt_in = true
  *   - teléfono no está en blacklist activa
  *
@@ -418,6 +419,11 @@ export async function createDispatchUnitsFromProspectList(
      JOIN prospects p ON p.id = plm.prospect_id
      WHERE plm.prospect_list_id = $2
        AND p.status  = 'active'
+       -- Excluir prospects descartados del pipeline (migración 099).
+       -- IS DISTINCT FROM permite manejar filas anteriores a la migración que aún
+       -- no tengan el valor por defecto aplicado (aunque con DEFAULT NOT NULL no
+       -- debería ocurrir, es un guard defensivo de bajo costo).
+       AND p.stage IS DISTINCT FROM 'descartado'
        AND p.opt_in  = true
        AND NOT EXISTS (
          SELECT 1 FROM blacklist bl

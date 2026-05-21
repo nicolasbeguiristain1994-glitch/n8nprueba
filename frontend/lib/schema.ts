@@ -349,9 +349,7 @@ export const CreateListFromSelectionSchema = z.object({
   prospect_ids: z.array(z.string().uuid()).optional(),
   filters: z.object({
     q:        z.string().max(200).optional(),
-    status:   z.enum(['active', 'unsubscribed']).optional(),
     batch_id: z.string().uuid().optional(),
-    opt_in:   z.boolean().optional(),
   }).optional(),
 }).refine(
   d => (d.prospect_ids && d.prospect_ids.length > 0) || d.filters !== undefined,

@@ -42,9 +42,19 @@ BEGIN
 END;
 $$;
 
-ALTER TABLE prospects
-  ADD CONSTRAINT prospects_status_check
-  CHECK (status IN ('active', 'unsubscribed', 'converted'));
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'prospects_status_check'
+      AND conrelid = 'prospects'::regclass
+  ) THEN
+    ALTER TABLE prospects
+      ADD CONSTRAINT prospects_status_check
+      CHECK (status IN ('active', 'unsubscribed', 'converted'));
+  END IF;
+END
+$$;
 
 -- notes en contacts: columna nueva, no existía previamente en la tabla.
 -- Se agrega aquí —junto con converted_to_contact_id— porque la funcionalidad

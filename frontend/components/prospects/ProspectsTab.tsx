@@ -16,7 +16,8 @@ import {
 } from 'lucide-react'
 import { Textarea } from '@/components/ui/textarea'
 import { fetchJson } from '@/lib/fetchJson'
-import type { Prospect, ProspectImportBatch, ProspectImportResult } from '@/lib/prospects'
+import type { Prospect, ProspectImportBatch, ProspectImportResult, ProspectStage } from '@/lib/prospects'
+import { PROSPECT_STAGE_LABELS } from '@/lib/prospects'
 
 // ── Tipos locales ─────────────────────────────────────────────────────────────
 
@@ -80,6 +81,24 @@ function detectPhoneColumnByContent(rows: string[][]): number {
   return 0
 }
 
+// ── Stage badge ───────────────────────────────────────────────────────────────
+
+const STAGE_CLASSES: Record<ProspectStage, string> = {
+  nuevo:      'bg-gray-100 text-gray-600 border-gray-200',
+  contactado: 'bg-blue-100 text-blue-700 border-blue-200',
+  interesado: 'bg-amber-100 text-amber-700 border-amber-200',
+  descartado: 'bg-red-100 text-red-600 border-red-200',
+}
+
+function StageBadge({ stage }: { stage: ProspectStage | undefined }) {
+  const s = stage ?? 'nuevo'
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${STAGE_CLASSES[s]}`}>
+      {PROSPECT_STAGE_LABELS[s]}
+    </span>
+  )
+}
+
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export function ProspectsTab() {
@@ -94,6 +113,7 @@ export function ProspectsTab() {
   const [search, setSearch]         = useState('')
   const [filterBatch, setFilterBatch] = useState('')
   const [filterStatus, setFilterStatus] = useState('')   // '' = todos
+  const [filterStage, setFilterStage]   = useState('')   // '' = todas las etapas
   const [page, setPage]             = useState(1)
   const limit = 50
 
@@ -124,6 +144,7 @@ export function ProspectsTab() {
   const [convertNotes, setConvertNotes]       = useState('')
   const [converting, setConverting]           = useState(false)
   const [convertResult, setConvertResult]     = useState<{ contact_id: string; warning?: string } | null>(null)
+  const [updatingStage, setUpdatingStage]     = useState(false)
 
   // ── Carga ─────────────────────────────────────────────────────────────────
 
@@ -137,6 +158,7 @@ export function ProspectsTab() {
         limit:    String(limit),
         batch_id: filterBatch,
         status:   filterStatus,
+        stage:    filterStage,
       })
       const data = await fetchJson<{ prospects: Prospect[]; total: number }>(`/api/prospects?${q}`)
       setProspects(data.prospects ?? [])
@@ -144,7 +166,7 @@ export function ProspectsTab() {
     } finally {
       setLoading(false)
     }
-  }, [search, page, filterBatch, filterStatus])
+  }, [search, page, filterBatch, filterStatus, filterStage])
 
   useEffect(() => { load() }, [load])
 
@@ -174,8 +196,17 @@ export function ProspectsTab() {
 
   const deleteSelected = async () => {
     if (!selected.size) return
-    if (!confirm(`¿Eliminar ${selected.size} prospecto(s)?`)) return
-    await Promise.all([...selected].map(id => fetchJson(`/api/prospects/${id}`, { method: 'DELETE' }).catch(() => {})))
+    const toDelete = [...selected].filter(id => {
+      const p = prospects.find(p => p.id === id)
+      return p?.status !== 'converted'
+    })
+    const skipped = selected.size - toDelete.length
+    const msg = skipped > 0
+      ? `¿Eliminar ${toDelete.length} prospecto(s)? ${skipped} convertido(s) serán ignorados.`
+      : `¿Eliminar ${toDelete.length} prospecto(s)?`
+    if (!toDelete.length) { alert('Los prospectos convertidos no se pueden eliminar.'); return }
+    if (!confirm(msg)) return
+    await Promise.all(toDelete.map(id => fetchJson(`/api/prospects/${id}`, { method: 'DELETE' }).catch(() => {})))
     load()
   }
 
@@ -394,6 +425,26 @@ export function ProspectsTab() {
     }
   }
 
+  const updateStage = async (newStage: ProspectStage) => {
+    if (!detailProspect || updatingStage) return
+    setUpdatingStage(true)
+    try {
+      await fetchJson(`/api/prospects/${detailProspect.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage: newStage }),
+      })
+      // Actualizar el modal y la fila en la tabla sin reload completo
+      setDetailProspect(prev => prev ? { ...prev, stage: newStage } : prev)
+      setProspects(prev => prev.map(p => p.id === detailProspect.id ? { ...p, stage: newStage } : p))
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Error desconocido'
+      alert(`Error al actualizar etapa: ${msg}`)
+    } finally {
+      setUpdatingStage(false)
+    }
+  }
+
   // ── UI ────────────────────────────────────────────────────────────────────
 
   const totalPages = Math.ceil(total / limit)
@@ -416,13 +467,25 @@ export function ProspectsTab() {
 
         <Select value={filterStatus || 'all'} onValueChange={v => { setFilterStatus(!v || v === 'all' ? '' : v); setPage(1) }}>
           <SelectTrigger className="w-36">
-            <SelectValue placeholder="Todos" />
+            <SelectValue placeholder="Estado" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Todos</SelectItem>
+            <SelectItem value="all">Todos los estados</SelectItem>
             <SelectItem value="active">Activos</SelectItem>
             <SelectItem value="converted">Convertidos</SelectItem>
             <SelectItem value="unsubscribed">Dados de baja</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={filterStage || 'all'} onValueChange={v => { setFilterStage(!v || v === 'all' ? '' : v); setPage(1) }}>
+          <SelectTrigger className="w-36">
+            <SelectValue placeholder="Etapa" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todas las etapas</SelectItem>
+            {(Object.entries(PROSPECT_STAGE_LABELS) as [ProspectStage, string][]).map(([value, label]) => (
+              <SelectItem key={value} value={value}>{label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
 
@@ -500,6 +563,7 @@ export function ProspectsTab() {
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">Nombre</th>
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">Email</th>
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">Estado</th>
+              <th className="px-3 py-2 text-left font-medium text-muted-foreground">Etapa</th>
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">Origen</th>
               <th className="px-3 py-2 text-left font-medium text-muted-foreground">Alta</th>
               <th className="w-10 px-3 py-2" />
@@ -508,14 +572,14 @@ export function ProspectsTab() {
           <tbody className="divide-y">
             {loading && (
               <tr>
-                <td colSpan={8} className="py-12 text-center text-muted-foreground">
+                <td colSpan={9} className="py-12 text-center text-muted-foreground">
                   Cargando…
                 </td>
               </tr>
             )}
             {!loading && !prospects.length && (
               <tr>
-                <td colSpan={8} className="py-12 text-center text-muted-foreground">
+                <td colSpan={9} className="py-12 text-center text-muted-foreground">
                   No hay prospectos.{' '}
                   <button
                     className="text-emerald-600 underline"
@@ -555,6 +619,7 @@ export function ProspectsTab() {
                     {p.status === 'active' ? 'Activo' : p.status === 'converted' ? 'Convertido' : 'Dado de baja'}
                   </Badge>
                 </td>
+                <td className="px-3 py-2"><StageBadge stage={p.stage} /></td>
                 <td className="px-3 py-2 text-xs text-muted-foreground">{p.source}</td>
                 <td className="px-3 py-2 text-xs text-muted-foreground">
                   {new Date(p.created_at).toLocaleDateString('es-AR')}
@@ -838,6 +903,26 @@ export function ProspectsTab() {
                       {detailProspect.status === 'active' ? 'Activo'
                         : detailProspect.status === 'converted' ? 'Convertido' : 'Dado de baja'}
                     </Badge>
+                  </span>
+
+                  <span className="text-muted-foreground">Etapa</span>
+                  <span>
+                    <Select
+                      value={detailProspect.stage ?? 'nuevo'}
+                      onValueChange={v => updateStage(v as ProspectStage)}
+                      disabled={updatingStage || detailProspect.status !== 'active'}
+                    >
+                      <SelectTrigger className="h-7 text-xs w-36">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(Object.keys(PROSPECT_STAGE_LABELS) as ProspectStage[]).map(s => (
+                          <SelectItem key={s} value={s} className="text-xs">
+                            {PROSPECT_STAGE_LABELS[s]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </span>
 
                   <span className="text-muted-foreground">Opt-in</span>
