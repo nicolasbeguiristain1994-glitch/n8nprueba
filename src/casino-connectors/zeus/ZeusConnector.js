@@ -82,7 +82,9 @@ class ZeusConnector extends BaseCasinoConnector {
     }
 
     if (!res.ok) {
-      throw new Error(`${this.config.name} auto-login failed: HTTP ${res.status}`)
+      let errBody = ''
+      try { errBody = await res.text() } catch (_) {}
+      throw new Error(`${this.config.name} auto-login failed: HTTP ${res.status} — ${errBody}`)
     }
 
     const body  = await res.json()
