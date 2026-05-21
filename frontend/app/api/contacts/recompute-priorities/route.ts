@@ -9,8 +9,14 @@ import {
 const service = new UserPrioritizationService()
 
 export async function POST(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'contacts', 'manage')
-  if (!auth.ok) return auth.response
+  // Bypass de auth para llamadas internas del pipeline diario
+  const cronSecret = req.headers.get('x-cron-secret')
+  const isCronCall = cronSecret && process.env.CRON_SECRET && cronSecret === process.env.CRON_SECRET
+
+  if (!isCronCall) {
+    const auth = await checkPermissionWithUser(req, 'contacts', 'manage')
+    if (!auth.ok) return auth.response
+  }
 
   try {
     const result = await service.recomputeAll()
