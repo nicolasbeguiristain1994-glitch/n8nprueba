@@ -854,6 +854,11 @@ async function handleFailure(
            updated_at   = NOW()
        WHERE id = $2`,
       [errDetail, unit.id]
+    ).catch(e =>
+      clog.error({
+        event: 'handle.failure.reset.error', campaignId, mode: 'multi-line',
+        recipientId: unit.id, error: e instanceof Error ? e.message : String(e),
+      })
     )
   } else {
     // Permanent failure — max retries exhausted
@@ -866,6 +871,11 @@ async function handleFailure(
            updated_at   = NOW()
        WHERE id = $2`,
       [errDetail, unit.id]
+    ).catch(e =>
+      clog.error({
+        event: 'handle.failure.permanent.error', campaignId, mode: 'multi-line',
+        recipientId: unit.id, error: e instanceof Error ? e.message : String(e),
+      })
     )
   }
 

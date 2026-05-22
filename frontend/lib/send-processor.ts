@@ -22,7 +22,7 @@ export type CampaignRow = {
 }
 
 export type RecipientRow = {
-  id: string; contact_id: string; phone_number: string
+  id: string; contact_id: string | null; prospect_id: string | null; phone_number: string
   first_name: string; attempts: number
 }
 
@@ -114,15 +114,17 @@ export async function claimOne(campaignId: string): Promise<RecipientRow | undef
          LIMIT  1
          FOR UPDATE SKIP LOCKED
        )
-       RETURNING id, contact_id, phone_number, attempts
+       RETURNING id, contact_id, prospect_id, phone_number, attempts
      )
      SELECT cl.id,
             cl.contact_id,
+            cl.prospect_id,
             cl.phone_number,
             cl.attempts,
-            COALESCE(c.first_name, '') AS first_name
+            COALESCE(c.first_name, p.first_name, '') AS first_name
      FROM   claimed cl
-     LEFT JOIN contacts c ON c.id = cl.contact_id`,
+     LEFT JOIN contacts  c ON c.id = cl.contact_id
+     LEFT JOIN prospects p ON p.id = cl.prospect_id`,
     [campaignId]
   )
   return rows[0]
@@ -177,6 +179,11 @@ export async function recordFailure(
      WHERE campaign_recipient_id = $2
        AND status = 'queued'`,
     [errDetail, recipient.id]
+  ).catch(e =>
+    clog.error({
+      event: 'record.failure.update.wm.error', campaignId, mode: 'single-line',
+      recipientId: recipient.id, error: e instanceof Error ? e.message : String(e),
+    })
   )
   // Safety net: insert a failed row if the pre-insert never ran (very early crash)
   await query(
@@ -189,6 +196,11 @@ export async function recordFailure(
      DO NOTHING`,
     [recipient.contact_id, campaignId, recipient.phone_number,
      personalizedMsg, errDetail, recipient.id]
+  ).catch(e =>
+    clog.error({
+      event: 'record.failure.insert.wm.error', campaignId, mode: 'single-line',
+      recipientId: recipient.id, error: e instanceof Error ? e.message : String(e),
+    })
   )
   await query(
     `UPDATE campaign_recipients
@@ -196,6 +208,11 @@ export async function recordFailure(
          error_detail = $1, updated_at = NOW()
      WHERE id = $2`,
     [errDetail, recipient.id]
+  ).catch(e =>
+    clog.error({
+      event: 'record.failure.update.cr.error', campaignId, mode: 'single-line',
+      recipientId: recipient.id, error: e instanceof Error ? e.message : String(e),
+    })
   )
 }
 
@@ -362,47 +379,50 @@ export async function processInBackground(
       }
 
       // ── 3. Frequency gate ───────────────────────────────────────────────
+      // Only applies to contacts. Prospects don't have frequency profiles.
       // BLOCK → skip (freq limit exceeded). DELAY/ALLOW → send.
       // Engine error → log and continue (availability > strict freq control).
       let freqDecision: 'ALLOW' | 'DELAY' | 'BLOCK' = 'ALLOW'
       let freqReason = ''
-      try {
-        const freqResult = await ContactFrequencyEngine.atomicEvaluateAndRecord(
-          {
-            contactId:    recipient.contact_id,
-            operatorId:   campaign.owned_by,
-            campaignId:   id,
-            segMonto:     null,
-            segActividad: null,
-          },
-          {
-            contactId:           recipient.contact_id,
-            campaignId:          id,
-            operatorId:          campaign.owned_by,
-            phoneNumber:         recipient.phone_number,
-            campaignRecipientId: recipient.id,
-          },
-        )
-        freqDecision = freqResult.decision
-        freqReason   = freqResult.reason
-      } catch (freqErr) {
-        // Fail-open: log error pero continuar. Política explícita — disponibilidad
-        // de campaña > control de frecuencia estricto ante fallos de infraestructura.
-        freqEngineFailOpenCount++
-        clog.error({
-          event:       'freq.engine.error',
-          campaignId:  id,
-          mode:        'single-line',
-          recipientId: recipient.id,
-          contactId:   recipient.contact_id,
-          error:       freqErr instanceof Error ? freqErr.message : String(freqErr),
-        })
-        if (freqEngineFailOpenCount === FREQ_FAIL_OPEN_WARN_THRESHOLD) {
-          clog.warn({
-            event: 'freq.engine.failopen.accumulated', campaignId: id, mode: 'single-line',
-            count: freqEngineFailOpenCount,
-            detail: 'motor de frecuencia con errores repetidos — enviando sin control de frecuencia',
+      if (recipient.contact_id) {
+        try {
+          const freqResult = await ContactFrequencyEngine.atomicEvaluateAndRecord(
+            {
+              contactId:    recipient.contact_id,
+              operatorId:   campaign.owned_by,
+              campaignId:   id,
+              segMonto:     null,
+              segActividad: null,
+            },
+            {
+              contactId:           recipient.contact_id,
+              campaignId:          id,
+              operatorId:          campaign.owned_by,
+              phoneNumber:         recipient.phone_number,
+              campaignRecipientId: recipient.id,
+            },
+          )
+          freqDecision = freqResult.decision
+          freqReason   = freqResult.reason
+        } catch (freqErr) {
+          // Fail-open: log error pero continuar. Política explícita — disponibilidad
+          // de campaña > control de frecuencia estricto ante fallos de infraestructura.
+          freqEngineFailOpenCount++
+          clog.error({
+            event:       'freq.engine.error',
+            campaignId:  id,
+            mode:        'single-line',
+            recipientId: recipient.id,
+            contactId:   recipient.contact_id,
+            error:       freqErr instanceof Error ? freqErr.message : String(freqErr),
           })
+          if (freqEngineFailOpenCount === FREQ_FAIL_OPEN_WARN_THRESHOLD) {
+            clog.warn({
+              event: 'freq.engine.failopen.accumulated', campaignId: id, mode: 'single-line',
+              count: freqEngineFailOpenCount,
+              detail: 'motor de frecuencia con errores repetidos — enviando sin control de frecuencia',
+            })
+          }
         }
       }
 

@@ -65,6 +65,7 @@ function makeRecipient(overrides: Partial<RecipientRow> = {}): RecipientRow {
   return {
     id:           'rec-uuid-1',
     contact_id:   'contact-uuid-1',
+    prospect_id:  null,
     phone_number: '+5491100000001',
     first_name:   'Juan',
     attempts:     1,
