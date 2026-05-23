@@ -233,7 +233,7 @@ export function ProspectsTab() {
       await fetchJson('/api/prospects', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filters: { q: search, status: filterStatus, stage: filterStage, batch_id: filterBatch } }),
+        body: JSON.stringify({ filters: { q: search, status: filterStatus, stage: filterStage, batch_id: filterBatch, list_id: filterList } }),
       }).catch(() => {})
       setSelectAllMode(false)
       load()

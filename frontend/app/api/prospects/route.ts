@@ -108,12 +108,12 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// DELETE /api/prospects — bulk delete: { ids: string[] } | { filters: { q, status, stage, batch_id } }
+// DELETE /api/prospects — bulk delete: { ids: string[] } | { filters: { q, status, stage, batch_id, list_id } }
 export async function DELETE(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'contacts', 'manage')
   if (!auth.ok) return auth.response
 
-  let body: { ids?: string[]; filters?: { q?: string; status?: string; stage?: string; batch_id?: string } }
+  let body: { ids?: string[]; filters?: { q?: string; status?: string; stage?: string; batch_id?: string; list_id?: string } }
   try { body = await req.json() } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
@@ -122,32 +122,42 @@ export async function DELETE(req: NextRequest) {
     if (Array.isArray(body.ids)) {
       const ids = body.ids.filter(isUUID)
       if (!ids.length) return NextResponse.json({ deleted: 0 })
-      const rows = await query<{ id: string }>(
-        `DELETE FROM prospects WHERE id = ANY($1) AND status != 'converted' RETURNING id`,
+      const [{ count }] = await query<{ count: string }>(
+        `WITH deleted AS (
+           DELETE FROM prospects WHERE id = ANY($1) AND status != 'converted' RETURNING 1
+         )
+         SELECT COUNT(*)::text AS count FROM deleted`,
         [ids]
       )
-      return NextResponse.json({ deleted: rows.length })
+      return NextResponse.json({ deleted: Number(count) })
     }
 
     if (body.filters) {
-      const { q = '', status = '', stage = '', batch_id = '' } = body.filters
+      const { q = '', status = '', stage = '', batch_id = '', list_id = '' } = body.filters
       if (status && !['active', 'unsubscribed', 'converted'].includes(status)) {
         return NextResponse.json({ error: `Invalid status "${status}"` }, { status: 400 })
       }
       if (stage && !['nuevo', 'contactado', 'interesado', 'descartado'].includes(stage)) {
         return NextResponse.json({ error: `Invalid stage "${stage}"` }, { status: 400 })
       }
-      const rows = await query<{ id: string }>(
-        `DELETE FROM prospects
-         WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
-           AND ($2 = '' OR status = $2)
-           AND ($3 = '' OR stage  = $3)
-           AND ($4 = '' OR import_batch_id::text = $4)
-           AND status != 'converted'
-         RETURNING id`,
-        [`%${q}%`, status, stage, batch_id]
+      const [{ count }] = await query<{ count: string }>(
+        `WITH deleted AS (
+           DELETE FROM prospects
+           WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
+             AND ($2 = '' OR status = $2)
+             AND ($3 = '' OR stage  = $3)
+             AND ($4 = '' OR import_batch_id::text = $4)
+             AND ($5 = '' OR EXISTS (
+               SELECT 1 FROM prospect_list_members plm
+               WHERE plm.prospect_id = id AND plm.prospect_list_id::text = $5
+             ))
+             AND status != 'converted'
+           RETURNING 1
+         )
+         SELECT COUNT(*)::text AS count FROM deleted`,
+        [`%${q}%`, status, stage, batch_id, list_id]
       )
-      return NextResponse.json({ deleted: rows.length })
+      return NextResponse.json({ deleted: Number(count) })
     }
 
     return NextResponse.json({ error: 'Must provide ids or filters' }, { status: 400 })
