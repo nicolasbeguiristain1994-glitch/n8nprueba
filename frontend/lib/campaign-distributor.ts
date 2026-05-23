@@ -734,30 +734,42 @@ async function handleSuccess(
   messageKind: 'text' | 'template' = 'text',
   templateName?: string,
 ): Promise<void> {
-  // Queries 1 + 2: críticas, independientes entre sí → paralelo
-  await Promise.all([
-    query(
-      `UPDATE whatsapp_messages
-       SET status               = 'sent',
-           evolution_message_id = $1,
-           sent_at              = NOW(),
-           updated_at           = NOW()
-       WHERE campaign_recipient_id = $2
-         AND status = 'queued'`,
-      [messageId, unit.id]
-    ),
-    query(
-      `UPDATE campaign_recipients
-       SET status               = 'sent',
-           sent_at              = NOW(),
-           locked_at            = NULL,
-           message_body         = $1,
-           evolution_message_id = $2,
-           updated_at           = NOW()
-       WHERE id = $3`,
-      [messageBody, messageId, unit.id]
-    ),
-  ])
+  // Queries 1 + 2: críticas, independientes entre sí → paralelo.
+  // Si fallan, NO lanzar: el mensaje ya fue enviado. La stale recovery post-loop
+  // resuelve el recipient atascado en 'sending' via JOIN en wm.status = 'sent'.
+  try {
+    await Promise.all([
+      query(
+        `UPDATE whatsapp_messages
+         SET status               = 'sent',
+             evolution_message_id = $1,
+             sent_at              = NOW(),
+             updated_at           = NOW()
+         WHERE campaign_recipient_id = $2
+           AND status = 'queued'`,
+        [messageId, unit.id]
+      ),
+      query(
+        `UPDATE campaign_recipients
+         SET status               = 'sent',
+             sent_at              = NOW(),
+             locked_at            = NULL,
+             message_body         = $1,
+             evolution_message_id = $2,
+             updated_at           = NOW()
+         WHERE id = $3`,
+        [messageBody, messageId, unit.id]
+      ),
+    ])
+  } catch (successWriteErr) {
+    clog.error({
+      event: 'handle.success.write.error', campaignId, mode: 'multi-line',
+      recipientId: unit.id, lineId: line.id,
+      error: successWriteErr instanceof Error ? successWriteErr.message : String(successWriteErr),
+      detail: 'mensaje enviado — stale recovery resolverá el estado del recipient',
+    })
+    // No re-lanzar. No llamar handleFailure. El mensaje fue enviado exitosamente.
+  }
 
   // Fallback: ensure a 'sent' row exists if the pre-insert never ran (e.g. index missing, DB error)
   await query(
@@ -968,7 +980,17 @@ async function sendOneUnit(
   maxRetries:  number,
   opts:        SendOneUnitOptions = {},
 ): Promise<'sent' | 'failed' | 'no-unit' | 'skipped'> {
-  const unit = await claimNextUnit(campaignId, line.id)
+  let unit: DispatchUnit | null
+  try {
+    unit = await claimNextUnit(campaignId, line.id)
+  } catch (claimErr) {
+    clog.error({
+      event: 'claim.unit.error', campaignId, mode: 'multi-line',
+      lineId: line.id,
+      error: claimErr instanceof Error ? claimErr.message : String(claimErr),
+    })
+    return 'failed'
+  }
   if (!unit) return 'no-unit'
 
   // ── Frequency gate ──────────────────────────────────────────────────────────
@@ -1335,9 +1357,19 @@ export async function processMultiLineInBackground(
 
     while (true) {
       // ── 1. Status gate ──────────────────────────────────────────────────────
-      const [current] = await query<{ status: string }>(
-        'SELECT status FROM campaigns WHERE id = $1', [id]
-      )
+      let current: { status: string } | undefined
+      try {
+        const [row] = await query<{ status: string }>(
+          'SELECT status FROM campaigns WHERE id = $1', [id]
+        )
+        current = row
+      } catch (statusErr) {
+        clog.warn({
+          event: 'status.gate.error', campaignId: id, mode: 'multi-line',
+          error: statusErr instanceof Error ? statusErr.message : String(statusErr),
+        })
+        continue
+      }
       if (!current || current.status === 'paused' || current.status === 'cancelled' || current.status === 'completed') {
         delayController.abort()  // cancelar cualquier delay en curso
         break
@@ -1348,8 +1380,18 @@ export async function processMultiLineInBackground(
       // Con TTL 10s: ~1 query cada 10 mensajes en campañas de ritmo normal.
       const nowMs = Date.now()
       if (cachedEligibleLines.length === 0 || nowMs - eligibleLinesFetchedAt > ELIGIBLE_TTL_MS) {
-        cachedEligibleLines = await getEligibleLines(campaign.owned_by)
-        eligibleLinesFetchedAt = nowMs
+        try {
+          cachedEligibleLines = await getEligibleLines(campaign.owned_by)
+          eligibleLinesFetchedAt = nowMs
+        } catch (linesErr) {
+          clog.warn({
+            event: 'eligible.lines.refresh.error', campaignId: id, mode: 'multi-line',
+            error: linesErr instanceof Error ? linesErr.message : String(linesErr),
+            cached_count: cachedEligibleLines.length,
+          })
+          // No actualizar eligibleLinesFetchedAt para reintentar en el próximo ciclo.
+          // Si hay cache previo se usa. Si no, eligibleLines.length === 0 pausará la campaña.
+        }
       }
       const eligibleLines = cachedEligibleLines
       if (eligibleLines.length === 0) {
@@ -1385,6 +1427,12 @@ export async function processMultiLineInBackground(
           `UPDATE campaigns SET status = 'paused', pause_reason = 'no_eligible_lines'
            WHERE id = $1 AND status = 'running'`,
           [id]
+        ).catch(e =>
+          clog.error({
+            event: 'pause.update.error', campaignId: id, mode: 'multi-line',
+            pause_reason: 'no_eligible_lines',
+            error: e instanceof Error ? e.message : String(e),
+          })
         )
         break
       }
@@ -1417,6 +1465,12 @@ export async function processMultiLineInBackground(
           `UPDATE campaigns SET status = 'paused', pause_reason = 'all_lines_outside_schedule'
            WHERE id = $1 AND status = 'running'`,
           [id]
+        ).catch(e =>
+          clog.error({
+            event: 'pause.update.error', campaignId: id, mode: 'multi-line',
+            pause_reason: 'all_lines_outside_schedule',
+            error: e instanceof Error ? e.message : String(e),
+          })
         )
         break
       }
@@ -1491,9 +1545,23 @@ export async function processMultiLineInBackground(
       // ── 7. Pacing delay — personalidad de la línea de mayor capacidad ───────
       // Un delay por ciclo (no por línea) — el batch completo ya se envió.
       // Se usa la personalidad de la primera línea activa (mayor capacidad residual).
-      const leadLine        = activeLines[0]
-      const leadPersonality = getLoadedPersonality(leadLine.id) ?? await getLinePersonality(leadLine.id)
-      const adjustedDelay   = getAdjustedDelayConfig(buildDelayConfig(campaign), leadPersonality)
+      const leadLine = activeLines[0]
+      let leadPersonality = getLoadedPersonality(leadLine.id)
+      if (!leadPersonality) {
+        try {
+          leadPersonality = await getLinePersonality(leadLine.id)
+        } catch (personalityErr) {
+          clog.warn({
+            event: 'personality.fetch.error', campaignId: id, mode: 'multi-line',
+            lineId: leadLine.id,
+            error: personalityErr instanceof Error ? personalityErr.message : String(personalityErr),
+            detail: 'usando delay base sin ajuste de personalidad',
+          })
+        }
+      }
+      const adjustedDelay = leadPersonality
+        ? getAdjustedDelayConfig(buildDelayConfig(campaign), leadPersonality)
+        : buildDelayConfig(campaign)
       await humanLikeDelay(adjustedDelay, delayController.signal)
 
       // ── 8. Heartbeat: lock + personality persist + counters ─────────────────
@@ -1562,25 +1630,41 @@ export async function processMultiLineInBackground(
       [id],
     ).catch(() => {})
 
-    // Final counter sync + mark completed if all work is done
-    const { sent, failed, skipped, pending } = await syncCounters(id)
-    const [finalState] = await query<{ status: string }>(
-      'SELECT status FROM campaigns WHERE id = $1', [id]
-    )
-    if (finalState?.status === 'running' && pending === 0) {
-      await query(
-        `UPDATE campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1`,
-        [id]
-      )
-      clog.info({
-        event: 'campaign.completed', campaignId: id, mode: 'multi-line',
-        sent, failed, skipped,
-      })
-    } else {
-      clog.info({
-        event: 'processor.end', campaignId: id, mode: 'multi-line',
-        sent, failed, skipped, pending,
-        finalStatus: finalState?.status ?? 'unknown',
+    // Final counter sync + mark completed if all work is done.
+    // Wrapeado en try/catch: errores aquí no deben propagar como systemic_error.
+    // La campaña ya terminó de enviar — el lock se libera en el finally independientemente.
+    try {
+      const { sent, failed, skipped, pending } = await syncCounters(id)
+      const [finalState] = await query<{ status: string }>(
+        'SELECT status FROM campaigns WHERE id = $1', [id]
+      ).catch(() => [undefined] as const)
+
+      if (finalState?.status === 'running' && pending === 0) {
+        await query(
+          `UPDATE campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1`,
+          [id]
+        ).catch(e =>
+          clog.error({
+            event: 'completion.update.error', campaignId: id, mode: 'multi-line',
+            error: e instanceof Error ? e.message : String(e),
+          })
+        )
+        clog.info({
+          event: 'campaign.completed', campaignId: id, mode: 'multi-line',
+          sent, failed, skipped,
+        })
+      } else {
+        clog.info({
+          event: 'processor.end', campaignId: id, mode: 'multi-line',
+          sent, failed, skipped, pending,
+          finalStatus: finalState?.status ?? 'unknown',
+        })
+      }
+    } catch (finalErr) {
+      clog.error({
+        event: 'processor.final.sync.error', campaignId: id, mode: 'multi-line',
+        error: finalErr instanceof Error ? finalErr.message : String(finalErr),
+        detail: 'error en tramo final — la campaña puede necesitar completarse manualmente',
       })
     }
 

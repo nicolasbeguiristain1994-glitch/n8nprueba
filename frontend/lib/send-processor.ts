@@ -226,7 +226,24 @@ export async function sendOne(
   const personalizedMsg = personalize(pickMessage(campaign), recipient.first_name, campaign)
 
   // Pick the best eligible line — same logic as multi-line distributor
-  const eligibleLines = await getEligibleLines()
+  let eligibleLines: Awaited<ReturnType<typeof getEligibleLines>> = []
+  try {
+    eligibleLines = await getEligibleLines()
+  } catch (linesErr) {
+    clog.error({
+      event: 'eligible.lines.error', campaignId, mode: 'single-line',
+      recipientId: recipient.id,
+      error: linesErr instanceof Error ? linesErr.message : String(linesErr),
+    })
+    await recordFailure(campaignId, recipient, personalizedMsg, 'no-eligible-lines-error')
+    clog.warn({
+      event: 'recipient.failed', campaignId, mode: 'single-line',
+      recipientId: recipient.id, contactId: recipient.contact_id,
+      attempt: recipient.attempts, provider: 'evolution',
+      error: 'no-eligible-lines-error',
+    })
+    return 'failed'
+  }
   if (eligibleLines.length === 0) {
     await recordFailure(campaignId, recipient, personalizedMsg, 'no-eligible-lines')
     clog.warn({
@@ -360,9 +377,19 @@ export async function processInBackground(
 
     while (true) {
       // ── 1. Status gate ──────────────────────────────────────────────────
-      const [current] = await query<{ status: string }>(
-        'SELECT status FROM campaigns WHERE id = $1', [id]
-      )
+      let current: { status: string } | undefined
+      try {
+        const [row] = await query<{ status: string }>(
+          'SELECT status FROM campaigns WHERE id = $1', [id]
+        )
+        current = row
+      } catch (statusErr) {
+        clog.warn({
+          event: 'status.gate.error', campaignId: id, mode: 'single-line',
+          error: statusErr instanceof Error ? statusErr.message : String(statusErr),
+        })
+        continue
+      }
       if (!current || current.status === 'paused' || current.status === 'cancelled') {
         clog.info({
           event: 'processor.stopped', campaignId: id, mode: 'single-line',
@@ -372,7 +399,16 @@ export async function processInBackground(
       }
 
       // ── 2. Claim one recipient ──────────────────────────────────────────
-      const recipient = await claimOne(id)
+      let recipient: Awaited<ReturnType<typeof claimOne>>
+      try {
+        recipient = await claimOne(id)
+      } catch (claimErr) {
+        clog.error({
+          event: 'claim.one.error', campaignId: id, mode: 'single-line',
+          error: claimErr instanceof Error ? claimErr.message : String(claimErr),
+        })
+        continue
+      }
       if (!recipient) {
         clog.info({ event: 'processor.drained', campaignId: id, mode: 'single-line' })
         break
@@ -448,8 +484,15 @@ export async function processInBackground(
           reason:      'freq-blocked',
           detail:      freqReason,
         })
-        const { pending: pendingAfterSkip } = await syncCounters(id)
-        if (pendingAfterSkip === 0) break
+        try {
+          const { pending: pendingAfterSkip } = await syncCounters(id)
+          if (pendingAfterSkip === 0) break
+        } catch (syncErr) {
+          clog.warn({
+            event: 'sync.counters.error', campaignId: id, mode: 'single-line',
+            error: syncErr instanceof Error ? syncErr.message : String(syncErr),
+          })
+        }
         continue  // no antiblock delay for skipped recipients
       }
 
@@ -458,8 +501,15 @@ export async function processInBackground(
       sendCount++
 
       // ── 5. Sync counters ────────────────────────────────────────────────
-      const { pending } = await syncCounters(id)
-      if (pending === 0) break
+      try {
+        const { pending } = await syncCounters(id)
+        if (pending === 0) break
+      } catch (syncErr) {
+        clog.warn({
+          event: 'sync.counters.error', campaignId: id, mode: 'single-line',
+          error: syncErr instanceof Error ? syncErr.message : String(syncErr),
+        })
+      }
 
       // ── 6. Antiblock delay ──────────────────────────────────────────────
       await antiblockDelay(campaign)
@@ -478,24 +528,40 @@ export async function processInBackground(
       }
     }
 
-    // Final counter sync + completion check
-    const { sent, failed, skipped, pending } = await syncCounters(id)
-    const [finalState] = await query<{ status: string }>(
-      'SELECT status FROM campaigns WHERE id = $1', [id]
-    )
-    if (finalState?.status === 'running' && pending === 0) {
-      await query(
-        `UPDATE campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1`, [id]
-      )
-      clog.info({
-        event: 'campaign.completed', campaignId: id, mode: 'single-line',
-        sent, failed, skipped,
-      })
-    } else {
-      clog.info({
-        event: 'processor.end', campaignId: id, mode: 'single-line',
-        sent, failed, skipped, pending,
-        finalStatus: finalState?.status ?? 'unknown',
+    // Final counter sync + completion check.
+    // Wrapeado en try/catch: errores aquí no deben propagar como systemic_error.
+    // La campaña ya terminó de enviar — el lock se libera en el finally independientemente.
+    try {
+      const { sent, failed, skipped, pending } = await syncCounters(id)
+      const [finalState] = await query<{ status: string }>(
+        'SELECT status FROM campaigns WHERE id = $1', [id]
+      ).catch(() => [undefined] as const)
+
+      if (finalState?.status === 'running' && pending === 0) {
+        await query(
+          `UPDATE campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1`, [id]
+        ).catch(e =>
+          clog.error({
+            event: 'completion.update.error', campaignId: id, mode: 'single-line',
+            error: e instanceof Error ? e.message : String(e),
+          })
+        )
+        clog.info({
+          event: 'campaign.completed', campaignId: id, mode: 'single-line',
+          sent, failed, skipped,
+        })
+      } else {
+        clog.info({
+          event: 'processor.end', campaignId: id, mode: 'single-line',
+          sent, failed, skipped, pending,
+          finalStatus: finalState?.status ?? 'unknown',
+        })
+      }
+    } catch (finalErr) {
+      clog.error({
+        event: 'processor.final.sync.error', campaignId: id, mode: 'single-line',
+        error: finalErr instanceof Error ? finalErr.message : String(finalErr),
+        detail: 'error en tramo final — la campaña puede necesitar completarse manualmente',
       })
     }
 
