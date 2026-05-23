@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
   const status   = sp.get('status')   || ''
   const stage    = sp.get('stage')    || ''
   const batchId  = sp.get('batch_id') || ''
+  const listId   = sp.get('list_id')  || ''
   const page     = Math.max(1, Number(sp.get('page') || 1))
   const limit    = Math.min(200, Math.max(1, Number(sp.get('limit') || 50)))
   const offset   = (page - 1) * limit
@@ -43,9 +44,13 @@ export async function GET(req: NextRequest) {
           AND ($2 = '' OR p.status = $2)
           AND ($3 = '' OR p.stage  = $3)
           AND ($4 = '' OR p.import_batch_id::text = $4)
+          AND ($5 = '' OR EXISTS (
+            SELECT 1 FROM prospect_list_members plm
+            WHERE plm.prospect_id = p.id AND plm.prospect_list_id::text = $5
+          ))
         ORDER BY p.created_at DESC
-        LIMIT $5 OFFSET $6
-      `, [`%${search}%`, status, stage, batchId, limit, offset])
+        LIMIT $6 OFFSET $7
+      `, [`%${search}%`, status, stage, batchId, listId, limit, offset])
     } catch (e) {
       // Fallback: migración 098/099 no aplicadas aún en este entorno
       const msg = e instanceof Error ? e.message : ''
@@ -76,16 +81,24 @@ export async function GET(req: NextRequest) {
           `SELECT COUNT(*) FROM prospects p
            WHERE ($1 = '' OR p.phone_number ILIKE $1 OR p.first_name ILIKE $1 OR p.last_name ILIKE $1)
              AND ($2 = '' OR p.status = $2)
-             AND ($3 = '' OR p.import_batch_id::text = $3)`,
-          [`%${search}%`, status, batchId]
+             AND ($3 = '' OR p.import_batch_id::text = $3)
+             AND ($4 = '' OR EXISTS (
+               SELECT 1 FROM prospect_list_members plm
+               WHERE plm.prospect_id = p.id AND plm.prospect_list_id::text = $4
+             ))`,
+          [`%${search}%`, status, batchId, listId]
         )
       : await query<{ count: string }>(
           `SELECT COUNT(*) FROM prospects p
            WHERE ($1 = '' OR p.phone_number ILIKE $1 OR p.first_name ILIKE $1 OR p.last_name ILIKE $1)
              AND ($2 = '' OR p.status = $2)
              AND ($3 = '' OR p.stage  = $3)
-             AND ($4 = '' OR p.import_batch_id::text = $4)`,
-          [`%${search}%`, status, stage, batchId]
+             AND ($4 = '' OR p.import_batch_id::text = $4)
+             AND ($5 = '' OR EXISTS (
+               SELECT 1 FROM prospect_list_members plm
+               WHERE plm.prospect_id = p.id AND plm.prospect_list_id::text = $5
+             ))`,
+          [`%${search}%`, status, stage, batchId, listId]
         )
 
     return NextResponse.json({ prospects: rows, total: Number(count), page, limit })

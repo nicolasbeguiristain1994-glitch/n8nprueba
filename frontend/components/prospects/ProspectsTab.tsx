@@ -13,6 +13,7 @@ import {
 import {
   Upload, RefreshCw, Trash2, Search, Send, History, AlertTriangle,
   CheckCircle, XCircle, ChevronLeft, ChevronRight, Eye, UserPlus,
+  CheckSquare, List, ChevronDown, X, Filter, Users,
 } from 'lucide-react'
 import { Textarea } from '@/components/ui/textarea'
 import { fetchJson } from '@/lib/fetchJson'
@@ -121,6 +122,12 @@ export function ProspectsTab() {
   const [selected, setSelected]     = useState<Set<string>>(new Set())
   const [selectAllMode, setSelectAllMode] = useState(false)  // selecciona todos los de la búsqueda (no solo la página)
 
+  // ── Listas de difusión (filtro)
+  const [prospectLists, setProspectLists] = useState<{id: string; name: string; member_count: number}[]>([])
+  const [filterList, setFilterList]       = useState('')
+  const [showListsMenu, setShowListsMenu] = useState(false)
+  const listsMenuRef = useRef<HTMLDivElement>(null)
+
   // ── Modal importación
   const [importOpen, setImportOpen]       = useState(false)
   const [parsedRows, setParsedRows]       = useState<ParsedRow[]>([])
@@ -162,6 +169,7 @@ export function ProspectsTab() {
         batch_id: filterBatch,
         status:   filterStatus,
         stage:    filterStage,
+        list_id:  filterList,
       })
       const data = await fetchJson<{ prospects: Prospect[]; total: number }>(`/api/prospects?${q}`)
       setProspects(data.prospects ?? [])
@@ -169,7 +177,7 @@ export function ProspectsTab() {
     } finally {
       setLoading(false)
     }
-  }, [search, page, filterBatch, filterStatus, filterStage])
+  }, [search, page, filterBatch, filterStatus, filterStage, filterList])
 
   useEffect(() => { load() }, [load])
 
@@ -178,6 +186,23 @@ export function ProspectsTab() {
       .then(d => setBatches(d.batches ?? []))
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    fetchJson<{ lists: {id: string; name: string; member_count: number}[] }>('/api/prospect-lists?limit=100')
+      .then(d => setProspectLists(d.lists ?? []))
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!showListsMenu) return
+    const handler = (e: MouseEvent) => {
+      if (listsMenuRef.current && !listsMenuRef.current.contains(e.target as Node)) {
+        setShowListsMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showListsMenu])
 
   // ── Selección ─────────────────────────────────────────────────────────────
 
@@ -541,6 +566,60 @@ export function ProspectsTab() {
         <Button variant="outline" size="sm" onClick={() => setBatchHistoryOpen(true)}>
           <History className="h-4 w-4 mr-1" /> Historial
         </Button>
+
+        <Button
+          size="sm" variant="outline"
+          onClick={() => {
+            setSelected(new Set(prospects.map(p => p.id)))
+            if (total > prospects.length) setSelectAllMode(true)
+          }}
+          className="border-blue-200 text-blue-700 hover:bg-blue-50"
+        >
+          <CheckSquare className="h-4 w-4 mr-1" />
+          Seleccionar todos
+        </Button>
+
+        <div className="relative" ref={listsMenuRef}>
+          <Button
+            size="sm" variant="outline"
+            onClick={() => setShowListsMenu(v => !v)}
+            className={`border-indigo-200 text-indigo-700 hover:bg-indigo-50 ${filterList ? 'bg-indigo-50 border-indigo-400' : ''}`}
+          >
+            <List className="h-4 w-4 mr-1" />
+            {filterList ? (prospectLists.find(l => l.id === filterList)?.name ?? 'Lista') : 'Listas'}
+            {filterList && (
+              <X
+                className="ml-1.5 h-3 w-3 opacity-60 hover:opacity-100"
+                onClick={e => { e.stopPropagation(); setFilterList(''); setPage(1) }}
+              />
+            )}
+            {!filterList && <ChevronDown className="ml-1 h-3 w-3 opacity-60" />}
+          </Button>
+          {showListsMenu && (
+            <div className="absolute left-0 top-full mt-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg z-30 w-72 py-1 max-h-80 overflow-y-auto">
+              <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-800">
+                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Listas de difusión</span>
+              </div>
+              {prospectLists.length === 0 && (
+                <p className="text-xs text-gray-400 px-3 py-4 text-center">No hay listas creadas</p>
+              )}
+              {prospectLists.map(l => (
+                <div
+                  key={l.id}
+                  className={`flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer ${filterList === l.id ? 'bg-indigo-50 dark:bg-indigo-950/30' : ''}`}
+                  onClick={() => { setFilterList(l.id); setPage(1); setShowListsMenu(false) }}
+                >
+                  <Users className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm truncate ${filterList === l.id ? 'font-semibold text-indigo-700 dark:text-indigo-400' : 'text-gray-700 dark:text-gray-200'}`}>{l.name}</p>
+                    <p className="text-[11px] text-gray-400">{l.member_count.toLocaleString()} prospectos</p>
+                  </div>
+                  {filterList === l.id && <Filter className="h-3 w-3 text-indigo-500 shrink-0" />}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         <Button
           size="sm"
