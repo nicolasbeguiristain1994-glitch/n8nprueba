@@ -151,6 +151,10 @@ export function ProspectsTab() {
   // ── Corrección de prefijo en batch existente
   const [fixingPrefix, setFixingPrefix] = useState(false)
 
+  // ── Dropdown custom de batches
+  const [showBatchMenu, setShowBatchMenu] = useState(false)
+  const batchMenuRef = useRef<HTMLDivElement>(null)
+
   // ── Modal detalle + conversión
   const [detailProspect, setDetailProspect]   = useState<Prospect | null>(null)
   const [convertStep, setConvertStep]         = useState<'idle' | 'confirm' | 'done'>('idle')
@@ -222,6 +226,17 @@ export function ProspectsTab() {
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [showListsMenu])
+
+  useEffect(() => {
+    if (!showBatchMenu) return
+    const handler = (e: MouseEvent) => {
+      if (batchMenuRef.current && !batchMenuRef.current.contains(e.target as Node)) {
+        setShowBatchMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showBatchMenu])
 
   // ── Selección ─────────────────────────────────────────────────────────────
 
@@ -589,19 +604,59 @@ export function ProspectsTab() {
         </Select>
 
         {batches.length > 0 && (
-          <Select value={filterBatch} onValueChange={v => { setFilterBatch(v === 'all' || !v ? '' : v); setPage(1) }}>
-            <SelectTrigger className="w-44">
-              <SelectValue placeholder="Todos los batches" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Todos los batches</SelectItem>
-              {batches.slice(0, 20).map(b => (
-                <SelectItem key={b.id} value={b.id}>
-                  {b.filename ?? 'Sin nombre'} ({b.imported})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="relative" ref={batchMenuRef}>
+            <Button
+              size="sm" variant="outline"
+              onClick={() => setShowBatchMenu(v => !v)}
+              className={`max-w-[180px] justify-between ${filterBatch ? 'border-indigo-400 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-400' : ''}`}
+            >
+              <span className="truncate text-left flex-1">
+                {filterBatch ? (batches.find(b => b.id === filterBatch)?.filename ?? 'Batch') : 'Todos los batches'}
+              </span>
+              {filterBatch
+                ? <X className="ml-1 h-3 w-3 shrink-0 opacity-60 hover:opacity-100" onClick={e => { e.stopPropagation(); setFilterBatch(''); setPage(1) }} />
+                : <ChevronDown className="ml-1 h-3 w-3 shrink-0 opacity-60" />
+              }
+            </Button>
+            {showBatchMenu && (
+              <div className="absolute left-0 top-full mt-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg z-30 w-72 py-1 max-h-80 overflow-y-auto">
+                <div
+                  className={`flex items-center px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer text-sm ${!filterBatch ? 'font-semibold text-indigo-700 dark:text-indigo-400' : 'text-gray-700 dark:text-gray-200'}`}
+                  onClick={() => { setFilterBatch(''); setPage(1); setShowBatchMenu(false) }}
+                >
+                  Todos los batches
+                </div>
+                <div className="border-t border-gray-100 dark:border-gray-800" />
+                {batches.map(b => (
+                  <div
+                    key={b.id}
+                    className={`flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer group ${filterBatch === b.id ? 'bg-indigo-50 dark:bg-indigo-950/30' : ''}`}
+                    onClick={() => { setFilterBatch(b.id); setPage(1); setShowBatchMenu(false) }}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm truncate ${filterBatch === b.id ? 'font-semibold text-indigo-700 dark:text-indigo-400' : 'text-gray-700 dark:text-gray-200'}`}>
+                        {b.filename ?? 'Sin nombre'}
+                      </p>
+                      <p className="text-[11px] text-gray-400">{b.imported.toLocaleString()} importados</p>
+                    </div>
+                    <button
+                      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-red-500 p-0.5 rounded disabled:opacity-30"
+                      title="Eliminar del historial"
+                      disabled={deletingBatchId === b.id}
+                      onClick={e => {
+                        e.stopPropagation()
+                        if (confirm(`¿Eliminar "${b.filename ?? 'este batch'}" del historial?\nLos prospectos importados NO se borran.`)) {
+                          deleteBatch(b.id)
+                        }
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
         <Button variant="outline" size="sm" onClick={load} disabled={loading}>
