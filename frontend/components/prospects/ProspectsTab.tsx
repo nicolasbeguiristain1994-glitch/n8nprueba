@@ -147,6 +147,9 @@ export function ProspectsTab() {
   // ── Modal historial de batches
   const [batchHistoryOpen, setBatchHistoryOpen] = useState(false)
 
+  // ── Corrección de prefijo en batch existente
+  const [fixingPrefix, setFixingPrefix] = useState(false)
+
   // ── Modal detalle + conversión
   const [detailProspect, setDetailProspect]   = useState<Prospect | null>(null)
   const [convertStep, setConvertStep]         = useState<'idle' | 'confirm' | 'done'>('idle')
@@ -342,7 +345,11 @@ export function ProspectsTab() {
       }
     }
 
-    setParsedRows(rows.filter(r => r.phone.length > 2))
+    const validRows = rows.filter(r => r.phone.length > 2)
+    setParsedRows(validRows)
+    // Auto-activar prefijo si la mayoría de números no tiene código de Argentina
+    const withoutPrefix = validRows.filter(r => !r.phone.startsWith('+54')).length
+    setAutoPrefix(withoutPrefix > validRows.length / 2 ? '+549' : '')
     setImportOpen(true)
   }
 
@@ -499,6 +506,28 @@ export function ProspectsTab() {
     }
   }
 
+  // ── Corregir prefijo en batch existente ──────────────────────────────────
+
+  const fixBatchPrefix = async () => {
+    if (!filterBatch) return
+    const batchName = batches.find(b => b.id === filterBatch)?.filename ?? filterBatch.slice(0, 8)
+    if (!confirm(`¿Agregar +549 a todos los números del batch "${batchName}" que no tengan código de Argentina?\nEsto actualizará ${total.toLocaleString()} prospectos directamente en la base de datos.`)) return
+    setFixingPrefix(true)
+    try {
+      const result = await fetchJson<{ fixed: number }>('/api/prospects/fix-prefix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batch_id: filterBatch, prefix: '+549' }),
+      })
+      alert(`✓ ${result.fixed.toLocaleString()} números corregidos a formato +549.`)
+      load()
+    } catch {
+      alert('Error al corregir los números. Intentá de nuevo.')
+    } finally {
+      setFixingPrefix(false)
+    }
+  }
+
   // ── UI ────────────────────────────────────────────────────────────────────
 
   const totalPages = Math.ceil(total / limit)
@@ -566,6 +595,18 @@ export function ProspectsTab() {
         <Button variant="outline" size="sm" onClick={() => setBatchHistoryOpen(true)}>
           <History className="h-4 w-4 mr-1" /> Historial
         </Button>
+
+        {filterBatch && (
+          <Button
+            variant="outline" size="sm"
+            onClick={fixBatchPrefix}
+            disabled={fixingPrefix}
+            className="border-orange-200 text-orange-700 hover:bg-orange-50"
+            title="Agregar +549 a los números de este batch que no tengan código de Argentina"
+          >
+            {fixingPrefix ? 'Corrigiendo…' : 'Corregir +549'}
+          </Button>
+        )}
 
         <Button
           size="sm" variant="outline"
