@@ -128,6 +128,7 @@ export function ProspectsTab() {
   const [importing, setImporting]         = useState(false)
   const [importProgress, setImportProgress] = useState(0)   // 0-100
   const [importResult, setImportResult]   = useState<ProspectImportResult | null>(null)
+  const [autoPrefix, setAutoPrefix]       = useState('')    // p.ej. '+549' para Argentina
   const fileRef = useRef<HTMLInputElement>(null)
 
   // ── Modal agregar a campaña
@@ -238,6 +239,7 @@ export function ProspectsTab() {
     setImportFilename(file.name)
     setImportResult(null)
     setParsedRows([])
+    setAutoPrefix('')
 
     const ext = file.name.split('.').pop()?.toLowerCase()
     let rows: ParsedRow[] = []
@@ -328,7 +330,12 @@ export function ProspectsTab() {
     setImporting(true)
     setImportProgress(0)
 
-    const allRows = parsedRows.map(r => ({ phone: r.phone, first_name: r.first_name, last_name: r.last_name, email: r.email }))
+    const allRows = parsedRows.map(r => {
+      const phone = autoPrefix && !r.phone.startsWith('+54')
+        ? autoPrefix + r.phone.slice(1)
+        : r.phone
+      return { phone, first_name: r.first_name, last_name: r.last_name, email: r.email }
+    })
     const chunks: typeof allRows[] = []
     for (let i = 0; i < allRows.length; i += CHUNK_SIZE) chunks.push(allRows.slice(i, i + CHUNK_SIZE))
 
@@ -739,13 +746,21 @@ export function ProspectsTab() {
                         </tr>
                       </thead>
                       <tbody className="divide-y">
-                        {parsedRows.slice(0, 5).map((r, i) => (
-                          <tr key={i}>
-                            <td className="px-3 py-1.5 font-mono">{r.phone}</td>
-                            <td className="px-3 py-1.5">{[r.first_name, r.last_name].filter(Boolean).join(' ') || '—'}</td>
-                            <td className="px-3 py-1.5 text-muted-foreground">{r.email || '—'}</td>
-                          </tr>
-                        ))}
+                        {parsedRows.slice(0, 5).map((r, i) => {
+                          const needsFix = autoPrefix && !r.phone.startsWith('+54')
+                          const displayPhone = needsFix ? autoPrefix + r.phone.slice(1) : r.phone
+                          return (
+                            <tr key={i}>
+                              <td className="px-3 py-1.5 font-mono">
+                                {needsFix
+                                  ? <span className="text-emerald-600 font-medium">{displayPhone}</span>
+                                  : r.phone}
+                              </td>
+                              <td className="px-3 py-1.5">{[r.first_name, r.last_name].filter(Boolean).join(' ') || '—'}</td>
+                              <td className="px-3 py-1.5 text-muted-foreground">{r.email || '—'}</td>
+                            </tr>
+                          )
+                        })}
                         {parsedRows.length > 5 && (
                           <tr>
                             <td colSpan={3} className="px-3 py-1.5 text-muted-foreground text-center">
@@ -757,6 +772,64 @@ export function ProspectsTab() {
                     </table>
                   </div>
                 )}
+
+                {/* ── Sugerencia de prefijo argentino ── */}
+                {(() => {
+                  const needsCount = parsedRows.filter(r => !r.phone.startsWith('+54')).length
+                  if (!needsCount) return null
+                  const example = parsedRows.find(r => !r.phone.startsWith('+54'))
+                  return (
+                    <div className={`rounded-md border px-4 py-3 text-sm space-y-2 ${
+                      autoPrefix
+                        ? 'bg-emerald-50 border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800'
+                        : 'bg-amber-50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800'
+                    }`}>
+                      {autoPrefix ? (
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-300">
+                            <CheckCircle className="h-4 w-4 shrink-0" />
+                            <span>
+                              <strong>{needsCount.toLocaleString()}</strong> números recibirán el prefijo{' '}
+                              <span className="font-mono font-medium">{autoPrefix}</span>
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className="text-xs text-muted-foreground underline hover:no-underline"
+                            onClick={() => setAutoPrefix('')}
+                          >
+                            Quitar
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-1.5 text-amber-700 dark:text-amber-300">
+                            <AlertTriangle className="h-4 w-4 shrink-0" />
+                            <span>
+                              <strong>{needsCount.toLocaleString()}</strong> números no tienen código de Argentina (+54)
+                            </span>
+                          </div>
+                          {example && (
+                            <p className="text-xs text-muted-foreground">
+                              Ej: <span className="font-mono">{example.phone}</span>
+                              {' → '}
+                              <span className="font-mono text-emerald-600">+549{example.phone.slice(1)}</span>
+                            </p>
+                          )}
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs border-amber-300 text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950/40"
+                            onClick={() => setAutoPrefix('+549')}
+                          >
+                            Agregar característica +549 automáticamente
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  )
+                })()}
               </div>
 
               {importing && (
