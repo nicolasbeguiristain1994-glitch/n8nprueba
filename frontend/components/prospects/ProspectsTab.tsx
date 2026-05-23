@@ -146,6 +146,7 @@ export function ProspectsTab() {
 
   // ── Modal historial de batches
   const [batchHistoryOpen, setBatchHistoryOpen] = useState(false)
+  const [deletingBatchId, setDeletingBatchId]   = useState<string | null>(null)
 
   // ── Corrección de prefijo en batch existente
   const [fixingPrefix, setFixingPrefix] = useState(false)
@@ -184,11 +185,26 @@ export function ProspectsTab() {
 
   useEffect(() => { load() }, [load])
 
-  useEffect(() => {
+  const loadBatches = useCallback(() => {
     fetchJson<{ batches: ProspectImportBatch[] }>('/api/prospects/batches')
       .then(d => setBatches(d.batches ?? []))
       .catch(() => {})
   }, [])
+
+  useEffect(() => { loadBatches() }, [loadBatches])
+
+  const deleteBatch = async (batchId: string) => {
+    setDeletingBatchId(batchId)
+    try {
+      await fetchJson(`/api/prospects/batches/${batchId}`, { method: 'DELETE' })
+      setBatches(prev => prev.filter(b => b.id !== batchId))
+      if (filterBatch === batchId) { setFilterBatch(''); setPage(1) }
+    } catch {
+      alert('Error al eliminar el batch.')
+    } finally {
+      setDeletingBatchId(null)
+    }
+  }
 
   useEffect(() => {
     fetchJson<{ lists: {id: string; name: string; member_count: number}[] }>('/api/prospect-lists?limit=100')
@@ -1099,11 +1115,12 @@ export function ProspectsTab() {
                     <th className="px-3 py-2 text-right">Dup</th>
                     <th className="px-3 py-2 text-right">Inválidos</th>
                     <th className="px-3 py-2 text-left">Fecha</th>
+                    <th className="w-8 px-2 py-2" />
                   </tr>
                 </thead>
                 <tbody className="divide-y">
                   {batches.map(b => (
-                    <tr key={b.id} className="hover:bg-muted/30">
+                    <tr key={b.id} className="hover:bg-muted/30 group">
                       <td className="px-3 py-2 font-medium">{b.filename ?? '—'}</td>
                       <td className="px-3 py-2 text-right">{b.total_rows.toLocaleString()}</td>
                       <td className="px-3 py-2 text-right text-emerald-600 font-medium">{b.imported.toLocaleString()}</td>
@@ -1111,6 +1128,20 @@ export function ProspectsTab() {
                       <td className="px-3 py-2 text-right text-muted-foreground">{b.skipped_invalid.toLocaleString()}</td>
                       <td className="px-3 py-2 text-xs text-muted-foreground">
                         {new Date(b.created_at).toLocaleString('es-AR')}
+                      </td>
+                      <td className="px-2 py-2">
+                        <button
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-red-500 disabled:opacity-30"
+                          title="Eliminar registro del historial"
+                          disabled={deletingBatchId === b.id}
+                          onClick={() => {
+                            if (confirm(`¿Eliminar "${b.filename ?? 'este batch'}" del historial? Los prospectos importados NO se borran.`)) {
+                              deleteBatch(b.id)
+                            }
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
                       </td>
                     </tr>
                   ))}
