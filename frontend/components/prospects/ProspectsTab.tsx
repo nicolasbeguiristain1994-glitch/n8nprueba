@@ -119,6 +119,7 @@ export function ProspectsTab() {
 
   // ── Selección
   const [selected, setSelected]     = useState<Set<string>>(new Set())
+  const [selectAllMode, setSelectAllMode] = useState(false)  // selecciona todos los de la búsqueda (no solo la página)
 
   // ── Modal importación
   const [importOpen, setImportOpen]       = useState(false)
@@ -151,6 +152,7 @@ export function ProspectsTab() {
   const load = useCallback(async () => {
     setLoading(true)
     setSelected(new Set())
+    setSelectAllMode(false)
     try {
       const q = new URLSearchParams({
         q:        search,
@@ -185,17 +187,33 @@ export function ProspectsTab() {
       return next
     })
 
-  const toggleAll = () =>
+  const toggleAll = () => {
+    setSelectAllMode(false)
     setSelected(prev =>
       prev.size === prospects.length
         ? new Set()
         : new Set(prospects.map(p => p.id))
     )
+  }
 
   // ── Delete ────────────────────────────────────────────────────────────────
 
   const deleteSelected = async () => {
-    if (!selected.size) return
+    if (!selected.size && !selectAllMode) return
+
+    if (selectAllMode) {
+      const msg = `¿Eliminar TODOS los ${total.toLocaleString()} prospectos de esta búsqueda? (los convertidos serán ignorados)\nEsta acción no se puede deshacer.`
+      if (!confirm(msg)) return
+      await fetchJson('/api/prospects', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filters: { q: search, status: filterStatus, stage: filterStage, batch_id: filterBatch } }),
+      }).catch(() => {})
+      setSelectAllMode(false)
+      load()
+      return
+    }
+
     const toDelete = [...selected].filter(id => {
       const p = prospects.find(p => p.id === id)
       return p?.status !== 'converted'
@@ -206,7 +224,11 @@ export function ProspectsTab() {
       : `¿Eliminar ${toDelete.length} prospecto(s)?`
     if (!toDelete.length) { alert('Los prospectos convertidos no se pueden eliminar.'); return }
     if (!confirm(msg)) return
-    await Promise.all(toDelete.map(id => fetchJson(`/api/prospects/${id}`, { method: 'DELETE' }).catch(() => {})))
+    await fetchJson('/api/prospects', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: toDelete }),
+    }).catch(() => {})
     load()
   }
 
@@ -528,22 +550,57 @@ export function ProspectsTab() {
           onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = '' }}
         />
 
-        {selected.size > 0 && (
+        {(selected.size > 0 || selectAllMode) && (
           <>
-            <Button size="sm" variant="outline" onClick={openAddToCampaign}>
-              <Send className="h-4 w-4 mr-1" /> Agregar a campaña ({selected.size})
-            </Button>
+            {!selectAllMode && (
+              <Button size="sm" variant="outline" onClick={openAddToCampaign}>
+                <Send className="h-4 w-4 mr-1" /> Agregar a campaña ({selected.size})
+              </Button>
+            )}
             <Button size="sm" variant="destructive" onClick={deleteSelected}>
-              <Trash2 className="h-4 w-4 mr-1" /> Eliminar ({selected.size})
+              <Trash2 className="h-4 w-4 mr-1" />
+              {selectAllMode ? `Eliminar todos (${total.toLocaleString()})` : `Eliminar (${selected.size})`}
             </Button>
           </>
         )}
       </div>
 
+      {/* ── Banner seleccionar todos ── */}
+      {allSelected && !selectAllMode && total > prospects.length && (
+        <div className="flex items-center gap-2 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-3 py-2 text-sm">
+          <span className="text-blue-700 dark:text-blue-300">
+            Los {prospects.length} prospectos de esta página están seleccionados.
+          </span>
+          <button
+            type="button"
+            className="font-medium text-blue-600 dark:text-blue-400 underline hover:no-underline"
+            onClick={() => setSelectAllMode(true)}
+          >
+            Seleccionar los {total.toLocaleString()} de esta búsqueda
+          </button>
+        </div>
+      )}
+      {selectAllMode && (
+        <div className="flex items-center gap-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-sm">
+          <span className="text-amber-700 dark:text-amber-300">
+            Todos los <strong>{total.toLocaleString()}</strong> prospectos de esta búsqueda están seleccionados.
+          </span>
+          <button
+            type="button"
+            className="font-medium text-amber-600 dark:text-amber-400 underline hover:no-underline"
+            onClick={() => { setSelectAllMode(false); setSelected(new Set()) }}
+          >
+            Cancelar
+          </button>
+        </div>
+      )}
+
       {/* ── Contador ── */}
       <div className="text-sm text-muted-foreground">
         {total.toLocaleString()} prospectos en total
-        {selected.size > 0 && ` · ${selected.size} seleccionados`}
+        {selectAllMode
+          ? ` · ${total.toLocaleString()} seleccionados (todos)`
+          : selected.size > 0 ? ` · ${selected.size} seleccionados` : ''}
       </div>
 
       {/* ── Tabla ── */}

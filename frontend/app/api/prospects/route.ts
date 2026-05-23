@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
-import { isE164 } from '@/lib/validate'
+import { isE164, isUUID } from '@/lib/validate'
 
 // GET /api/prospects
 // Params: q, page, limit, status, stage, batch_id
@@ -91,6 +91,55 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ prospects: rows, total: Number(count), page, limit })
   } catch (e) {
     console.error('[GET /api/prospects]', e instanceof Error ? e.message : e)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+// DELETE /api/prospects — bulk delete: { ids: string[] } | { filters: { q, status, stage, batch_id } }
+export async function DELETE(req: NextRequest) {
+  const auth = await checkPermissionWithUser(req, 'contacts', 'manage')
+  if (!auth.ok) return auth.response
+
+  let body: { ids?: string[]; filters?: { q?: string; status?: string; stage?: string; batch_id?: string } }
+  try { body = await req.json() } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  try {
+    if (Array.isArray(body.ids)) {
+      const ids = body.ids.filter(isUUID)
+      if (!ids.length) return NextResponse.json({ deleted: 0 })
+      const rows = await query<{ id: string }>(
+        `DELETE FROM prospects WHERE id = ANY($1) AND status != 'converted' RETURNING id`,
+        [ids]
+      )
+      return NextResponse.json({ deleted: rows.length })
+    }
+
+    if (body.filters) {
+      const { q = '', status = '', stage = '', batch_id = '' } = body.filters
+      if (status && !['active', 'unsubscribed', 'converted'].includes(status)) {
+        return NextResponse.json({ error: `Invalid status "${status}"` }, { status: 400 })
+      }
+      if (stage && !['nuevo', 'contactado', 'interesado', 'descartado'].includes(stage)) {
+        return NextResponse.json({ error: `Invalid stage "${stage}"` }, { status: 400 })
+      }
+      const rows = await query<{ id: string }>(
+        `DELETE FROM prospects
+         WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
+           AND ($2 = '' OR status = $2)
+           AND ($3 = '' OR stage  = $3)
+           AND ($4 = '' OR import_batch_id::text = $4)
+           AND status != 'converted'
+         RETURNING id`,
+        [`%${q}%`, status, stage, batch_id]
+      )
+      return NextResponse.json({ deleted: rows.length })
+    }
+
+    return NextResponse.json({ error: 'Must provide ids or filters' }, { status: 400 })
+  } catch (e) {
+    console.error('[DELETE /api/prospects]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
