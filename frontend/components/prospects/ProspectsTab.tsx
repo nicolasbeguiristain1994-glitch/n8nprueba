@@ -155,6 +155,16 @@ export function ProspectsTab() {
   const [showBatchMenu, setShowBatchMenu] = useState(false)
   const batchMenuRef = useRef<HTMLDivElement>(null)
 
+  // ── Diálogo de confirmación estilizado
+  const [confirmDialog, setConfirmDialog] = useState<{
+    title: string
+    message: string
+    confirmLabel?: string
+    variant?: 'danger' | 'warning'
+    onConfirm: () => void
+  } | null>(null)
+  const showConfirm = (opts: NonNullable<typeof confirmDialog>) => setConfirmDialog(opts)
+
   // ── Modal detalle + conversión
   const [detailProspect, setDetailProspect]   = useState<Prospect | null>(null)
   const [convertStep, setConvertStep]         = useState<'idle' | 'confirm' | 'done'>('idle')
@@ -258,19 +268,25 @@ export function ProspectsTab() {
 
   // ── Delete ────────────────────────────────────────────────────────────────
 
-  const deleteSelected = async () => {
+  const deleteSelected = () => {
     if (!selected.size && !selectAllMode) return
 
     if (selectAllMode) {
-      const msg = `¿Eliminar TODOS los ${total.toLocaleString()} prospectos de esta búsqueda? (los convertidos serán ignorados)\nEsta acción no se puede deshacer.`
-      if (!confirm(msg)) return
-      await fetchJson('/api/prospects', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filters: { q: search, status: filterStatus, stage: filterStage, batch_id: filterBatch, list_id: filterList } }),
-      }).catch(() => {})
-      setSelectAllMode(false)
-      load()
+      showConfirm({
+        title: 'Eliminar todos los prospectos',
+        message: `Se eliminarán los ${total.toLocaleString()} prospectos de esta búsqueda. Los convertidos serán ignorados. Esta acción no se puede deshacer.`,
+        confirmLabel: `Eliminar ${total.toLocaleString()}`,
+        variant: 'danger',
+        onConfirm: async () => {
+          await fetchJson('/api/prospects', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filters: { q: search, status: filterStatus, stage: filterStage, batch_id: filterBatch, list_id: filterList } }),
+          }).catch(() => {})
+          setSelectAllMode(false)
+          load()
+        },
+      })
       return
     }
 
@@ -279,17 +295,23 @@ export function ProspectsTab() {
       return p?.status !== 'converted'
     })
     const skipped = selected.size - toDelete.length
-    const msg = skipped > 0
-      ? `¿Eliminar ${toDelete.length} prospecto(s)? ${skipped} convertido(s) serán ignorados.`
-      : `¿Eliminar ${toDelete.length} prospecto(s)?`
     if (!toDelete.length) { alert('Los prospectos convertidos no se pueden eliminar.'); return }
-    if (!confirm(msg)) return
-    await fetchJson('/api/prospects', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: toDelete }),
-    }).catch(() => {})
-    load()
+    showConfirm({
+      title: 'Eliminar prospectos seleccionados',
+      message: skipped > 0
+        ? `Se eliminarán ${toDelete.length} prospecto(s). ${skipped} convertido(s) serán ignorados.`
+        : `Se eliminarán ${toDelete.length} prospecto(s). Esta acción no se puede deshacer.`,
+      confirmLabel: `Eliminar ${toDelete.length}`,
+      variant: 'danger',
+      onConfirm: async () => {
+        await fetchJson('/api/prospects', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids: toDelete }),
+        }).catch(() => {})
+        load()
+      },
+    })
   }
 
   // ── Parse archivo ─────────────────────────────────────────────────────────
@@ -539,24 +561,31 @@ export function ProspectsTab() {
 
   // ── Corregir prefijo en batch existente ──────────────────────────────────
 
-  const fixBatchPrefix = async () => {
+  const fixBatchPrefix = () => {
     if (!filterBatch) return
     const batchName = batches.find(b => b.id === filterBatch)?.filename ?? filterBatch.slice(0, 8)
-    if (!confirm(`¿Agregar +549 a todos los números del batch "${batchName}" que no tengan código de Argentina?\nEsto actualizará ${total.toLocaleString()} prospectos directamente en la base de datos.`)) return
-    setFixingPrefix(true)
-    try {
-      const result = await fetchJson<{ fixed: number }>('/api/prospects/fix-prefix', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ batch_id: filterBatch, prefix: '+549' }),
-      })
-      alert(`✓ ${result.fixed.toLocaleString()} números corregidos a formato +549.`)
-      load()
-    } catch {
-      alert('Error al corregir los números. Intentá de nuevo.')
-    } finally {
-      setFixingPrefix(false)
-    }
+    showConfirm({
+      title: 'Corregir números de teléfono',
+      message: `Se agregará +549 a todos los números del batch "${batchName}" que no tengan código de Argentina. Esto actualizará hasta ${total.toLocaleString()} prospectos directamente en la base de datos.`,
+      confirmLabel: 'Corregir +549',
+      variant: 'warning',
+      onConfirm: async () => {
+        setFixingPrefix(true)
+        try {
+          const result = await fetchJson<{ fixed: number }>('/api/prospects/fix-prefix', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ batch_id: filterBatch, prefix: '+549' }),
+          })
+          alert(`✓ ${result.fixed.toLocaleString()} números corregidos a formato +549.`)
+          load()
+        } catch {
+          alert('Error al corregir los números. Intentá de nuevo.')
+        } finally {
+          setFixingPrefix(false)
+        }
+      },
+    })
   }
 
   // ── UI ────────────────────────────────────────────────────────────────────
@@ -645,9 +674,13 @@ export function ProspectsTab() {
                       disabled={deletingBatchId === b.id}
                       onClick={e => {
                         e.stopPropagation()
-                        if (confirm(`¿Eliminar "${b.filename ?? 'este batch'}" del historial?\nLos prospectos importados NO se borran.`)) {
-                          deleteBatch(b.id)
-                        }
+                        showConfirm({
+                          title: 'Eliminar del historial',
+                          message: `Se eliminará "${b.filename ?? 'este batch'}" del historial de importaciones. Los prospectos importados NO se borran.`,
+                          confirmLabel: 'Eliminar',
+                          variant: 'danger',
+                          onConfirm: () => deleteBatch(b.id),
+                        })
                       }}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -1189,11 +1222,13 @@ export function ProspectsTab() {
                           className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-red-500 disabled:opacity-30"
                           title="Eliminar registro del historial"
                           disabled={deletingBatchId === b.id}
-                          onClick={() => {
-                            if (confirm(`¿Eliminar "${b.filename ?? 'este batch'}" del historial? Los prospectos importados NO se borran.`)) {
-                              deleteBatch(b.id)
-                            }
-                          }}
+                          onClick={() => showConfirm({
+                            title: 'Eliminar del historial',
+                            message: `Se eliminará "${b.filename ?? 'este batch'}" del historial de importaciones. Los prospectos importados NO se borran.`,
+                            confirmLabel: 'Eliminar',
+                            variant: 'danger',
+                            onConfirm: () => deleteBatch(b.id),
+                          })}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -1389,6 +1424,46 @@ export function ProspectsTab() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* ── Diálogo de confirmación estilizado ── */}
+      {confirmDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setConfirmDialog(null)} />
+          <div className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+            {/* Banda de color superior */}
+            <div className={`h-1.5 w-full ${confirmDialog.variant === 'danger' ? 'bg-red-500' : 'bg-orange-400'}`} />
+            <div className="px-6 py-5 space-y-3">
+              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+                {confirmDialog.title}
+              </h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+                {confirmDialog.message}
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-6 py-4 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-100 dark:border-gray-700">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setConfirmDialog(null)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                className={confirmDialog.variant === 'danger'
+                  ? 'bg-red-600 hover:bg-red-700 text-white'
+                  : 'bg-orange-500 hover:bg-orange-600 text-white'}
+                onClick={() => {
+                  setConfirmDialog(null)
+                  confirmDialog.onConfirm()
+                }}
+              >
+                {confirmDialog.confirmLabel ?? 'Confirmar'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   )
