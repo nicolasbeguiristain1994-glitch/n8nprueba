@@ -165,6 +165,14 @@ export function ProspectsTab() {
   } | null>(null)
   const showConfirm = (opts: NonNullable<typeof confirmDialog>) => setConfirmDialog(opts)
 
+  // ── Diálogo de información / resultado (sin cancelar, solo cerrar)
+  const [infoDialog, setInfoDialog] = useState<{
+    title: string
+    message: string
+    variant?: 'success' | 'error' | 'info'
+  } | null>(null)
+  const showInfo = (opts: NonNullable<typeof infoDialog>) => setInfoDialog(opts)
+
   // ── Modal detalle + conversión
   const [detailProspect, setDetailProspect]   = useState<Prospect | null>(null)
   const [convertStep, setConvertStep]         = useState<'idle' | 'confirm' | 'done'>('idle')
@@ -214,7 +222,7 @@ export function ProspectsTab() {
       setBatches(prev => prev.filter(b => b.id !== batchId))
       if (filterBatch === batchId) { setFilterBatch(''); setPage(1) }
     } catch {
-      alert('Error al eliminar el batch.')
+      showInfo({ title: 'Error', message: 'No se pudo eliminar el batch. Intentá de nuevo.', variant: 'error' })
     } finally {
       setDeletingBatchId(null)
     }
@@ -295,7 +303,7 @@ export function ProspectsTab() {
       return p?.status !== 'converted'
     })
     const skipped = selected.size - toDelete.length
-    if (!toDelete.length) { alert('Los prospectos convertidos no se pueden eliminar.'); return }
+    if (!toDelete.length) { showInfo({ title: 'No se puede eliminar', message: 'Los prospectos convertidos no se pueden eliminar.', variant: 'error' }); return }
     showConfirm({
       title: 'Eliminar prospectos seleccionados',
       message: skipped > 0
@@ -533,7 +541,7 @@ export function ProspectsTab() {
       load()
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Error desconocido'
-      alert(`Error al convertir: ${msg}`)
+      showInfo({ title: 'Error al convertir', message: msg, variant: 'error' })
     } finally {
       setConverting(false)
     }
@@ -553,7 +561,7 @@ export function ProspectsTab() {
       setProspects(prev => prev.map(p => p.id === detailProspect.id ? { ...p, stage: newStage } : p))
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Error desconocido'
-      alert(`Error al actualizar etapa: ${msg}`)
+      showInfo({ title: 'Error al actualizar etapa', message: msg, variant: 'error' })
     } finally {
       setUpdatingStage(false)
     }
@@ -577,10 +585,10 @@ export function ProspectsTab() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ batch_id: filterBatch, prefix: '+549' }),
           })
-          alert(`✓ ${result.fixed.toLocaleString()} números corregidos a formato +549.`)
+          showInfo({ title: 'Corrección completada', message: `${result.fixed.toLocaleString()} números actualizados a formato +549.`, variant: 'success' })
           load()
         } catch {
-          alert('Error al corregir los números. Intentá de nuevo.')
+          showInfo({ title: 'Error', message: 'No se pudieron corregir los números. Intentá de nuevo.', variant: 'error' })
         } finally {
           setFixingPrefix(false)
         }
@@ -1430,36 +1438,40 @@ export function ProspectsTab() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setConfirmDialog(null)} />
           <div className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
-            {/* Banda de color superior */}
             <div className={`h-1.5 w-full ${confirmDialog.variant === 'danger' ? 'bg-red-500' : 'bg-orange-400'}`} />
             <div className="px-6 py-5 space-y-3">
-              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-                {confirmDialog.title}
-              </h2>
-              <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-                {confirmDialog.message}
-              </p>
+              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">{confirmDialog.title}</h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">{confirmDialog.message}</p>
             </div>
             <div className="flex items-center justify-end gap-2 px-6 py-4 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-100 dark:border-gray-700">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setConfirmDialog(null)}
-              >
-                Cancelar
-              </Button>
+              <Button variant="outline" size="sm" onClick={() => setConfirmDialog(null)}>Cancelar</Button>
               <Button
                 size="sm"
-                className={confirmDialog.variant === 'danger'
-                  ? 'bg-red-600 hover:bg-red-700 text-white'
-                  : 'bg-orange-500 hover:bg-orange-600 text-white'}
-                onClick={() => {
-                  setConfirmDialog(null)
-                  confirmDialog.onConfirm()
-                }}
+                className={confirmDialog.variant === 'danger' ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-orange-500 hover:bg-orange-600 text-white'}
+                onClick={() => { setConfirmDialog(null); confirmDialog.onConfirm() }}
               >
                 {confirmDialog.confirmLabel ?? 'Confirmar'}
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Diálogo de información / resultado ── */}
+      {infoDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setInfoDialog(null)} />
+          <div className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className={`h-1.5 w-full ${
+              infoDialog.variant === 'success' ? 'bg-emerald-500' :
+              infoDialog.variant === 'error'   ? 'bg-red-500' : 'bg-blue-500'
+            }`} />
+            <div className="px-6 py-5 space-y-2">
+              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">{infoDialog.title}</h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">{infoDialog.message}</p>
+            </div>
+            <div className="flex justify-end px-6 py-4 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-100 dark:border-gray-700">
+              <Button size="sm" onClick={() => setInfoDialog(null)}>Cerrar</Button>
             </div>
           </div>
         </div>
