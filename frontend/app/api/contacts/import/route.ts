@@ -48,11 +48,12 @@ export async function POST(req: NextRequest) {
     const casinoUsername = (c.casino_username || c.name || '').trim() || null
     const rawSeg = (c.segment || '').trim().toLowerCase()
     const VALID_SEGMENTS = ['casual', 'regular', 'vip', 'whale', 'bajo', 'medio', 'alto']
+    const rawName = (c.name || '').trim()
     normalized.push({
       phone:           rawPhone,
-      name:            (c.name || '').trim() || null,
+      name:            rawName ? rawName.slice(0, 100) : null,
       segment:         VALID_SEGMENTS.includes(rawSeg) ? rawSeg : null,
-      casino_username: casinoUsername,
+      casino_username: casinoUsername ? casinoUsername.slice(0, 100) : null,
     })
   }
 
