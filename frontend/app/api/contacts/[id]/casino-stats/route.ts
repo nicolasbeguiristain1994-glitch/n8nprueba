@@ -15,8 +15,9 @@ const ZEUS_AGENTS  = getAgentsForPlatform('zeus')
 const BET30_AGENTS = getAgentsForPlatform('bet30')
 
 // Platform detection regexes (match on the end of the username string)
-const ZEUS_RE  = /z(s|eus)?$/i
-const BET30_RE = /b(t)?$/i
+// ZEUS_RE: matches z, z2, z3, zs, zs2, zeus — the digit suffix appears in some agent tables
+const ZEUS_RE  = /z(s|eus)?\d*$/i
+const BET30_RE = /b(t)?\d*$/i
 
 interface PlatformStats {
   monto_cargas_mes:  number
