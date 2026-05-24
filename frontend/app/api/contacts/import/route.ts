@@ -46,10 +46,12 @@ export async function POST(req: NextRequest) {
     seen.add(rawPhone)
     // casino_username: campo explícito > fallback al campo name
     const casinoUsername = (c.casino_username || c.name || '').trim() || null
+    const rawSeg = (c.segment || '').trim().toLowerCase()
+    const VALID_SEGMENTS = ['casual', 'regular', 'vip', 'whale', 'bajo', 'medio', 'alto']
     normalized.push({
       phone:           rawPhone,
       name:            (c.name || '').trim() || null,
-      segment:         (c.segment || '').trim() || null,
+      segment:         VALID_SEGMENTS.includes(rawSeg) ? rawSeg : null,
       casino_username: casinoUsername,
     })
   }
@@ -218,6 +220,6 @@ export async function POST(req: NextRequest) {
     const code = (e as Record<string, unknown>)?.code
     const detail = (e as Record<string, unknown>)?.detail
     console.error('[contacts/import] bulk upsert error — code:', code, '| detail:', detail, '| msg:', msg)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return NextResponse.json({ error: `Error al importar: ${msg}` }, { status: 500 })
   }
 }
