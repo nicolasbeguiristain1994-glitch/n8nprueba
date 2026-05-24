@@ -79,6 +79,7 @@ export default function Lines() {
   const isAdmin = user?.role === 'admin'
 
   const [lines, setLines]         = useState<Line[]>([])
+  const [metaConfigured, setMetaConfigured] = useState(false)
   const [loading, setLoading]     = useState(false)
   const [toggling, setToggling]   = useState<string | null>(null)
   const [syncing, setSyncing]     = useState<string | null>(null)
@@ -255,8 +256,11 @@ export default function Lines() {
 
   const load = useCallback(() => {
     setLoading(true)
-    fetchJson<{ lines: Line[] }>('/api/lines')
-      .then(d => setLines(d.lines || []))
+    fetchJson<{ lines: Line[], metaConfigured?: boolean }>('/api/lines')
+      .then(d => {
+        setLines(d.lines || [])
+        setMetaConfigured(d.metaConfigured ?? false)
+      })
       .catch(() => setLines([]))
       .finally(() => setLoading(false))
   }, [])
@@ -502,9 +506,6 @@ export default function Lines() {
   const eligible       = lines.filter(l => l.eligible).length
   const cloudLines     = lines.filter(l => l.line_type === 'cloud').length
   const evolutionLines = lines.filter(l => l.line_type === 'evolution').length
-
-  // NEXT_PUBLIC_* se resuelve en build time — si no estaba definida al compilar, es undefined.
-  const metaConfigured = !!process.env.NEXT_PUBLIC_META_CONFIG_ID
 
   // Stepper: pasos y posición actual — se adapta a la rama elegida
   const stepperSteps: string[] = addStep === 'evolution'

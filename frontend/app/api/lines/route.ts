@@ -37,7 +37,10 @@ export async function GET(req: NextRequest) {
       WHERE 1=1 ${clause}
       ORDER BY l.priority ASC, l.evolution_instance ASC
     `, params)
-    return NextResponse.json({ lines })
+    // metaConfigured se evalúa en el servidor en runtime (no en build time),
+    // lo que evita el problema de NEXT_PUBLIC_* no disponibles en el bundle del cliente.
+    const metaConfigured = !!process.env.NEXT_PUBLIC_META_CONFIG_ID
+    return NextResponse.json({ lines, metaConfigured })
   } catch (e) {
     console.error('[/api/lines GET]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
