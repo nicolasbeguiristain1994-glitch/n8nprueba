@@ -80,6 +80,8 @@ export default function Lines() {
 
   const [lines, setLines]         = useState<Line[]>([])
   const [metaConfigured, setMetaConfigured] = useState(false)
+  const [metaAppId,      setMetaAppId]      = useState('')
+  const [metaConfigId,   setMetaConfigId]   = useState('')
   const [loading, setLoading]     = useState(false)
   const [toggling, setToggling]   = useState<string | null>(null)
   const [syncing, setSyncing]     = useState<string | null>(null)
@@ -159,11 +161,10 @@ export default function Lines() {
   // Cargar FB SDK al llegar al paso de Cloud Signup (una sola vez por sesión)
   useEffect(() => {
     if (addStep !== 'cloud-signup') return
-    const appId = process.env.NEXT_PUBLIC_META_APP_ID
-    if (!appId) { setCloudError('NEXT_PUBLIC_META_APP_ID no está configurado'); return }
+    if (!metaAppId) { setCloudError('NEXT_PUBLIC_META_APP_ID no está configurado'); return }
     if (document.getElementById('fb-sdk')) { setSdkReady(true); return }
     window.fbAsyncInit = function () {
-      window.FB.init({ appId, autoLogAppEvents: true, xfbml: true, version: 'v21.0' })
+      window.FB.init({ appId: metaAppId, autoLogAppEvents: true, xfbml: true, version: 'v21.0' })
       setSdkReady(true)
     }
     const script = document.createElement('script')
@@ -201,7 +202,7 @@ export default function Lines() {
         }
       },
       {
-        config_id: process.env.NEXT_PUBLIC_META_CONFIG_ID,
+        config_id: metaConfigId,
         response_type: 'code', override_default_response_type: true,
         extras: {
           feature: 'whatsapp_embedded_signup',
@@ -256,10 +257,12 @@ export default function Lines() {
 
   const load = useCallback(() => {
     setLoading(true)
-    fetchJson<{ lines: Line[], metaConfigured?: boolean }>('/api/lines')
+    fetchJson<{ lines: Line[], metaConfigured?: boolean, metaAppId?: string, metaConfigId?: string }>('/api/lines')
       .then(d => {
         setLines(d.lines || [])
         setMetaConfigured(d.metaConfigured ?? false)
+        setMetaAppId(d.metaAppId ?? '')
+        setMetaConfigId(d.metaConfigId ?? '')
       })
       .catch(() => setLines([]))
       .finally(() => setLoading(false))
