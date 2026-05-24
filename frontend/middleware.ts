@@ -24,6 +24,8 @@ import { getSessionFromRequest } from '@/lib/auth'
 const UNPROTECTED_API_PREFIXES: readonly string[] = [
   '/api/auth/login',
   '/api/auth/logout',
+  // OAuth callbacks — validate code+state internally
+  '/api/auth/callback/',
   // Webhook receivers — verified via HMAC / Meta challenge internally
   '/api/webhook/',
   '/api/cloud/webhook',
@@ -35,7 +37,16 @@ const UNPROTECTED_API_PREFIXES: readonly string[] = [
   '/api/warmup/orchestrator/run',
 ]
 
-const UNPROTECTED_PAGES: readonly string[] = ['/login']
+const UNPROTECTED_PAGES: readonly string[] = [
+  '/',
+  '/login',
+  '/politica-de-privacidad',
+  '/terminos-y-condiciones',
+  '/eliminacion-de-datos',
+  // OAuth / webhook page-level routes
+  '/auth/facebook/callback',
+  '/webhook/meta',
+]
 
 function isUnprotected(pathname: string): boolean {
   if (UNPROTECTED_PAGES.includes(pathname)) return true
