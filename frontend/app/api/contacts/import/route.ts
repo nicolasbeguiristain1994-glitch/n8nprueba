@@ -137,10 +137,15 @@ export async function POST(req: NextRequest) {
           [casinoInputJson]
         )
 
-        // Step 2: Insert current tags.
+        // Step 2: Insert current tags + set segment based on 30-day rolling deposit volume.
+        // Super Vip (vip)  = max 30-day deposits >= $1,000,000 in any period
+        // Vip       (alto) = max 30-day deposits >= $500,000   in any period
+        // Otherwise        = use casino's seg_monto as fallback
         await query(
           `WITH matched AS (
-             SELECT c.id AS contact_id, cp.agente, cp.seg_monto, cp.seg_actividad, cp.fecha_primera
+             SELECT c.id AS contact_id,
+                    LOWER(inp.casino_username) AS username_lower,
+                    cp.agente, cp.seg_monto, cp.seg_actividad, cp.fecha_primera
              FROM contacts c
              JOIN (
                SELECT phone, casino_username
@@ -151,6 +156,21 @@ export async function POST(req: NextRequest) {
              JOIN casino_players cp ON cp.username_lower = LOWER(inp.casino_username)
              WHERE cp.seg_monto IS NOT NULL AND cp.seg_actividad IS NOT NULL AND cp.agente IS NOT NULL
            ),
+           rolling AS (
+             SELECT LOWER(t.username) AS uname, MAX(t.window_sum) AS max_30d
+             FROM (
+               SELECT username,
+                      SUM(monto) OVER (
+                        PARTITION BY LOWER(username)
+                        ORDER BY fecha
+                        RANGE BETWEEN INTERVAL '30 days' PRECEDING AND CURRENT ROW
+                      ) AS window_sum
+               FROM casino_transactions
+               WHERE tipo = 'carga'
+                 AND LOWER(username) IN (SELECT username_lower FROM matched)
+             ) t
+             GROUP BY LOWER(t.username)
+           ),
            tags_insert AS (
              INSERT INTO contact_tags (id, contact_id, tag, added_by, added_at)
              SELECT gen_random_uuid(), contact_id,
@@ -158,14 +178,12 @@ export async function POST(req: NextRequest) {
                  'casino:monto:'     || seg_monto,
                  'casino:actividad:' || seg_actividad,
                  'casino:agente:'    || agente,
-                 -- valor_riesgo: inactivo, en_riesgo, and perdido all trigger risk classification
                  CASE
                    WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto IN ('vip','alto') THEN 'casino:valor_riesgo:critico'
                    WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto = 'medio'         THEN 'casino:valor_riesgo:medio'
                    WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto = 'bajo'          THEN 'casino:valor_riesgo:bajo'
                    ELSE NULL
                  END,
-                 -- antiguedad: derived from fecha_primera; NULL when fecha_primera is missing
                  CASE
                    WHEN fecha_primera IS NULL                              THEN NULL
                    WHEN (CURRENT_DATE - fecha_primera) <  30              THEN 'casino:antiguedad:nuevo'
@@ -181,9 +199,15 @@ export async function POST(req: NextRequest) {
            )
            UPDATE contacts
              SET panel      = COALESCE(contacts.panel, m.agente),
-                 segment    = m.seg_monto::contact_segment,
+                 segment    = CASE
+                   WHEN COALESCE(r.max_30d, 0) >= 1000000 THEN 'vip'::contact_segment
+                   WHEN COALESCE(r.max_30d, 0) >= 500000  THEN 'alto'::contact_segment
+                   WHEN r.max_30d IS NOT NULL AND m.seg_monto IN ('vip','alto') THEN 'medio'::contact_segment
+                   ELSE m.seg_monto::contact_segment
+                 END,
                  updated_at = NOW()
            FROM matched m
+           LEFT JOIN rolling r ON r.uname = m.username_lower
            WHERE contacts.id = m.contact_id`,
           [casinoInputJson]
         )
