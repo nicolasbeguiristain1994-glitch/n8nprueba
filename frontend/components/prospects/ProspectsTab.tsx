@@ -144,6 +144,13 @@ export function ProspectsTab() {
   const [addingToCampaign, setAddingToCampaign] = useState(false)
   const [addResult, setAddResult]               = useState<{ added: number; already: number } | null>(null)
 
+  // ── Modal crear lista de difusión
+  const [createListOpen, setCreateListOpen]       = useState(false)
+  const [createListName, setCreateListName]       = useState('')
+  const [creatingList, setCreatingList]           = useState(false)
+  const [createListError, setCreateListError]     = useState<string | null>(null)
+  const [createListResult, setCreateListResult]   = useState<{ id: string; member_count: number } | null>(null)
+
   // ── Modal historial de batches
   const [batchHistoryOpen, setBatchHistoryOpen] = useState(false)
   const [deletingBatchId, setDeletingBatchId]   = useState<string | null>(null)
@@ -509,6 +516,27 @@ export function ProspectsTab() {
     }
   }
 
+  // ── Crear lista de difusión desde selección ──────────────────────────────────
+
+  const createListFromProspects = async () => {
+    if (!createListName.trim()) { setCreateListError('El nombre es requerido'); return }
+    setCreatingList(true); setCreateListError(null)
+    try {
+      const res = await fetch('/api/prospect-lists/from-selection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name:         createListName.trim(),
+          prospect_ids: Array.from(selected),
+        }),
+      })
+      const d = await res.json()
+      if (!res.ok) { setCreateListError(d.error || 'Error al crear la lista'); return }
+      setCreateListResult(d)
+    } catch { setCreateListError('Error de red') }
+    finally { setCreatingList(false) }
+  }
+
   // ── Conversión prospect → contacto ────────────────────────────────────────
 
   const openDetail = (e: React.MouseEvent, p: Prospect) => {
@@ -792,9 +820,14 @@ export function ProspectsTab() {
         {(selected.size > 0 || selectAllMode) && (
           <>
             {!selectAllMode && (
-              <Button size="sm" variant="outline" onClick={openAddToCampaign}>
-                <Send className="h-4 w-4 mr-1" /> Agregar a campaña ({selected.size})
-              </Button>
+              <>
+                <Button size="sm" variant="outline" onClick={() => { setCreateListOpen(true); setCreateListName(''); setCreateListError(null); setCreateListResult(null) }}>
+                  <List className="h-4 w-4 mr-1" /> Crear lista ({selected.size})
+                </Button>
+                <Button size="sm" variant="outline" onClick={openAddToCampaign}>
+                  <Send className="h-4 w-4 mr-1" /> Agregar a campaña ({selected.size})
+                </Button>
+              </>
             )}
             <Button size="sm" variant="destructive" onClick={deleteSelected}>
               <Trash2 className="h-4 w-4 mr-1" />
@@ -1186,6 +1219,52 @@ export function ProspectsTab() {
               </div>
               <DialogFooter>
                 <Button onClick={() => { setAddCampaignOpen(false); setAddResult(null) }}>Cerrar</Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Modal crear lista de difusión ── */}
+      <Dialog open={createListOpen} onOpenChange={v => { if (!creatingList) setCreateListOpen(v) }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Crear lista con {selected.size} prospecto(s)</DialogTitle>
+          </DialogHeader>
+
+          {!createListResult ? (
+            <>
+              <div className="py-2 space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Se creará una nueva lista de difusión con los prospectos seleccionados.
+                </p>
+                <Input
+                  placeholder="Nombre de la lista…"
+                  value={createListName}
+                  onChange={e => setCreateListName(e.target.value)}
+                  disabled={creatingList}
+                />
+                {createListError && (
+                  <p className="text-sm text-destructive">{createListError}</p>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setCreateListOpen(false)} disabled={creatingList}>Cancelar</Button>
+                <Button onClick={createListFromProspects} disabled={!createListName.trim() || creatingList}>
+                  {creatingList ? 'Creando…' : 'Crear lista'}
+                </Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <div className="py-4 space-y-2">
+                <div className="flex items-center gap-2 text-emerald-700">
+                  <CheckCircle className="h-5 w-5" />
+                  <span className="font-medium">Lista creada con {createListResult.member_count} prospecto(s).</span>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button onClick={() => { setCreateListOpen(false); setCreateListResult(null) }}>Cerrar</Button>
               </DialogFooter>
             </>
           )}
