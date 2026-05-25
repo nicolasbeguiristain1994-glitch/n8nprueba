@@ -136,6 +136,9 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[/api/lists POST]', msg)
-    return NextResponse.json({ error: msg }, { status: 500 })
+    if (msg.includes('contact_lists_name_unique')) {
+      return NextResponse.json({ error: 'Ya existe una lista con ese nombre. Usá un nombre diferente.' }, { status: 409 })
+    }
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
