@@ -415,6 +415,50 @@ export function ProspectsTab() {
           raw:        r.join(','),
         }))
       }
+    } else if (ext === 'vcf') {
+      const text = await file.text()
+      const blocks = text.split(/BEGIN:VCARD/i).slice(1)
+      for (const block of blocks) {
+        // Manejo de line folding (líneas que empiezan con espacio son continuaciones)
+        const lines = block.split(/\r?\n/).reduce<string[]>((acc, line) => {
+          if (/^[ \t]/.test(line) && acc.length) { acc[acc.length - 1] += line.slice(1) }
+          else { acc.push(line) }
+          return acc
+        }, [])
+
+        let phone: string | null = null
+        let firstName: string | null = null
+        let lastName: string | null = null
+        let email: string | null = null
+
+        for (const line of lines) {
+          const upper = line.toUpperCase()
+          if (upper.startsWith('TEL') && phone === null) {
+            const val = line.slice(line.lastIndexOf(':') + 1).trim()
+            if (val) phone = val
+          } else if (upper.startsWith('FN:')) {
+            const val = line.slice(3).trim()
+            if (val) firstName = val
+          } else if (upper.startsWith('N:') && !firstName) {
+            const parts = line.slice(2).split(';')
+            lastName  = parts[0]?.trim() || null
+            firstName = parts[1]?.trim() || null
+          } else if (upper.startsWith('EMAIL') && email === null) {
+            const val = line.slice(line.lastIndexOf(':') + 1).trim()
+            if (val) email = val
+          }
+        }
+
+        if (phone) {
+          rows.push({
+            phone:      normalizePhone(phone),
+            first_name: firstName,
+            last_name:  lastName,
+            email:      email,
+            raw:        `vcf:${phone}`,
+          })
+        }
+      }
     }
 
     const validRows = rows.filter(r => r.phone.length > 2)
@@ -820,12 +864,12 @@ export function ProspectsTab() {
           onClick={() => fileRef.current?.click()}
           className="bg-emerald-600 hover:bg-emerald-700 text-white"
         >
-          <Upload className="h-4 w-4 mr-1" /> Importar CSV / Excel
+          <Upload className="h-4 w-4 mr-1" /> Importar CSV / Excel / VCF
         </Button>
         <input
           ref={fileRef}
           type="file"
-          accept=".csv,.xlsx,.xls,.txt"
+          accept=".csv,.xlsx,.xls,.txt,.vcf"
           className="hidden"
           onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = '' }}
         />
