@@ -25,6 +25,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const rows = await query(`
       SELECT
         COALESCE(c.id, p.id)                     AS id,
+        c.id                                      AS contact_id,
+        p.id                                      AS prospect_id,
         COALESCE(c.first_name, p.first_name)     AS first_name,
         COALESCE(c.last_name,  p.last_name)      AS last_name,
         cr.phone_number,
@@ -68,6 +70,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const rows = await query(`
       SELECT
         COALESCE(c.id, p.id)                      AS id,
+        c.id                                       AS contact_id,
+        p.id                                       AS prospect_id,
         COALESCE(c.first_name, p.first_name)      AS first_name,
         COALESCE(c.last_name,  p.last_name)       AS last_name,
         COALESCE(c.phone_number, p.phone_number)  AS phone_number,
@@ -104,43 +108,54 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     console.warn('[contacts] attempt 2 failed:', (e as Error).message)
   }
 
-  // ── Intento 3: whatsapp_messages + contacts + prospects por teléfono ────────
+  // ── Intento 3: whatsapp_messages + match por últimos 10 dígitos ─────────────
+  // Cubre casos donde el número está guardado con/sin prefijo de país (e.g. +549... vs +1...).
   try {
     const rows = await query(`
-      SELECT DISTINCT ON (REPLACE(wm.phone_number, '+', ''))
+      SELECT DISTINCT ON (RIGHT(REGEXP_REPLACE(wm.phone_number, '[^0-9]', '', 'g'), 10))
         COALESCE(c.id::text, p.id::text, wm.id::text)    AS id,
+        c.id                                              AS contact_id,
+        p.id                                              AS prospect_id,
         COALESCE(c.first_name, p.first_name)              AS first_name,
         COALESCE(c.last_name,  p.last_name)               AS last_name,
         wm.phone_number,
         wm.status   AS msg_status,
         wm.sent_at, wm.delivered_at, wm.read_at, wm.failed_at, wm.error_detail
       FROM whatsapp_messages wm
-      LEFT JOIN contacts  c ON REPLACE(c.phone_number, '+', '') = REPLACE(wm.phone_number, '+', '')
-      LEFT JOIN prospects p ON REPLACE(p.phone_number, '+', '') = REPLACE(wm.phone_number, '+', '')
+      LEFT JOIN contacts  c
+        ON RIGHT(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g'), 10)
+         = RIGHT(REGEXP_REPLACE(wm.phone_number, '[^0-9]', '', 'g'), 10)
+      LEFT JOIN prospects p
+        ON RIGHT(REGEXP_REPLACE(p.phone_number, '[^0-9]', '', 'g'), 10)
+         = RIGHT(REGEXP_REPLACE(wm.phone_number, '[^0-9]', '', 'g'), 10)
       WHERE wm.campaign_id = $1
       ORDER BY
-        REPLACE(wm.phone_number, '+', ''),
+        RIGHT(REGEXP_REPLACE(wm.phone_number, '[^0-9]', '', 'g'), 10),
         CASE wm.status
-          WHEN 'read'      THEN 1  WHEN 'delivered' THEN 2  WHEN 'sent'    THEN 3
-          WHEN 'failed'    THEN 4  WHEN 'skipped'   THEN 5  ELSE 6
+          WHEN 'read' THEN 1  WHEN 'delivered' THEN 2  WHEN 'sent'    THEN 3
+          WHEN 'failed' THEN 4  WHEN 'skipped' THEN 5  ELSE 6
         END,
         wm.created_at DESC
     `, [id])
     return NextResponse.json({ contacts: rows })
   } catch (e) {
-    // Si prospects no existe aún, reintentar sin ese join
+    // Fallback sin prospects (tabla puede no existir aún)
     try {
       const rows = await query(`
-        SELECT DISTINCT ON (REPLACE(wm.phone_number, '+', ''))
+        SELECT DISTINCT ON (RIGHT(REGEXP_REPLACE(wm.phone_number, '[^0-9]', '', 'g'), 10))
           COALESCE(c.id::text, wm.id::text) AS id,
+          c.id AS contact_id,
+          NULL::uuid AS prospect_id,
           c.first_name, c.last_name,
           wm.phone_number,
           wm.status AS msg_status,
           wm.sent_at, wm.delivered_at, wm.read_at, wm.failed_at, wm.error_detail
         FROM whatsapp_messages wm
-        LEFT JOIN contacts c ON REPLACE(c.phone_number, '+', '') = REPLACE(wm.phone_number, '+', '')
+        LEFT JOIN contacts c
+          ON RIGHT(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g'), 10)
+           = RIGHT(REGEXP_REPLACE(wm.phone_number, '[^0-9]', '', 'g'), 10)
         WHERE wm.campaign_id = $1
-        ORDER BY REPLACE(wm.phone_number, '+', ''), wm.created_at DESC
+        ORDER BY RIGHT(REGEXP_REPLACE(wm.phone_number, '[^0-9]', '', 'g'), 10), wm.created_at DESC
       `, [id])
       return NextResponse.json({ contacts: rows })
     } catch (e2) {

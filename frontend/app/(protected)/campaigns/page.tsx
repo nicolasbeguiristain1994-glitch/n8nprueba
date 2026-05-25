@@ -14,7 +14,8 @@ interface CampaignList { id: string; name: string; contact_count: number }
 interface ProspectListOption { id: string; name: string; member_count: number }
 interface AntiBanProfile { id: string; profile_name: string; is_default: boolean; timing_mode: string; risk_tolerance: string; recommended_for: string | null }
 interface CampaignContact {
-  id: string; first_name: string; last_name: string; phone_number: string
+  id: string; contact_id: string | null; prospect_id: string | null
+  first_name: string; last_name: string; phone_number: string
   msg_status: string | null; sent_at: string | null
   delivered_at: string | null; read_at: string | null
   failed_at: string | null; error_detail: string | null
@@ -293,11 +294,32 @@ export default function Campaigns() {
     setFailedListMsg(null)
     try {
       const name = `Fallidos – ${campaign.name} (${new Date().toLocaleDateString('es-AR')})`
-      const res = await fetch('/api/lists', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, contact_ids: failed.map(c => c.id) }),
-      })
+      const isProspectCampaign = !!campaign.prospect_list_id
+
+      let res: Response
+      if (isProspectCampaign) {
+        const ids = failed.map(c => c.prospect_id).filter(Boolean) as string[]
+        if (ids.length === 0) {
+          setFailedListMsg('No se encontraron prospectos válidos para crear la lista')
+          return
+        }
+        res = await fetch('/api/prospect-lists/from-selection', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, prospect_ids: ids }),
+        })
+      } else {
+        const ids = failed.map(c => c.contact_id).filter(Boolean) as string[]
+        if (ids.length === 0) {
+          setFailedListMsg('No se encontraron contactos válidos para crear la lista')
+          return
+        }
+        res = await fetch('/api/lists', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, contact_ids: ids }),
+        })
+      }
       const d = await res.json().catch(() => ({}))
       if (!res.ok) {
         setFailedListMsg(`Error: ${d.error || 'No se pudo crear la lista'}`)
@@ -1157,7 +1179,7 @@ export default function Campaigns() {
 
       {/* Modal detalle campaña */}
       <Dialog open={!!selected} onOpenChange={() => { setSelected(null); setDetailError(null) }}>
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-[95vw] max-w-7xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {selected?.name}
