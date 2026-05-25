@@ -104,20 +104,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     console.warn('[contacts] attempt 2 failed:', (e as Error).message)
   }
 
-  // ── Intento 3: whatsapp_messages + contacts por teléfono (fallback universal)
-  // No usa prospects para evitar falla si la tabla no existe aún.
+  // ── Intento 3: whatsapp_messages + contacts + prospects por teléfono ────────
   try {
     const rows = await query(`
       SELECT DISTINCT ON (REPLACE(wm.phone_number, '+', ''))
-        COALESCE(c.id::text, wm.id::text) AS id,
-        c.first_name,
-        c.last_name,
+        COALESCE(c.id::text, p.id::text, wm.id::text)    AS id,
+        COALESCE(c.first_name, p.first_name)              AS first_name,
+        COALESCE(c.last_name,  p.last_name)               AS last_name,
         wm.phone_number,
         wm.status   AS msg_status,
         wm.sent_at, wm.delivered_at, wm.read_at, wm.failed_at, wm.error_detail
       FROM whatsapp_messages wm
-      LEFT JOIN contacts c
-        ON REPLACE(c.phone_number, '+', '') = REPLACE(wm.phone_number, '+', '')
+      LEFT JOIN contacts  c ON REPLACE(c.phone_number, '+', '') = REPLACE(wm.phone_number, '+', '')
+      LEFT JOIN prospects p ON REPLACE(p.phone_number, '+', '') = REPLACE(wm.phone_number, '+', '')
       WHERE wm.campaign_id = $1
       ORDER BY
         REPLACE(wm.phone_number, '+', ''),
@@ -129,7 +128,24 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     `, [id])
     return NextResponse.json({ contacts: rows })
   } catch (e) {
-    console.error('[contacts] attempt 3 failed:', (e as Error).message)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    // Si prospects no existe aún, reintentar sin ese join
+    try {
+      const rows = await query(`
+        SELECT DISTINCT ON (REPLACE(wm.phone_number, '+', ''))
+          COALESCE(c.id::text, wm.id::text) AS id,
+          c.first_name, c.last_name,
+          wm.phone_number,
+          wm.status AS msg_status,
+          wm.sent_at, wm.delivered_at, wm.read_at, wm.failed_at, wm.error_detail
+        FROM whatsapp_messages wm
+        LEFT JOIN contacts c ON REPLACE(c.phone_number, '+', '') = REPLACE(wm.phone_number, '+', '')
+        WHERE wm.campaign_id = $1
+        ORDER BY REPLACE(wm.phone_number, '+', ''), wm.created_at DESC
+      `, [id])
+      return NextResponse.json({ contacts: rows })
+    } catch (e2) {
+      console.error('[contacts] attempt 3 failed:', (e2 as Error).message)
+      return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    }
   }
 }
