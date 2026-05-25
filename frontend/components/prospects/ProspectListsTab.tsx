@@ -8,11 +8,12 @@ import {
 } from '@/components/ui/dialog'
 import {
   RefreshCw, Trash2, Search, Plus, ChevronLeft,
-  Users, Megaphone, Calendar, CheckSquare, X,
+  Users, Megaphone, Calendar, CheckSquare, X, Download,
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import type { ProspectList, ProspectListMember, Prospect } from '@/lib/prospects'
 import { PROSPECT_STAGE_LABELS } from '@/lib/prospects'
+import { DownloadContactsModal } from '@/components/contacts/DownloadContactsModal'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -82,6 +83,9 @@ export function ProspectListsTab() {
   // ── Errores de carga ──────────────────────────────────────────────────────
   const [listLoadError, setListLoadError]     = useState<string | null>(null)
   const [detailLoadError, setDetailLoadError] = useState<string | null>(null)
+
+  // ── Modal descarga ────────────────────────────────────────────────────────
+  const [downloadTarget, setDownloadTarget] = useState<ProspectList | null>(null)
 
   // ── Modal agregar prospectos a lista existente ────────────────────────────
   const [showAddToList, setShowAddToList]     = useState(false)
@@ -305,6 +309,7 @@ export function ProspectListsTab() {
         onDelete={deleteMember}
         onBack={() => { setView('list'); setSelectedList(null) }}
         onRefresh={() => loadDetail(selectedList.id)}
+        onDownload={() => setDownloadTarget(selectedList)}
         onAddProspects={() => {
           setSelectedAdd(new Set())
           setAddSearch(''); setAddPage(1); setAddError(null)
@@ -437,13 +442,22 @@ export function ProspectListsTab() {
                   </td>
                   <td className="px-4 py-3 text-gray-500 text-[12px]">{formatDate(l.created_at)}</td>
                   <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                    <button
-                      className="p-1 text-gray-300 hover:text-red-500 transition-colors rounded"
-                      title="Eliminar lista"
-                      onClick={() => deleteList(l.id, l.name)}
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        className="p-1 text-gray-300 hover:text-teal-600 transition-colors rounded"
+                        title="Descargar lista"
+                        onClick={() => setDownloadTarget(l)}
+                      >
+                        <Download size={14} />
+                      </button>
+                      <button
+                        className="p-1 text-gray-300 hover:text-red-500 transition-colors rounded"
+                        title="Eliminar lista"
+                        onClick={() => deleteList(l.id, l.name)}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -461,6 +475,18 @@ export function ProspectListsTab() {
           <button disabled={page * LIMIT >= total} onClick={() => setPage(p => p + 1)}
             className="px-3 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40">→</button>
         </div>
+      )}
+
+      {/* Modal descarga */}
+      {downloadTarget && (
+        <DownloadContactsModal
+          open={!!downloadTarget}
+          onClose={() => setDownloadTarget(null)}
+          contactCount={downloadTarget.member_count}
+          fetchParams={new URLSearchParams()}
+          apiEndpoint={`/api/prospect-lists/${downloadTarget.id}`}
+          filenameHint={downloadTarget.name.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-')}
+        />
       )}
 
       {/* Modal nueva lista */}
@@ -641,6 +667,7 @@ interface DetailViewProps {
   onDelete:       (id: string) => void
   onBack:         () => void
   onRefresh:      () => void
+  onDownload:     () => void
   onAddProspects: () => void
   // Modal add
   showAddToList:       boolean
@@ -663,7 +690,7 @@ interface DetailViewProps {
 
 function DetailView({
   list, members, membersTotal, memberPage, setMemberPage, memberSearch, setMemberSearch,
-  loading, loadError, deletingMemberId, onDelete, onBack, onRefresh, onAddProspects,
+  loading, loadError, deletingMemberId, onDelete, onBack, onRefresh, onDownload, onAddProspects,
   showAddToList, setShowAddToList, addSearch, setAddSearch, addPage, setAddPage,
   addProspects, addProspectsTotal, loadingAdd, selectedAdd, onToggleAdd,
   onSelectAllAdd, onDeselectAllAdd, adding, addError, onSubmitAdd,
@@ -687,6 +714,14 @@ function DetailView({
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          </Button>
+          <Button
+            variant="outline" size="sm"
+            className="border-teal-200 text-teal-700 hover:bg-teal-50"
+            onClick={onDownload}
+            disabled={list.member_count === 0}
+          >
+            <Download size={14} className="mr-1" /> Descargar
           </Button>
           <Button size="sm" onClick={onAddProspects}>
             <Plus size={14} className="mr-1" /> Agregar prospectos

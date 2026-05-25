@@ -13,10 +13,12 @@ interface DownloadContactsModalProps {
   onClose: () => void
   /** Conteo aproximado para mostrar en UI (no bloquea la descarga) */
   contactCount: number
-  /** Parámetros de query para GET /api/contacts (sin download=true) */
+  /** Parámetros de query para el endpoint de descarga (sin download=true) */
   fetchParams: URLSearchParams
   /** Parte del nombre de archivo. Ej: "todos", "lista-vip", "panel-betcoin" */
   filenameHint: string
+  /** Endpoint al que se le agrega ?download=true. Default: /api/contacts */
+  apiEndpoint?: string
 }
 
 export function DownloadContactsModal({
@@ -25,6 +27,7 @@ export function DownloadContactsModal({
   contactCount,
   fetchParams,
   filenameHint,
+  apiEndpoint = '/api/contacts',
 }: DownloadContactsModalProps) {
   const [splitting, setSplitting]     = useState(false)
   const [batchSize, setBatchSize]     = useState(30)
@@ -43,7 +46,7 @@ export function DownloadContactsModal({
       const params = new URLSearchParams(fetchParams)
       params.set('download', 'true')
 
-      const res = await fetch(`/api/contacts?${params}`)
+      const res = await fetch(`${apiEndpoint}?${params}`)
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
         throw new Error(d.error || `Error ${res.status}`)

@@ -17,11 +17,12 @@ export async function GET(
   const { id } = await params
   if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
-  const sp     = req.nextUrl.searchParams
-  const search = sp.get('q')   || ''
-  const page   = Math.max(1, Number(sp.get('page')  || 1))
-  const limit  = Math.min(200, Math.max(1, Number(sp.get('limit') || 50)))
-  const offset = (page - 1) * limit
+  const sp       = req.nextUrl.searchParams
+  const search   = sp.get('q')        || ''
+  const download = sp.get('download') === 'true'
+  const page     = Math.max(1, Number(sp.get('page')  || 1))
+  const limit    = Math.min(200, Math.max(1, Number(sp.get('limit') || 50)))
+  const offset   = (page - 1) * limit
 
   try {
     const [list] = await query(
@@ -38,6 +39,20 @@ export async function GET(
     // Verificar que el usuario tiene acceso a esta lista específica
     if (!isOwnerOrAdmin(auth.user, (list as { owned_by: string | null }).owned_by)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    // Modo descarga: devuelve todos los miembros sin paginación en formato ExportableContact
+    if (download) {
+      const contacts = await query(`
+        SELECT
+          p.id, p.phone_number, p.first_name, p.last_name, p.email,
+          p.opt_in, p.created_at
+        FROM prospect_list_members plm
+        JOIN prospects p ON p.id = plm.prospect_id
+        WHERE plm.prospect_list_id = $1
+        ORDER BY plm.added_at DESC
+      `, [id])
+      return NextResponse.json({ contacts })
     }
 
     const members = await query(`
