@@ -376,9 +376,12 @@ export default function Campaigns() {
 
     // Fetch contacts and (for multi-line) dispatch summary in parallel
     const contactsFetch = fetch(`/api/campaigns/${c.id}/contacts`)
-      .then(r => r.json())
-      .then(d => setCampContacts(d.contacts || []))
-      .catch(() => setDetailError('Error de red al cargar destinatarios'))
+      .then(async r => {
+        const d = await r.json()
+        if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
+        setCampContacts(d.contacts || [])
+      })
+      .catch(err => setDetailError(err instanceof Error ? err.message : 'Error al cargar destinatarios'))
       .finally(() => setLoadingContacts(false))
 
     const dispatchFetch = c.use_multi_line
