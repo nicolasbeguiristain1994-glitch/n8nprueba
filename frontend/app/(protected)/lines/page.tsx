@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Check, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, LogOut, Plus, RotateCcw, Pencil, Cloud, MessageSquare, Zap, Info } from 'lucide-react'
+import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Check, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, LogOut, Plus, RotateCcw, Pencil, Cloud, MessageSquare, Zap, Info, Trash2 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
@@ -102,6 +102,11 @@ export default function Lines() {
   const [unlinkTarget, setUnlinkTarget]   = useState<Line | null>(null)
   const [unlinkLoading, setUnlinkLoading] = useState(false)
   const [unlinkError, setUnlinkError]     = useState<string | null>(null)
+
+  // Delete modal
+  const [deleteTarget, setDeleteTarget]   = useState<Line | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [deleteError, setDeleteError]     = useState<string | null>(null)
 
   // Detail modal
   const [detailLine, setDetailLine] = useState<Line | null>(null)
@@ -479,6 +484,27 @@ export default function Lines() {
     }
   }
 
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    setDeleteLoading(true)
+    setDeleteError(null)
+    try {
+      const res  = await fetch('/api/lines', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: deleteTarget.id }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setDeleteError(data.error || 'Error al eliminar'); return }
+      setDeleteTarget(null)
+      load()
+    } catch {
+      setDeleteError('Error de conexión')
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
   useEffect(() => () => stopPoll(), [])
 
   const addLine = async () => {
@@ -802,6 +828,15 @@ export default function Lines() {
                                 className="p-1.5 rounded text-gray-400 hover:text-orange-600 hover:bg-orange-50 transition-colors"
                               >
                                 <LogOut size={14} />
+                              </button>
+                            )}
+                            {isAdmin && (
+                              <button
+                                onClick={() => { setDeleteTarget(l); setDeleteError(null) }}
+                                title="Eliminar línea"
+                                className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                              >
+                                <Trash2 size={14} />
                               </button>
                             )}
                           </div>
@@ -1157,6 +1192,37 @@ export default function Lines() {
                 onClick={confirmUnlink}>
                 {unlinkLoading ? <Loader2 size={14} className="animate-spin mr-1" /> : <LogOut size={14} className="mr-1" />}
                 Desvincular
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Modal eliminar línea ── */}
+      <Dialog open={!!deleteTarget} onOpenChange={open => { if (!open) { setDeleteTarget(null); setDeleteError(null) } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <Trash2 size={16} /> Eliminar línea
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-gray-700">
+              ¿Eliminar permanentemente <span className="font-semibold">{deleteTarget?.display_name || deleteTarget?.line_key}</span>?
+              Esta acción <span className="font-medium">no se puede deshacer</span> y borrará la línea del sistema.
+            </p>
+            {deleteError && (
+              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{deleteError}</p>
+            )}
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" disabled={deleteLoading}
+                onClick={() => { setDeleteTarget(null); setDeleteError(null) }}>
+                Cancelar
+              </Button>
+              <Button className="flex-1 bg-red-600 hover:bg-red-700 text-white" disabled={deleteLoading}
+                onClick={confirmDelete}>
+                {deleteLoading ? <Loader2 size={14} className="animate-spin mr-1" /> : <Trash2 size={14} className="mr-1" />}
+                Eliminar
               </Button>
             </div>
           </div>
