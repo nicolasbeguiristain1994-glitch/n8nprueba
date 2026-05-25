@@ -196,8 +196,6 @@ export function ProspectsTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    setSelected(new Set())
-    setSelectAllMode(false)
     try {
       const q = new URLSearchParams({
         q:        search,
@@ -215,6 +213,12 @@ export function ProspectsTab() {
       setLoading(false)
     }
   }, [search, page, filterBatch, filterStatus, filterStage, filterList])
+
+  // Limpiar selección cuando cambian los filtros (pero NO al cambiar de página)
+  useEffect(() => {
+    setSelected(new Set())
+    setSelectAllMode(false)
+  }, [search, filterBatch, filterStatus, filterStage, filterList])
 
   useEffect(() => { load() }, [load])
 
@@ -278,11 +282,16 @@ export function ProspectsTab() {
 
   const toggleAll = () => {
     setSelectAllMode(false)
-    setSelected(prev =>
-      prev.size === prospects.length
-        ? new Set()
-        : new Set(prospects.map(p => p.id))
-    )
+    const allCurrentSelected = prospects.length > 0 && prospects.every(p => selected.has(p.id))
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (allCurrentSelected) {
+        prospects.forEach(p => next.delete(p.id))
+      } else {
+        prospects.forEach(p => next.add(p.id))
+      }
+      return next
+    })
   }
 
   // ── Delete ────────────────────────────────────────────────────────────────
@@ -309,17 +318,10 @@ export function ProspectsTab() {
       return
     }
 
-    const toDelete = [...selected].filter(id => {
-      const p = prospects.find(p => p.id === id)
-      return p?.status !== 'converted'
-    })
-    const skipped = selected.size - toDelete.length
-    if (!toDelete.length) { showInfo({ title: 'No se puede eliminar', message: 'Los prospectos convertidos no se pueden eliminar.', variant: 'error' }); return }
+    const toDelete = [...selected]
     showConfirm({
       title: 'Eliminar prospectos seleccionados',
-      message: skipped > 0
-        ? `Se eliminarán ${toDelete.length} prospecto(s). ${skipped} convertido(s) serán ignorados.`
-        : `Se eliminarán ${toDelete.length} prospecto(s). Esta acción no se puede deshacer.`,
+      message: `Se eliminarán ${toDelete.length} prospecto(s). Los convertidos serán ignorados. Esta acción no se puede deshacer.`,
       confirmLabel: `Eliminar ${toDelete.length}`,
       variant: 'danger',
       onConfirm: async () => {
@@ -328,6 +330,7 @@ export function ProspectsTab() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ids: toDelete }),
         }).catch(() => {})
+        setSelected(new Set())
         load()
       },
     })
@@ -675,7 +678,10 @@ export function ProspectsTab() {
   // ── UI ────────────────────────────────────────────────────────────────────
 
   const totalPages = Math.ceil(total / limit)
-  const allSelected = prospects.length > 0 && selected.size === prospects.length
+  // true si todos los de la página actual están seleccionados
+  const allCurrentPageSelected = prospects.length > 0 && prospects.every(p => selected.has(p.id))
+  // para compatibilidad con código legacy
+  const allSelected = allCurrentPageSelected
 
   return (
     <div className="space-y-4">
@@ -895,10 +901,10 @@ export function ProspectsTab() {
       </div>
 
       {/* ── Banner seleccionar todos ── */}
-      {allSelected && !selectAllMode && total > prospects.length && (
+      {allCurrentPageSelected && !selectAllMode && total > prospects.length && (
         <div className="flex items-center gap-2 rounded-md bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 px-3 py-2 text-sm">
           <span className="text-blue-700 dark:text-blue-300">
-            Los {prospects.length} prospectos de esta página están seleccionados.
+            Los {prospects.length} prospectos de esta página están seleccionados.{selected.size > prospects.length ? ` (${selected.size} en total)` : ''}
           </span>
           <button
             type="button"
@@ -929,7 +935,7 @@ export function ProspectsTab() {
         {total.toLocaleString()} prospectos en total
         {selectAllMode
           ? ` · ${total.toLocaleString()} seleccionados (todos)`
-          : selected.size > 0 ? ` · ${selected.size} seleccionados` : ''}
+          : selected.size > 0 ? ` · ${selected.size} seleccionado${selected.size !== 1 ? 's' : ''} (${selected.size > prospects.length ? 'múltiples páginas' : `pág. ${page}`})` : ''}
       </div>
 
       {/* ── Tabla ── */}
