@@ -22,49 +22,40 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   try {
-    // Trae todos los contactos de la lista de la campaña
-    // y hace LEFT JOIN con los mensajes enviados en esa campaña
-    // LATERAL subquery keeps exactly one (latest) message per contact,
-    // preventing duplicate rows when a contact has multiple whatsapp_messages
-    // rows for the same campaign (e.g. retry after crash).
+    // Usa campaign_recipients como base de verdad — funciona para campañas
+    // con contact_list (contact_id) y con prospect_list (prospect_id).
     const rows = await query(`
       SELECT
-        c.id,
-        c.first_name,
-        c.last_name,
-        c.phone_number,
-        -- Priorizar m.status para delivered/read (más detallado)
-        -- pero si cr dice 'failed' o 'skipped', eso gana sobre 'queued'/'sending' de m
+        COALESCE(c.id, p.id)               AS id,
+        COALESCE(c.first_name, p.first_name) AS first_name,
+        COALESCE(c.last_name,  p.last_name)  AS last_name,
+        cr.phone_number,
         COALESCE(
           CASE WHEN m.status IN ('delivered', 'read') THEN m.status END,
           CASE WHEN cr.status IN ('failed', 'skipped') THEN cr.status END,
           m.status,
           cr.status
-        )                                          AS msg_status,
+        )                                              AS msg_status,
         m.sent_at,
         m.delivered_at,
         m.read_at,
-        COALESCE(m.failed_at, cr.failed_at)        AS failed_at,
-        -- cr.error_detail se setea en handleFailure antes del UPDATE en whatsapp_messages
-        COALESCE(cr.error_detail, m.error_detail)  AS error_detail
-      FROM campaigns camp
-      JOIN contact_list_members clm ON clm.list_id = camp.list_id
-      JOIN contacts c ON c.id = clm.contact_id
-      LEFT JOIN campaign_recipients cr
-        ON cr.contact_id = c.id AND cr.campaign_id = camp.id
+        COALESCE(m.failed_at, cr.failed_at)            AS failed_at,
+        COALESCE(cr.error_detail, m.error_detail)      AS error_detail
+      FROM campaign_recipients cr
+      LEFT JOIN contacts  c ON c.id = cr.contact_id
+      LEFT JOIN prospects p ON p.id = cr.prospect_id
       LEFT JOIN LATERAL (
         SELECT status, sent_at, delivered_at, read_at, failed_at, error_detail
         FROM whatsapp_messages
-        WHERE campaign_id = camp.id
+        WHERE campaign_id = cr.campaign_id
           AND (
-            contact_id = c.id
-            OR (contact_id IS NULL
-                AND REPLACE(phone_number, '+', '') = REPLACE(c.phone_number, '+', ''))
+            contact_id = cr.contact_id
+            OR REPLACE(phone_number, '+', '') = REPLACE(cr.phone_number, '+', '')
           )
         ORDER BY created_at DESC
         LIMIT 1
       ) m ON true
-      WHERE camp.id = $1
+      WHERE cr.campaign_id = $1
       ORDER BY
         CASE COALESCE(m.status, cr.status)
           WHEN 'read'      THEN 1
@@ -76,7 +67,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           WHEN 'pending'   THEN 7
           ELSE 8
         END,
-        c.first_name
+        COALESCE(c.first_name, p.first_name)
     `, [id])
 
     return NextResponse.json({ contacts: rows })

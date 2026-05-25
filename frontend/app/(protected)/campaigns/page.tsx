@@ -84,6 +84,7 @@ export default function Campaigns() {
   const [syncing, setSyncing]             = useState<string | null>(null)
   const [creatingFailedList, setCreatingFailedList] = useState(false)
   const [failedListMsg, setFailedListMsg]           = useState<string | null>(null)
+  const [contactStatusFilter, setContactStatusFilter] = useState<string>('all')
 
   const FORM_DEFAULT = {
     name: '', list_id: '', prospect_list_id: '', audience_type: 'contacts' as 'contacts' | 'prospects',
@@ -370,6 +371,7 @@ export default function Campaigns() {
     setDetailError(null)
     setDispatch(null)
     setFailedListMsg(null)
+    setContactStatusFilter('all')
     setLoadingContacts(true)
 
     // Fetch contacts and (for multi-line) dispatch summary in parallel
@@ -1218,21 +1220,40 @@ export default function Campaigns() {
                     ? <p className="text-xs text-red-400 flex items-center gap-1"><Loader2 size={11} className="animate-spin"/> Cargando errores…</p>
                     : (() => {
                         const failed = campContacts.filter(c => c.msg_status === 'failed')
-                        if (failed.length === 0) return <p className="text-xs text-red-400">Sin detalle disponible</p>
+                        if (failed.length === 0) return <p className="text-xs text-red-400">Sin detalle disponible aún — los datos se cargan al abrir el detalle.</p>
                         const grouped = failed.reduce<Record<string, number>>((acc, c) => {
                           const k = c.error_detail || 'sin detalle'
                           acc[k] = (acc[k] || 0) + 1
                           return acc
                         }, {})
                         return (
-                          <div className="space-y-1.5">
-                            {Object.entries(grouped).sort((a,b) => b[1]-a[1]).map(([err, cnt], i) => (
-                              <div key={i} className="flex items-start gap-2 text-xs bg-white border border-red-100 rounded px-2 py-1.5">
-                                <span className="shrink-0 font-bold text-red-500 min-w-[2rem]">{cnt}×</span>
-                                <span className="font-mono text-red-700 break-all">{err}</span>
+                          <div className="space-y-2">
+                            {/* Resumen agrupado por error */}
+                            <div className="space-y-1">
+                              {Object.entries(grouped).sort((a,b) => b[1]-a[1]).map(([err, cnt], i) => (
+                                <div key={i} className="flex items-start gap-2 text-xs bg-white border border-red-100 rounded px-2 py-1.5">
+                                  <span className="shrink-0 font-bold text-red-500 min-w-[2rem]">{cnt}×</span>
+                                  <span className="font-mono text-red-700 break-all">{err}</span>
+                                </div>
+                              ))}
+                            </div>
+                            {/* Lista individual de contactos fallidos */}
+                            <div className="space-y-1 pt-1 border-t border-red-100">
+                              <p className="text-[11px] font-semibold text-red-600 uppercase tracking-wide">Contactos fallidos</p>
+                              <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
+                                {failed.map((c, i) => (
+                                  <div key={c.id ?? i} className="flex items-center gap-2 text-xs bg-white border border-red-100 rounded px-2 py-1.5">
+                                    <span className="font-mono text-gray-600 shrink-0">{c.phone_number}</span>
+                                    {(c.first_name || c.last_name) && (
+                                      <span className="text-gray-500 truncate">{[c.first_name, c.last_name].filter(Boolean).join(' ')}</span>
+                                    )}
+                                    {c.error_detail && (
+                                      <span className="ml-auto text-red-500 font-mono text-[10px] truncate max-w-[140px]" title={c.error_detail}>{c.error_detail}</span>
+                                    )}
+                                  </div>
+                                ))}
                               </div>
-                            ))}
-                            <p className="text-xs text-red-400 pt-1">Ver tabla de destinatarios abajo para detalle por contacto.</p>
+                            </div>
                           </div>
                         )
                       })()
@@ -1375,50 +1396,85 @@ export default function Campaigns() {
 
               {/* Tabla de contactos */}
               <div>
-                <p className="text-sm font-medium text-gray-700 mb-2">Destinatarios</p>
+                <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
+                  <p className="text-sm font-medium text-gray-700">Destinatarios</p>
+                  {!loadingContacts && campContacts.length > 0 && (
+                    <div className="flex items-center gap-1 text-xs">
+                      {[
+                        { key: 'all',       label: 'Todos',      count: campContacts.length },
+                        { key: 'failed',    label: 'Fallidos',   count: campContacts.filter(c => c.msg_status === 'failed').length },
+                        { key: 'sent',      label: 'Enviados',   count: campContacts.filter(c => ['sent','delivered','read'].includes(c.msg_status ?? '')).length },
+                        { key: 'pending',   label: 'Pendientes', count: campContacts.filter(c => ['pending','sending'].includes(c.msg_status ?? '')).length },
+                      ].filter(t => t.count > 0 || t.key === 'all').map(t => (
+                        <button
+                          key={t.key}
+                          onClick={() => setContactStatusFilter(t.key)}
+                          className={`px-2 py-0.5 rounded-full border transition-colors ${
+                            contactStatusFilter === t.key
+                              ? t.key === 'failed'
+                                ? 'bg-red-100 border-red-300 text-red-700 font-semibold'
+                                : 'bg-indigo-100 border-indigo-300 text-indigo-700 font-semibold'
+                              : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                          }`}
+                        >
+                          {t.label} {t.count > 0 && <span className="ml-0.5 opacity-70">{t.count}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 {detailError
                   ? <p className="text-sm text-red-500 bg-red-50 border border-red-200 rounded px-3 py-2">{detailError}</p>
                   : loadingContacts
                   ? <div className="flex items-center gap-2 py-4 text-gray-400 text-sm"><Loader2 size={14} className="animate-spin"/> Cargando…</div>
                   : campContacts.length === 0
                     ? <p className="text-sm text-gray-400">Sin contactos registrados</p>
-                    : (
-                      <div className="border rounded-lg overflow-hidden">
-                        <table className="w-full text-sm">
-                          <thead className="bg-gray-50 border-b border-gray-100">
-                            <tr>
-                              <th className="text-left px-3 py-2 font-medium text-gray-600">Contacto</th>
-                              <th className="text-left px-3 py-2 font-medium text-gray-600">Teléfono</th>
-                              <th className="text-left px-3 py-2 font-medium text-gray-600">Estado</th>
-                              <th className="text-left px-3 py-2 font-medium text-gray-600">Enviado</th>
-                              <th className="text-left px-3 py-2 font-medium text-gray-600">Leído</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {campContacts.map(c => (
-                              <tr key={c.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
-                                <td className="px-3 py-2">
-                                  {[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}
-                                </td>
-                                <td className="px-3 py-2 font-mono text-xs text-gray-500">{c.phone_number}</td>
-                                <td className="px-3 py-2">
-                                  <ContactStatusBadge status={c.msg_status} />
-                                  {c.msg_status === 'failed' && c.error_detail && (
-                                    <p className="text-xs text-red-500 font-mono mt-0.5 break-all max-w-xs">{c.error_detail}</p>
-                                  )}
-                                </td>
-                                <td className="px-3 py-2 text-xs text-gray-400">
-                                  {c.sent_at ? new Date(c.sent_at).toLocaleString('es-AR', { dateStyle:'short', timeStyle:'short' }) : '—'}
-                                </td>
-                                <td className="px-3 py-2 text-xs text-gray-400">
-                                  {c.read_at ? new Date(c.read_at).toLocaleString('es-AR', { dateStyle:'short', timeStyle:'short' }) : '—'}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )
+                    : (() => {
+                        const filtered = contactStatusFilter === 'all'
+                          ? campContacts
+                          : contactStatusFilter === 'failed'
+                            ? campContacts.filter(c => c.msg_status === 'failed')
+                            : contactStatusFilter === 'sent'
+                              ? campContacts.filter(c => ['sent','delivered','read'].includes(c.msg_status ?? ''))
+                              : campContacts.filter(c => ['pending','sending'].includes(c.msg_status ?? ''))
+                        return (
+                          <div className="border rounded-lg overflow-hidden">
+                            <table className="w-full text-sm">
+                              <thead className="bg-gray-50 border-b border-gray-100">
+                                <tr>
+                                  <th className="text-left px-3 py-2 font-medium text-gray-600">Contacto</th>
+                                  <th className="text-left px-3 py-2 font-medium text-gray-600">Teléfono</th>
+                                  <th className="text-left px-3 py-2 font-medium text-gray-600">Estado</th>
+                                  <th className="text-left px-3 py-2 font-medium text-gray-600">Enviado</th>
+                                  <th className="text-left px-3 py-2 font-medium text-gray-600">Leído</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {filtered.map(c => (
+                                  <tr key={c.id} className={`border-b border-gray-100 last:border-0 hover:bg-gray-50 ${c.msg_status === 'failed' ? 'bg-red-50/40' : ''}`}>
+                                    <td className="px-3 py-2">
+                                      {[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}
+                                    </td>
+                                    <td className="px-3 py-2 font-mono text-xs text-gray-500">{c.phone_number}</td>
+                                    <td className="px-3 py-2">
+                                      <ContactStatusBadge status={c.msg_status} />
+                                      {c.msg_status === 'failed' && c.error_detail && (
+                                        <p className="text-xs text-red-500 font-mono mt-0.5 break-all max-w-xs">{c.error_detail}</p>
+                                      )}
+                                    </td>
+                                    <td className="px-3 py-2 text-xs text-gray-400">
+                                      {c.sent_at ? new Date(c.sent_at).toLocaleString('es-AR', { dateStyle:'short', timeStyle:'short' }) : '—'}
+                                    </td>
+                                    <td className="px-3 py-2 text-xs text-gray-400">
+                                      {c.read_at ? new Date(c.read_at).toLocaleString('es-AR', { dateStyle:'short', timeStyle:'short' }) : '—'}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )
+                      })()
                 }
               </div>
             </div>
