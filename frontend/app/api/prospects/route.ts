@@ -15,9 +15,10 @@ export async function GET(req: NextRequest) {
   const stage    = sp.get('stage')    || ''
   const batchId  = sp.get('batch_id') || ''
   const listId   = sp.get('list_id')  || ''
-  const page     = Math.max(1, Number(sp.get('page') || 1))
-  const limit    = Math.min(200, Math.max(1, Number(sp.get('limit') || 50)))
-  const offset   = (page - 1) * limit
+  const download = sp.get('download') === 'true'
+  const page     = download ? 1 : Math.max(1, Number(sp.get('page') || 1))
+  const limit    = download ? 100_000 : Math.min(200, Math.max(1, Number(sp.get('limit') || 50)))
+  const offset   = download ? 0 : (page - 1) * limit
 
   if (status && !['active', 'unsubscribed', 'converted'].includes(status)) {
     return NextResponse.json({ error: `Invalid status "${status}"` }, { status: 400 })
@@ -101,6 +102,7 @@ export async function GET(req: NextRequest) {
           [`%${search}%`, status, stage, batchId, listId]
         )
 
+    if (download) return NextResponse.json({ contacts: rows })
     return NextResponse.json({ prospects: rows, total: Number(count), page, limit })
   } catch (e) {
     console.error('[GET /api/prospects]', e instanceof Error ? e.message : e)

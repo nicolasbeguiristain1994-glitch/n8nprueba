@@ -13,12 +13,13 @@ import {
 import {
   Upload, RefreshCw, Trash2, Search, Send, History, AlertTriangle,
   CheckCircle, XCircle, ChevronLeft, ChevronRight, Eye, UserPlus,
-  CheckSquare, List, ChevronDown, X, Filter, Users,
+  CheckSquare, List, ChevronDown, X, Filter, Users, Download,
 } from 'lucide-react'
 import { Textarea } from '@/components/ui/textarea'
 import { fetchJson } from '@/lib/fetchJson'
 import type { Prospect, ProspectImportBatch, ProspectImportResult, ProspectStage } from '@/lib/prospects'
 import { PROSPECT_STAGE_LABELS } from '@/lib/prospects'
+import { DownloadContactsModal } from '@/components/contacts/DownloadContactsModal'
 
 // ── Tipos locales ─────────────────────────────────────────────────────────────
 
@@ -157,6 +158,9 @@ export function ProspectsTab() {
 
   // ── Corrección de prefijo en batch existente
   const [fixingPrefix, setFixingPrefix] = useState(false)
+
+  // ── Modal descarga
+  const [showDownloadModal, setShowDownloadModal] = useState(false)
 
   // ── Dropdown custom de batches
   const [showBatchMenu, setShowBatchMenu] = useState(false)
@@ -734,6 +738,15 @@ export function ProspectsTab() {
 
         <Button variant="outline" size="sm" onClick={() => setBatchHistoryOpen(true)}>
           <History className="h-4 w-4 mr-1" /> Historial
+        </Button>
+
+        <Button
+          variant="outline" size="sm"
+          className="border-teal-200 text-teal-700 hover:bg-teal-50"
+          onClick={() => setShowDownloadModal(true)}
+          disabled={total === 0}
+        >
+          <Download className="h-4 w-4 mr-1" /> Descargar
         </Button>
 
         {filterBatch && (
@@ -1555,6 +1568,27 @@ export function ProspectsTab() {
           </div>
         </div>
       )}
+
+      <DownloadContactsModal
+        open={showDownloadModal}
+        onClose={() => setShowDownloadModal(false)}
+        contactCount={total}
+        fetchParams={new URLSearchParams({
+          q:        search,
+          status:   filterStatus,
+          stage:    filterStage,
+          batch_id: filterBatch,
+          list_id:  filterList,
+        })}
+        apiEndpoint="/api/prospects"
+        filenameHint={
+          filterList
+            ? (prospectLists.find(l => l.id === filterList)?.name ?? 'lista').toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-')
+            : filterBatch
+              ? (batches.find(b => b.id === filterBatch)?.filename ?? 'batch').replace(/\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-')
+              : 'todos'
+        }
+      />
 
     </div>
   )
