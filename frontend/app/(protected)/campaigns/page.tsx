@@ -1179,7 +1179,7 @@ export default function Campaigns() {
 
       {/* Modal detalle campaña */}
       <Dialog open={!!selected} onOpenChange={() => { setSelected(null); setDetailError(null) }}>
-        <DialogContent className="w-[95vw] max-w-7xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-[95vw] max-w-7xl sm:w-[95vw] sm:max-w-7xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {selected?.name}

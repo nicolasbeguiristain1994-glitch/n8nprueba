@@ -20,45 +20,67 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  // ── Intento 1: campaign_recipients (campañas modernas con distributor) ──────
+  // ── Intento 1: campaign_recipients con FK join + fallback por teléfono ──────
+  // Maneja tanto IDs directos como campañas donde contact_id/prospect_id son NULL.
   try {
     const rows = await query(`
       SELECT
-        COALESCE(c.id, p.id)                     AS id,
-        c.id                                      AS contact_id,
-        p.id                                      AS prospect_id,
-        COALESCE(c.first_name, p.first_name)     AS first_name,
-        COALESCE(c.last_name,  p.last_name)      AS last_name,
+        COALESCE(c_fk.id, p_fk.id, c_ph.id, p_ph.id)              AS id,
+        COALESCE(c_fk.id, c_ph.id)                                  AS contact_id,
+        COALESCE(p_fk.id, p_ph.id)                                  AS prospect_id,
+        COALESCE(c_fk.first_name, p_fk.first_name,
+                 c_ph.first_name, p_ph.first_name)                  AS first_name,
+        COALESCE(c_fk.last_name,  p_fk.last_name,
+                 c_ph.last_name,  p_ph.last_name)                   AS last_name,
         cr.phone_number,
         COALESCE(
           CASE WHEN m.status IN ('delivered', 'read') THEN m.status END,
           CASE WHEN cr.status IN ('failed', 'skipped') THEN cr.status END,
           m.status,
           cr.status
-        )                                         AS msg_status,
+        )                                                            AS msg_status,
         m.sent_at,
         m.delivered_at,
         m.read_at,
-        COALESCE(m.failed_at, cr.failed_at)       AS failed_at,
-        COALESCE(cr.error_detail, m.error_detail) AS error_detail
+        COALESCE(m.failed_at, cr.failed_at)                         AS failed_at,
+        COALESCE(cr.error_detail, m.error_detail)                   AS error_detail
       FROM campaign_recipients cr
-      LEFT JOIN contacts  c ON c.id = cr.contact_id
-      LEFT JOIN prospects p ON p.id = cr.prospect_id
+      -- FK joins (rápidos, usan índice por id)
+      LEFT JOIN contacts  c_fk ON c_fk.id = cr.contact_id
+      LEFT JOIN prospects p_fk ON p_fk.id = cr.prospect_id
+      -- Fallback por teléfono si los FK son NULL (normaliza últimos 10 dígitos)
+      LEFT JOIN LATERAL (
+        SELECT id, first_name, last_name FROM contacts
+        WHERE cr.contact_id IS NULL
+          AND RIGHT(REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g'), 10)
+            = RIGHT(REGEXP_REPLACE(cr.phone_number, '[^0-9]', '', 'g'), 10)
+        LIMIT 1
+      ) c_ph ON true
+      LEFT JOIN LATERAL (
+        SELECT id, first_name, last_name FROM prospects
+        WHERE cr.prospect_id IS NULL
+          AND RIGHT(REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g'), 10)
+            = RIGHT(REGEXP_REPLACE(cr.phone_number, '[^0-9]', '', 'g'), 10)
+        LIMIT 1
+      ) p_ph ON true
+      -- Último mensaje de WA para este destinatario (normaliza teléfono)
       LEFT JOIN LATERAL (
         SELECT status, sent_at, delivered_at, read_at, failed_at, error_detail
         FROM   whatsapp_messages wm
         WHERE  wm.campaign_id = cr.campaign_id
-          AND  REPLACE(wm.phone_number, '+', '') = REPLACE(cr.phone_number, '+', '')
+          AND  RIGHT(REGEXP_REPLACE(wm.phone_number, '[^0-9]', '', 'g'), 10)
+             = RIGHT(REGEXP_REPLACE(cr.phone_number, '[^0-9]', '', 'g'), 10)
         ORDER BY wm.created_at DESC
         LIMIT 1
       ) m ON true
       WHERE cr.campaign_id = $1
       ORDER BY
         CASE COALESCE(m.status, cr.status)
-          WHEN 'read'      THEN 1  WHEN 'delivered' THEN 2  WHEN 'sent'      THEN 3
-          WHEN 'failed'    THEN 4  WHEN 'skipped'   THEN 5  WHEN 'sending'   THEN 6
+          WHEN 'read'      THEN 1  WHEN 'delivered' THEN 2  WHEN 'sent'    THEN 3
+          WHEN 'failed'    THEN 4  WHEN 'skipped'   THEN 5  WHEN 'sending' THEN 6
           WHEN 'pending'   THEN 7  ELSE 8
-        END, COALESCE(c.first_name, p.first_name)
+        END,
+        COALESCE(c_fk.first_name, p_fk.first_name, c_ph.first_name, p_ph.first_name)
     `, [id])
     if (rows.length > 0) return NextResponse.json({ contacts: rows })
   } catch (e) {
@@ -89,8 +111,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         SELECT status, sent_at, delivered_at, read_at, failed_at, error_detail
         FROM   whatsapp_messages wm
         WHERE  wm.campaign_id = camp.id
-          AND  REPLACE(wm.phone_number, '+', '') =
-               REPLACE(COALESCE(c.phone_number, p.phone_number), '+', '')
+          AND  RIGHT(REGEXP_REPLACE(wm.phone_number, '[^0-9]', '', 'g'), 10)
+             = RIGHT(REGEXP_REPLACE(COALESCE(c.phone_number, p.phone_number), '[^0-9]', '', 'g'), 10)
         ORDER BY wm.created_at DESC
         LIMIT 1
       ) m ON true
@@ -109,7 +131,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   // ── Intento 3: whatsapp_messages + match por últimos 10 dígitos ─────────────
-  // Cubre casos donde el número está guardado con/sin prefijo de país (e.g. +549... vs +1...).
+  // Cubre campañas sin campaign_recipients (anteriores al distributor).
   try {
     const rows = await query(`
       SELECT DISTINCT ON (RIGHT(REGEXP_REPLACE(wm.phone_number, '[^0-9]', '', 'g'), 10))
