@@ -49,9 +49,18 @@ export async function GET(req: NextRequest) {
             SELECT 1 FROM prospect_list_members plm
             WHERE plm.prospect_id = p.id AND plm.prospect_list_id::text = $5
           ))
-        ORDER BY p.created_at DESC
+        ORDER BY
+          CASE
+            WHEN $8 = '' THEN NULL::int
+            WHEN LOWER(COALESCE(p.first_name,'')) = LOWER($8) THEN 0
+            WHEN LOWER(COALESCE(p.last_name,''))  = LOWER($8) THEN 0
+            ELSE 1
+          END NULLS LAST,
+          CASE WHEN $8 = '' THEN NULL::int
+               ELSE LENGTH(COALESCE(p.first_name,'') || COALESCE(p.last_name,'')) END NULLS LAST,
+          p.created_at DESC
         LIMIT $6 OFFSET $7
-      `, [`%${search}%`, status, stage, batchId, listId, limit, offset])
+      `, [`%${search}%`, status, stage, batchId, listId, limit, offset, search])
     } catch (e) {
       // Fallback: migración 098/099 no aplicadas aún en este entorno
       const msg = e instanceof Error ? e.message : ''
@@ -69,9 +78,18 @@ export async function GET(req: NextRequest) {
           WHERE ($1 = '' OR p.phone_number ILIKE $1 OR p.first_name ILIKE $1 OR p.last_name ILIKE $1)
             AND ($2 = '' OR p.status = $2)
             AND ($3 = '' OR p.import_batch_id::text = $3)
-          ORDER BY p.created_at DESC
+          ORDER BY
+            CASE
+              WHEN $6 = '' THEN NULL::int
+              WHEN LOWER(COALESCE(p.first_name,'')) = LOWER($6) THEN 0
+              WHEN LOWER(COALESCE(p.last_name,''))  = LOWER($6) THEN 0
+              ELSE 1
+            END NULLS LAST,
+            CASE WHEN $6 = '' THEN NULL::int
+                 ELSE LENGTH(COALESCE(p.first_name,'') || COALESCE(p.last_name,'')) END NULLS LAST,
+            p.created_at DESC
           LIMIT $4 OFFSET $5
-        `, [`%${search}%`, status, batchId, limit, offset])
+        `, [`%${search}%`, status, batchId, limit, offset, search])
       } else {
         throw e
       }
