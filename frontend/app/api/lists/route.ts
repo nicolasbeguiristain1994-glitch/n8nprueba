@@ -134,7 +134,8 @@ export async function POST(req: NextRequest) {
       metadata: { name: nameStr, owner: session.user_id } })
     return NextResponse.json({ id: result.id, name: nameStr, total: result.total })
   } catch (e) {
-    console.error('[/api/lists POST]', e instanceof Error ? e.message : e)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error('[/api/lists POST]', msg)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
