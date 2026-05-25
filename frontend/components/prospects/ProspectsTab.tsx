@@ -137,6 +137,8 @@ export function ProspectsTab() {
   const [importProgress, setImportProgress] = useState(0)   // 0-100
   const [importResult, setImportResult]   = useState<ProspectImportResult | null>(null)
   const [autoPrefix, setAutoPrefix]       = useState('')    // p.ej. '+549' para Argentina
+  const [autoNumber, setAutoNumber]       = useState(false) // numerar contactos con nombre repetido
+  const [repeatName, setRepeatName]       = useState<string | null>(null) // nombre que se repite, si aplica
   const fileRef = useRef<HTMLInputElement>(null)
 
   // ── Modal agregar a campaña
@@ -469,6 +471,12 @@ export function ProspectsTab() {
     // Auto-activar prefijo si la mayoría de números no tiene código de Argentina
     const withoutPrefix = validRows.filter(r => !r.phone.startsWith('+54')).length
     setAutoPrefix(withoutPrefix > validRows.length / 2 ? '+549' : '')
+    // Detectar si todos los contactos tienen el mismo nombre (ej. "WONBET")
+    const names = validRows.map(r => (r.first_name ?? '').trim()).filter(Boolean)
+    const uniqueNames = new Set(names)
+    const detected = names.length >= 2 && uniqueNames.size === 1 ? names[0] : null
+    setRepeatName(detected)
+    setAutoNumber(detected !== null)
     setImportOpen(true)
   }
 
@@ -481,11 +489,14 @@ export function ProspectsTab() {
     setImporting(true)
     setImportProgress(0)
 
-    const allRows = parsedRows.map(r => {
+    const allRows = parsedRows.map((r, i) => {
       const phone = autoPrefix && !r.phone.startsWith('+54')
         ? autoPrefix + r.phone.slice(1)
         : r.phone
-      return { phone, first_name: r.first_name, last_name: r.last_name, email: r.email }
+      const first_name = autoNumber && repeatName && r.first_name?.trim() === repeatName
+        ? `${repeatName} ${i + 1}`
+        : r.first_name
+      return { phone, first_name, last_name: r.last_name, email: r.email }
     })
     const chunks: typeof allRows[] = []
     for (let i = 0; i < allRows.length; i += CHUNK_SIZE) chunks.push(allRows.slice(i, i + CHUNK_SIZE))
@@ -1077,6 +1088,9 @@ export function ProspectsTab() {
                         {parsedRows.slice(0, 5).map((r, i) => {
                           const needsFix = autoPrefix && !r.phone.startsWith('+54')
                           const displayPhone = needsFix ? autoPrefix + r.phone.slice(1) : r.phone
+                          const displayName = autoNumber && repeatName && r.first_name?.trim() === repeatName
+                            ? `${repeatName} ${i + 1}`
+                            : r.first_name
                           return (
                             <tr key={i}>
                               <td className="px-3 py-1.5 font-mono">
@@ -1084,7 +1098,11 @@ export function ProspectsTab() {
                                   ? <span className="text-emerald-600 font-medium">{displayPhone}</span>
                                   : r.phone}
                               </td>
-                              <td className="px-3 py-1.5">{[r.first_name, r.last_name].filter(Boolean).join(' ') || '—'}</td>
+                              <td className="px-3 py-1.5">
+                                {autoNumber && repeatName && r.first_name?.trim() === repeatName
+                                  ? <span className="text-indigo-600 font-medium">{displayName}</span>
+                                  : [displayName, r.last_name].filter(Boolean).join(' ') || '—'}
+                              </td>
                               <td className="px-3 py-1.5 text-muted-foreground">{r.email || '—'}</td>
                             </tr>
                           )
@@ -1158,6 +1176,42 @@ export function ProspectsTab() {
                     </div>
                   )
                 })()}
+
+                {/* ── Numeración automática cuando todos tienen el mismo nombre ── */}
+                {repeatName && (
+                  <div className={`rounded-md border px-4 py-3 text-sm space-y-2 ${
+                    autoNumber
+                      ? 'bg-indigo-50 border-indigo-200 dark:bg-indigo-950/20 dark:border-indigo-800'
+                      : 'bg-gray-50 border-gray-200 dark:bg-gray-800/30 dark:border-gray-700'
+                  }`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className={`flex items-center gap-1.5 ${autoNumber ? 'text-indigo-700 dark:text-indigo-300' : 'text-gray-600 dark:text-gray-400'}`}>
+                        {autoNumber
+                          ? <CheckCircle className="h-4 w-4 shrink-0" />
+                          : <AlertTriangle className="h-4 w-4 shrink-0" />}
+                        <span>
+                          Todos los contactos tienen el nombre{' '}
+                          <span className="font-mono font-medium">{repeatName}</span>
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className={`text-xs underline hover:no-underline shrink-0 ${autoNumber ? 'text-muted-foreground' : 'text-indigo-600 dark:text-indigo-400 font-medium'}`}
+                        onClick={() => setAutoNumber(v => !v)}
+                      >
+                        {autoNumber ? 'Quitar numeración' : 'Numerar'}
+                      </button>
+                    </div>
+                    {autoNumber && (
+                      <p className="text-xs text-indigo-600 dark:text-indigo-400">
+                        Se importarán como{' '}
+                        <span className="font-mono">{repeatName} 1</span>,{' '}
+                        <span className="font-mono">{repeatName} 2</span>,{' '}
+                        <span className="font-mono">{repeatName} 3</span>…
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {importing && (
