@@ -751,23 +751,33 @@ export default function Contacts() {
         // Prefer server-provided platforms (includes verified bet30); fall back to client-side zeus-only
         const platforms = row.original.platforms ?? detectClientPlatforms(row.original.first_name, row.original.last_name)
         const hasName   = !!(row.original.first_name || row.original.last_name)
+        const customTags = row.original.custom_tags ?? []
         return (
-          <div className="flex items-center gap-1.5 min-w-0">
-            <EditableTextCell
-              value={full}
-              placeholder="— sin nombre"
-              onSave={newName => {
-                const trimmed = newName.trim()
-                const parts   = trimmed ? trimmed.split(/\s+/) : []
-                const first   = parts[0] || null
-                const last    = parts.slice(1).join(' ') || null
-                updateField(row.original.id, 'first_name', first)
-                if (last !== (row.original.last_name || null)) updateField(row.original.id, 'last_name', last)
-              }}
-            />
-            {platforms.includes('zeus')  && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">Zeus</span>}
-            {platforms.includes('bet30') && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700">Bet30</span>}
-            {platforms.length === 0 && hasName && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-gray-100 text-gray-500">otros</span>}
+          <div className="flex flex-col gap-0.5 min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <EditableTextCell
+                value={full}
+                placeholder="— sin nombre"
+                onSave={newName => {
+                  const trimmed = newName.trim()
+                  const parts   = trimmed ? trimmed.split(/\s+/) : []
+                  const first   = parts[0] || null
+                  const last    = parts.slice(1).join(' ') || null
+                  updateField(row.original.id, 'first_name', first)
+                  if (last !== (row.original.last_name || null)) updateField(row.original.id, 'last_name', last)
+                }}
+              />
+              {platforms.includes('zeus')  && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">Zeus</span>}
+              {platforms.includes('bet30') && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700">Bet30</span>}
+              {platforms.length === 0 && hasName && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-gray-100 text-gray-500">otros</span>}
+            </div>
+            {customTags.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {customTags.map(t => (
+                  <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-indigo-50 text-indigo-600 border border-indigo-200">{t}</span>
+                ))}
+              </div>
+            )}
           </div>
         )
       },

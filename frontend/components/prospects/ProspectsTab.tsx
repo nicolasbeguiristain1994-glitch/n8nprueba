@@ -1139,9 +1139,20 @@ export function ProspectsTab() {
                 </td>
                 <td className="px-3 py-2 font-mono text-xs">{p.phone_number}</td>
                 <td className="px-3 py-2">
-                  {[p.first_name, p.last_name].filter(Boolean).join(' ') || (
-                    <span className="text-muted-foreground italic">sin nombre</span>
-                  )}
+                  <div className="flex flex-col gap-0.5">
+                    <span>
+                      {[p.first_name, p.last_name].filter(Boolean).join(' ') || (
+                        <span className="text-muted-foreground italic">sin nombre</span>
+                      )}
+                    </span>
+                    {(p.tags ?? []).length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {(p.tags ?? []).map(t => (
+                          <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-indigo-50 text-indigo-600 border border-indigo-200">{t}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </td>
                 <td className="px-3 py-2 text-muted-foreground">{p.email ?? '—'}</td>
                 <td className="px-3 py-2">
