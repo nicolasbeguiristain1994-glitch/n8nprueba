@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   Search, Upload, RefreshCw, List, CheckSquare, X, Users, UserPlus,
   Trash2, Download, DatabaseZap, Pencil, ChevronDown, Filter, Info, Scissors,
+  Tag, Ban,
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
@@ -38,7 +39,7 @@ interface Contact {
   email: string; status: string; opt_in: boolean; created_at: string; segment: string; panel: string; gaming: string; linea: number | null
   actividad?: string; valor_riesgo?: string; antiguedad?: string
   last_deposit_at?: string | null; total_deposits?: number; total_withdrawals?: number
-  platforms?: string[]
+  platforms?: string[]; custom_tags?: string[]
 }
 interface ImportRow   { phone: string; name?: string; segment?: string }
 interface ContactList { id: string; name: string; contact_count: number; created_at: string }
@@ -248,6 +249,16 @@ export default function Contacts() {
   const [editGaming, setEditGaming]       = useState('')
   const [editSaving, setEditSaving]       = useState(false)
   const [editError, setEditError]         = useState<string | null>(null)
+
+  // ── Tags de contacto ─────────────────────────────────────────────────────
+  const [tagsContact, setTagsContact]   = useState<Contact | null>(null)
+  const [tagsValue, setTagsValue]       = useState<string[]>([])
+  const [tagsInput, setTagsInput]       = useState('')
+  const [tagsSaving, setTagsSaving]     = useState(false)
+  const [tagsError, setTagsError]       = useState<string | null>(null)
+
+  // ── Blacklist ─────────────────────────────────────────────────────────────
+  const [blacklistSaving, setBlacklistSaving] = useState(false)
 
   // ── Split lista ───────────────────────────────────────────────────────────
   const [splitSource, setSplitSource]   = useState<ContactList | null>(null)
@@ -645,6 +656,74 @@ export default function Contacts() {
     }
   }
 
+  // ── Tags ──────────────────────────────────────────────────────────────────
+
+  const openTags = (c: Contact) => {
+    setTagsContact(c)
+    setTagsValue(c.custom_tags ?? [])
+    setTagsInput('')
+    setTagsError(null)
+  }
+
+  const addTag = () => {
+    const t = tagsInput.trim().toLowerCase().replace(/[^a-z0-9_\- ]/g, '')
+    if (!t || tagsValue.includes(t)) { setTagsInput(''); return }
+    setTagsValue(prev => [...prev, t])
+    setTagsInput('')
+  }
+
+  const removeTag = (t: string) => setTagsValue(prev => prev.filter(x => x !== t))
+
+  const saveTags = async () => {
+    if (!tagsContact) return
+    setTagsSaving(true); setTagsError(null)
+    try {
+      const res = await fetch(`/api/contacts/${tagsContact.id}/tags`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags: tagsValue }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { setTagsError(data.error || 'Error al guardar'); return }
+      setContacts(cs => cs.map(c => c.id === tagsContact.id ? { ...c, custom_tags: tagsValue } : c))
+      setTagsContact(null)
+    } catch { setTagsError('Error de conexión') }
+    finally { setTagsSaving(false) }
+  }
+
+  // ── Blacklist ──────────────────────────────────────────────────────────────
+
+  const sendToBlacklist = async (phones: string[], onDone?: () => void) => {
+    setBlacklistSaving(true)
+    try {
+      const res = await fetch('/api/blacklist', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phones }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { alert(data.error || 'Error al agregar a blacklist'); return }
+      onDone?.()
+    } catch { alert('Error de conexión') }
+    finally { setBlacklistSaving(false) }
+  }
+
+  const blacklistContact = async (c: Contact) => {
+    if (!confirm(`¿Agregar ${c.first_name || c.phone_number} a la blacklist?`)) return
+    await sendToBlacklist([c.phone_number], () => {
+      setViewContact(null)
+      alert('Contacto agregado a la blacklist.')
+    })
+  }
+
+  const blacklistSelected = async () => {
+    if (!selectedCount) return
+    if (!confirm(`¿Agregar ${selectedCount} contactos a la blacklist?`)) return
+    const phones = contacts.filter(c => rowSelection[c.id]).map(c => c.phone_number)
+    await sendToBlacklist(phones, () => {
+      setRowSelection({})
+      alert(`${phones.length} contactos agregados a la blacklist.`)
+    })
+  }
+
   // ── Columnas del DataTable ────────────────────────────────────────────────
 
   const columns = useMemo<ColumnDef<Contact, unknown>[]>(() => [
@@ -851,6 +930,17 @@ export default function Contacts() {
             onClick={() => openEdit(row.original)}
             icon={Pencil}
             label="Editar contacto"
+          />
+          <DataTableActionButton
+            onClick={() => openTags(row.original)}
+            icon={Tag}
+            label="Editar etiquetas"
+          />
+          <DataTableActionButton
+            onClick={() => blacklistContact(row.original)}
+            icon={Ban}
+            label="Agregar a blacklist"
+            variant="destructive"
           />
           <DataTableActionButton
             onClick={() => deleteContact(row.original.id)}
@@ -1196,6 +1286,12 @@ export default function Contacts() {
               onClick={() => { setListMode('selection'); setShowList(true) }}
               className="h-7 text-xs border-green-200 text-green-700 hover:bg-green-50">
               <List size={13} className="mr-1" /> Crear lista ({ids.length})
+            </Button>
+            <Button size="sm" variant="outline"
+              onClick={blacklistSelected}
+              disabled={blacklistSaving}
+              className="h-7 text-xs border-orange-200 text-orange-700 hover:bg-orange-50">
+              <Ban size={13} className="mr-1" /> Blacklist ({ids.length})
             </Button>
             <Button size="sm" variant="outline"
               onClick={deleteSelected}
@@ -1561,9 +1657,30 @@ export default function Contacts() {
                   </div>
                 </div>
               )}
-              <Button variant="outline" size="sm" className="w-full" onClick={() => { setViewContact(null); openEdit(viewContact) }}>
-                <Pencil size={13} className="mr-1.5" /> Editar contacto
-              </Button>
+              {/* Tags del contacto */}
+              {(viewContact.custom_tags?.length ?? 0) > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {viewContact.custom_tags!.map(t => (
+                    <span key={t} className="text-xs bg-indigo-50 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded-full">{t}</span>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="flex-1" onClick={() => { setViewContact(null); openEdit(viewContact) }}>
+                  <Pencil size={13} className="mr-1.5" /> Editar
+                </Button>
+                <Button variant="outline" size="sm" className="flex-1" onClick={() => { setViewContact(null); openTags(viewContact) }}>
+                  <Tag size={13} className="mr-1.5" /> Etiquetas
+                </Button>
+                <Button variant="outline" size="sm"
+                  className="border-orange-200 text-orange-700 hover:bg-orange-50"
+                  onClick={() => blacklistContact(viewContact)}
+                  disabled={blacklistSaving}
+                >
+                  <Ban size={13} />
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>
@@ -1647,6 +1764,58 @@ export default function Contacts() {
               </Button>
               <Button className="flex-1" onClick={saveEdit} disabled={editSaving}>
                 {editSaving ? 'Guardando…' : 'Guardar cambios'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Modal etiquetas ── */}
+      <Dialog open={!!tagsContact} onOpenChange={v => { if (!v) setTagsContact(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Tag size={16} /> Etiquetas</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              {tagsContact ? `${tagsContact.first_name || tagsContact.phone_number}` : ''}
+            </p>
+            {/* Chips actuales */}
+            <div className="flex flex-wrap gap-1.5 min-h-[32px]">
+              {tagsValue.map(t => (
+                <span key={t} className="inline-flex items-center gap-1 text-xs bg-indigo-50 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded-full">
+                  {t}
+                  <button type="button" onClick={() => removeTag(t)} className="hover:text-indigo-900 ml-0.5">
+                    <X size={10} />
+                  </button>
+                </span>
+              ))}
+              {tagsValue.length === 0 && (
+                <span className="text-xs text-muted-foreground italic">Sin etiquetas</span>
+              )}
+            </div>
+            {/* Input para agregar */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                className="flex-1 text-sm border border-input rounded-md px-3 py-1.5 bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                placeholder="Nueva etiqueta…"
+                value={tagsInput}
+                onChange={e => setTagsInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag() } }}
+                maxLength={50}
+              />
+              <Button size="sm" variant="outline" onClick={addTag} disabled={!tagsInput.trim()}>
+                Agregar
+              </Button>
+            </div>
+            {tagsError && <p className="text-xs text-destructive">{tagsError}</p>}
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => setTagsContact(null)} disabled={tagsSaving}>
+                Cancelar
+              </Button>
+              <Button className="flex-1" onClick={saveTags} disabled={tagsSaving}>
+                {tagsSaving ? 'Guardando…' : 'Guardar etiquetas'}
               </Button>
             </div>
           </div>

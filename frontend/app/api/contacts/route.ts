@@ -151,7 +151,12 @@ export async function GET(req: NextRequest) {
               FROM contact_tags
               WHERE contact_id = contacts.id AND tag LIKE 'casino:antiguedad:%'
               LIMIT 1) AS antiguedad,
-             platforms
+             platforms,
+             COALESCE((
+               SELECT ARRAY_AGG(tag ORDER BY tag)
+               FROM contact_tags
+               WHERE contact_id = contacts.id AND tag NOT LIKE 'casino:%'
+             ), '{}') AS custom_tags
       FROM contacts
       WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
         AND ($4 = '' OR segment::text = $4)

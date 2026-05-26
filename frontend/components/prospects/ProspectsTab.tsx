@@ -14,6 +14,7 @@ import {
   Upload, RefreshCw, Trash2, Search, Send, History, AlertTriangle,
   CheckCircle, XCircle, ChevronLeft, ChevronRight, Eye, UserPlus,
   CheckSquare, List, ChevronDown, X, Filter, Users, Download,
+  Tag, Ban,
 } from 'lucide-react'
 import { Textarea } from '@/components/ui/textarea'
 import { fetchJson } from '@/lib/fetchJson'
@@ -163,6 +164,13 @@ export function ProspectsTab() {
 
   // ── Modal descarga
   const [showDownloadModal, setShowDownloadModal] = useState(false)
+
+  // ── Tags de prospecto
+  const [tagsInput, setTagsInput]   = useState('')
+  const [tagsSaving, setTagsSaving] = useState(false)
+
+  // ── Blacklist
+  const [blacklistSaving, setBlacklistSaving] = useState(false)
 
   // ── Dropdown custom de batches
   const [showBatchMenu, setShowBatchMenu] = useState(false)
@@ -599,6 +607,108 @@ export function ProspectsTab() {
     finally { setCreatingList(false) }
   }
 
+  // ── Tags de prospecto ─────────────────────────────────────────────────────
+
+  const addProspectTag = () => {
+    if (!detailProspect) return
+    const t = tagsInput.trim().toLowerCase().replace(/[^a-z0-9_\- ]/g, '')
+    if (!t || (detailProspect.tags ?? []).includes(t)) { setTagsInput(''); return }
+    const newTags = [...(detailProspect.tags ?? []), t]
+    setDetailProspect(p => p ? { ...p, tags: newTags } : p)
+    setTagsInput('')
+  }
+
+  const removeProspectTag = (tag: string) => {
+    if (!detailProspect) return
+    const newTags = (detailProspect.tags ?? []).filter(t => t !== tag)
+    setDetailProspect(p => p ? { ...p, tags: newTags } : p)
+  }
+
+  const saveProspectTags = async () => {
+    if (!detailProspect) return
+    setTagsSaving(true)
+    try {
+      await fetchJson(`/api/prospects/${detailProspect.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags: detailProspect.tags ?? [] }),
+      })
+      setProspects(prev => prev.map(p => p.id === detailProspect.id ? { ...p, tags: detailProspect.tags } : p))
+    } catch {
+      showInfo({ title: 'Error', message: 'No se pudieron guardar las etiquetas.', variant: 'error' })
+    } finally {
+      setTagsSaving(false)
+    }
+  }
+
+  // ── Blacklist ─────────────────────────────────────────────────────────────
+
+  const sendToBlacklist = async (phones: string[], onDone?: () => void) => {
+    setBlacklistSaving(true)
+    try {
+      const res = await fetch('/api/blacklist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phones }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        showInfo({ title: 'Error', message: data.error || 'Error al agregar a blacklist.', variant: 'error' })
+        return
+      }
+      onDone?.()
+    } catch {
+      showInfo({ title: 'Error', message: 'Error de conexión.', variant: 'error' })
+    } finally {
+      setBlacklistSaving(false)
+    }
+  }
+
+  const blacklistProspect = (p: Prospect) => {
+    showConfirm({
+      title: 'Agregar a blacklist',
+      message: `¿Agregar ${[p.first_name, p.last_name].filter(Boolean).join(' ') || p.phone_number} a la blacklist? No recibirá más mensajes.`,
+      confirmLabel: 'Agregar a blacklist',
+      variant: 'warning',
+      onConfirm: () => sendToBlacklist([p.phone_number], () => {
+        closeDetail()
+        showInfo({ title: 'Blacklist', message: 'Prospecto agregado a la blacklist.', variant: 'success' })
+      }),
+    })
+  }
+
+  const blacklistSelected = () => {
+    const count = selectAllMode ? total : selected.size
+    showConfirm({
+      title: 'Agregar a blacklist',
+      message: `¿Agregar ${count.toLocaleString()} prospecto(s) a la blacklist? No recibirán más mensajes.`,
+      confirmLabel: `Agregar ${count.toLocaleString()} a blacklist`,
+      variant: 'warning',
+      onConfirm: async () => {
+        if (selectAllMode) {
+          // Fetch all phones from current filter
+          const q = new URLSearchParams({ q: search, status: filterStatus, stage: filterStage, batch_id: filterBatch, list_id: filterList, download: 'true' })
+          try {
+            const data = await fetchJson<{ contacts: Prospect[] }>(`/api/prospects?${q}`)
+            const phones = (data.contacts ?? []).map((p: Prospect) => p.phone_number)
+            await sendToBlacklist(phones, () => {
+              setSelectAllMode(false)
+              showInfo({ title: 'Blacklist', message: `${phones.length.toLocaleString()} prospectos agregados a la blacklist.`, variant: 'success' })
+            })
+          } catch {
+            showInfo({ title: 'Error', message: 'Error al obtener prospectos.', variant: 'error' })
+          }
+        } else {
+          const phones = [...selected].map(id => prospects.find(p => p.id === id)?.phone_number).filter((ph): ph is string => !!ph)
+          await sendToBlacklist(phones, () => {
+            setSelected(new Set())
+            showInfo({ title: 'Blacklist', message: `${phones.length.toLocaleString()} prospectos agregados a la blacklist.`, variant: 'success' })
+          })
+        }
+      },
+    })
+  }
+
   // ── Conversión prospect → contacto ────────────────────────────────────────
 
   const openDetail = (e: React.MouseEvent, p: Prospect) => {
@@ -903,6 +1013,15 @@ export function ProspectsTab() {
                 </Button>
               </>
             )}
+            <Button
+              size="sm" variant="outline"
+              onClick={blacklistSelected}
+              disabled={blacklistSaving}
+              className="border-orange-200 text-orange-700 hover:bg-orange-50"
+            >
+              <Ban className="h-4 w-4 mr-1" />
+              {selectAllMode ? `Blacklist todos (${total.toLocaleString()})` : `Blacklist (${selected.size})`}
+            </Button>
             <Button size="sm" variant="destructive" onClick={deleteSelected}>
               <Trash2 className="h-4 w-4 mr-1" />
               {selectAllMode ? `Eliminar todos (${total.toLocaleString()})` : `Eliminar (${selected.size})`}
@@ -1529,16 +1648,53 @@ export function ProspectsTab() {
                   </div>
                 )}
 
-                {detailProspect.tags?.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {detailProspect.tags.map(t => (
-                      <Badge key={t} variant="outline" className="text-xs">{t}</Badge>
+                {/* Editor de etiquetas */}
+                <div className="space-y-2">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1">
+                    <Tag className="h-3 w-3" /> Etiquetas
+                  </span>
+                  <div className="flex flex-wrap gap-1.5 min-h-[24px]">
+                    {(detailProspect.tags ?? []).map(t => (
+                      <span key={t} className="inline-flex items-center gap-1 text-xs bg-indigo-50 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded-full">
+                        {t}
+                        <button type="button" onClick={() => removeProspectTag(t)} className="hover:text-indigo-900">
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </span>
                     ))}
+                    {(detailProspect.tags ?? []).length === 0 && (
+                      <span className="text-xs text-muted-foreground italic">Sin etiquetas</span>
+                    )}
                   </div>
-                )}
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      className="flex-1 text-xs border border-input rounded-md px-2.5 py-1.5 bg-background focus:outline-none focus:ring-1 focus:ring-ring"
+                      placeholder="Nueva etiqueta…"
+                      value={tagsInput}
+                      onChange={e => setTagsInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addProspectTag() } }}
+                      maxLength={50}
+                    />
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={addProspectTag} disabled={!tagsInput.trim()}>
+                      Agregar
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={saveProspectTags} disabled={tagsSaving}>
+                      {tagsSaving ? '…' : 'Guardar'}
+                    </Button>
+                  </div>
+                </div>
               </div>
 
-              <DialogFooter className="gap-2">
+              <DialogFooter className="gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  onClick={() => blacklistProspect(detailProspect)}
+                  disabled={blacklistSaving}
+                  className="border-orange-200 text-orange-700 hover:bg-orange-50"
+                >
+                  <Ban className="h-4 w-4 mr-1" /> Blacklist
+                </Button>
                 <Button variant="outline" onClick={closeDetail}>Cerrar</Button>
                 {detailProspect.status === 'active' && !detailProspect.converted_to_contact_id && (
                   <Button
