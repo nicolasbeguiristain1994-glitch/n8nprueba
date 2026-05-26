@@ -169,6 +169,7 @@ export default function Contacts() {
   const [filterAntiguedad, setFilterAntiguedad] = useState('')
   const [filterPlataforma, setFilterPlataforma] = useState('')
   const [filterSinMovimiento, setFilterSinMovimiento] = useState(false)
+  const [filterTag, setFilterTag]                     = useState('')
 
   // ── Paginación (TanStack format) ──────────────────────────────────────────
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 })
@@ -290,12 +291,13 @@ export default function Contacts() {
       ...(filterList          ? { list_id: filterList }          : {}),
       ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
       ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
+      ...(filterTag           ? { tag: filterTag }               : {}),
     })
     fetchJson<{ contacts: Contact[]; total: number }>(`/api/contacts?${q}`)
       .then(d => { setContacts(d.contacts || []); setTotal(d.total || 0) })
       .catch(() => { setContacts([]); setTotal(0) })
       .finally(() => setLoading(false))
-  }, [search, pagination.pageIndex, segment, filterGaming, filterPanel, filterLinea, filterActividad, filterAntiguedad, filterList, filterPlataforma, filterSinMovimiento])
+  }, [search, pagination.pageIndex, segment, filterGaming, filterPanel, filterLinea, filterActividad, filterAntiguedad, filterList, filterPlataforma, filterSinMovimiento, filterTag])
 
   useEffect(() => { load() }, [load])
   const reloadLists = useCallback(() => {
@@ -772,9 +774,16 @@ export default function Contacts() {
               {platforms.length === 0 && hasName && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-gray-100 text-gray-500">otros</span>}
             </div>
             {customTags.length > 0 && (
-              <div className="flex flex-wrap gap-1">
+              <div className="flex flex-wrap gap-1" onClick={e => e.stopPropagation()}>
                 {customTags.map(t => (
-                  <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-indigo-50 text-indigo-600 border border-indigo-200">{t}</span>
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => { setFilterTag(t); resetPage() }}
+                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium border transition-colors cursor-pointer hover:bg-indigo-100 ${filterTag === t ? 'bg-indigo-200 border-indigo-400 text-indigo-800' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}
+                  >
+                    {t}
+                  </button>
                 ))}
               </div>
             )}
@@ -1255,6 +1264,26 @@ export default function Contacts() {
         >
           Sin movimiento
         </button>
+
+        {/* ── Filtro por etiqueta ── */}
+        <div className="relative">
+          <Tag size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Etiqueta…"
+            value={filterTag}
+            onChange={e => { setFilterTag(e.target.value.trim().toLowerCase()); resetPage() }}
+            className="pl-7 h-8 text-xs w-36"
+          />
+          {filterTag && (
+            <button
+              type="button"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              onClick={() => { setFilterTag(''); resetPage() }}
+            >
+              <X size={11} />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Badge de lista activa */}

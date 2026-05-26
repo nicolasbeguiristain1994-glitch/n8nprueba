@@ -41,6 +41,7 @@ export async function GET(req: NextRequest) {
   const listIdRaw  = req.nextUrl.searchParams.get('list_id') || ''
   const listId     = listIdRaw && /^[0-9a-f-]{36}$/i.test(listIdRaw) ? listIdRaw : ''
   const plataforma    = req.nextUrl.searchParams.get('plataforma') || ''
+  const filterTag     = (req.nextUrl.searchParams.get('tag') || '').trim().slice(0, 100)
   // Filtro "Sin movimiento": contactos sin depósitos en los últimos 12 meses
   const sinMovimiento = req.nextUrl.searchParams.get('sin_movimiento') === 'true'
 
@@ -128,10 +129,21 @@ export async function GET(req: NextRequest) {
     : ''
   const agentParams = agentAllowed ? [agentAllowed] : []
 
+  // tag filter — appended as last param after vis+agent params
+  const tagMainIdx    = 11 + vis.params.length + agentParams.length
+  const tagFilterMain = filterTag
+    ? ` AND EXISTS (SELECT 1 FROM contact_tags ct WHERE ct.contact_id = contacts.id AND ct.tag = $${tagMainIdx} AND ct.tag NOT LIKE 'casino:%')`
+    : ''
+  const tagParams = filterTag ? [filterTag] : []
+
   // 8 base params for count query (no limit/offset): $1-$7 same, $8=list_id
   const vis7          = visibilityClause(user.role, user.user_id, 8)
   const agentFilterCt = agentAllowed
     ? ` AND panel = ANY($${9 + vis7.params.length}::text[])`
+    : ''
+  const tagCountIdx    = 9 + vis7.params.length + agentParams.length
+  const tagFilterCount = filterTag
+    ? ` AND EXISTS (SELECT 1 FROM contact_tags ct WHERE ct.contact_id = contacts.id AND ct.tag = $${tagCountIdx} AND ct.tag NOT LIKE 'casino:%')`
     : ''
 
   try {
@@ -174,11 +186,11 @@ export async function GET(req: NextRequest) {
         AND ($10 = '' OR id IN (
           SELECT contact_id FROM contact_list_members WHERE list_id = $10::uuid
         ))
-        ${vis.sql}${agentFilter}${plataformaFilter}${sinMovimientoFilter}
+        ${vis.sql}${agentFilter}${tagFilterMain}${plataformaFilter}${sinMovimientoFilter}
       ORDER BY created_at DESC
       LIMIT $2 OFFSET $3
     `, [`%${search}%`, limit, offset, segment, gaming, panel, linea, actividad, antiguedad, listId,
-        ...vis.params, ...agentParams])
+        ...vis.params, ...agentParams, ...tagParams])
 
     const [{ count }] = await query<{ count: string }>(
       `SELECT COUNT(*) FROM contacts
@@ -198,9 +210,9 @@ export async function GET(req: NextRequest) {
          AND ($8 = '' OR id IN (
            SELECT contact_id FROM contact_list_members WHERE list_id = $8::uuid
          ))
-         ${vis7.sql}${agentFilterCt}${plataformaFilter}${sinMovimientoFilter}`,
+         ${vis7.sql}${agentFilterCt}${tagFilterCount}${plataformaFilter}${sinMovimientoFilter}`,
       [`%${search}%`, segment, gaming, panel, linea, actividad, antiguedad, listId,
-       ...vis7.params, ...agentParams]
+       ...vis7.params, ...agentParams, ...tagParams]
     )
 
     return NextResponse.json({ contacts: rows, total: Number(count), page, limit })

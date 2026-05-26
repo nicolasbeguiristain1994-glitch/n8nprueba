@@ -117,6 +117,7 @@ export function ProspectsTab() {
   const [filterBatch, setFilterBatch] = useState('')
   const [filterStatus, setFilterStatus] = useState('')   // '' = todos
   const [filterStage, setFilterStage]   = useState('')   // '' = todas las etapas
+  const [filterTag, setFilterTag]       = useState('')   // '' = todas las etiquetas
   const [page, setPage]             = useState(1)
   const limit = 50
 
@@ -215,6 +216,7 @@ export function ProspectsTab() {
         status:   filterStatus,
         stage:    filterStage,
         list_id:  filterList,
+        tag:      filterTag,
       })
       const data = await fetchJson<{ prospects: Prospect[]; total: number }>(`/api/prospects?${q}`)
       setProspects(data.prospects ?? [])
@@ -222,13 +224,13 @@ export function ProspectsTab() {
     } finally {
       setLoading(false)
     }
-  }, [search, page, filterBatch, filterStatus, filterStage, filterList])
+  }, [search, page, filterBatch, filterStatus, filterStage, filterList, filterTag])
 
   // Limpiar selección cuando cambian los filtros (pero NO al cambiar de página)
   useEffect(() => {
     setSelected(new Set())
     setSelectAllMode(false)
-  }, [search, filterBatch, filterStatus, filterStage, filterList])
+  }, [search, filterBatch, filterStatus, filterStage, filterList, filterTag])
 
   useEffect(() => { load() }, [load])
 
@@ -830,6 +832,25 @@ export function ProspectsTab() {
           />
         </div>
 
+        <div className="relative min-w-[160px]">
+          <Tag className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Filtrar por etiqueta…"
+            value={filterTag}
+            onChange={e => { setFilterTag(e.target.value.trim().toLowerCase()); setPage(1) }}
+            className="pl-8 text-sm"
+          />
+          {filterTag && (
+            <button
+              type="button"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              onClick={() => { setFilterTag(''); setPage(1) }}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
         <Select value={filterStatus || 'all'} onValueChange={v => { setFilterStatus(!v || v === 'all' ? '' : v); setPage(1) }}>
           <SelectTrigger className="w-36">
             <SelectValue placeholder="Estado" />
@@ -1146,9 +1167,16 @@ export function ProspectsTab() {
                       )}
                     </span>
                     {(p.tags ?? []).length > 0 && (
-                      <div className="flex flex-wrap gap-1">
+                      <div className="flex flex-wrap gap-1" onClick={e => e.stopPropagation()}>
                         {(p.tags ?? []).map(t => (
-                          <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-indigo-50 text-indigo-600 border border-indigo-200">{t}</span>
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => { setFilterTag(t); setPage(1) }}
+                            className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium border transition-colors cursor-pointer hover:bg-indigo-100 ${filterTag === t ? 'bg-indigo-200 border-indigo-400 text-indigo-800' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}
+                          >
+                            {t}
+                          </button>
                         ))}
                       </div>
                     )}

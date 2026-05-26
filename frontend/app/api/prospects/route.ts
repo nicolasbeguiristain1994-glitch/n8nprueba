@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
   const stage    = sp.get('stage')    || ''
   const batchId  = sp.get('batch_id') || ''
   const listId   = sp.get('list_id')  || ''
+  const filterTag = (sp.get('tag') || '').trim().slice(0, 100)
   const download = sp.get('download') === 'true'
   const page     = download ? 1 : Math.max(1, Number(sp.get('page') || 1))
   const limit    = download ? 100_000 : Math.min(200, Math.max(1, Number(sp.get('limit') || 50)))
@@ -49,6 +50,7 @@ export async function GET(req: NextRequest) {
             SELECT 1 FROM prospect_list_members plm
             WHERE plm.prospect_id = p.id AND plm.prospect_list_id::text = $5
           ))
+          AND ($9 = '' OR p.tags @> ARRAY[$9]::text[])
         ORDER BY
           CASE
             WHEN $8 = '' THEN NULL::int
@@ -60,7 +62,7 @@ export async function GET(req: NextRequest) {
                ELSE LENGTH(COALESCE(p.first_name,'') || COALESCE(p.last_name,'')) END NULLS LAST,
           p.created_at DESC
         LIMIT $6 OFFSET $7
-      `, [`%${search}%`, status, stage, batchId, listId, limit, offset, search])
+      `, [`%${search}%`, status, stage, batchId, listId, limit, offset, search, filterTag])
     } catch (e) {
       // Fallback: migración 098/099 no aplicadas aún en este entorno
       const msg = e instanceof Error ? e.message : ''
@@ -78,6 +80,7 @@ export async function GET(req: NextRequest) {
           WHERE ($1 = '' OR p.phone_number ILIKE $1 OR p.first_name ILIKE $1 OR p.last_name ILIKE $1)
             AND ($2 = '' OR p.status = $2)
             AND ($3 = '' OR p.import_batch_id::text = $3)
+            AND ($7 = '' OR p.tags @> ARRAY[$7]::text[])
           ORDER BY
             CASE
               WHEN $6 = '' THEN NULL::int
@@ -89,7 +92,7 @@ export async function GET(req: NextRequest) {
                  ELSE LENGTH(COALESCE(p.first_name,'') || COALESCE(p.last_name,'')) END NULLS LAST,
             p.created_at DESC
           LIMIT $4 OFFSET $5
-        `, [`%${search}%`, status, batchId, limit, offset, search])
+        `, [`%${search}%`, status, batchId, limit, offset, search, filterTag])
       } else {
         throw e
       }
@@ -104,8 +107,9 @@ export async function GET(req: NextRequest) {
              AND ($4 = '' OR EXISTS (
                SELECT 1 FROM prospect_list_members plm
                WHERE plm.prospect_id = p.id AND plm.prospect_list_id::text = $4
-             ))`,
-          [`%${search}%`, status, batchId, listId]
+             ))
+             AND ($5 = '' OR p.tags @> ARRAY[$5]::text[])`,
+          [`%${search}%`, status, batchId, listId, filterTag]
         )
       : await query<{ count: string }>(
           `SELECT COUNT(*) FROM prospects p
@@ -116,8 +120,9 @@ export async function GET(req: NextRequest) {
              AND ($5 = '' OR EXISTS (
                SELECT 1 FROM prospect_list_members plm
                WHERE plm.prospect_id = p.id AND plm.prospect_list_id::text = $5
-             ))`,
-          [`%${search}%`, status, stage, batchId, listId]
+             ))
+             AND ($6 = '' OR p.tags @> ARRAY[$6]::text[])`,
+          [`%${search}%`, status, stage, batchId, listId, filterTag]
         )
 
     if (download) return NextResponse.json({ contacts: rows })
