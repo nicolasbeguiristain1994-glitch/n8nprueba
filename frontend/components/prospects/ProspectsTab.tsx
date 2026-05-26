@@ -141,6 +141,8 @@ export function ProspectsTab() {
   const [autoPrefix, setAutoPrefix]       = useState('')    // p.ej. '+549' para Argentina
   const [autoNumber, setAutoNumber]       = useState(false) // numerar contactos con nombre repetido
   const [repeatName, setRepeatName]       = useState<string | null>(null) // nombre que se repite, si aplica
+  const [mostlyNoNames, setMostlyNoNames] = useState(false) // mayoría sin nombre → ofrecer prefijo manual
+  const [manualPrefix, setManualPrefix]   = useState('')    // prefijo ingresado por el usuario (ej: "Trebol")
   const fileRef = useRef<HTMLInputElement>(null)
 
   // ── Modal agregar a campaña
@@ -487,6 +489,10 @@ export function ProspectsTab() {
     const detected = names.length >= 2 && uniqueNames.size === 1 ? names[0] : null
     setRepeatName(detected)
     setAutoNumber(detected !== null)
+    // Detectar si la mayoría no tiene nombre → ofrecer prefijo manual
+    const noNameCount = validRows.filter(r => !(r.first_name ?? '').trim()).length
+    setMostlyNoNames(validRows.length > 0 && noNameCount > validRows.length * 0.8)
+    setManualPrefix('')
     setImportOpen(true)
   }
 
@@ -503,9 +509,12 @@ export function ProspectsTab() {
       const phone = autoPrefix && !r.phone.startsWith('+54')
         ? autoPrefix + r.phone.slice(1)
         : r.phone
-      const first_name = autoNumber && repeatName && r.first_name?.trim() === repeatName
-        ? `${repeatName} ${i + 1}`
-        : r.first_name
+      let first_name = r.first_name
+      if (autoNumber && repeatName && r.first_name?.trim() === repeatName) {
+        first_name = `${repeatName} ${i + 1}`
+      } else if (manualPrefix.trim() && !(r.first_name ?? '').trim()) {
+        first_name = `${manualPrefix.trim()} ${i + 1}`
+      }
       return { phone, first_name, last_name: r.last_name, email: r.email }
     })
     const chunks: typeof allRows[] = []
@@ -1257,9 +1266,13 @@ export function ProspectsTab() {
                         {parsedRows.slice(0, 5).map((r, i) => {
                           const needsFix = autoPrefix && !r.phone.startsWith('+54')
                           const displayPhone = needsFix ? autoPrefix + r.phone.slice(1) : r.phone
-                          const displayName = autoNumber && repeatName && r.first_name?.trim() === repeatName
+                          const hasRepeat = autoNumber && repeatName && r.first_name?.trim() === repeatName
+                          const hasManual = manualPrefix.trim() && !(r.first_name ?? '').trim()
+                          const displayName = hasRepeat
                             ? `${repeatName} ${i + 1}`
-                            : r.first_name
+                            : hasManual
+                              ? `${manualPrefix.trim()} ${i + 1}`
+                              : r.first_name
                           return (
                             <tr key={i}>
                               <td className="px-3 py-1.5 font-mono">
@@ -1268,7 +1281,7 @@ export function ProspectsTab() {
                                   : r.phone}
                               </td>
                               <td className="px-3 py-1.5">
-                                {autoNumber && repeatName && r.first_name?.trim() === repeatName
+                                {(hasRepeat || hasManual)
                                   ? <span className="text-indigo-600 font-medium">{displayName}</span>
                                   : [displayName, r.last_name].filter(Boolean).join(' ') || '—'}
                               </td>
@@ -1345,6 +1358,41 @@ export function ProspectsTab() {
                     </div>
                   )
                 })()}
+
+                {/* ── Nombre base cuando la mayoría no tiene nombre ── */}
+                {mostlyNoNames && !repeatName && (
+                  <div className="rounded-md border border-indigo-200 bg-indigo-50 dark:bg-indigo-950/20 dark:border-indigo-800 px-4 py-3 text-sm space-y-2">
+                    <div className="flex items-center gap-1.5 text-indigo-700 dark:text-indigo-300">
+                      <UserPlus className="h-4 w-4 shrink-0" />
+                      <span>La mayoría de contactos no tiene nombre. Podés asignar un nombre base para numerarlos.</span>
+                    </div>
+                    <div className="flex gap-2 items-center">
+                      <Input
+                        placeholder="Ej: Trebol"
+                        value={manualPrefix}
+                        onChange={e => setManualPrefix(e.target.value)}
+                        className="h-8 text-sm flex-1"
+                      />
+                      {manualPrefix.trim() && (
+                        <button
+                          type="button"
+                          className="text-xs text-muted-foreground underline hover:no-underline"
+                          onClick={() => setManualPrefix('')}
+                        >
+                          Quitar
+                        </button>
+                      )}
+                    </div>
+                    {manualPrefix.trim() && (
+                      <p className="text-xs text-indigo-600 dark:text-indigo-400">
+                        Se importarán como{' '}
+                        <span className="font-mono">{manualPrefix.trim()} 1</span>,{' '}
+                        <span className="font-mono">{manualPrefix.trim()} 2</span>,{' '}
+                        <span className="font-mono">{manualPrefix.trim()} 3</span>…
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* ── Numeración automática cuando todos tienen el mismo nombre ── */}
                 {repeatName && (
