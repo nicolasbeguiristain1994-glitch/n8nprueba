@@ -677,14 +677,20 @@ export default function Contacts() {
   const saveTags = async () => {
     if (!tagsContact) return
     setTagsSaving(true); setTagsError(null)
+    // Si hay texto en el input, lo agregamos antes de guardar
+    const pending = tagsInput.trim().toLowerCase().replace(/[^a-z0-9_\- ]/g, '')
+    const finalTags = pending && !tagsValue.includes(pending)
+      ? [...tagsValue, pending]
+      : tagsValue
+    if (pending) { setTagsValue(finalTags); setTagsInput('') }
     try {
       const res = await fetch(`/api/contacts/${tagsContact.id}/tags`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tags: tagsValue }),
+        body: JSON.stringify({ tags: finalTags }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) { setTagsError(data.error || 'Error al guardar'); return }
-      setContacts(cs => cs.map(c => c.id === tagsContact.id ? { ...c, custom_tags: tagsValue } : c))
+      setContacts(cs => cs.map(c => c.id === tagsContact.id ? { ...c, custom_tags: finalTags } : c))
       setTagsContact(null)
     } catch { setTagsError('Error de conexión') }
     finally { setTagsSaving(false) }

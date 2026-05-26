@@ -627,13 +627,24 @@ export function ProspectsTab() {
   const saveProspectTags = async () => {
     if (!detailProspect) return
     setTagsSaving(true)
+    // Si hay texto en el input, lo agregamos antes de guardar
+    const pending = tagsInput.trim().toLowerCase().replace(/[^a-z0-9_\- ]/g, '')
+    const currentTags = detailProspect.tags ?? []
+    const finalTags = pending && !currentTags.includes(pending)
+      ? [...currentTags, pending]
+      : currentTags
+    if (pending) {
+      setDetailProspect(p => p ? { ...p, tags: finalTags } : p)
+      setTagsInput('')
+    }
     try {
       await fetchJson(`/api/prospects/${detailProspect.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tags: detailProspect.tags ?? [] }),
+        body: JSON.stringify({ tags: finalTags }),
       })
-      setProspects(prev => prev.map(p => p.id === detailProspect.id ? { ...p, tags: detailProspect.tags } : p))
+      setProspects(prev => prev.map(p => p.id === detailProspect.id ? { ...p, tags: finalTags } : p))
+      showInfo({ title: 'Etiquetas guardadas', message: `${finalTags.length} etiqueta(s) guardada(s).`, variant: 'success' })
     } catch {
       showInfo({ title: 'Error', message: 'No se pudieron guardar las etiquetas.', variant: 'error' })
     } finally {
