@@ -132,7 +132,7 @@ export async function GET(req: NextRequest) {
   // tag filter — appended as last param after vis+agent params
   const tagMainIdx    = 11 + vis.params.length + agentParams.length
   const tagFilterMain = filterTag
-    ? ` AND EXISTS (SELECT 1 FROM contact_tags ct WHERE ct.contact_id = contacts.id AND ct.tag = $${tagMainIdx} AND ct.tag NOT LIKE 'casino:%')`
+    ? ` AND EXISTS (SELECT 1 FROM contact_tags ct WHERE ct.contact_id = contacts.id AND ct.tag ILIKE '%' || $${tagMainIdx} || '%' AND ct.tag NOT LIKE 'casino:%')`
     : ''
   const tagParams = filterTag ? [filterTag] : []
 
@@ -143,7 +143,7 @@ export async function GET(req: NextRequest) {
     : ''
   const tagCountIdx    = 9 + vis7.params.length + agentParams.length
   const tagFilterCount = filterTag
-    ? ` AND EXISTS (SELECT 1 FROM contact_tags ct WHERE ct.contact_id = contacts.id AND ct.tag = $${tagCountIdx} AND ct.tag NOT LIKE 'casino:%')`
+    ? ` AND EXISTS (SELECT 1 FROM contact_tags ct WHERE ct.contact_id = contacts.id AND ct.tag ILIKE '%' || $${tagCountIdx} || '%' AND ct.tag NOT LIKE 'casino:%')`
     : ''
 
   try {

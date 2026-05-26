@@ -837,7 +837,7 @@ export function ProspectsTab() {
           <Input
             placeholder="Filtrar por etiqueta…"
             value={filterTag}
-            onChange={e => { setFilterTag(e.target.value.trim().toLowerCase()); setPage(1) }}
+            onChange={e => { setFilterTag(e.target.value.toLowerCase()); setPage(1) }}
             className="pl-8 text-sm"
           />
           {filterTag && (

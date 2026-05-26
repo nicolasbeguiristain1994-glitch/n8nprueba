@@ -1271,7 +1271,7 @@ export default function Contacts() {
           <Input
             placeholder="Etiqueta…"
             value={filterTag}
-            onChange={e => { setFilterTag(e.target.value.trim().toLowerCase()); resetPage() }}
+            onChange={e => { setFilterTag(e.target.value.toLowerCase()); resetPage() }}
             className="pl-7 h-8 text-xs w-36"
           />
           {filterTag && (

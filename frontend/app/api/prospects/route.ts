@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
             SELECT 1 FROM prospect_list_members plm
             WHERE plm.prospect_id = p.id AND plm.prospect_list_id::text = $5
           ))
-          AND ($9 = '' OR p.tags @> ARRAY[$9]::text[])
+          AND ($9 = '' OR EXISTS (SELECT 1 FROM unnest(p.tags) t(tag) WHERE t.tag ILIKE '%' || $9 || '%'))
         ORDER BY
           CASE
             WHEN $8 = '' THEN NULL::int
@@ -80,7 +80,7 @@ export async function GET(req: NextRequest) {
           WHERE ($1 = '' OR p.phone_number ILIKE $1 OR p.first_name ILIKE $1 OR p.last_name ILIKE $1)
             AND ($2 = '' OR p.status = $2)
             AND ($3 = '' OR p.import_batch_id::text = $3)
-            AND ($7 = '' OR p.tags @> ARRAY[$7]::text[])
+            AND ($7 = '' OR EXISTS (SELECT 1 FROM unnest(p.tags) t(tag) WHERE t.tag ILIKE '%' || $7 || '%'))
           ORDER BY
             CASE
               WHEN $6 = '' THEN NULL::int
@@ -108,7 +108,7 @@ export async function GET(req: NextRequest) {
                SELECT 1 FROM prospect_list_members plm
                WHERE plm.prospect_id = p.id AND plm.prospect_list_id::text = $4
              ))
-             AND ($5 = '' OR p.tags @> ARRAY[$5]::text[])`,
+             AND ($5 = '' OR EXISTS (SELECT 1 FROM unnest(p.tags) t(tag) WHERE t.tag ILIKE '%' || $5 || '%'))`,
           [`%${search}%`, status, batchId, listId, filterTag]
         )
       : await query<{ count: string }>(
@@ -121,7 +121,7 @@ export async function GET(req: NextRequest) {
                SELECT 1 FROM prospect_list_members plm
                WHERE plm.prospect_id = p.id AND plm.prospect_list_id::text = $5
              ))
-             AND ($6 = '' OR p.tags @> ARRAY[$6]::text[])`,
+             AND ($6 = '' OR EXISTS (SELECT 1 FROM unnest(p.tags) t(tag) WHERE t.tag ILIKE '%' || $6 || '%'))`,
           [`%${search}%`, status, stage, batchId, listId, filterTag]
         )
 
