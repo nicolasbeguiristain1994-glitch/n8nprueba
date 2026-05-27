@@ -1,6 +1,10 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { SegmentationTab } from '@/components/settings/SegmentationTab'
+import { ScoringTab } from '@/components/settings/ScoringTab'
+import { FrequencyRulesTab } from '@/components/settings/FrequencyRulesTab'
+import { AuditLogTab } from '@/components/settings/AuditLogTab'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -202,6 +206,10 @@ export default function SettingsPage() {
           <TabsTrigger value="casino">Casino</TabsTrigger>
           <TabsTrigger value="limits">Límites</TabsTrigger>
           <TabsTrigger value="perms">Permisos</TabsTrigger>
+          <TabsTrigger value="segmentacion">Segmentación</TabsTrigger>
+          <TabsTrigger value="scoring">Motor de Prioridades</TabsTrigger>
+          <TabsTrigger value="frecuencia">Frecuencia</TabsTrigger>
+          <TabsTrigger value="auditoria">Auditoría</TabsTrigger>
         </TabsList>
 
         {/* ── General ─────────────────────────────────────────────────── */}
@@ -480,6 +488,26 @@ export default function SettingsPage() {
               <SaveRow section="perms" />
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* ── Segmentación ─────────────────────────────────────────────── */}
+        <TabsContent value="segmentacion" className="mt-4">
+          <SegmentationTab />
+        </TabsContent>
+
+        {/* ── Motor de Prioridades ─────────────────────────────────────── */}
+        <TabsContent value="scoring" className="mt-4">
+          <ScoringTab />
+        </TabsContent>
+
+        {/* ── Frecuencia ───────────────────────────────────────────────── */}
+        <TabsContent value="frecuencia" className="mt-4">
+          <FrequencyRulesTab />
+        </TabsContent>
+
+        {/* ── Auditoría ────────────────────────────────────────────────── */}
+        <TabsContent value="auditoria" className="mt-4">
+          <AuditLogTab />
         </TabsContent>
       </Tabs>
     </div>
