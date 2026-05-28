@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
   const selectAll = req.nextUrl.searchParams.get('select_all') === 'true'
   const page      = Number(req.nextUrl.searchParams.get('page') || 1)
   const limit     = download ? 100000 : 50
-  const offset    = download ? 0 : (page - 1) * limit
+  const offset    = (page - 1) * limit
   const linea      = req.nextUrl.searchParams.get('linea') || ''
   const actividad  = req.nextUrl.searchParams.get('actividad') || ''
   const antiguedad = req.nextUrl.searchParams.get('antiguedad') || ''

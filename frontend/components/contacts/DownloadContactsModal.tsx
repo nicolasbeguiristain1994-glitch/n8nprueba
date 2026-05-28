@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -33,6 +33,8 @@ export function DownloadContactsModal({
   const [batchSize, setBatchSize]     = useState(30)
   const [downloading, setDownloading] = useState(false)
   const [error, setError]             = useState<string | null>(null)
+  const [progress, setProgress]       = useState<{ loaded: number; total: number } | null>(null)
+  const cancelRef                     = useRef(false)
 
   const partCount = splitting && batchSize > 0
     ? Math.ceil(contactCount / batchSize)
@@ -41,21 +43,39 @@ export function DownloadContactsModal({
   const handleDownload = async () => {
     setDownloading(true)
     setError(null)
+    setProgress(null)
+    cancelRef.current = false
 
     try {
-      const params = new URLSearchParams(fetchParams)
-      params.set('download', 'true')
+      const baseParams = new URLSearchParams(fetchParams)
+      baseParams.set('download', 'true')
 
-      const res = await fetch(`${apiEndpoint}?${params}`)
-      if (!res.ok) {
-        const d = await res.json().catch(() => ({}))
-        throw new Error(d.error || `Error ${res.status}`)
-      }
+      let allContacts: ExportableContact[] = []
+      let currentPage = 1
+      let total = 0
 
-      const data = await res.json()
-      const contacts: ExportableContact[] = data.contacts ?? []
+      do {
+        if (cancelRef.current) throw new Error('Descarga cancelada')
+        const params = new URLSearchParams(baseParams)
+        params.set('page', String(currentPage))
 
-      if (contacts.length === 0) {
+        const res = await fetch(`${apiEndpoint}?${params}`)
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}))
+          throw new Error(d.error || `Error ${res.status}`)
+        }
+
+        const data = await res.json()
+        const batch: ExportableContact[] = data.contacts ?? []
+        total = data.total ?? batch.length
+        allContacts = allContacts.concat(batch)
+        setProgress({ loaded: allContacts.length, total })
+        currentPage++
+
+        if (batch.length === 0) break
+      } while (allContacts.length < total)
+
+      if (allContacts.length === 0) {
         throw new Error('No hay contactos para descargar')
       }
 
@@ -63,9 +83,9 @@ export function DownloadContactsModal({
       const basename = `contactos_${filenameHint}_${date}`
 
       if (splitting) {
-        await downloadZippedVcf(contacts, batchSize, basename)
+        await downloadZippedVcf(allContacts, batchSize, basename)
       } else {
-        downloadSingleVcf(contacts, `${basename}.vcf`)
+        downloadSingleVcf(allContacts, `${basename}.vcf`)
       }
 
       onClose()
@@ -73,11 +93,15 @@ export function DownloadContactsModal({
       setError(e instanceof Error ? e.message : 'Error inesperado al descargar')
     } finally {
       setDownloading(false)
+      setProgress(null)
     }
   }
 
   const handleClose = () => {
-    if (downloading) return
+    if (downloading) {
+      cancelRef.current = true
+      return
+    }
     setError(null)
     onClose()
   }
@@ -171,6 +195,21 @@ export function DownloadContactsModal({
             }
           </div>
 
+          {/* Progreso de descarga multi-página */}
+          {downloading && progress && (
+            <div className="space-y-1.5">
+              <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
+                <div
+                  className="bg-teal-500 h-1.5 rounded-full transition-all duration-300"
+                  style={{ width: `${Math.min(100, (progress.loaded / progress.total) * 100)}%` }}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground text-center tabular-nums">
+                Cargando {progress.loaded.toLocaleString('es-AR')} / {progress.total.toLocaleString('es-AR')} contactos…
+              </p>
+            </div>
+          )}
+
           {error && (
             <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
               {error}
@@ -182,7 +221,6 @@ export function DownloadContactsModal({
               variant="outline"
               className="flex-1"
               onClick={handleClose}
-              disabled={downloading}
             >
               Cancelar
             </Button>
