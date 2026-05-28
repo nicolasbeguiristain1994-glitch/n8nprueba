@@ -58,10 +58,12 @@
  */
 
 import { withTransaction }                      from '@/lib/db'
+import { getAll as getScoringConfigFromDB }     from '@/lib/scoring-config-service'
 import { ContactFrequencyRulesRepository }      from './repositories/ContactFrequencyRulesRepository'
 import { ContactSendHistoryRepository }         from './repositories/ContactSendHistoryRepository'
 import { resolveApplicableRule }                from './rules'
 import { calculateRiskScore }                   from './risk-scorer'
+import type { ScorerConfig }                    from './risk-scorer'
 import { logFrequencyDecision, logFrequencyError } from './logger'
 import { recordDecision, recordError }             from './metrics'
 import type {
@@ -88,6 +90,22 @@ const ADVISORY_LOCK_NAMESPACE = 50
 const rulesRepo   = new ContactFrequencyRulesRepository()
 const historyRepo = new ContactSendHistoryRepository()
 
+// ── Builder de ScorerConfig desde scoring_config DB ──────────────────────────
+
+async function loadScorerConfig(): Promise<ScorerConfig> {
+  const raw = await getScoringConfigFromDB()
+  return {
+    allowThreshold:     raw.allow_threshold,
+    delayThreshold:     raw.delay_threshold,
+    cooldownMultiplier: raw.cooldown_multiplier,
+    weights: {
+      daily:    raw.risk_weight_daily,
+      weekly:   raw.risk_weight_weekly,
+      cooldown: raw.risk_weight_cooldown,
+    },
+  }
+}
+
 // ── Motor ─────────────────────────────────────────────────────────────────────
 
 export class ContactFrequencyEngine {
@@ -107,10 +125,13 @@ export class ContactFrequencyEngine {
     const { contactId, operatorId, campaignId, segMonto, segActividad } = input
     const evaluatedAt = new Date()
 
-    const profile        = await historyRepo.getFrequencyProfile(contactId)
-    const rules          = await rulesRepo.findActiveRulesForContext(operatorId)
+    const [profile, rules, scorerCfg] = await Promise.all([
+      historyRepo.getFrequencyProfile(contactId),
+      rulesRepo.findActiveRulesForContext(operatorId),
+      loadScorerConfig(),
+    ])
     const applicableRule = resolveApplicableRule(rules, operatorId, segMonto, segActividad)
-    const { decision, riskScore, reason } = calculateRiskScore(profile, applicableRule)
+    const { decision, riskScore, reason } = calculateRiskScore(profile, applicableRule, scorerCfg)
 
     logFrequencyDecision({
       contact_id:  contactId,
@@ -163,6 +184,10 @@ export class ContactFrequencyEngine {
     const evaluatedAt = new Date()
     const startMs     = Date.now()
 
+    // Cargar scoring config ANTES de la transacción: es una lectura de cache (Redis),
+    // no debe retener el advisory lock mientras espera.
+    const scorerCfg = await loadScorerConfig()
+
     const txResult = await withTransaction(async (client) => {
 
       // ── Paso 1: Advisory Lock ───────────────────────────────────────────────
@@ -193,7 +218,7 @@ export class ContactFrequencyEngine {
       // ── Paso 3: Resolver regla y calcular decisión ──────────────────────────
       const rules          = await rulesRepo.findActiveRulesForContext(operatorId, client)
       const applicableRule = resolveApplicableRule(rules, operatorId, segMonto, segActividad)
-      const { decision, riskScore, reason } = calculateRiskScore(profile, applicableRule)
+      const { decision, riskScore, reason } = calculateRiskScore(profile, applicableRule, scorerCfg)
 
       // ── Paso 4: Pre-registrar si no es BLOCK ───────────────────────────────
       //

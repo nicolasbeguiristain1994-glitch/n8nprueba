@@ -4,7 +4,7 @@ import {
   REACTIVATION_SEGMENT_RULES,
   DEPOSIT_AMOUNT_TIERS,
 } from './config'
-import type { ValueTier, ReactivationSegment } from './config'
+import type { ValueTier, ReactivationSegment, InactivityWindow, SegmentRule } from './config'
 
 export interface ScoreBreakdown {
   valueScore:          number                    // 0–60: LTV del tier
@@ -12,6 +12,25 @@ export interface ScoreBreakdown {
   total:               number                    // 0–100
   valueTier:           ValueTier
   reactivationSegment: ReactivationSegment | null
+}
+
+/**
+ * Config que puede sobreescribir los hardcoded de config.ts.
+ * Cuando se omite, las funciones usan los valores de config.ts.
+ * Esto permite inyectar valores desde DB sin romper tests ni callers existentes.
+ */
+export interface ScoringConfig {
+  valueScores:              Record<ValueTier, number>
+  inactivityWindows:        Record<ValueTier, InactivityWindow>
+  depositAmountTiers:       Array<{ minAmount: number; tier: ValueTier }>
+  reactivationSegmentRules: SegmentRule[]
+}
+
+const DEFAULT_SCORING_CONFIG: ScoringConfig = {
+  valueScores:              VALUE_SCORES,
+  inactivityWindows:        INACTIVITY_WINDOWS,
+  depositAmountTiers:       DEPOSIT_AMOUNT_TIERS,
+  reactivationSegmentRules: REACTIVATION_SEGMENT_RULES,
 }
 
 // ── Resolución de tier ────────────────────────────────────────────────────────
@@ -29,11 +48,12 @@ export interface ScoreBreakdown {
  * computada por el sistema del casino.
  */
 export function resolveValueTier(
-  segment: string | null,
+  segment:            string | null,
   totalDepositAmount: number | null,
+  depositAmountTiers: Array<{ minAmount: number; tier: ValueTier }> = DEPOSIT_AMOUNT_TIERS,
 ): ValueTier {
   if (totalDepositAmount !== null) {
-    for (const { minAmount, tier } of DEPOSIT_AMOUNT_TIERS) {
+    for (const { minAmount, tier } of depositAmountTiers) {
       if (totalDepositAmount >= minAmount) return tier
     }
   }
@@ -53,8 +73,8 @@ export function resolveValueTier(
  * Constante por tier — el valor del contacto no cambia con el tiempo,
  * solo cambia su urgencia de reactivación.
  */
-export function scoreValue(tier: ValueTier): number {
-  return VALUE_SCORES[tier]
+export function scoreValue(tier: ValueTier, cfg: ScoringConfig = DEFAULT_SCORING_CONFIG): number {
+  return cfg.valueScores[tier]
 }
 
 /**
@@ -70,8 +90,8 @@ export function scoreValue(tier: ValueTier): number {
  *   63 días → position=0.50 → urgency=20  (mitad de ventana)
  *   120 días → position=1.00 → urgency=0  (al límite)
  */
-export function scoreUrgency(daysInactive: number, tier: ValueTier): number {
-  const { minDays, maxDays } = INACTIVITY_WINDOWS[tier]
+export function scoreUrgency(daysInactive: number, tier: ValueTier, cfg: ScoringConfig = DEFAULT_SCORING_CONFIG): number {
+  const { minDays, maxDays } = cfg.inactivityWindows[tier]
   const span = maxDays - minDays
   if (span <= 0) return 0
 
@@ -81,14 +101,15 @@ export function scoreUrgency(daysInactive: number, tier: ValueTier): number {
 
 /**
  * Clasifica al contacto en un segmento de difusión.
- * Aplica el primer match de REACTIVATION_SEGMENT_RULES (reglas ordenadas por prioridad).
+ * Aplica el primer match de reactivationSegmentRules (reglas ordenadas por prioridad).
  * Retorna null si el contacto está fuera de todas las ventanas conocidas.
  */
 export function resolveReactivationSegment(
-  tier: ValueTier,
+  tier:         ValueTier,
   daysInactive: number,
+  cfg:          ScoringConfig = DEFAULT_SCORING_CONFIG,
 ): ReactivationSegment | null {
-  for (const rule of REACTIVATION_SEGMENT_RULES) {
+  for (const rule of cfg.reactivationSegmentRules) {
     if (
       rule.tiers.includes(tier) &&
       daysInactive >= rule.minDays &&
@@ -102,15 +123,18 @@ export function resolveReactivationSegment(
 
 // ── Cómputo unificado ─────────────────────────────────────────────────────────
 
-export function computeScore(metrics: {
-  daysInactive:       number
-  segment:            string | null
-  totalDepositAmount: number | null
-}): ScoreBreakdown {
-  const tier    = resolveValueTier(metrics.segment, metrics.totalDepositAmount)
-  const vScore  = scoreValue(tier)
-  const uScore  = scoreUrgency(metrics.daysInactive, tier)
-  const segment = resolveReactivationSegment(tier, metrics.daysInactive)
+export function computeScore(
+  metrics: {
+    daysInactive:       number
+    segment:            string | null
+    totalDepositAmount: number | null
+  },
+  cfg: ScoringConfig = DEFAULT_SCORING_CONFIG,
+): ScoreBreakdown {
+  const tier    = resolveValueTier(metrics.segment, metrics.totalDepositAmount, cfg.depositAmountTiers)
+  const vScore  = scoreValue(tier, cfg)
+  const uScore  = scoreUrgency(metrics.daysInactive, tier, cfg)
+  const segment = resolveReactivationSegment(tier, metrics.daysInactive, cfg)
 
   return {
     valueScore:          vScore,

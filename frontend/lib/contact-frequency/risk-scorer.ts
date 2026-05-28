@@ -18,7 +18,7 @@
  *   ─ weeklyScore   (0→35): ratio sentThisWeek / max_per_week
  *   ─ cooldownScore (0→25): presión inversa de horas desde último envío
  *
- * Umbrales de decisión (configurables en rules.ts):
+ * Umbrales de decisión (configurables via ScorerConfig):
  *   score 0–30  → ALLOW
  *   score 31–60 → DELAY
  *   score 61–100 → BLOCK
@@ -32,6 +32,27 @@ import type {
   ContactFrequencyProfile,
   FrequencyDecision,
 } from './types'
+
+// ── Config inyectable ─────────────────────────────────────────────────────────
+
+/**
+ * Config que puede sobreescribir los hardcoded de rules.ts.
+ * Cuando se omite, calculateRiskScore usa los valores de rules.ts.
+ * Esto permite inyectar valores desde DB (scoring_config) sin romper tests.
+ */
+export interface ScorerConfig {
+  allowThreshold:     number
+  delayThreshold:     number
+  cooldownMultiplier: number
+  weights:            { daily: number; weekly: number; cooldown: number }
+}
+
+const DEFAULT_SCORER_CONFIG: ScorerConfig = {
+  allowThreshold:     ALLOW_THRESHOLD,
+  delayThreshold:     DELAY_THRESHOLD,
+  cooldownMultiplier: COOLDOWN_PROPORTIONAL_MULTIPLIER,
+  weights:            { ...RISK_WEIGHTS },
+}
 
 // ── Tipo de resultado ─────────────────────────────────────────────────────────
 
@@ -59,15 +80,17 @@ export interface ScorerResult {
 /**
  * Calcula el Risk Score y la decisión de frecuencia para un contacto.
  *
- * Función pura: el resultado depende únicamente de profile y rule.
+ * Función pura: el resultado depende únicamente de profile, rule y cfg.
  * No hace IO, no tiene estado, es completamente determinista dado los inputs.
  *
  * @param profile - Perfil de frecuencia actual del contacto
  * @param rule    - Regla aplicable resuelta por resolveApplicableRule()
+ * @param cfg     - Thresholds y pesos (opcional; usa hardcoded de rules.ts si se omite)
  */
 export function calculateRiskScore(
   profile: ContactFrequencyProfile,
   rule:    ContactFrequencyRule,
+  cfg:     ScorerConfig = DEFAULT_SCORER_CONFIG,
 ): ScorerResult {
 
   // ── Nivel 1: Bloqueos duros ───────────────────────────────────────────────
@@ -77,14 +100,14 @@ export function calculateRiskScore(
   if (profile.sentToday >= rule.max_per_day) {
     return buildHardBlock(
       `Límite diario alcanzado: ${profile.sentToday}/${rule.max_per_day} mensajes en las últimas 24h`,
-      profile, rule,
+      profile, rule, cfg,
     )
   }
 
   if (profile.sentThisWeek >= rule.max_per_week) {
     return buildHardBlock(
       `Límite semanal alcanzado: ${profile.sentThisWeek}/${rule.max_per_week} mensajes en los últimos 7 días`,
-      profile, rule,
+      profile, rule, cfg,
     )
   }
 
@@ -98,20 +121,20 @@ export function calculateRiskScore(
       `Cool-down activo: ${remainingHours}h restantes ` +
       `(mínimo ${rule.min_hours_between_sends}h entre envíos, ` +
       `último hace ${profile.hoursSinceLastSend.toFixed(1)}h)`,
-      profile, rule,
+      profile, rule, cfg,
     )
   }
 
   // ── Nivel 2: Score proporcional ───────────────────────────────────────────
 
-  const dailyScore    = computeDailyScore(profile, rule)
-  const weeklyScore   = computeWeeklyScore(profile, rule)
-  const cooldownScore = computeCooldownScore(profile, rule)
+  const dailyScore    = computeDailyScore(profile, rule, cfg.weights)
+  const weeklyScore   = computeWeeklyScore(profile, rule, cfg.weights)
+  const cooldownScore = computeCooldownScore(profile, rule, cfg)
 
   // Math.round evita scores como 13.000000000000002.
   // Math.min(100) previene overflow por imprecisión de punto flotante.
   const riskScore = Math.min(100, Math.round(dailyScore + weeklyScore + cooldownScore))
-  const decision  = scoreToDecision(riskScore)
+  const decision  = scoreToDecision(riskScore, cfg)
   const reason    = buildProportionalReason(decision, profile, rule, riskScore)
 
   return { decision, riskScore, reason, components: { dailyScore, weeklyScore, cooldownScore } }
@@ -120,66 +143,63 @@ export function calculateRiskScore(
 // ── Componentes del score ─────────────────────────────────────────────────────
 
 /**
- * Componente diario (0 → RISK_WEIGHTS.daily = 40).
+ * Componente diario (0 → weights.daily).
  *
  * Sube linealmente a medida que el contacto se acerca al límite diario.
- * Nunca llega a 40 en el path proporcional: el bloqueo duro lo intercepta
+ * Nunca llega al máximo en el path proporcional: el bloqueo duro lo intercepta
  * cuando sentToday >= max_per_day (ratio = 1.0).
  */
 function computeDailyScore(
   profile: ContactFrequencyProfile,
   rule:    ContactFrequencyRule,
+  weights: ScorerConfig['weights'],
 ): number {
   if (rule.max_per_day <= 0) return 0
   const ratio = profile.sentToday / rule.max_per_day
-  return RISK_WEIGHTS.daily * clamp01(ratio)
+  return weights.daily * clamp01(ratio)
 }
 
 /**
- * Componente semanal (0 → RISK_WEIGHTS.weekly = 35).
+ * Componente semanal (0 → weights.weekly).
  *
  * Refleja cuánto de la "cuota semanal" se ha consumido.
- * Un contacto que ya recibió 1/2 mensajes esta semana tiene score semanal = 17.5.
+ * Un contacto que ya recibió 1/2 mensajes esta semana tiene score semanal = weights.weekly / 2.
  */
 function computeWeeklyScore(
   profile: ContactFrequencyProfile,
   rule:    ContactFrequencyRule,
+  weights: ScorerConfig['weights'],
 ): number {
   if (rule.max_per_week <= 0) return 0
   const ratio = profile.sentThisWeek / rule.max_per_week
-  return RISK_WEIGHTS.weekly * clamp01(ratio)
+  return weights.weekly * clamp01(ratio)
 }
 
 /**
- * Componente cool-down (0 → RISK_WEIGHTS.cooldown = 25).
+ * Componente cool-down (0 → weights.cooldown).
  *
  * ## Ventana ampliada (fix del bug "cooldown always 0")
  *
  * El path proporcional solo se alcanza cuando hoursSinceLastSend >= min_hours.
  * Con ventana = min_hours, ratio siempre sería >= 1 → score siempre 0.
- * Solución: usar ventana = min_hours × COOLDOWN_PROPORTIONAL_MULTIPLIER (× 2).
+ * Solución: usar ventana = min_hours × cooldownMultiplier (× 2 por defecto).
  *
- * Comportamiento con min_hours=48, ventana=96:
+ * Comportamiento con min_hours=48, multiplicador=2, ventana=96:
  *   hoursSinceLastSend=48h  → ratio=0.50 → pressure=0.50 → score=12.5  (límite cool-down)
- *   hoursSinceLastSend=60h  → ratio=0.63 → pressure=0.37 → score≈9.4
- *   hoursSinceLastSend=72h  → ratio=0.75 → pressure=0.25 → score≈6.3
  *   hoursSinceLastSend=96h  → ratio=1.00 → pressure=0.00 → score=0     (sin presión)
- *   hoursSinceLastSend>96h  → ratio>1.00 → clamped a 0    → score=0
- *
- * En bloqueos duros (hoursSinceLastSend < min_hours), el componente sigue
- * calculándose (con ratio < 0.5 → score > 12.5) para diagnóstico.
  *
  * Si nunca se envió (lastSentAt = null) → score = 0 (sin presión).
  */
 function computeCooldownScore(
   profile: ContactFrequencyProfile,
   rule:    ContactFrequencyRule,
+  cfg:     ScorerConfig,
 ): number {
   if (profile.hoursSinceLastSend === null || rule.min_hours_between_sends <= 0) return 0
-  const proportionalWindow = rule.min_hours_between_sends * COOLDOWN_PROPORTIONAL_MULTIPLIER
+  const proportionalWindow = rule.min_hours_between_sends * cfg.cooldownMultiplier
   const ratio              = profile.hoursSinceLastSend / proportionalWindow
   const inversePressure    = clamp01(1 - ratio)
-  return RISK_WEIGHTS.cooldown * inversePressure
+  return cfg.weights.cooldown * inversePressure
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -193,23 +213,24 @@ function buildHardBlock(
   reason:  string,
   profile: ContactFrequencyProfile,
   rule:    ContactFrequencyRule,
+  cfg:     ScorerConfig,
 ): ScorerResult {
   return {
     decision:  'BLOCK',
     riskScore: 100,
     reason,
     components: {
-      dailyScore:    computeDailyScore(profile, rule),
-      weeklyScore:   computeWeeklyScore(profile, rule),
-      cooldownScore: computeCooldownScore(profile, rule),
+      dailyScore:    computeDailyScore(profile, rule, cfg.weights),
+      weeklyScore:   computeWeeklyScore(profile, rule, cfg.weights),
+      cooldownScore: computeCooldownScore(profile, rule, cfg),
     },
   }
 }
 
 /** Convierte un score numérico a la decisión correspondiente. */
-function scoreToDecision(score: number): FrequencyDecision {
-  if (score <= ALLOW_THRESHOLD) return 'ALLOW'
-  if (score <= DELAY_THRESHOLD) return 'DELAY'
+function scoreToDecision(score: number, cfg: ScorerConfig): FrequencyDecision {
+  if (score <= cfg.allowThreshold) return 'ALLOW'
+  if (score <= cfg.delayThreshold) return 'DELAY'
   return 'BLOCK'
 }
 

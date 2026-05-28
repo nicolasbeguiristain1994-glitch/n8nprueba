@@ -1,7 +1,13 @@
 import { randomUUID } from 'crypto'
 import { checkEligibility } from './prioritization-rules'
 import { computeScore } from './scoring'
+import { REACTIVATION_SEGMENT_RULES } from './config'
 import { UserPrioritizationRepository } from './UserPrioritizationRepository'
+import { getAllTiers } from '@/lib/segmentation-config-service'
+import type { SegmentationTier } from '@/lib/segmentation-config-service'
+import type { ScoringConfig } from './scoring'
+import type { EligibilityConfig } from './prioritization-rules'
+import type { ValueTier } from './config'
 import {
   logRecomputeStart,
   logRecomputeBatch,
@@ -18,6 +24,44 @@ import type {
 } from './types'
 
 const BATCH_SIZE            = 500
+
+// ── Configuración en runtime desde segmentation_tiers ────────────────────────
+
+interface TierRuntimeConfigs {
+  scoring:     ScoringConfig
+  eligibility: EligibilityConfig
+}
+
+function buildTierRuntimeConfigs(tiers: SegmentationTier[]): TierRuntimeConfigs {
+  const valueScores       = {} as Record<ValueTier, number>
+  const inactivityWindows = {} as Record<ValueTier, { minDays: number; maxDays: number }>
+  const recontactCooldown = {} as Record<ValueTier, number>
+  const depositAmountTiers: Array<{ minAmount: number; tier: ValueTier }> = []
+
+  for (const t of tiers) {
+    valueScores[t.tier]       = t.value_score
+    inactivityWindows[t.tier] = { minDays: t.min_days_inactive, maxDays: t.max_days_inactive }
+    recontactCooldown[t.tier] = t.recontact_cooldown_days
+    depositAmountTiers.push({ minAmount: t.deposit_threshold_min, tier: t.tier })
+  }
+
+  // resolveValueTier itera en orden y retorna el primer match → orden descendente
+  depositAmountTiers.sort((a, b) => b.minAmount - a.minAmount)
+
+  return {
+    scoring: {
+      valueScores,
+      inactivityWindows,
+      depositAmountTiers,
+      reactivationSegmentRules: REACTIVATION_SEGMENT_RULES,
+    },
+    eligibility: {
+      inactivityWindows,
+      recontactCooldownDays: recontactCooldown,
+      depositAmountTiers,
+    },
+  }
+}
 const INSTANCE_ID           = process.env.HOSTNAME ?? `pid-${process.pid}`
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000   // renovar TTL cada 5 minutos
 
@@ -50,6 +94,11 @@ export class UserPrioritizationService {
     const heartbeatIntervalMs = options.heartbeatIntervalMs ?? HEARTBEAT_INTERVAL_MS
     const startedAt           = new Date()
     const start               = startedAt.getTime()
+
+    // Cargar config de tiers UNA vez para todo el batch (Redis cache → rápido).
+    // Si falla, buildTierRuntimeConfigs recibe [] y scoreContact usa defaults hardcoded.
+    const tierCfg = await getAllTiers().then(buildTierRuntimeConfigs).catch(() => undefined)
+
     let lastId: string | undefined
     let batchNum              = 0
     let processed             = 0
@@ -82,7 +131,7 @@ export class UserPrioritizationService {
         if (heartbeatRevoked) throw new LockRevokedError()
 
         const scores = contacts.map(contact =>
-          this.scoreContact(contact, lastMessagedMap.get(contact.contactId) ?? null),
+          this.scoreContact(contact, lastMessagedMap.get(contact.contactId) ?? null, tierCfg),
         )
 
         await this.repo.upsertScores(scores, lockToken)
@@ -178,12 +227,13 @@ export class UserPrioritizationService {
     const contact = await this.repo.fetchContactById(contactId)
     if (!contact) throw new Error(`Contact not found: ${contactId}`)
 
-    const [lastMessagedMap, lastRunId] = await Promise.all([
+    const [lastMessagedMap, lastRunId, tierCfg] = await Promise.all([
       this.repo.getLastMessagedDaysMap([contactId]),
       this.repo.getLastCompleteRunId(),
+      getAllTiers().then(buildTierRuntimeConfigs).catch(() => undefined),
     ])
 
-    const score = this.scoreContact(contact, lastMessagedMap.get(contactId) ?? null)
+    const score = this.scoreContact(contact, lastMessagedMap.get(contactId) ?? null, tierCfg)
     await this.repo.upsertScores([score], lastRunId ?? undefined)
     return score as ContactPriorityScore
   }
@@ -221,8 +271,9 @@ export class UserPrioritizationService {
   // ── Lógica de scoring por contacto ───────────────────────────────────────────
 
   private scoreContact(
-    contact: ContactMetricsRow,
+    contact:             ContactMetricsRow,
     daysSinceLastMessage: number | null,
+    tierCfg?:            TierRuntimeConfigs,
   ): Omit<ContactPriorityScore, 'id' | 'runId'> {
     const daysInactive = contact.lastDepositAt
       ? daysBetween(contact.lastDepositAt, new Date())
@@ -238,14 +289,14 @@ export class UserPrioritizationService {
       totalDepositAmount:  contact.totalDepositAmount,
       daysInactive,
       daysSinceLastMessage,
-    })
+    }, tierCfg?.eligibility)
 
     const breakdown = eligible && daysInactive !== null
       ? computeScore({
           daysInactive,
           segment:            contact.segment,
           totalDepositAmount: contact.totalDepositAmount,
-        })
+        }, tierCfg?.scoring)
       : null
 
     return {

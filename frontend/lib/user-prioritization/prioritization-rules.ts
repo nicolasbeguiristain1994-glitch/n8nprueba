@@ -1,6 +1,6 @@
-import { INACTIVITY_WINDOWS, RECONTACT_COOLDOWN_DAYS } from './config'
+import { INACTIVITY_WINDOWS, RECONTACT_COOLDOWN_DAYS, DEPOSIT_AMOUNT_TIERS } from './config'
 import { resolveValueTier } from './scoring'
-import type { ValueTier } from './config'
+import type { ValueTier, InactivityWindow } from './config'
 
 export interface EligibilityInput {
   status:              string
@@ -22,6 +22,22 @@ export interface EligibilityResult {
 }
 
 /**
+ * Config que puede sobreescribir los hardcoded de config.ts.
+ * Cuando se omite, las funciones usan los valores de config.ts.
+ */
+export interface EligibilityConfig {
+  inactivityWindows:     Record<ValueTier, InactivityWindow>
+  recontactCooldownDays: Record<ValueTier, number>
+  depositAmountTiers:    Array<{ minAmount: number; tier: ValueTier }>
+}
+
+const DEFAULT_ELIGIBILITY_CONFIG: EligibilityConfig = {
+  inactivityWindows:     INACTIVITY_WINDOWS,
+  recontactCooldownDays: RECONTACT_COOLDOWN_DAYS,
+  depositAmountTiers:    DEPOSIT_AMOUNT_TIERS,
+}
+
+/**
  * Determina si un contacto puede recibir un mensaje de reactivación.
  *
  * Las ventanas de inactividad son ESPECÍFICAS POR TIER: un VIP puede estar
@@ -40,12 +56,15 @@ export interface EligibilityResult {
  *   no_deposit_history → sin last_deposit_at (no se puede calcular inactividad)
  *   still_active       → depositó hace menos de window.minDays para su tier
  *   too_cold           → inactivo por más de window.maxDays para su tier
- *   recently_messaged  → contactado hace menos de RECONTACT_COOLDOWN_DAYS[tier]
+ *   recently_messaged  → contactado hace menos de recontactCooldownDays[tier]
  */
-export function checkEligibility(input: EligibilityInput): EligibilityResult {
+export function checkEligibility(
+  input: EligibilityInput,
+  cfg:   EligibilityConfig = DEFAULT_ELIGIBILITY_CONFIG,
+): EligibilityResult {
   const reasons: string[] = []
-  const valueTier = resolveValueTier(input.segment, input.totalDepositAmount)
-  const window    = INACTIVITY_WINDOWS[valueTier]
+  const valueTier = resolveValueTier(input.segment, input.totalDepositAmount, cfg.depositAmountTiers)
+  const window    = cfg.inactivityWindows[valueTier]
 
   if (input.deletedAt !== null) {
     reasons.push('deleted')
@@ -73,7 +92,7 @@ export function checkEligibility(input: EligibilityInput): EligibilityResult {
     }
   }
 
-  const cooldown = RECONTACT_COOLDOWN_DAYS[valueTier]
+  const cooldown = cfg.recontactCooldownDays[valueTier]
   if (input.daysSinceLastMessage !== null && input.daysSinceLastMessage < cooldown) {
     reasons.push('recently_messaged')
   }
