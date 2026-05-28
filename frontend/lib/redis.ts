@@ -15,7 +15,13 @@ let _client: RedisClient | null = null
 export function getConfigRedisClient(): RedisClient | null {
   if (!process.env.REDIS_URL) return null
   if (!_client) {
-    _client = createClient({ url: process.env.REDIS_URL })
+    _client = createClient({
+      url: process.env.REDIS_URL,
+      socket: {
+        connectTimeout: 2000,
+        reconnectStrategy: (retries) => (retries >= 3 ? false : Math.min(retries * 200, 1000)),
+      },
+    })
     _client.connect().catch(err =>
       console.warn('[config-cache] Redis connect error — degrading to DB only:', err)
     )

@@ -97,11 +97,20 @@ export function validateTierConfig(tier: Partial<SegmentationTier>): string[] {
 
 // ── Helpers Redis ─────────────────────────────────────────────────────────────
 
+const REDIS_OP_TIMEOUT_MS = 500
+
+async function withTimeout<T>(promise: Promise<T>, fallback: T): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>(resolve => setTimeout(() => resolve(fallback), REDIS_OP_TIMEOUT_MS)),
+  ])
+}
+
 async function redisGet(key: string): Promise<string | null> {
   try {
     const client = getConfigRedisClient()
     if (!client) return null
-    return await client.get(key)
+    return await withTimeout(client.get(key), null)
   } catch (err) {
     console.warn('[segmentation-config] Redis GET error:', err)
     return null
