@@ -8,6 +8,9 @@ import { Download, FileDown } from 'lucide-react'
 import { downloadSingleVcf, downloadZippedVcf } from '@/lib/vcf-export'
 import type { ExportableContact } from '@/lib/vcf-export'
 
+// Matches the browsing page size in the contacts table
+const BROWSE_PAGE_SIZE = 50
+
 interface DownloadContactsModalProps {
   open: boolean
   onClose: () => void
@@ -29,16 +32,27 @@ export function DownloadContactsModal({
   filenameHint,
   apiEndpoint = '/api/contacts',
 }: DownloadContactsModalProps) {
-  const [splitting, setSplitting]     = useState(false)
-  const [batchSize, setBatchSize]     = useState(30)
-  const [downloading, setDownloading] = useState(false)
-  const [error, setError]             = useState<string | null>(null)
-  const [progress, setProgress]       = useState<{ loaded: number; total: number } | null>(null)
-  const cancelRef                     = useRef(false)
+  const [splitting, setSplitting]       = useState(false)
+  const [batchSize, setBatchSize]       = useState(30)
+  const [downloading, setDownloading]   = useState(false)
+  const [error, setError]               = useState<string | null>(null)
+  const [progress, setProgress]         = useState<{ loaded: number; total: number } | null>(null)
+  const [rangeEnabled, setRangeEnabled] = useState(false)
+  const [fromPage, setFromPage]         = useState(1)
+  const [toPage, setToPage]             = useState(100)
+  const cancelRef                       = useRef(false)
 
-  const partCount = splitting && batchSize > 0
-    ? Math.ceil(contactCount / batchSize)
-    : 1
+  const totalPages      = Math.max(1, Math.ceil(contactCount / BROWSE_PAGE_SIZE))
+  const clampedFrom     = Math.min(Math.max(1, fromPage), totalPages)
+  const clampedTo       = Math.min(Math.max(clampedFrom, toPage), totalPages)
+  const rangeOffset     = (clampedFrom - 1) * BROWSE_PAGE_SIZE
+  const rangeRowLimit   = Math.min(
+    (clampedTo - clampedFrom + 1) * BROWSE_PAGE_SIZE,
+    Math.max(0, contactCount - rangeOffset),
+  )
+
+  const effectiveCount  = rangeEnabled ? rangeRowLimit : contactCount
+  const effectiveParts  = splitting && batchSize > 0 ? Math.ceil(effectiveCount / batchSize) : 1
 
   const handleDownload = async () => {
     setDownloading(true)
@@ -50,9 +64,12 @@ export function DownloadContactsModal({
       const baseParams = new URLSearchParams(fetchParams)
       baseParams.set('download', 'true')
 
+      const rowLimit = rangeEnabled ? rangeRowLimit : null
+      if (rangeEnabled) baseParams.set('from', String(rangeOffset))
+
       let allContacts: ExportableContact[] = []
       let currentPage = 1
-      let total = 0
+      let serverTotal = 0
 
       do {
         if (cancelRef.current) throw new Error('Descarga cancelada')
@@ -67,13 +84,22 @@ export function DownloadContactsModal({
 
         const data = await res.json()
         const batch: ExportableContact[] = data.contacts ?? []
-        total = data.total ?? batch.length
-        allContacts = allContacts.concat(batch)
-        setProgress({ loaded: allContacts.length, total })
+        serverTotal = data.total ?? batch.length
+
+        const canAdd = rowLimit !== null ? rowLimit - allContacts.length : Infinity
+        const toAdd  = batch.slice(0, canAdd)
+        allContacts  = allContacts.concat(toAdd)
+
+        const displayTotal = rowLimit !== null ? rowLimit : serverTotal
+        setProgress({ loaded: allContacts.length, total: displayTotal })
         currentPage++
 
-        if (batch.length === 0) break
-      } while (allContacts.length < total)
+        if (batch.length === 0 || toAdd.length < batch.length) break
+      } while (
+        rowLimit !== null
+          ? allContacts.length < rowLimit
+          : allContacts.length < serverTotal
+      )
 
       if (allContacts.length === 0) {
         throw new Error('No hay contactos para descargar')
@@ -129,6 +155,66 @@ export function DownloadContactsModal({
             </p>
           </div>
 
+          {/* Toggle rango de páginas */}
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={() => setRangeEnabled(v => !v)}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition-colors text-sm ${
+                rangeEnabled
+                  ? 'bg-orange-50 border-orange-300 text-orange-800'
+                  : 'bg-background border-border text-foreground hover:bg-muted'
+              }`}
+            >
+              <span className="font-medium">Seleccionar rango de páginas</span>
+              <span className={`relative inline-flex w-9 h-5 rounded-full transition-colors flex-shrink-0 ${
+                rangeEnabled ? 'bg-orange-500' : 'bg-muted-foreground/30'
+              }`}>
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
+                  rangeEnabled ? 'translate-x-4' : 'translate-x-0.5'
+                }`} />
+              </span>
+            </button>
+
+            {rangeEnabled && (
+              <div className="space-y-2 pl-1">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-muted-foreground w-28 whitespace-nowrap">Desde página</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={totalPages}
+                    value={fromPage}
+                    onChange={e => {
+                      const v = Math.max(1, parseInt(e.target.value, 10) || 1)
+                      setFromPage(v)
+                      if (toPage < v) setToPage(v)
+                    }}
+                    className="w-24 text-center"
+                  />
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">de {totalPages.toLocaleString('es-AR')}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-muted-foreground w-28 whitespace-nowrap">Hasta página</label>
+                  <Input
+                    type="number"
+                    min={fromPage}
+                    max={totalPages}
+                    value={toPage}
+                    onChange={e => setToPage(Math.max(fromPage, Math.min(totalPages, parseInt(e.target.value, 10) || fromPage)))}
+                    className="w-24 text-center"
+                  />
+                </div>
+                {rangeRowLimit > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    ~<span className="font-semibold text-orange-700">{rangeRowLimit.toLocaleString('es-AR')}</span>{' '}
+                    contactos (pág. {clampedFrom.toLocaleString('es-AR')}–{clampedTo.toLocaleString('es-AR')})
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Toggle dividir en varios archivos */}
           <div className="space-y-3">
             <button
@@ -141,17 +227,12 @@ export function DownloadContactsModal({
               }`}
             >
               <span className="font-medium">Dividir en varios archivos</span>
-              {/* Toggle visual */}
-              <span
-                className={`relative inline-flex w-9 h-5 rounded-full transition-colors flex-shrink-0 ${
-                  splitting ? 'bg-indigo-500' : 'bg-muted-foreground/30'
-                }`}
-              >
-                <span
-                  className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
-                    splitting ? 'translate-x-4' : 'translate-x-0.5'
-                  }`}
-                />
+              <span className={`relative inline-flex w-9 h-5 rounded-full transition-colors flex-shrink-0 ${
+                splitting ? 'bg-indigo-500' : 'bg-muted-foreground/30'
+              }`}>
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
+                  splitting ? 'translate-x-4' : 'translate-x-0.5'
+                }`} />
               </span>
             </button>
 
@@ -171,11 +252,11 @@ export function DownloadContactsModal({
               </div>
             )}
 
-            {splitting && contactCount > 0 && (
+            {splitting && effectiveCount > 0 && (
               <p className="text-xs text-muted-foreground pl-1">
-                ~{contactCount.toLocaleString()} contactos →{' '}
+                ~{effectiveCount.toLocaleString('es-AR')} contactos →{' '}
                 <span className="font-semibold text-indigo-700">
-                  {partCount} archivo{partCount !== 1 ? 's' : ''} VCF
+                  {effectiveParts} archivo{effectiveParts !== 1 ? 's' : ''} VCF
                 </span>{' '}
                 dentro de un ZIP
               </p>
@@ -186,16 +267,16 @@ export function DownloadContactsModal({
           <div className="bg-muted/50 rounded-lg px-3 py-2.5 text-xs text-muted-foreground">
             Se descargarán aprox.{' '}
             <span className="font-semibold text-foreground">
-              {contactCount.toLocaleString()}
+              {effectiveCount.toLocaleString('es-AR')}
             </span>{' '}
             contactos
             {splitting
-              ? ` en ${partCount} archivo${partCount !== 1 ? 's' : ''} comprimidos (ZIP)`
+              ? ` en ${effectiveParts} archivo${effectiveParts !== 1 ? 's' : ''} comprimidos (ZIP)`
               : ' en un único archivo VCF'
             }
           </div>
 
-          {/* Progreso de descarga multi-página */}
+          {/* Progreso de descarga */}
           {downloading && progress && (
             <div className="space-y-1.5">
               <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
@@ -227,7 +308,7 @@ export function DownloadContactsModal({
             <Button
               className="flex-1 bg-teal-600 hover:bg-teal-700 text-white"
               onClick={handleDownload}
-              disabled={downloading}
+              disabled={downloading || (rangeEnabled && rangeRowLimit === 0)}
             >
               <Download size={14} className={`mr-1.5 ${downloading ? 'animate-bounce' : ''}`} />
               {downloading ? 'Descargando…' : 'Descargar'}

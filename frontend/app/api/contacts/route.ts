@@ -33,8 +33,9 @@ export async function GET(req: NextRequest) {
   const download  = req.nextUrl.searchParams.get('download') === 'true'
   const selectAll = req.nextUrl.searchParams.get('select_all') === 'true'
   const page      = Number(req.nextUrl.searchParams.get('page') || 1)
+  const dlFrom    = download ? Math.max(0, Number(req.nextUrl.searchParams.get('from') || '0')) : 0
   const limit     = download ? 100000 : 50
-  const offset    = (page - 1) * limit
+  const offset    = download ? dlFrom + (page - 1) * limit : (page - 1) * limit
   const linea      = req.nextUrl.searchParams.get('linea') || ''
   const actividad  = req.nextUrl.searchParams.get('actividad') || ''
   const antiguedad = req.nextUrl.searchParams.get('antiguedad') || ''
