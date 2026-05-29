@@ -2,10 +2,13 @@
 import { useEffect, useState, useCallback } from 'react'
 import {
   TrendingUp, RefreshCw, ChevronLeft, ChevronRight,
-  Filter, AlertCircle, CheckCircle2, RotateCcw,
+  Filter, AlertCircle, CheckCircle2, RotateCcw, HelpCircle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
@@ -91,6 +94,187 @@ const PLATFORMS: { key: Platform; label: string }[] = [
 
 const PAGE_SIZE = 50
 
+// ── Modal de ayuda ────────────────────────────────────────────────────────────
+
+function ScoringHelpModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <TrendingUp size={18} className="text-green-600" />
+            ¿Cómo funciona el score de prioridades?
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-5 text-sm text-gray-700">
+
+          {/* Fórmula */}
+          <div className="bg-gray-50 rounded-lg px-4 py-3 text-center">
+            <p className="text-xs text-gray-400 mb-1">Fórmula del score</p>
+            <p className="font-mono text-gray-800 text-base">
+              Score (0–100) = <span className="text-purple-600 font-semibold">Valor</span> + <span className="text-amber-600 font-semibold">Urgencia</span>
+            </p>
+          </div>
+
+          {/* Valor */}
+          <div>
+            <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-1.5">
+              <span className="inline-block w-2.5 h-2.5 rounded-full bg-purple-400" />
+              Puntaje de Valor (0–60)
+            </h3>
+            <p className="text-gray-500 text-xs mb-2">
+              Refleja cuánto depositó el cliente históricamente. No cambia con el tiempo.
+            </p>
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="bg-gray-100 text-gray-500 uppercase">
+                  <th className="px-3 py-2 text-left rounded-tl-md">Nivel</th>
+                  <th className="px-3 py-2 text-left">Depósito total</th>
+                  <th className="px-3 py-2 text-right rounded-tr-md">Puntos</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                <tr>
+                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">Super VIP</span></td>
+                  <td className="px-3 py-2 text-gray-500">≥ $10.000</td>
+                  <td className="px-3 py-2 text-right font-semibold text-gray-800">60</td>
+                </tr>
+                <tr>
+                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">VIP</span></td>
+                  <td className="px-3 py-2 text-gray-500">≥ $3.000</td>
+                  <td className="px-3 py-2 text-right font-semibold text-gray-800">45</td>
+                </tr>
+                <tr>
+                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">Medio</span></td>
+                  <td className="px-3 py-2 text-gray-500">≥ $500</td>
+                  <td className="px-3 py-2 text-right font-semibold text-gray-800">25</td>
+                </tr>
+                <tr>
+                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium">Bajo</span></td>
+                  <td className="px-3 py-2 text-gray-500">&lt; $500</td>
+                  <td className="px-3 py-2 text-right font-semibold text-gray-800">10</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Urgencia */}
+          <div>
+            <h3 className="font-semibold text-gray-900 mb-2 flex items-center gap-1.5">
+              <span className="inline-block w-2.5 h-2.5 rounded-full bg-amber-400" />
+              Puntaje de Urgencia (0–40)
+            </h3>
+            <p className="text-gray-500 text-xs mb-2">
+              Empieza en 40 cuando el cliente recién deja de depositar y baja gradualmente hasta 0.
+              Cada nivel tiene su propia ventana de tiempo.
+            </p>
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="bg-gray-100 text-gray-500 uppercase">
+                  <th className="px-3 py-2 text-left rounded-tl-md">Nivel</th>
+                  <th className="px-3 py-2 text-left">Ventana activa</th>
+                  <th className="px-3 py-2 text-left">Urgencia al entrar</th>
+                  <th className="px-3 py-2 text-right rounded-tr-md">Urgencia al salir</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                <tr>
+                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">Super VIP</span></td>
+                  <td className="px-3 py-2 text-gray-500">7 – 180 días</td>
+                  <td className="px-3 py-2 text-amber-600 font-semibold">40</td>
+                  <td className="px-3 py-2 text-right text-gray-400">0</td>
+                </tr>
+                <tr>
+                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">VIP</span></td>
+                  <td className="px-3 py-2 text-gray-500">7 – 150 días</td>
+                  <td className="px-3 py-2 text-amber-600 font-semibold">40</td>
+                  <td className="px-3 py-2 text-right text-gray-400">0</td>
+                </tr>
+                <tr>
+                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">Medio</span></td>
+                  <td className="px-3 py-2 text-gray-500">14 – 60 días</td>
+                  <td className="px-3 py-2 text-amber-600 font-semibold">40</td>
+                  <td className="px-3 py-2 text-right text-gray-400">0</td>
+                </tr>
+                <tr>
+                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 font-medium">Bajo</span></td>
+                  <td className="px-3 py-2 text-gray-500">30 – 45 días</td>
+                  <td className="px-3 py-2 text-amber-600 font-semibold">40</td>
+                  <td className="px-3 py-2 text-right text-gray-400">0</td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="text-xs text-gray-400 mt-2 italic">
+              Fuera de la ventana el contacto no aparece en la lista: antes es porque todavía está activo, después porque ya está demasiado frío.
+            </p>
+          </div>
+
+          {/* Segmentos */}
+          <div>
+            <h3 className="font-semibold text-gray-900 mb-2">Segmentos — qué mensaje enviar</h3>
+            <div className="space-y-2">
+              {[
+                {
+                  label: 'Urgente',
+                  style: 'bg-red-100 text-red-700',
+                  desc: 'VIP/Super VIP con 7–30 días inactivos. Memoria fresca de la marca.',
+                  msg: '"Te extrañamos, volvé." — mensaje directo, sin necesidad de incentivo extra.',
+                },
+                {
+                  label: 'Prioritaria',
+                  style: 'bg-orange-100 text-orange-700',
+                  desc: 'VIP/Super VIP 31–90 días · Medio 14–30 días.',
+                  msg: 'Incluir incentivo: bono, free spins o cashback.',
+                },
+                {
+                  label: 'Estándar',
+                  style: 'bg-blue-100 text-blue-700',
+                  desc: 'VIP/Super VIP 91–120 días · Medio 31–60 días.',
+                  msg: 'Oferta especial, torneo o novedad de producto.',
+                },
+                {
+                  label: 'Fría alto valor',
+                  style: 'bg-purple-100 text-purple-700',
+                  desc: 'VIP/Super VIP con 121–180 días inactivos. Alto LTV, vale la inversión.',
+                  msg: 'Win-back agresivo: oferta máxima. No enviar mensaje genérico.',
+                },
+                {
+                  label: 'Fría',
+                  style: 'bg-gray-100 text-gray-600',
+                  desc: 'Bajo con 30–45 días inactivos. Ventana estrecha, ROI marginal.',
+                  msg: 'Mensaje de bajo costo. No invertir en incentivo grande.',
+                },
+              ].map(({ label, style, desc, msg }) => (
+                <div key={label} className="flex gap-3 items-start">
+                  <span className={`mt-0.5 shrink-0 inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${style}`}>
+                    {label}
+                  </span>
+                  <div>
+                    <p className="text-xs text-gray-500">{desc}</p>
+                    <p className="text-xs text-gray-800 mt-0.5">{msg}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Ejemplo */}
+          <div className="bg-green-50 border border-green-100 rounded-lg px-4 py-3">
+            <p className="text-xs font-semibold text-green-800 mb-1">Ejemplo</p>
+            <p className="text-xs text-green-700">
+              Cliente Super VIP ($15.000 depositados) con 45 días inactivo:<br />
+              <span className="font-mono">Valor = 60 · Urgencia = 31 → Score = <strong>91</strong></span><br />
+              Segmento: <strong>Prioritaria</strong> — enviar con incentivo.
+            </p>
+          </div>
+
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function contactName(c: PrioritizedContact) {
@@ -119,6 +303,7 @@ export default function PrioridadesPage() {
   const [segment, setSegment]             = useState('todos')
   const [tier, setTier]                   = useState('todos')
   const [agent, setAgent]                 = useState('todos')
+  const [showHelp, setShowHelp]           = useState(false)
 
   const load = useCallback(async (
     p   = page,
@@ -197,6 +382,8 @@ export default function PrioridadesPage() {
   return (
     <div className="flex flex-col h-full bg-gray-50">
 
+      <ScoringHelpModal open={showHelp} onClose={() => setShowHelp(false)} />
+
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-4">
         <div className="flex items-center justify-between">
@@ -211,6 +398,13 @@ export default function PrioridadesPage() {
                 {result.total.toLocaleString()} {tab === 'pending' ? 'a difundir' : 'difundidos'}
               </span>
             )}
+            <button
+              onClick={() => setShowHelp(true)}
+              title="¿Cómo funciona el score?"
+              className="p-1 rounded-full text-gray-300 hover:text-gray-500 hover:bg-gray-100 transition-colors"
+            >
+              <HelpCircle size={16} />
+            </button>
           </div>
           {isAdmin && (
             <Button onClick={handleRecompute} disabled={recomputing} size="sm" variant="outline" className="gap-2">
