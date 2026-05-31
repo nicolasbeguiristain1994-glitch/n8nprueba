@@ -46,7 +46,7 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
     if (!conv?.contact_id) return
     const res = await fetch(`/api/contacts/${conv.contact_id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ segment: 'vip' }),
+      body: JSON.stringify({ segment: 'super_vip' }),
     })
     if (res.ok) { flash('vip'); onRefresh?.() }
   })

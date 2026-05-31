@@ -51,14 +51,14 @@ interface ContactList { id: string; name: string; contact_count: number; created
 const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
 
 const NIVEL_LABEL: Record<string, string> = {
-  bajo: 'Bajo', medio: 'Medio', alto: 'Vip', vip: 'Super Vip',
+  bajo: 'Bajo', medio: 'Medio', vip: 'Vip', super_vip: 'Super Vip',
 }
 
 const SEGMENT_STYLE: Record<string, string> = {
   casual: 'bg-gray-100 text-gray-600', regular: 'bg-blue-100 text-blue-700',
-  vip: 'bg-purple-100 text-purple-700', whale: 'bg-amber-100 text-amber-700',
+  super_vip: 'bg-purple-100 text-purple-700', whale: 'bg-amber-100 text-amber-700',
   bajo: 'bg-orange-50 text-orange-700', medio: 'bg-slate-100 text-slate-600',
-  alto: 'bg-yellow-100 text-yellow-700',
+  vip: 'bg-yellow-100 text-yellow-700',
 }
 const ACTIVIDAD_STYLE: Record<string, string> = {
   frecuente: 'bg-green-100 text-green-700', regular: 'bg-blue-100 text-blue-700',
@@ -83,10 +83,10 @@ const ANTIGUEDAD_DESC: Record<string, string> = {
   nuevo:       'Menos de 1 mes',
 }
 const NIVEL_DESC: Record<string, string> = {
-  vip:  'Super Vip — jugador de alto valor, depósitos frecuentes y altos',
-  alto: 'Vip — jugador activo con buen historial de depósitos',
-  medio:'Medio — actividad regular, potencial de crecimiento',
-  bajo: 'Bajo — actividad baja o reciente, en etapa de calificación',
+  super_vip: 'Super Vip — jugador de alto valor, depósitos frecuentes y altos',
+  vip:       'Vip — jugador activo con buen historial de depósitos',
+  medio:     'Medio — actividad regular, potencial de crecimiento',
+  bajo:      'Bajo — actividad baja o reciente, en etapa de calificación',
 }
 const VALOR_RIESGO_STYLE: Record<string, string> = {
   critico: 'bg-red-100 text-red-700', medio: 'bg-orange-100 text-orange-700',
@@ -853,10 +853,10 @@ export default function Contacts() {
         <EditableCell
           value={row.original.segment || ''}
           options={[
-            { value: 'vip',  label: 'Super Vip' },
-            { value: 'alto', label: 'Vip' },
-            { value: 'medio',label: 'Medio' },
-            { value: 'bajo', label: 'Bajo' },
+            { value: 'super_vip', label: 'Super Vip' },
+            { value: 'vip',       label: 'Vip' },
+            { value: 'medio',     label: 'Medio' },
+            { value: 'bajo',      label: 'Bajo' },
           ]}
           activeClass={SEGMENT_STYLE[row.original.segment] ?? 'bg-gray-100 text-gray-600'}
           placeholder="— sin nivel"
@@ -1511,7 +1511,7 @@ export default function Contacts() {
                   {[
                     { label: 'Agente', value: criteriaPanel, set: setCriteriaPanel, key: 'all-agent', items: PANEL_OPTIONS.map(p => ({ v: p, l: p })) },
                     { label: 'Juego', value: criteriaGaming, set: setCriteriaGaming, key: 'all-game', items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }] },
-                    { label: 'Nivel', value: criteriaSegment, set: setCriteriaSegment, key: 'all-seg', items: [{ v: 'vip', l: 'Super Vip' }, { v: 'alto', l: 'Vip' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }] },
+                    { label: 'Nivel', value: criteriaSegment, set: setCriteriaSegment, key: 'all-seg', items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip', l: 'Vip' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }] },
                   ].map(({ label, value, set, key, items }) => (
                     <div key={key}>
                       <label className="text-xs font-medium text-muted-foreground mb-1 block">{label}</label>
@@ -1585,7 +1585,7 @@ export default function Contacts() {
                 { label: 'Panel', value: newPanel, set: setNewPanel, items: PANEL_OPTIONS.map(p => ({ v: p, l: p })), ph: 'Panel' },
                 { label: 'Línea', value: newLinea, set: setNewLinea, items: Array.from({ length: 100 }, (_, i) => ({ v: String(i + 1), l: `Línea ${i + 1}` })), ph: 'Línea' },
                 { label: 'Juego', value: newGaming, set: setNewGaming, items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }], ph: 'Juego' },
-                { label: 'Nivel', value: newSegment, set: setNewSegment, items: [{ v: 'vip', l: 'Super Vip' }, { v: 'alto', l: 'Vip' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }], ph: 'Nivel' },
+                { label: 'Nivel', value: newSegment, set: setNewSegment, items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip', l: 'Vip' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }], ph: 'Nivel' },
               ].map(({ label, value, set, items, ph }) => (
                 <div key={label}>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">{label}</label>
@@ -1757,7 +1757,7 @@ export default function Contacts() {
                 { label: 'Panel',  value: editPanel,   set: setEditPanel,   items: PANEL_OPTIONS.map(p => ({ v: p, l: p })),                                                                                          ph: 'Panel'  },
                 { label: 'Línea',  value: editLinea,   set: setEditLinea,   items: Array.from({ length: 100 }, (_, i) => ({ v: String(i + 1), l: `Línea ${i + 1}` })),                                               ph: 'Línea'  },
                 { label: 'Juego',  value: editGaming,  set: setEditGaming,  items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }],                         ph: 'Juego'  },
-                { label: 'Nivel',  value: editSegment, set: setEditSegment, items: [{ v: 'vip', l: 'Super Vip' }, { v: 'alto', l: 'Vip' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }],                   ph: 'Nivel'  },
+                { label: 'Nivel',  value: editSegment, set: setEditSegment, items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip', l: 'Vip' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }],                   ph: 'Nivel'  },
               ].map(({ label, value, set, items, ph }) => (
                 <div key={label}>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">{label}</label>

@@ -5,15 +5,15 @@ import type { Segment, Intent } from '@/lib/scoring/conversation-scoring'
 
 export function SegmentBadge({ segment }: { segment: Segment }) {
   if (!segment || segment === 'bajo' || segment === 'medio') return null
-  if (segment === 'vip')
+  if (segment === 'super_vip')
     return (
-      <span className="inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded border bg-yellow-50 text-yellow-800 border-yellow-300 tracking-wide">
-        VIP
+      <span className="inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded border bg-purple-50 text-purple-800 border-purple-300 tracking-wide">
+        Super Vip
       </span>
     )
   return (
-    <span className="inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded border bg-green-50 text-green-800 border-green-300 tracking-wide">
-      Alto Valor
+    <span className="inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded border bg-yellow-50 text-yellow-800 border-yellow-300 tracking-wide">
+      Vip
     </span>
   )
 }

@@ -21,7 +21,7 @@ const FilterSchema = z.object({
   // Filtro principal del operador: seleccionar un segmento de difusión específico.
   // Sin filtro → devuelve TODOS los elegibles del último run completo, por priority_score DESC.
   reactivationSegment:  z.enum(REACTIVATION_SEGMENTS).optional(),
-  valueTier:            z.enum(['vip', 'alto', 'medio', 'bajo']).optional(),
+  valueTier:            z.enum(['super_vip', 'vip', 'medio', 'bajo']).optional(),
   platform:             z.string().max(50).optional(),
   agent:                z.string().max(50).optional(),
   broadcasted:          z.coerce.boolean().default(false),

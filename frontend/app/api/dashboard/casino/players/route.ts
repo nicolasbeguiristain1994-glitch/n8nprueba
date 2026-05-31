@@ -54,7 +54,7 @@ const ANTIGUEDAD_ALLOWED   = new Set(['nuevo', 'reciente', 'establecido', 'veter
 
 // ── casino_players enum whitelists ────────────────────────────────────────────
 // Canonical values from migrations 025 + 027.
-const NIVEL_ALLOWED = new Set(['bajo', 'medio', 'alto', 'vip'])
+const NIVEL_ALLOWED = new Set(['bajo', 'medio', 'vip', 'super_vip'])
 const SEG_ACTIVIDAD_ALLOWED = new Set([
   'nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido',
 ])
@@ -66,7 +66,7 @@ const SEG_ACTIVIDAD_ALLOWED = new Set([
 
 // Historical mode (columns belong to casino_players directly, no alias)
 const VR_HIST: Record<string, string> = {
-  critico: `(seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto IN ('vip','alto'))`,
+  critico: `(seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto IN ('super_vip','vip'))`,
   medio:   `(seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto = 'medio')`,
   bajo:    `(seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto = 'bajo')`,
 }
@@ -80,7 +80,7 @@ const ANT_HIST: Record<string, string> = {
 
 // Period mode (casino_players is LEFT JOINed as alias 'cp')
 const VR_PERIOD: Record<string, string> = {
-  critico: `(cp.seg_actividad IN ('perdido','inactivo','en_riesgo') AND cp.seg_monto IN ('vip','alto'))`,
+  critico: `(cp.seg_actividad IN ('perdido','inactivo','en_riesgo') AND cp.seg_monto IN ('super_vip','vip'))`,
   medio:   `(cp.seg_actividad IN ('perdido','inactivo','en_riesgo') AND cp.seg_monto = 'medio')`,
   bajo:    `(cp.seg_actividad IN ('perdido','inactivo','en_riesgo') AND cp.seg_monto = 'bajo')`,
 }
@@ -480,7 +480,7 @@ export async function GET(req: Request) {
              COALESCE(cp.labels, '{}')                AS labels,
              CASE
                WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
-                    AND cp.seg_monto IN ('vip','alto') THEN 'critico'
+                    AND cp.seg_monto IN ('super_vip','vip') THEN 'critico'
                WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
                     AND cp.seg_monto = 'medio'         THEN 'medio'
                WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
@@ -567,7 +567,7 @@ export async function GET(req: Request) {
              COALESCE(labels, '{}')      AS labels,
              CASE
                WHEN seg_actividad IN ('perdido','inactivo','en_riesgo')
-                    AND seg_monto IN ('vip','alto') THEN 'critico'
+                    AND seg_monto IN ('super_vip','vip') THEN 'critico'
                WHEN seg_actividad IN ('perdido','inactivo','en_riesgo')
                     AND seg_monto = 'medio'         THEN 'medio'
                WHEN seg_actividad IN ('perdido','inactivo','en_riesgo')

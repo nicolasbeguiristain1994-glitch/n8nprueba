@@ -11,7 +11,7 @@ import { useCurrentUser } from '@/lib/useCurrentUser'
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
-type TierName = 'vip' | 'alto' | 'medio' | 'bajo'
+type TierName = 'super_vip' | 'vip' | 'medio' | 'bajo'
 
 interface SegmentationTier {
   tier: TierName
@@ -34,12 +34,12 @@ const FIELD_LABELS: Record<EditableField, string> = {
   deposit_threshold_min:   'Depósito mín ($)',
   recontact_cooldown_days: 'Cooldown (días)',
 }
-const TIER_LABELS: Record<TierName, string> = { vip: 'VIP', alto: 'Alto', medio: 'Medio', bajo: 'Bajo' }
+const TIER_LABELS: Record<TierName, string> = { super_vip: 'Super Vip', vip: 'Vip', medio: 'Medio', bajo: 'Bajo' }
 const TIER_COLORS: Record<TierName, string> = {
-  vip:   'bg-yellow-50 text-yellow-800 font-semibold',
-  alto:  'bg-blue-50 text-blue-800 font-semibold',
-  medio: 'bg-gray-50 text-gray-700 font-medium',
-  bajo:  'bg-gray-50 text-gray-400 font-medium',
+  super_vip: 'bg-purple-50 text-purple-800 font-semibold',
+  vip:       'bg-yellow-50 text-yellow-800 font-semibold',
+  medio:     'bg-gray-50 text-gray-700 font-medium',
+  bajo:      'bg-gray-50 text-gray-400 font-medium',
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -339,7 +339,7 @@ export function SegmentationTab() {
               <tbody>
                 {(tiers.length > 0
                   ? tiers
-                  : (['vip', 'alto', 'medio', 'bajo'] as TierName[]).map(t => ({
+                  : (['super_vip', 'vip', 'medio', 'bajo'] as TierName[]).map(t => ({
                       tier: t, min_days_inactive: 0, max_days_inactive: 0, value_score: 0,
                       deposit_threshold_min: 0, recontact_cooldown_days: 0, is_active: true,
                       workspace_id: 'default', updated_at: '',

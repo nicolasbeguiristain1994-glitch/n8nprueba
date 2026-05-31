@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import {
   Loader2, Download, RefreshCw, AlertCircle, TrendingUp, TrendingDown,
-  Send, CheckCheck, Eye, MessageSquare, X, BarChart2,
+  Send, CheckCheck, Eye, MessageSquare, X, BarChart2, Bot, Sparkles,
 } from 'lucide-react'
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
@@ -204,6 +204,14 @@ export default function EstadisticasPage() {
   // Export
   const [exporting, setExporting] = useState(false)
 
+  // AI Chat tab
+  interface AiMessage { role: 'user' | 'assistant'; content: string }
+  const [aiMessages,  setAiMessages]  = useState<AiMessage[]>([])
+  const [aiInput,     setAiInput]     = useState('')
+  const [aiLoading,   setAiLoading]   = useState(false)
+  const [aiError,     setAiError]     = useState<string | null>(null)
+  const aiBottomRef = useRef<HTMLDivElement>(null)
+
   // Active tab
   const [tab, setTab] = useState('resumen')
 
@@ -283,6 +291,31 @@ export default function EstadisticasPage() {
     setFrom(PRESETS[i].from()); setTo(PRESETS[i].to())
   }
 
+  // AI Chat handler
+  async function sendAiMessage(text?: string) {
+    const content = (text ?? aiInput).trim()
+    if (!content || aiLoading) return
+    setAiInput('')
+    setAiError(null)
+    const updated: AiMessage[] = [...aiMessages, { role: 'user', content }]
+    setAiMessages(updated)
+    setAiLoading(true)
+    setTimeout(() => aiBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+    try {
+      const res = await fetch('/api/stats/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: updated }),
+      })
+      const data = await res.json() as { response?: string; error?: string }
+      if (!res.ok || data.error) { setAiError(data.error ?? `Error ${res.status}`); return }
+      setAiMessages(prev => [...prev, { role: 'assistant', content: data.response ?? '' }])
+    } catch { setAiError('Error de red') } finally {
+      setAiLoading(false)
+      setTimeout(() => aiBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+    }
+  }
+
   // Export handler
   async function handleExport(type: string) {
     setExporting(true)
@@ -342,6 +375,9 @@ export default function EstadisticasPage() {
           <TabsTrigger value="campanas">Campañas</TabsTrigger>
           <TabsTrigger value="lineas">Líneas</TabsTrigger>
           <TabsTrigger value="plantillas">Plantillas</TabsTrigger>
+          <TabsTrigger value="ia" className="flex items-center gap-1.5">
+            <Sparkles size={13} />IA Analytics
+          </TabsTrigger>
         </TabsList>
 
         {/* ── TAB: RESUMEN ─────────────────────────────────────────────────── */}
@@ -723,6 +759,106 @@ export default function EstadisticasPage() {
               </table>
             </div>
           )}
+        </TabsContent>
+
+        {/* ── TAB: IA ANALYTICS ───────────────────────────────────────────── */}
+        <TabsContent value="ia" className="mt-4">
+          <div className="flex flex-col h-[calc(100vh-220px)] min-h-[500px] border border-gray-200 rounded-xl overflow-hidden bg-white">
+
+            {/* Header */}
+            <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-100 bg-gray-50">
+              <div className="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center">
+                <Bot size={14} className="text-violet-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-900">IA Analytics</p>
+                <p className="text-xs text-gray-400">Hacé preguntas sobre jugadores, transacciones y campañas</p>
+              </div>
+            </div>
+
+            {/* Messages */}
+            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+              {aiMessages.length === 0 && (
+                <div className="flex flex-col items-center justify-center h-full gap-6 text-center">
+                  <div className="w-12 h-12 rounded-2xl bg-violet-50 flex items-center justify-center">
+                    <Sparkles size={22} className="text-violet-500" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">¿Qué querés saber?</p>
+                    <p className="text-xs text-gray-400 mt-1">Hacé preguntas en lenguaje natural sobre tu base de jugadores</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
+                    {[
+                      '¿Cuántos Super VIP hay por agente?',
+                      '¿Cuáles son los 10 jugadores con más depósitos este mes?',
+                      '¿Cuántos jugadores nuevos se registraron en los últimos 30 días?',
+                      '¿Qué agente tiene más jugadores en riesgo?',
+                    ].map(q => (
+                      <button key={q} onClick={() => sendAiMessage(q)}
+                        className="text-left px-3 py-2.5 rounded-lg border border-gray-200 bg-gray-50 hover:bg-violet-50 hover:border-violet-200 text-xs text-gray-600 hover:text-violet-700 transition-colors">
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {aiMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  {msg.role === 'assistant' && (
+                    <div className="w-6 h-6 rounded-full bg-violet-100 flex items-center justify-center mr-2 mt-0.5 shrink-0">
+                      <Bot size={12} className="text-violet-600" />
+                    </div>
+                  )}
+                  <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
+                    msg.role === 'user'
+                      ? 'bg-violet-600 text-white rounded-br-sm'
+                      : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+                  }`}>
+                    {msg.content}
+                  </div>
+                </div>
+              ))}
+
+              {aiLoading && (
+                <div className="flex justify-start">
+                  <div className="w-6 h-6 rounded-full bg-violet-100 flex items-center justify-center mr-2 mt-0.5 shrink-0">
+                    <Bot size={12} className="text-violet-600" />
+                  </div>
+                  <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
+                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
+                    <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
+                  </div>
+                </div>
+              )}
+
+              {aiError && (
+                <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  <AlertCircle size={13} /> {aiError}
+                </div>
+              )}
+
+              <div ref={aiBottomRef} />
+            </div>
+
+            {/* Input */}
+            <div className="border-t border-gray-100 px-4 py-3 bg-white">
+              <form onSubmit={e => { e.preventDefault(); void sendAiMessage() }} className="flex gap-2">
+                <Input
+                  value={aiInput}
+                  onChange={e => setAiInput(e.target.value)}
+                  placeholder="Preguntá sobre jugadores, depósitos, segmentos..."
+                  className="flex-1 h-9 text-sm"
+                  disabled={aiLoading}
+                />
+                <Button type="submit" size="sm" disabled={aiLoading || !aiInput.trim()}
+                  className="h-9 px-3 bg-violet-600 hover:bg-violet-700 text-white">
+                  {aiLoading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                </Button>
+              </form>
+            </div>
+          </div>
         </TabsContent>
       </Tabs>
     </div>

@@ -7,7 +7,7 @@ import {
 } from '@/lib/user-prioritization/config'
 import { getConfigRedisClient } from '@/lib/redis'
 
-export type TierName = 'vip' | 'alto' | 'medio' | 'bajo'
+export type TierName = 'super_vip' | 'vip' | 'medio' | 'bajo'
 
 export interface SegmentationTier {
   tier: TierName
@@ -33,7 +33,7 @@ const CACHE_TTL_SECONDS = 300
 
 // Orden de prioridad para resolución de solapamientos entre ventanas de inactividad.
 // VIP/ALTO comparten minDays=7 → vip toma precedencia sobre alto, etc.
-const TIER_PRIORITY: TierName[] = ['vip', 'alto', 'medio', 'bajo']
+const TIER_PRIORITY: TierName[] = ['super_vip', 'vip', 'medio', 'bajo']
 
 // ── Fallback hardcodeado ──────────────────────────────────────────────────────
 //
@@ -44,8 +44,8 @@ const TIER_PRIORITY: TierName[] = ['vip', 'alto', 'medio', 'bajo']
 // NOTA para cuando se implemente PATCH: al guardar cambios en segmentation_tiers,
 // invalidar las siguientes Redis keys del workspace:
 //   DEL config:segmentation:{workspaceId}:all
+//   DEL config:segmentation:{workspaceId}:super_vip
 //   DEL config:segmentation:{workspaceId}:vip
-//   DEL config:segmentation:{workspaceId}:alto
 //   DEL config:segmentation:{workspaceId}:medio
 //   DEL config:segmentation:{workspaceId}:bajo
 // O usar SCAN + DEL con patrón "config:segmentation:{workspaceId}:*"

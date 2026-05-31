@@ -10,8 +10,8 @@ export interface CasinoSummary {
   activos_mes:             number  // fecha_ultima  >= hoy - 30
   nuevos_anterior:         number  // fecha_primera en días 31-60 atrás
   activos_anterior:        number  // fecha_ultima  en días 31-60 atrás
-  total_vip:               number  // seg_monto = 'vip'
-  prioridad_reactivacion:  number  // vip/alto + inactivo/en_riesgo/perdido
+  total_vip:               number  // seg_monto = 'super_vip'
+  prioridad_reactivacion:  number  // super_vip/vip + inactivo/en_riesgo/perdido
   total_jugadores:         number
 }
 
@@ -32,7 +32,7 @@ export interface CasinoAgente {
 export interface CasinoVip {
   username:      string
   agente:        string
-  seg_monto:     string  // 'vip' | 'alto'
+  seg_monto:     string  // 'super_vip' | 'vip'
   seg_actividad: string
   dias_ultimo:   number  // CURRENT_DATE - fecha_ultima
   total_cargas:  number
@@ -99,9 +99,9 @@ export async function GET(req: Request) {
             WHERE fecha_ultima  BETWEEN CURRENT_DATE - 60
                                     AND CURRENT_DATE - 31
           )::int                                                        AS activos_anterior,
-          COUNT(*) FILTER (WHERE seg_monto = 'vip')::int               AS total_vip,
+          COUNT(*) FILTER (WHERE seg_monto = 'super_vip')::int          AS total_vip,
           COUNT(*) FILTER (
-            WHERE seg_monto    IN ('vip','alto')
+            WHERE seg_monto    IN ('super_vip','vip')
               AND seg_actividad IN ('inactivo','en_riesgo','perdido')
           )::int                                                        AS prioridad_reactivacion,
           COUNT(*)::int                                                 AS total_jugadores
@@ -122,7 +122,7 @@ export async function GET(req: Request) {
           COUNT(*)::int                                                                AS total,
           COUNT(*) FILTER (WHERE cp.fecha_primera BETWEEN $1::date AND $2::date)::int AS nuevos_mes,
           COUNT(*) FILTER (WHERE cp.fecha_ultima  BETWEEN $1::date AND $2::date)::int AS activos_mes,
-          COUNT(*) FILTER (WHERE cp.seg_monto = 'vip')::int                           AS vip,
+          COUNT(*) FILTER (WHERE cp.seg_monto = 'super_vip')::int                      AS vip,
           COUNT(*) FILTER (
             WHERE cp.fecha_ultima < $1::date OR cp.fecha_ultima IS NULL
           )::int                                                                       AS en_riesgo,
@@ -170,7 +170,7 @@ export async function GET(req: Request) {
           cant_retiros,
           fecha_ultima::text                  AS fecha_ultima
         FROM casino_players
-        WHERE seg_monto IN ('vip','alto')
+        WHERE seg_monto IN ('super_vip','vip')
           AND fecha_ultima IS NOT NULL
           AND agente = ANY(${agentsSql})
         ORDER BY

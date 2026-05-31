@@ -46,7 +46,7 @@ type OperatorUser = {
 }
 
 const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
-const SEGMENT_LABEL: Record<string, string> = { bajo: 'Bajo', medio: 'Medio', alto: 'Vip', vip: 'Super Vip' }
+const SEGMENT_LABEL: Record<string, string> = { bajo: 'Bajo', medio: 'Medio', vip: 'Vip', super_vip: 'Super Vip' }
 
 // ── Sub-component: contact card ───────────────────────────────────────────────
 
@@ -251,8 +251,8 @@ export default function VisibilityPage() {
                   <SelectTrigger className="h-7 text-xs flex-1"><SelectValue placeholder="Nivel" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Todos los niveles</SelectItem>
-                    <SelectItem value="vip">Super Vip</SelectItem>
-                    <SelectItem value="alto">Vip</SelectItem>
+                    <SelectItem value="super_vip">Super Vip</SelectItem>
+                    <SelectItem value="vip">Vip</SelectItem>
                     <SelectItem value="medio">Medio</SelectItem>
                     <SelectItem value="bajo">Bajo</SelectItem>
                   </SelectContent>

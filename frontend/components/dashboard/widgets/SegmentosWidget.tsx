@@ -27,10 +27,10 @@ const ACT_COLORS: Record<string, string> = {
 }
 
 const MONTO_COLORS: Record<string, string> = {
-  bajo:  '#94a3b8',
-  medio: '#4f46e5',  /* primary indigo */
-  alto:  '#0d9488',  /* accent teal */
-  vip:   '#7c3aed',  /* vip purple */
+  bajo:      '#94a3b8',
+  medio:     '#4f46e5',  /* primary indigo */
+  vip:       '#0d9488',  /* accent teal */
+  super_vip: '#7c3aed',  /* super vip purple */
 }
 
 const ACT_LABELS: Record<string, string> = {
@@ -39,7 +39,7 @@ const ACT_LABELS: Record<string, string> = {
 }
 
 const ORDER_ACT   = ['nuevo','frecuente','regular','ocasional','en_riesgo','inactivo','perdido']
-const ORDER_MONTO = ['bajo','medio','alto','vip']
+const ORDER_MONTO = ['bajo','medio','vip','super_vip']
 
 function sortSeg(data: SegCount[], order: string[]) {
   return [...data].sort((a, b) => order.indexOf(a.seg) - order.indexOf(b.seg))

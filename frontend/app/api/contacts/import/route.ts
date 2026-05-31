@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     // casino_username: campo explícito > fallback al campo name
     const casinoUsername = (c.casino_username || c.name || '').trim() || null
     const rawSeg = (c.segment || '').trim().toLowerCase()
-    const VALID_SEGMENTS = ['casual', 'regular', 'vip', 'whale', 'bajo', 'medio', 'alto']
+    const VALID_SEGMENTS = ['casual', 'regular', 'super_vip', 'vip', 'whale', 'bajo', 'medio']
     const rawName = (c.name || '').trim()
     normalized.push({
       phone:           rawPhone,
@@ -179,7 +179,7 @@ export async function POST(req: NextRequest) {
                  'casino:actividad:' || seg_actividad,
                  'casino:agente:'    || agente,
                  CASE
-                   WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto IN ('vip','alto') THEN 'casino:valor_riesgo:critico'
+                   WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto IN ('super_vip','vip') THEN 'casino:valor_riesgo:critico'
                    WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto = 'medio'         THEN 'casino:valor_riesgo:medio'
                    WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto = 'bajo'          THEN 'casino:valor_riesgo:bajo'
                    ELSE NULL
@@ -200,9 +200,9 @@ export async function POST(req: NextRequest) {
            UPDATE contacts
              SET panel      = COALESCE(contacts.panel, m.agente),
                  segment    = CASE
-                   WHEN COALESCE(r.max_30d, 0) >= 1000000 THEN 'vip'::contact_segment
-                   WHEN COALESCE(r.max_30d, 0) >= 500000  THEN 'alto'::contact_segment
-                   WHEN r.max_30d IS NOT NULL AND m.seg_monto IN ('vip','alto') THEN 'medio'::contact_segment
+                   WHEN COALESCE(r.max_30d, 0) >= 1000000 THEN 'super_vip'::contact_segment
+                   WHEN COALESCE(r.max_30d, 0) >= 500000  THEN 'vip'::contact_segment
+                   WHEN r.max_30d IS NOT NULL AND m.seg_monto IN ('super_vip','vip') THEN 'medio'::contact_segment
                    ELSE m.seg_monto::contact_segment
                  END,
                  updated_at = NOW()

@@ -2,9 +2,9 @@
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export type Segment = 'bajo' | 'medio' | 'alto' | 'vip' | null
+export type Segment = 'bajo' | 'medio' | 'vip' | 'super_vip' | null
 export type Intent  = 'urgent' | 'complaint' | 'reactivation' | null
-export type Filter  = 'all' | 'vip' | 'alto' | 'urgent' | 'complaint' | 'escalated' | 'unread'
+export type Filter  = 'all' | 'super_vip' | 'vip' | 'urgent' | 'complaint' | 'escalated' | 'unread'
 
 export interface Conv {
   phone_number:       string
@@ -75,8 +75,8 @@ export function detectIntent(message: string, direction: string): Intent {
 export function priorityScore(c: Conv): number {
   const w = SCORING_WEIGHTS
   let score = 0
-  if (c.segment === 'vip')  score += w.segment.vip
-  if (c.segment === 'alto') score += w.segment.alto
+  if (c.segment === 'super_vip') score += w.segment.vip
+  if (c.segment === 'vip')      score += w.segment.alto
   const i = detectIntent(c.last_message, c.last_direction)
   if (i === 'urgent')       score += w.intent.urgent
   if (i === 'complaint')    score += w.intent.complaint
@@ -89,8 +89,8 @@ export function priorityScore(c: Conv): number {
 
 export const FILTER_DEFS: ConvFilterDef[] = [
   { key: 'all',       label: 'Todos' },
-  { key: 'vip',       label: 'VIP' },
-  { key: 'alto',      label: 'Alto Valor' },
+  { key: 'super_vip', label: 'Super Vip' },
+  { key: 'vip',       label: 'Vip' },
   { key: 'urgent',    label: 'Urgentes' },
   { key: 'complaint', label: 'Quejas' },
   { key: 'escalated', label: 'Escalados' },
@@ -99,8 +99,8 @@ export const FILTER_DEFS: ConvFilterDef[] = [
 
 export function applyFilter(convs: Conv[], filter: Filter): Conv[] {
   switch (filter) {
+    case 'super_vip': return convs.filter(c => c.segment === 'super_vip')
     case 'vip':       return convs.filter(c => c.segment === 'vip')
-    case 'alto':      return convs.filter(c => c.segment === 'alto')
     case 'urgent':    return convs.filter(c => detectIntent(c.last_message, c.last_direction) === 'urgent')
     case 'complaint': return convs.filter(c => detectIntent(c.last_message, c.last_direction) === 'complaint' || !!c.is_escalated)
     case 'escalated': return convs.filter(c => !!c.is_escalated)
@@ -141,7 +141,7 @@ export function initials(c: Conv): string {
 }
 
 export function avatarCls(segment: Segment | undefined): string {
-  if (segment === 'vip')  return 'bg-yellow-100 text-yellow-700'
-  if (segment === 'alto') return 'bg-green-100 text-green-700'
+  if (segment === 'super_vip') return 'bg-purple-100 text-purple-700'
+  if (segment === 'vip')       return 'bg-yellow-100 text-yellow-700'
   return 'bg-gray-200 text-gray-600'
 }

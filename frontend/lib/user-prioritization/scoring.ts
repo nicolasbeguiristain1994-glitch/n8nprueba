@@ -59,10 +59,10 @@ export function resolveValueTier(
   }
 
   switch (segment) {
-    case 'vip':   return 'vip'
-    case 'alto':  return 'alto'
-    case 'medio': return 'medio'
-    default:      return 'bajo'
+    case 'super_vip': return 'super_vip'
+    case 'vip':       return 'vip'
+    case 'medio':     return 'medio'
+    default:          return 'bajo'
   }
 }
 

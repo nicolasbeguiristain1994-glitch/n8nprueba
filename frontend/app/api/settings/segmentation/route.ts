@@ -7,7 +7,7 @@ import { getConfigRedisClient } from '@/lib/redis'
 
 const WORKSPACE = 'default'
 
-const TIER_NAMES: TierName[] = ['vip', 'alto', 'medio', 'bajo']
+const TIER_NAMES: TierName[] = ['super_vip', 'vip', 'medio', 'bajo']
 
 // Campos que el cliente puede modificar. El campo `tier` y metadatos son inmutables.
 const ALLOWED_CHANGE_FIELDS = [

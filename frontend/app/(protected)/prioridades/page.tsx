@@ -71,17 +71,17 @@ const SEGMENT_STYLE: Record<string, string> = {
 }
 
 const TIER_STYLE: Record<string, string> = {
-  vip:   'bg-purple-100 text-purple-700',
-  alto:  'bg-amber-100 text-amber-700',
-  medio: 'bg-blue-100 text-blue-700',
-  bajo:  'bg-gray-100 text-gray-500',
+  super_vip: 'bg-purple-100 text-purple-700',
+  vip:       'bg-amber-100 text-amber-700',
+  medio:     'bg-blue-100 text-blue-700',
+  bajo:      'bg-gray-100 text-gray-500',
 }
 
 const TIER_LABEL: Record<string, string> = {
-  vip:   'Super Vip',
-  alto:  'Vip',
-  medio: 'Medio',
-  bajo:  'Bajo',
+  super_vip: 'Super Vip',
+  vip:       'Vip',
+  medio:     'Medio',
+  bajo:      'Bajo',
 }
 
 const AGENTS: string[] = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
@@ -136,12 +136,12 @@ function ScoringHelpModal({ open, onClose }: { open: boolean; onClose: () => voi
               </thead>
               <tbody className="divide-y divide-gray-100">
                 <tr>
-                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">Super VIP</span></td>
+                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">Super Vip</span></td>
                   <td className="px-3 py-2 text-gray-500">≥ $10.000</td>
                   <td className="px-3 py-2 text-right font-semibold text-gray-800">60</td>
                 </tr>
                 <tr>
-                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">VIP</span></td>
+                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">Vip</span></td>
                   <td className="px-3 py-2 text-gray-500">≥ $3.000</td>
                   <td className="px-3 py-2 text-right font-semibold text-gray-800">45</td>
                 </tr>
@@ -180,13 +180,13 @@ function ScoringHelpModal({ open, onClose }: { open: boolean; onClose: () => voi
               </thead>
               <tbody className="divide-y divide-gray-100">
                 <tr>
-                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">Super VIP</span></td>
+                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium">Super Vip</span></td>
                   <td className="px-3 py-2 text-gray-500">7 – 180 días</td>
                   <td className="px-3 py-2 text-amber-600 font-semibold">40</td>
                   <td className="px-3 py-2 text-right text-gray-400">0</td>
                 </tr>
                 <tr>
-                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">VIP</span></td>
+                  <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">Vip</span></td>
                   <td className="px-3 py-2 text-gray-500">7 – 150 días</td>
                   <td className="px-3 py-2 text-amber-600 font-semibold">40</td>
                   <td className="px-3 py-2 text-right text-gray-400">0</td>
@@ -218,25 +218,25 @@ function ScoringHelpModal({ open, onClose }: { open: boolean; onClose: () => voi
                 {
                   label: 'Urgente',
                   style: 'bg-red-100 text-red-700',
-                  desc: 'VIP/Super VIP con 7–30 días inactivos. Memoria fresca de la marca.',
+                  desc: 'VIP/Super Vip con 7–30 días inactivos. Memoria fresca de la marca.',
                   msg: '"Te extrañamos, volvé." — mensaje directo, sin necesidad de incentivo extra.',
                 },
                 {
                   label: 'Prioritaria',
                   style: 'bg-orange-100 text-orange-700',
-                  desc: 'VIP/Super VIP 31–90 días · Medio 14–30 días.',
+                  desc: 'VIP/Super Vip 31–90 días · Medio 14–30 días.',
                   msg: 'Incluir incentivo: bono, free spins o cashback.',
                 },
                 {
                   label: 'Estándar',
                   style: 'bg-blue-100 text-blue-700',
-                  desc: 'VIP/Super VIP 91–120 días · Medio 31–60 días.',
+                  desc: 'VIP/Super Vip 91–120 días · Medio 31–60 días.',
                   msg: 'Oferta especial, torneo o novedad de producto.',
                 },
                 {
                   label: 'Fría alto valor',
                   style: 'bg-purple-100 text-purple-700',
-                  desc: 'VIP/Super VIP con 121–180 días inactivos. Alto LTV, vale la inversión.',
+                  desc: 'VIP/Super Vip con 121–180 días inactivos. Alto LTV, vale la inversión.',
                   msg: 'Win-back agresivo: oferta máxima. No enviar mensaje genérico.',
                 },
                 {
@@ -263,7 +263,7 @@ function ScoringHelpModal({ open, onClose }: { open: boolean; onClose: () => voi
           <div className="bg-green-50 border border-green-100 rounded-lg px-4 py-3">
             <p className="text-xs font-semibold text-green-800 mb-1">Ejemplo</p>
             <p className="text-xs text-green-700">
-              Cliente Super VIP ($15.000 depositados) con 45 días inactivo:<br />
+              Cliente Super Vip ($15.000 depositados) con 45 días inactivo:<br />
               <span className="font-mono">Valor = 60 · Urgencia = 31 → Score = <strong>91</strong></span><br />
               Segmento: <strong>Prioritaria</strong> — enviar con incentivo.
             </p>

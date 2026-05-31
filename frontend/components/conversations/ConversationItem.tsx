@@ -8,8 +8,8 @@ import { SegmentBadge, IntentBadge, EscalatedBadge, ProcessBadge, FollowUpBadge 
 
 function borderColor(c: Conv, isSelected: boolean): string {
   if (isSelected)                                  return 'border-l-[3px] border-l-green-500'
-  if (c.segment === 'vip')                         return 'border-l-[3px] border-l-yellow-400'
-  if (c.segment === 'alto')                        return 'border-l-[3px] border-l-green-500'
+  if (c.segment === 'super_vip')                   return 'border-l-[3px] border-l-yellow-400'
+  if (c.segment === 'vip')                         return 'border-l-[3px] border-l-green-500'
   const i = detectIntent(c.last_message, c.last_direction)
   if (i === 'urgent')                              return 'border-l-[3px] border-l-red-400'
   if (i === 'complaint' || c.is_escalated)         return 'border-l-[3px] border-l-orange-400'
@@ -27,7 +27,7 @@ export const ConversationItem = memo(function ConversationItem({ conv: c, isSele
   const intent     = detectIntent(c.last_message, c.last_direction)
   const unread     = c.last_direction === 'inbound'
   const inProcess  = c.conv_flow === 'en_proceso'
-  const hasBadge   = c.segment === 'vip' || c.segment === 'alto' || intent || c.is_escalated || inProcess || c.has_follow_up
+  const hasBadge   = c.segment === 'super_vip' || c.segment === 'vip' || intent || c.is_escalated || inProcess || c.has_follow_up
 
   return (
     <button
