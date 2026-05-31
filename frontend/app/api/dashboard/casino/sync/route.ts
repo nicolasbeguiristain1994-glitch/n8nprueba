@@ -83,9 +83,20 @@ export async function POST(req: NextRequest) {
   const syncScript = path.join(scriptsDir, 'sync-casino-players-live.js')
   const segScript  = path.join(scriptsDir, 'segmentar-casino-players.js')
 
+  const agentesParam = req.nextUrl.searchParams.get('agentes')?.trim()
+
   const syncArgs = desde
-    ? [`--platform=${platformParam}`, `--desde=${desde}`, ...(hasta ? [`--hasta=${hasta}`] : [])]
-    : [`--platform=${platformParam}`, '--auto']
+    ? [
+        `--platform=${platformParam}`,
+        `--desde=${desde}`,
+        ...(hasta    ? [`--hasta=${hasta}`]         : []),
+        ...(agentesParam ? [`--agentes=${agentesParam}`] : []),
+      ]
+    : [
+        `--platform=${platformParam}`,
+        '--auto',
+        ...(agentesParam ? [`--agentes=${agentesParam}`] : []),
+      ]
 
   // Encadena sync → segmentación: la segmentación solo corre si el sync termina OK.
   // Se lanza en un proceso detached para no bloquear la respuesta HTTP.
