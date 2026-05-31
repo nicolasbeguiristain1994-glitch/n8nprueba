@@ -19,14 +19,21 @@ import path from 'path'
  * Requiere rol admin.
  *
  * Variables de entorno requeridas en el servidor (según plataforma):
- *   ZEUS_API_KEY, ZEUS_PLAYER_TOKEN     (para zeus)
- *   BET30_API_KEY, BET30_PLAYER_TOKEN   (para bet30)
+ *   ZEUS_API_KEY  +  ZEUS_PLAYER_TOKEN                        (token estático)
+ *   ZEUS_API_KEY  +  ZEUS_ADMIN_USER + ZEUS_ADMIN_PASSWORD    (auto-login, preferido)
+ *   BET30_API_KEY +  BET30_PLAYER_TOKEN                       (token estático)
+ *   BET30_API_KEY +  BET30_ADMIN_USER + BET30_ADMIN_PASSWORD  (auto-login, preferido)
  *   DATABASE_URL ya debe estar configurado
  */
 
-const PLATFORM_ENV_VARS: Record<string, { keyVar: string; tokenVar: string }> = {
-  zeus:  { keyVar: 'ZEUS_API_KEY',  tokenVar: 'ZEUS_PLAYER_TOKEN'  },
-  bet30: { keyVar: 'BET30_API_KEY', tokenVar: 'BET30_PLAYER_TOKEN' },
+const PLATFORM_ENV_VARS: Record<string, {
+  keyVar: string
+  tokenVar: string
+  adminUserVar: string
+  adminPassVar: string
+}> = {
+  zeus:  { keyVar: 'ZEUS_API_KEY',  tokenVar: 'ZEUS_PLAYER_TOKEN',  adminUserVar: 'ZEUS_ADMIN_USER',  adminPassVar: 'ZEUS_ADMIN_PASSWORD'  },
+  bet30: { keyVar: 'BET30_API_KEY', tokenVar: 'BET30_PLAYER_TOKEN', adminUserVar: 'BET30_ADMIN_USER', adminPassVar: 'BET30_ADMIN_PASSWORD' },
 }
 
 export async function POST(req: NextRequest) {
@@ -50,13 +57,19 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const creds = PLATFORM_ENV_VARS[platformParam]
-  const apiKey      = process.env[creds.keyVar]
+  const creds      = PLATFORM_ENV_VARS[platformParam]
+  const apiKey     = process.env[creds.keyVar]
   const playerToken = process.env[creds.tokenVar]
+  const adminUser  = process.env[creds.adminUserVar]
+  const adminPass  = process.env[creds.adminPassVar]
 
-  if (!apiKey || !playerToken) {
+  // Acepta: token estático O credenciales de auto-login (el conector obtiene el token solo)
+  const hasStaticToken = !!(apiKey && playerToken)
+  const hasAutoLogin   = !!(apiKey && adminUser && adminPass)
+
+  if (!hasStaticToken && !hasAutoLogin) {
     return NextResponse.json(
-      { error: `Variables ${creds.keyVar} y ${creds.tokenVar} no configuradas en el servidor` },
+      { error: `Configurar ${creds.keyVar} + ${creds.tokenVar} (o ${creds.adminUserVar} + ${creds.adminPassVar}) en el servidor` },
       { status: 503 },
     )
   }
@@ -88,9 +101,7 @@ export async function POST(req: NextRequest) {
       stdio:    'ignore',
       env: {
         ...process.env,
-        [creds.keyVar]:   apiKey,
-        [creds.tokenVar]: playerToken,
-        PATH:             process.env.PATH ?? '',
+        PATH: process.env.PATH ?? '',
       },
     })
 
