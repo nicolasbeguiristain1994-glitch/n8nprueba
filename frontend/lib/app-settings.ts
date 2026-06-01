@@ -19,10 +19,10 @@ const CACHE_TTL_SECONDS = 300
 export async function getAppSetting<T = unknown>(key: string, fallback: T): Promise<T> {
   const cacheKey = `app_settings:${key}`
 
-  // Capa 1: Redis
+  // Capa 1: Redis (solo si el cliente ya estableció conexión)
   try {
     const client = getConfigRedisClient()
-    if (client) {
+    if (client?.isReady) {
       const cached = await client.get(cacheKey)
       if (cached !== null) return JSON.parse(cached) as T
     }
@@ -41,7 +41,7 @@ export async function getAppSetting<T = unknown>(key: string, fallback: T): Prom
     // Cachear en Redis para las próximas lecturas
     try {
       const client = getConfigRedisClient()
-      if (client) {
+      if (client?.isReady) {
         await client.setEx(cacheKey, CACHE_TTL_SECONDS, JSON.stringify(rows[0].value))
       }
     } catch {
