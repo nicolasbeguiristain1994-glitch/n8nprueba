@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
   const segment   = req.nextUrl.searchParams.get('segment') || ''
   const gaming    = req.nextUrl.searchParams.get('gaming') || ''
   const panelRaw  = req.nextUrl.searchParams.get('panel') || ''
-  const panel     = PANEL_ALIAS_MAP[panelRaw] ?? panelRaw
+  const panel     = (PANEL_ALIAS_MAP[panelRaw] ?? panelRaw).toLowerCase()
   const download  = req.nextUrl.searchParams.get('download') === 'true'
   const selectAll = req.nextUrl.searchParams.get('select_all') === 'true'
   const page      = Number(req.nextUrl.searchParams.get('page') || 1)
@@ -106,7 +106,7 @@ export async function GET(req: NextRequest) {
         WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
           AND ($2 = '' OR segment::text = $2)
           AND ($3 = '' OR gaming::text = $3)
-          AND ($4 = '' OR panel = $4)
+          AND ($4 = '' OR LOWER(panel) = $4)
           AND ($5 = '' OR linea::text = $5)
           AND ($6 = '' OR EXISTS (
             SELECT 1 FROM contact_tags ct
@@ -181,7 +181,7 @@ export async function GET(req: NextRequest) {
       WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
         AND ($4 = '' OR segment::text = $4)
         AND ($5 = '' OR gaming::text = $5)
-        AND ($6 = '' OR panel = $6)
+        AND ($6 = '' OR LOWER(panel) = $6)
         AND ($7 = '' OR linea::text = $7)
         AND ($8 = '' OR EXISTS (
           SELECT 1 FROM contact_tags ct
@@ -205,7 +205,7 @@ export async function GET(req: NextRequest) {
        WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
          AND ($2 = '' OR segment::text = $2)
          AND ($3 = '' OR gaming::text = $3)
-         AND ($4 = '' OR panel = $4)
+         AND ($4 = '' OR LOWER(panel) = $4)
          AND ($5 = '' OR linea::text = $5)
          AND ($6 = '' OR EXISTS (
            SELECT 1 FROM contact_tags ct

@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'contacts debe ser un array de máximo 10.000 filas por chunk' }, { status: 400 })
   }
 
-  const panelValue = panel?.trim() || null
+  const panelValue = panel?.trim().toLowerCase() || null
   const lineaValue = linea ? Number(linea) : null
   if (lineaValue !== null && (lineaValue < 1 || lineaValue > 100)) {
     return NextResponse.json({ error: 'Línea inválida (1-100)' }, { status: 400 })
