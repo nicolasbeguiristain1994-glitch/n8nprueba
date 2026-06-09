@@ -25,18 +25,18 @@ ALTER TYPE contact_segment RENAME VALUE 'vip'  TO 'super_vip';
 ALTER TYPE contact_segment RENAME VALUE 'alto' TO 'vip';
 
 
--- ── 2. Datos en segmentation_tiers ───────────────────────────────────────────
--- Misma precaución: actualizar 'vip' → 'super_vip' antes de que 'alto' tome el
--- valor 'vip', para no violar la futura CHECK constraint.
-
-UPDATE segmentation_tiers SET tier = 'super_vip' WHERE tier = 'vip';
-UPDATE segmentation_tiers SET tier = 'vip'       WHERE tier = 'alto';
-
-
--- ── 3. CHECK constraint en segmentation_tiers ────────────────────────────────
+-- ── 2. CHECK constraint en segmentation_tiers ────────────────────────────────
+-- El DROP debe ir ANTES del UPDATE para que 'super_vip' no viole el CHECK viejo.
 
 ALTER TABLE segmentation_tiers
   DROP CONSTRAINT IF EXISTS segmentation_tiers_tier_check;
+
+
+-- ── 3. Datos en segmentation_tiers ───────────────────────────────────────────
+-- Actualizar 'vip' → 'super_vip' antes de que 'alto' tome el valor 'vip'.
+
+UPDATE segmentation_tiers SET tier = 'super_vip' WHERE tier = 'vip';
+UPDATE segmentation_tiers SET tier = 'vip'       WHERE tier = 'alto';
 
 ALTER TABLE segmentation_tiers
   ADD CONSTRAINT segmentation_tiers_tier_check
