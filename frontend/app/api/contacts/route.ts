@@ -21,7 +21,14 @@ const BET30_FILTER = `'bet30' = ANY(platforms)`
 const OTROS_FILTER = `NOT 'zeus' = ANY(platforms) AND NOT 'bet30' = ANY(platforms)`
 
 export async function GET(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'contacts', 'read')
+  let auth: Awaited<ReturnType<typeof checkPermissionWithUser>>
+  try {
+    auth = await checkPermissionWithUser(req, 'contacts', 'read')
+  } catch (e) {
+    const err = e as Record<string, unknown>
+    console.error('[/api/contacts GET auth]', { message: err?.message, code: err?.code, detail: err?.detail })
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
   if (!auth.ok) return auth.response
   const { user } = auth
 
@@ -218,7 +225,10 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ contacts: rows, total: Number(count), page, limit })
   } catch (e) {
-    console.error('[/api/contacts GET]', e instanceof Error ? e.message : e)
+    const err = e as Record<string, unknown>
+    console.error('[/api/contacts GET]', {
+      message: err?.message, code: err?.code, detail: err?.detail, stack: err?.stack,
+    })
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

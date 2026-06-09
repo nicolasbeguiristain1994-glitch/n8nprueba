@@ -158,6 +158,7 @@ export default function Contacts() {
   const [contacts, setContacts] = useState<Contact[]>([])
   const [total, setTotal]       = useState(0)
   const [loading, setLoading]   = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   // ── Filtros ───────────────────────────────────────────────────────────────
   const [search, setSearch]                   = useState('')
@@ -293,9 +294,14 @@ export default function Contacts() {
       ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
       ...(filterTag           ? { tag: filterTag }               : {}),
     })
+    setLoadError(null)
     fetchJson<{ contacts: Contact[]; total: number }>(`/api/contacts?${q}`)
       .then(d => { setContacts(d.contacts || []); setTotal(d.total || 0) })
-      .catch(() => { setContacts([]); setTotal(0) })
+      .catch((e: unknown) => {
+        setContacts([])
+        setTotal(0)
+        setLoadError(e instanceof Error ? e.message : 'Error al cargar contactos')
+      })
       .finally(() => setLoading(false))
   }, [search, pagination.pageIndex, segment, filterGaming, filterPanel, filterLinea, filterActividad, filterAntiguedad, filterList, filterPlataforma, filterSinMovimiento, filterTag])
 
@@ -1135,6 +1141,12 @@ export default function Contacts() {
       />
 
       {/* Errores inline */}
+      {loadError && (
+        <div className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-2 text-sm text-destructive flex items-center justify-between">
+          <span>Error al cargar contactos: {loadError}</span>
+          <button onClick={() => setLoadError(null)} className="ml-4 opacity-60 hover:opacity-100">✕</button>
+        </div>
+      )}
       {updateError && (
         <div className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-2 text-sm text-destructive flex items-center justify-between">
           <span>{updateError}</span>
