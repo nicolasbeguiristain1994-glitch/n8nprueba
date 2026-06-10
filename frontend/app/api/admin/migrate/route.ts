@@ -332,6 +332,56 @@ export async function POST(req: NextRequest) {
       AND c.platforms IS DISTINCT FROM computed.new_platforms
   `)
 
+  // ── 114: Update trigger + backfill platforms con regex simplificada ────────
+  // Reemplaza la lógica compleja de 113 con dos UPDATE simples (sin CTEs ni
+  // EXISTS complejos): agrega 'zeus' donde falta y 'bet30' donde falta,
+  // detectando el patrón en cualquier parte del campo (no solo al final).
+  await run('114a: update platforms trigger — simple regex', `
+    CREATE OR REPLACE FUNCTION compute_contact_platforms()
+    RETURNS trigger AS $$
+    DECLARE
+      v_is_zeus boolean := false;
+      v_full    text;
+    BEGIN
+      v_full := COALESCE(NEW.first_name, '') || ' ' || COALESCE(NEW.last_name, '');
+      IF v_full ~* 'z(e|s|eus)?[0-9]*(\/|$)' THEN
+        v_is_zeus := true;
+      ELSE
+        SELECT EXISTS (
+          SELECT 1 FROM casino_players cp
+          JOIN LATERAL unnest(regexp_split_to_array(v_full, '[/ \\t\\n]+')) AS tok ON true
+          WHERE LENGTH(tok) > 2
+            AND cp.username_lower = LOWER(REGEXP_REPLACE(tok, '^\\([^)]*\\)', '', 'i'))
+            AND cp.agente = ANY(ARRAY['bigwin','ofizeus','betcoin','royal','farabet'])
+        ) INTO v_is_zeus;
+      END IF;
+      NEW.platforms := ARRAY_REMOVE(ARRAY[
+        CASE WHEN v_is_zeus THEN 'zeus' END,
+        CASE WHEN v_full ~* 'b(t|e)?[0-9]*(\/|$)' THEN 'bet30' END
+      ], NULL);
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `)
+
+  // Agrega 'zeus' a contactos que tienen el patrón pero les falta la plataforma
+  await run('114b: backfill zeus — regex z/ze/zs en campo o antes de /', `
+    UPDATE contacts
+    SET platforms = array_append(platforms, 'zeus'),
+        updated_at = NOW()
+    WHERE (first_name ~* 'z(e|s|eus)?[0-9]*(\/|$)' OR last_name ~* 'z(e|s|eus)?[0-9]*(\/|$)')
+      AND NOT ('zeus' = ANY(platforms))
+  `)
+
+  // Agrega 'bet30' a contactos que tienen el patrón pero les falta la plataforma
+  await run('114c: backfill bet30 — regex b/bt/be en campo o antes de /', `
+    UPDATE contacts
+    SET platforms = array_append(platforms, 'bet30'),
+        updated_at = NOW()
+    WHERE (first_name ~* 'b(t|e)?[0-9]*(\/|$)' OR last_name ~* 'b(t|e)?[0-9]*(\/|$)')
+      AND NOT ('bet30' = ANY(platforms))
+  `)
+
   const failed = results.filter(r => !r.ok)
   return NextResponse.json({
     ok: failed.length === 0,

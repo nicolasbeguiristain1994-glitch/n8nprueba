@@ -142,13 +142,16 @@ function SegmentItem({ value, label, desc }: { value: string; label: string; des
   )
 }
 
-const ZEUS_RE = /z(s|eus)?$/i
+// Detect zeus/bet30 from username: suffix z/ze/zs/zeus or b/bt/be (+ optional digits)
+// at end of string OR immediately before a '/' separator (multi-username fields).
+const ZEUS_TOKEN_RE  = /z(e|s|eus)?\d*(\/|$)/i
+const BET30_TOKEN_RE = /b(t|e)?\d*(\/|$)/i
 
-// Client-side fallback: only zeus can be detected without DB. bet30 requires
-// server-side verification (the `platforms` field from the API is authoritative).
 function detectClientPlatforms(first: string | null, last: string | null): string[] {
+  const full = `${first || ''} ${last || ''}`
   const platforms: string[] = []
-  if (ZEUS_RE.test(first || '') || ZEUS_RE.test(last || '')) platforms.push('zeus')
+  if (ZEUS_TOKEN_RE.test(full))  platforms.push('zeus')
+  if (BET30_TOKEN_RE.test(full)) platforms.push('bet30')
   return platforms
 }
 
@@ -771,8 +774,10 @@ export default function Contacts() {
       header: ({ column }) => <DataTableColumnHeader column={column} title="Nombre" />,
       cell: ({ row }) => {
         const full = [row.original.first_name, row.original.last_name].filter(Boolean).join(' ')
-        // Prefer server-provided platforms (includes verified bet30); fall back to client-side zeus-only
-        const platforms = row.original.platforms ?? detectClientPlatforms(row.original.first_name, row.original.last_name)
+        // Use client-side detection when DB platforms is empty (fallback for unprocessed contacts)
+        const platforms = row.original.platforms?.length
+          ? row.original.platforms
+          : detectClientPlatforms(row.original.first_name, row.original.last_name)
         const hasName   = !!(row.original.first_name || row.original.last_name)
         const customTags = row.original.custom_tags ?? []
         return (
