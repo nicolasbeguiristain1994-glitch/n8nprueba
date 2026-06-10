@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDbClient } from '@/lib/db'
+import { getLongRunningClient } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
 
 /**
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const client = await getDbClient()
+  const client = await getLongRunningClient()
   const results: { step: string; ok: boolean; rows?: number; error?: string }[] = []
 
   async function run(step: string, sql: string) {
@@ -48,7 +48,6 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    await client.query('SET statement_timeout = 0')
 
     // Paso 1: Sync contacts.segment desde casino_players
     await run('sync segment', `
@@ -132,7 +131,7 @@ export async function POST(req: NextRequest) {
     `)
 
   } finally {
-    client.release()
+    await client.end()
   }
 
   const failed = results.filter(r => !r.ok)

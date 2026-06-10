@@ -1,4 +1,4 @@
-import { Pool, PoolClient } from 'pg'
+import { Pool, PoolClient, Client } from 'pg'
 
 // ── Resolve connection source ─────────────────────────────────────────────────
 // Priority: DATABASE_URL > DB_HOST + DB_* individual vars
@@ -94,6 +94,20 @@ pool.on('connect', () => {
 // ── Acquire a raw client (caller must call client.release()) ─────────────────
 export async function getDbClient(): Promise<PoolClient> {
   const client = await pool.connect()
+  return client
+}
+
+// ── Direct client for long-running admin ops (no query_timeout) ──────────────
+// pool.connect() inherits query_timeout from the pool and cannot be overridden.
+// Use this for backfills/syncs that legitimately run > 10s.
+export async function getLongRunningClient(): Promise<Client> {
+  const client = new Client(
+    DATABASE_URL
+      ? { connectionString: DATABASE_URL, ssl: sslConfig }
+      : { host: dbHost, port: dbPort, database: dbName, user: dbUser, password: dbPassword, ssl: sslConfig }
+  )
+  await client.connect()
+  await client.query('SET statement_timeout = 0')
   return client
 }
 

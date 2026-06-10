@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getDbClient } from '@/lib/db'
+import { getLongRunningClient } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
 
 /**
@@ -18,12 +18,10 @@ export async function POST(req: NextRequest) {
   const err = await checkPermission(req, 'lines', 'manage')
   if (err) return err
 
-  const client = await getDbClient()
+  const client = await getLongRunningClient()
   const results: { step: string; ok: boolean; affected?: number; error?: string }[] = []
 
   try {
-    // Disable timeout — backfill on 80k+ contacts can take > 10s
-    await client.query('SET statement_timeout = 0')
 
     // ── Step 1: Update trigger function ────────────────────────────────────────
     try {
@@ -93,7 +91,7 @@ export async function POST(req: NextRequest) {
     }
 
   } finally {
-    client.release()
+    await client.end()
   }
 
   const failed = results.filter(r => !r.ok)
