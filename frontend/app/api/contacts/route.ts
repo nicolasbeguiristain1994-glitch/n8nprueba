@@ -110,7 +110,7 @@ export async function GET(req: NextRequest) {
         WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
           AND ($2 = '{}' OR segment::text = ANY($2::text[]))
           AND ($3 = '' OR gaming::text = $3)
-          AND ($4 = '' OR $4 = ANY(panels_assigned))
+          AND ($4 = '' OR panel = $4)
           AND ($5 = '' OR linea::text = $5)
           AND ($6 = '' OR EXISTS (
             SELECT 1 FROM contact_tags ct
@@ -186,7 +186,7 @@ export async function GET(req: NextRequest) {
       WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
         AND ($4 = '{}' OR segment::text = ANY($4::text[]))
         AND ($5 = '' OR gaming::text = $5)
-        AND ($6 = '' OR $6 = ANY(panels_assigned))
+        AND ($6 = '' OR panel = $6)
         AND ($7 = '' OR linea::text = $7)
         AND ($8 = '' OR EXISTS (
           SELECT 1 FROM contact_tags ct
@@ -210,7 +210,7 @@ export async function GET(req: NextRequest) {
        WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
          AND ($2 = '{}' OR segment::text = ANY($2::text[]))
          AND ($3 = '' OR gaming::text = $3)
-         AND ($4 = '' OR $4 = ANY(panels_assigned))
+         AND ($4 = '' OR panel = $4)
          AND ($5 = '' OR linea::text = $5)
          AND ($6 = '' OR EXISTS (
            SELECT 1 FROM contact_tags ct
