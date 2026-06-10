@@ -1,16 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query } from '@/lib/db'
+import { getDbClient } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
 
 /**
  * POST /api/admin/sync-tags
  *
  * Sincroniza contact_tags de casino (actividad, antiguedad, valor_riesgo)
- * directamente desde casino_players. Reemplaza los tags stale sin depender
- * del script de segmentación en background.
+ * directamente desde casino_players.
  *
- * Solo admin.
+ * Usa cliente raw con statement_timeout = 0 para evitar cortes en tablas grandes.
+ *
+ * El JOIN usa múltiples variantes del nombre para manejar:
+ *   - Nombres simples:           "Emanuel5032ze"
+ *   - Con prefijo parentético:   "(C.MUCHO)Mario46z3"  → limpia → "Mario46z3"
+ *   - Multi-username con /:      "(C.MUCHO)Mario46z3/mario46be" → token 1 y 2
  */
+
+// SQL que extrae hasta 3 tokens del first_name para JOIN contra casino_players.
+// Tokens: directo · sin-prefijo · parte1-de-/ · parte2-de-/ · parte3-de-/
+const USERNAME_MATCH = `cp.username_lower = ANY(
+  ARRAY_REMOVE(ARRAY[
+    LOWER(TRIM(c.first_name)),
+    LOWER(TRIM(REGEXP_REPLACE(c.first_name, '^\\([^)]*\\)\\s*', '', 'i'))),
+    LOWER(TRIM(SPLIT_PART(REGEXP_REPLACE(c.first_name, '^\\([^)]*\\)\\s*', '', 'i'), '/', 1))),
+    LOWER(TRIM(SPLIT_PART(REGEXP_REPLACE(c.first_name, '^\\([^)]*\\)\\s*', '', 'i'), '/', 2))),
+    LOWER(TRIM(SPLIT_PART(REGEXP_REPLACE(c.first_name, '^\\([^)]*\\)\\s*', '', 'i'), '/', 3)))
+  ], '')
+)`
+
 export async function POST(req: NextRequest) {
   const err = await checkPermission(req, 'lines', 'manage')
   if (err) return err
@@ -21,92 +38,105 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
+  const client = await getDbClient()
   const results: { step: string; ok: boolean; rows?: number; error?: string }[] = []
 
-  async function run(step: string, sql: string, params: unknown[] = []) {
+  async function run(step: string, sql: string) {
     try {
-      const res = await query(sql, params)
-      const rows = Array.isArray(res) ? res.length : (res as { rowCount?: number }).rowCount ?? 0
-      results.push({ step, ok: true, rows })
+      const res = await client.query(sql)
+      results.push({ step, ok: true, rows: res.rowCount ?? 0 })
     } catch (e) {
       results.push({ step, ok: false, error: e instanceof Error ? e.message : String(e) })
     }
   }
 
-  // Paso 1: Sync contacts.segment desde casino_players
-  await run('sync segment', `
-    UPDATE contacts c
-    SET segment = cp.seg_monto::contact_segment, updated_at = NOW()
-    FROM casino_players cp
-    WHERE LOWER(TRIM(c.first_name)) = cp.username_lower
-      AND cp.seg_monto IS NOT NULL
-      AND c.segment::text IS DISTINCT FROM cp.seg_monto
-  `)
+  try {
+    await client.query('SET statement_timeout = 0')
 
-  // Paso 2: Sync last_deposit_at y contadores
-  await run('sync deposits', `
-    UPDATE contacts c
-    SET
-      total_deposits    = cp.cant_cargas,
-      total_withdrawals = cp.cant_retiros,
-      last_deposit_at   = cp.fecha_ultima::timestamptz,
-      updated_at        = NOW()
-    FROM casino_players cp
-    WHERE LOWER(TRIM(c.first_name)) = cp.username_lower
-      AND cp.fecha_ultima IS NOT NULL
-      AND (
-        c.total_deposits    IS DISTINCT FROM cp.cant_cargas
-        OR c.total_withdrawals IS DISTINCT FROM cp.cant_retiros
-        OR c.last_deposit_at::date IS DISTINCT FROM cp.fecha_ultima
-      )
-  `)
+    // Paso 1: Sync contacts.segment desde casino_players
+    await run('sync segment', `
+      UPDATE contacts c
+      SET segment = cp.seg_monto::contact_segment, updated_at = NOW()
+      FROM casino_players cp
+      WHERE ${USERNAME_MATCH}
+        AND cp.seg_monto IS NOT NULL
+        AND c.segment::text IS DISTINCT FROM cp.seg_monto
+    `)
 
-  // Paso 3: DELETE + INSERT de tags en una sola query atómica por contacto.
-  // Usa MERGE-style: borra exactamente los tags de casino:actividad/antiguedad/valor_riesgo
-  // que no coincidan con el valor actual de casino_players, luego inserta los correctos.
-  await run('delete stale tags', `
-    DELETE FROM contact_tags ct
-    WHERE (ct.tag LIKE 'casino:actividad:%'
-        OR ct.tag LIKE 'casino:antiguedad:%'
-        OR ct.tag LIKE 'casino:valor_riesgo:%')
-      AND ct.contact_id IN (
-        SELECT c.id
-        FROM contacts c
-        JOIN casino_players cp ON LOWER(TRIM(c.first_name)) = cp.username_lower
-        WHERE cp.seg_actividad IS NOT NULL
-      )
-  `)
+    // Paso 2: Sync last_deposit_at desde casino_transactions
+    await run('sync deposits', `
+      UPDATE contacts c
+      SET
+        total_deposits    = COALESCE(am.cant_cargas, 0),
+        total_withdrawals = cp.cant_retiros,
+        last_deposit_at   = am.last_tx_date,
+        updated_at        = NOW()
+      FROM casino_players cp
+      LEFT JOIN (
+        SELECT
+          LOWER(username)         AS username_lower,
+          COUNT(*)                AS cant_cargas,
+          MAX(fecha)::timestamptz AS last_tx_date
+        FROM casino_transactions
+        WHERE tipo = 'carga'
+        GROUP BY LOWER(username)
+      ) am ON am.username_lower = cp.username_lower
+      WHERE ${USERNAME_MATCH}
+        AND (
+          c.total_deposits  IS DISTINCT FROM COALESCE(am.cant_cargas, 0)
+          OR c.last_deposit_at IS DISTINCT FROM am.last_tx_date
+        )
+    `)
 
-  await run('insert fresh tags', `
-    INSERT INTO contact_tags (id, contact_id, tag, added_by, added_at)
-    SELECT
-      gen_random_uuid(), c.id,
-      unnest(array_remove(ARRAY[
-        'casino:actividad:' || cp.seg_actividad,
-        CASE
-          WHEN cp.fecha_primera IS NULL                             THEN NULL
-          WHEN (CURRENT_DATE - cp.fecha_primera) <  30             THEN 'casino:antiguedad:nuevo'
-          WHEN (CURRENT_DATE - cp.fecha_primera) <  90             THEN 'casino:antiguedad:reciente'
-          WHEN (CURRENT_DATE - cp.fecha_primera) < 150             THEN 'casino:antiguedad:establecido'
-          WHEN (CURRENT_DATE - cp.fecha_primera) < 270             THEN 'casino:antiguedad:veterano'
-          ELSE                                                           'casino:antiguedad:leal'
-        END,
-        CASE
-          WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
-            AND cp.seg_monto IN ('super_vip','vip_alto','vip_medio','vip') THEN 'casino:valor_riesgo:critico'
-          WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
-            AND cp.seg_monto = 'medio'                                     THEN 'casino:valor_riesgo:medio'
-          WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
-            AND cp.seg_monto = 'bajo'                                      THEN 'casino:valor_riesgo:bajo'
-          ELSE NULL
-        END
-      ], NULL)),
-      'sync_tags', NOW()
-    FROM contacts c
-    JOIN casino_players cp ON LOWER(TRIM(c.first_name)) = cp.username_lower
-    WHERE cp.seg_actividad IS NOT NULL AND cp.seg_monto IS NOT NULL
-    ON CONFLICT (contact_id, tag) DO NOTHING
-  `)
+    // Paso 3: Borrar tags stale de actividad/antiguedad/valor_riesgo
+    await run('delete stale tags', `
+      DELETE FROM contact_tags ct
+      WHERE (ct.tag LIKE 'casino:actividad:%'
+          OR ct.tag LIKE 'casino:antiguedad:%'
+          OR ct.tag LIKE 'casino:valor_riesgo:%')
+        AND ct.contact_id IN (
+          SELECT c.id
+          FROM contacts c
+          JOIN casino_players cp ON ${USERNAME_MATCH}
+          WHERE cp.seg_actividad IS NOT NULL
+        )
+    `)
+
+    // Paso 4: Insertar tags frescos
+    await run('insert fresh tags', `
+      INSERT INTO contact_tags (id, contact_id, tag, added_by, added_at)
+      SELECT
+        gen_random_uuid(), c.id,
+        unnest(array_remove(ARRAY[
+          'casino:actividad:' || cp.seg_actividad,
+          CASE
+            WHEN cp.fecha_primera IS NULL                             THEN NULL
+            WHEN (CURRENT_DATE - cp.fecha_primera) <  30             THEN 'casino:antiguedad:nuevo'
+            WHEN (CURRENT_DATE - cp.fecha_primera) <  90             THEN 'casino:antiguedad:reciente'
+            WHEN (CURRENT_DATE - cp.fecha_primera) < 150             THEN 'casino:antiguedad:establecido'
+            WHEN (CURRENT_DATE - cp.fecha_primera) < 270             THEN 'casino:antiguedad:veterano'
+            ELSE                                                           'casino:antiguedad:leal'
+          END,
+          CASE
+            WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
+              AND cp.seg_monto IN ('super_vip','vip_alto','vip_medio','vip') THEN 'casino:valor_riesgo:critico'
+            WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
+              AND cp.seg_monto = 'medio'                                     THEN 'casino:valor_riesgo:medio'
+            WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
+              AND cp.seg_monto = 'bajo'                                      THEN 'casino:valor_riesgo:bajo'
+            ELSE NULL
+          END
+        ], NULL)),
+        'sync_tags', NOW()
+      FROM contacts c
+      JOIN casino_players cp ON ${USERNAME_MATCH}
+      WHERE cp.seg_actividad IS NOT NULL AND cp.seg_monto IS NOT NULL
+      ON CONFLICT (contact_id, tag) DO NOTHING
+    `)
+
+  } finally {
+    client.release()
+  }
 
   const failed = results.filter(r => !r.ok)
   return NextResponse.json({
