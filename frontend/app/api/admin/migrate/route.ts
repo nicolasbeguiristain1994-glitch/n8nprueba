@@ -179,21 +179,157 @@ export async function POST(req: NextRequest) {
     ON CONFLICT (contact_id, tag) DO NOTHING
   `)
 
-  await run('110e: sync last_deposit_at and deposit counters', `
+  // 110e usa casino_transactions como fuente de verdad para last_deposit_at.
+  // casino_players.fecha_ultima puede estar desactualizado; MAX(casino_transactions.fecha)
+  // es la fecha real del último depósito. Si no hay transacciones para un usuario,
+  // last_deposit_at queda en NULL → el módulo de prioridades lo omite correctamente.
+  await run('110e: sync last_deposit_at from casino_transactions', `
     UPDATE contacts c
     SET
-      total_deposits    = cp.cant_cargas,
+      total_deposits    = COALESCE(am.cant_cargas, 0),
       total_withdrawals = cp.cant_retiros,
-      last_deposit_at   = cp.fecha_ultima::timestamptz,
+      last_deposit_at   = am.last_tx_date,
       updated_at        = NOW()
     FROM casino_players cp
+    LEFT JOIN (
+      SELECT
+        LOWER(username)            AS username_lower,
+        COUNT(*)                   AS cant_cargas,
+        MAX(fecha)::timestamptz    AS last_tx_date
+      FROM casino_transactions
+      WHERE tipo = 'carga'
+      GROUP BY LOWER(username)
+    ) am ON am.username_lower = cp.username_lower
     WHERE LOWER(TRIM(c.first_name)) = cp.username_lower
-      AND cp.fecha_ultima IS NOT NULL
       AND (
-        c.total_deposits    IS DISTINCT FROM cp.cant_cargas
-        OR c.total_withdrawals IS DISTINCT FROM cp.cant_retiros
-        OR c.last_deposit_at::date IS DISTINCT FROM cp.fecha_ultima
+        c.total_deposits IS DISTINCT FROM COALESCE(am.cant_cargas, 0)
+        OR c.last_deposit_at IS DISTINCT FROM am.last_tx_date
       )
+  `)
+
+  // ── 111: Soft-delete contactos con nombres de agentes ───────────────────────
+  await run('111: soft-delete contacts with agent names', `
+    UPDATE contacts
+    SET deleted_at = NOW(), updated_at = NOW()
+    WHERE LOWER(TRIM(first_name)) IN ('betcoin','farabet','bigwin','royal','ofizeus','zeus','zeusroyal')
+      AND deleted_at IS NULL
+  `)
+
+  // ── 112: Re-sync last_deposit_at para TODOS los contactos desde casino_transactions ──
+  // Fuerza la actualización (sin condición IS DISTINCT FROM) para sobreescribir
+  // cualquier valor stale de casino_players.fecha_ultima que haya quedado del paso 110e.
+  // Contactos sin transacciones en casino_transactions quedan con last_deposit_at = NULL
+  // y serán omitidos por el módulo de prioridades (skip: no_deposit_history).
+  await run('112: force-resync last_deposit_at from casino_transactions', `
+    UPDATE contacts c
+    SET
+      total_deposits  = COALESCE(am.cant_cargas, 0),
+      last_deposit_at = am.last_tx_date,
+      updated_at      = NOW()
+    FROM casino_players cp
+    LEFT JOIN (
+      SELECT
+        LOWER(username)         AS username_lower,
+        COUNT(*)                AS cant_cargas,
+        MAX(fecha)::timestamptz AS last_tx_date
+      FROM casino_transactions
+      WHERE tipo = 'carga'
+      GROUP BY LOWER(username)
+    ) am ON am.username_lower = cp.username_lower
+    WHERE LOWER(TRIM(c.first_name)) = cp.username_lower
+  `)
+
+  // ── 113: Fix platforms detection for multi-username fields and digit suffixes ──
+  // Updates trigger + backfills all contacts so that names like
+  // "(C.MUCHO)Mario46z3/mario46be" correctly get platforms = ['zeus','bet30'].
+  // Changes:
+  //   Zeus  regex: z(e|s|eus)?$  →  z(e|s|eus)?\d*$  (allows trailing digits)
+  //   Bet30 regex: b(t)?$        →  b(t|e)?\d*$       (allows 'be' suffix and digits)
+  //   Both: also tested per-token (split by / space etc.) not just on full field.
+  await run('113a: update compute_contact_platforms trigger', `
+    CREATE OR REPLACE FUNCTION compute_contact_platforms()
+    RETURNS trigger AS $$
+    DECLARE
+      v_is_zeus  boolean := false;
+      v_is_bet30 boolean := false;
+      v_full     text;
+    BEGIN
+      v_full := COALESCE(NEW.first_name, '') || ' ' || COALESCE(NEW.last_name, '');
+
+      IF v_full ~* 'z(e|s|eus)?\\d*$' THEN
+        v_is_zeus := true;
+      ELSE
+        SELECT EXISTS (
+          SELECT 1 FROM unnest(regexp_split_to_array(v_full, '[\\s/\\\\|,;]+')) AS tok
+          WHERE LENGTH(REGEXP_REPLACE(LOWER(tok), '^\\([^)]*\\)', '')) > 2
+            AND REGEXP_REPLACE(LOWER(tok), '^\\([^)]*\\)', '') ~* 'z(e|s|eus)?\\d*$'
+        ) INTO v_is_zeus;
+        IF NOT v_is_zeus THEN
+          SELECT EXISTS (
+            SELECT 1
+            FROM casino_players cp
+            JOIN LATERAL unnest(regexp_split_to_array(v_full, '[\\s/\\\\|,;]+')) AS tok ON true
+            WHERE LENGTH(tok) > 2
+              AND cp.username_lower = REGEXP_REPLACE(LOWER(tok), '^\\([^)]*\\)', '')
+              AND cp.agente = ANY(ARRAY['bigwin','ofizeus','betcoin','royal','farabet'])
+          ) INTO v_is_zeus;
+        END IF;
+      END IF;
+
+      IF v_full ~* 'b(t|e)?\\d*$' THEN
+        v_is_bet30 := true;
+      ELSE
+        SELECT EXISTS (
+          SELECT 1 FROM unnest(regexp_split_to_array(v_full, '[\\s/\\\\|,;]+')) AS tok
+          WHERE LENGTH(REGEXP_REPLACE(LOWER(tok), '^\\([^)]*\\)', '')) > 2
+            AND REGEXP_REPLACE(LOWER(tok), '^\\([^)]*\\)', '') ~* 'b(t|e)?\\d*$'
+        ) INTO v_is_bet30;
+      END IF;
+
+      NEW.platforms := ARRAY_REMOVE(ARRAY[
+        CASE WHEN v_is_zeus  THEN 'zeus'  END,
+        CASE WHEN v_is_bet30 THEN 'bet30' END
+      ], NULL);
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `)
+
+  await run('113b: backfill platforms with new logic', `
+    WITH tokens AS (
+      SELECT id,
+             COALESCE(first_name, '') || ' ' || COALESCE(last_name, '') AS full_name
+      FROM contacts
+    ),
+    per_token AS (
+      SELECT t.id, REGEXP_REPLACE(LOWER(tok), '^\\([^)]*\\)', '') AS clean_tok
+      FROM tokens t
+      JOIN LATERAL unnest(regexp_split_to_array(t.full_name, '[\\s/\\\\|,;]+')) AS tok ON true
+      WHERE LENGTH(tok) > 2
+    )
+    UPDATE contacts c
+    SET platforms = computed.new_platforms, updated_at = NOW()
+    FROM (
+      SELECT t.id,
+        ARRAY_REMOVE(ARRAY[
+          CASE WHEN
+            t.full_name ~* 'z(e|s|eus)?\\d*$'
+            OR EXISTS (SELECT 1 FROM per_token pt WHERE pt.id = t.id AND pt.clean_tok ~* 'z(e|s|eus)?\\d*$')
+            OR EXISTS (
+              SELECT 1 FROM casino_players cp
+              JOIN per_token pt ON pt.id = t.id AND cp.username_lower = pt.clean_tok
+              WHERE cp.agente = ANY(ARRAY['bigwin','ofizeus','betcoin','royal','farabet'])
+            )
+          THEN 'zeus' END,
+          CASE WHEN
+            t.full_name ~* 'b(t|e)?\\d*$'
+            OR EXISTS (SELECT 1 FROM per_token pt WHERE pt.id = t.id AND pt.clean_tok ~* 'b(t|e)?\\d*$')
+          THEN 'bet30' END
+        ], NULL) AS new_platforms
+      FROM tokens t
+    ) computed
+    WHERE c.id = computed.id
+      AND c.platforms IS DISTINCT FROM computed.new_platforms
   `)
 
   const failed = results.filter(r => !r.ok)
