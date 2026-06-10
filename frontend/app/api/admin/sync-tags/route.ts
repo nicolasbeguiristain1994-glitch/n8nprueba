@@ -10,22 +10,19 @@ import { checkPermission } from '@/lib/permissions'
  *
  * Usa cliente raw con statement_timeout = 0 para evitar cortes en tablas grandes.
  *
- * El JOIN usa múltiples variantes del nombre para manejar:
- *   - Nombres simples:           "Emanuel5032ze"
- *   - Con prefijo parentético:   "(C.MUCHO)Mario46z3"  → limpia → "Mario46z3"
- *   - Multi-username con /:      "(C.MUCHO)Mario46z3/mario46be" → token 1 y 2
+ * El JOIN tokeniza first_name por '/', espacio y tab para manejar:
+ *   "Emanuel5032ze"                    → ['emanuel5032ze']
+ *   "(C.MUCHO)Mario46z3/mario46be"     → ['mario46z3', 'mario46be']
+ *   "tamara618b tamara618z"            → ['tamara618b', 'tamara618z']
+ *   "Cana93bt Cana93zz Cana93ga"       → ['cana93bt', 'cana93zz', 'cana93ga']
  */
 
-// SQL que extrae hasta 3 tokens del first_name para JOIN contra casino_players.
-// Tokens: directo · sin-prefijo · parte1-de-/ · parte2-de-/ · parte3-de-/
+// Divide first_name por / y espacios, limpia prefijo "(X)" de cada token,
+// y compara contra casino_players.username_lower.
 const USERNAME_MATCH = `cp.username_lower = ANY(
-  ARRAY_REMOVE(ARRAY[
-    LOWER(TRIM(c.first_name)),
-    LOWER(TRIM(REGEXP_REPLACE(c.first_name, '^\\([^)]*\\)\\s*', '', 'i'))),
-    LOWER(TRIM(SPLIT_PART(REGEXP_REPLACE(c.first_name, '^\\([^)]*\\)\\s*', '', 'i'), '/', 1))),
-    LOWER(TRIM(SPLIT_PART(REGEXP_REPLACE(c.first_name, '^\\([^)]*\\)\\s*', '', 'i'), '/', 2))),
-    LOWER(TRIM(SPLIT_PART(REGEXP_REPLACE(c.first_name, '^\\([^)]*\\)\\s*', '', 'i'), '/', 3)))
-  ], '')
+  SELECT LOWER(TRIM(REGEXP_REPLACE(tok, '^\\([^)]*\\)\\s*', '', 'i')))
+  FROM regexp_split_to_table(COALESCE(c.first_name, ''), '[/ \\t]+') AS tok
+  WHERE LENGTH(TRIM(tok)) > 1
 )`
 
 export async function POST(req: NextRequest) {

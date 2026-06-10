@@ -36,17 +36,17 @@ export async function POST(req: NextRequest) {
         BEGIN
           v_full := COALESCE(NEW.first_name, '') || ' ' || COALESCE(NEW.last_name, '');
 
-          -- Zeus: pattern z/ze/zs/zeus + optional digits at end or before /
-          IF v_full ~* 'z(e|s|eus)?[0-9]*(\/|$)' THEN
+          -- Zeus: pattern z/ze/zs/zeus + optional digits at end or before separator
+          IF v_full ~* 'z(e|s|eus)?[0-9]*(\/|\s|$)' THEN
             v_is_zeus := true;
           ELSE
             -- Fallback: token-level casino_players lookup (handles f/ff suffix users)
-            -- Strip leading parenthesized prefix from each token (e.g. "(C.MUCHO)user99z")
+            -- Splits by / and spaces; strips leading parenthesized prefix from each token
             SELECT EXISTS (
               SELECT 1 FROM casino_players cp
-              JOIN LATERAL unnest(regexp_split_to_array(v_full, '[/ ]+')) AS tok ON true
-              WHERE LENGTH(tok) > 2
-                AND cp.username_lower = LOWER(REGEXP_REPLACE(tok, '^\([^)]*\)', '', 'gi'))
+              JOIN LATERAL regexp_split_to_table(v_full, '[/ \t]+') AS tok ON true
+              WHERE LENGTH(TRIM(tok)) > 1
+                AND cp.username_lower = LOWER(TRIM(REGEXP_REPLACE(tok, '^\([^)]*\)\s*', '', 'i')))
                 AND cp.agente = ANY(ARRAY['bigwin','ofizeus','betcoin','royal','farabet'])
             ) INTO v_is_zeus;
           END IF;
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
         UPDATE contacts
         SET platforms  = array_append(platforms, 'zeus'),
             updated_at = NOW()
-        WHERE (first_name ~* 'z(e|s|eus)?[0-9]*(\/|$)' OR last_name ~* 'z(e|s|eus)?[0-9]*(\/|$)')
+        WHERE (first_name ~* 'z(e|s|eus)?[0-9]*(\/|\s|$)' OR last_name ~* 'z(e|s|eus)?[0-9]*(\/|\s|$)')
           AND NOT ('zeus' = ANY(platforms))
       `)
       results.push({ step: 'backfill_zeus', ok: true, affected: r2.rowCount ?? 0 })
@@ -84,7 +84,7 @@ export async function POST(req: NextRequest) {
         UPDATE contacts
         SET platforms  = array_append(platforms, 'bet30'),
             updated_at = NOW()
-        WHERE (first_name ~* 'b(t|e)?[0-9]*(\/|$)' OR last_name ~* 'b(t|e)?[0-9]*(\/|$)')
+        WHERE (first_name ~* 'b(t|e)?[0-9]*(\/|\s|$)' OR last_name ~* 'b(t|e)?[0-9]*(\/|\s|$)')
           AND NOT ('bet30' = ANY(platforms))
       `)
       results.push({ step: 'backfill_bet30', ok: true, affected: r3.rowCount ?? 0 })

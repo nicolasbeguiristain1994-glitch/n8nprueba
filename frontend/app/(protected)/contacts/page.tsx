@@ -142,10 +142,10 @@ function SegmentItem({ value, label, desc }: { value: string; label: string; des
   )
 }
 
-// Detect zeus/bet30 from username: suffix z/ze/zs/zeus or b/bt/be (+ optional digits)
-// at end of string OR immediately before a '/' separator (multi-username fields).
-const ZEUS_TOKEN_RE  = /z(e|s|eus)?\d*(\/|$)/i
-const BET30_TOKEN_RE = /b(t|e)?\d*(\/|$)/i
+// Detect zeus/bet30: suffix z/ze/zs/zeus or b/bt/be (+ optional digits)
+// at end of string OR before a separator (/ or whitespace).
+const ZEUS_TOKEN_RE  = /z(e|s|eus)?\d*(\/|\s|$)/i
+const BET30_TOKEN_RE = /b(t|e)?\d*(\/|\s|$)/i
 
 function detectClientPlatforms(first: string | null, last: string | null): string[] {
   const full = `${first || ''} ${last || ''}`
