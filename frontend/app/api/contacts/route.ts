@@ -9,6 +9,7 @@ import { getAppSetting } from '@/lib/app-settings'
 const ACTIVIDAD_ALLOWED  = new Set(['nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido'])
 const ANTIGUEDAD_ALLOWED = new Set(['nuevo', 'reciente', 'establecido', 'veterano', 'leal'])
 const PLATAFORMA_ALLOWED = new Set(['zeus', 'bet30', 'otros'])
+const SEGMENT_ALLOWED    = new Set(['bajo', 'medio', 'vip', 'vip_medio', 'vip_alto', 'super_vip'])
 
 // Mapeo de nombres de agente en la UI → nombre real en la columna `panel` de la DB.
 // Si los contactos se importan con un nombre interno distinto al nombre de la UI, agregar aquí.
@@ -33,7 +34,10 @@ export async function GET(req: NextRequest) {
   const { user } = auth
 
   const search    = req.nextUrl.searchParams.get('q') || ''
-  const segment   = req.nextUrl.searchParams.get('segment') || ''
+  const segmentRaw = req.nextUrl.searchParams.get('segment') || ''
+  const segments   = segmentRaw ? segmentRaw.split(',').filter(s => SEGMENT_ALLOWED.has(s)) : []
+  // PostgreSQL array literal: '{}' means no filter, '{vip,super_vip}' filters to those values
+  const segmentParam = segments.length > 0 ? `{${segments.join(',')}}` : '{}'
   const gaming    = req.nextUrl.searchParams.get('gaming') || ''
   const panelRaw  = req.nextUrl.searchParams.get('panel') || ''
   const panel     = (PANEL_ALIAS_MAP[panelRaw] ?? panelRaw).toLowerCase()
@@ -104,7 +108,7 @@ export async function GET(req: NextRequest) {
       const idRows = await query<{ id: string }>(`
         SELECT id FROM contacts
         WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
-          AND ($2 = '' OR segment::text = $2)
+          AND ($2 = '{}' OR segment::text = ANY($2::text[]))
           AND ($3 = '' OR gaming::text = $3)
           AND ($4 = '' OR $4 = ANY(panels_assigned))
           AND ($5 = '' OR linea::text = $5)
@@ -119,7 +123,7 @@ export async function GET(req: NextRequest) {
           ${vis2.sql}${agentFilter2}${plataformaFilter}${sinMovimientoFilter}
         ORDER BY created_at DESC
         LIMIT 100000
-      `, [`%${search}%`, segment, gaming, panel, linea, actividad, antiguedad,
+      `, [`%${search}%`, segmentParam, gaming, panel, linea, actividad, antiguedad,
           ...vis2.params, ...agentParams2])
       return NextResponse.json({ ids: idRows.map(r => r.id) })
     } catch (e) {
@@ -180,7 +184,7 @@ export async function GET(req: NextRequest) {
              ), '{}') AS custom_tags
       FROM contacts
       WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
-        AND ($4 = '' OR segment::text = $4)
+        AND ($4 = '{}' OR segment::text = ANY($4::text[]))
         AND ($5 = '' OR gaming::text = $5)
         AND ($6 = '' OR $6 = ANY(panels_assigned))
         AND ($7 = '' OR linea::text = $7)
@@ -198,13 +202,13 @@ export async function GET(req: NextRequest) {
         ${vis.sql}${agentFilter}${tagFilterMain}${plataformaFilter}${sinMovimientoFilter}
       ORDER BY created_at DESC
       LIMIT $2 OFFSET $3
-    `, [`%${search}%`, limit, offset, segment, gaming, panel, linea, actividad, antiguedad, listId,
+    `, [`%${search}%`, limit, offset, segmentParam, gaming, panel, linea, actividad, antiguedad, listId,
         ...vis.params, ...agentParams, ...tagParams])
 
     const [{ count }] = await query<{ count: string }>(
       `SELECT COUNT(*) FROM contacts
        WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
-         AND ($2 = '' OR segment::text = $2)
+         AND ($2 = '{}' OR segment::text = ANY($2::text[]))
          AND ($3 = '' OR gaming::text = $3)
          AND ($4 = '' OR $4 = ANY(panels_assigned))
          AND ($5 = '' OR linea::text = $5)
@@ -220,7 +224,7 @@ export async function GET(req: NextRequest) {
            SELECT contact_id FROM contact_list_members WHERE list_id = $8::uuid
          ))
          ${vis7.sql}${agentFilterCt}${tagFilterCount}${plataformaFilter}${sinMovimientoFilter}`,
-      [`%${search}%`, segment, gaming, panel, linea, actividad, antiguedad, listId,
+      [`%${search}%`, segmentParam, gaming, panel, linea, actividad, antiguedad, listId,
        ...vis7.params, ...agentParams, ...tagParams]
     )
 

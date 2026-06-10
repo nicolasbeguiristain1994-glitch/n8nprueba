@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Search, Upload, RefreshCw, List, CheckSquare, X, Users, UserPlus,
   Trash2, Download, DatabaseZap, Pencil, ChevronDown, Filter, Info, Scissors,
@@ -167,7 +168,9 @@ export default function Contacts() {
 
   // ── Filtros ───────────────────────────────────────────────────────────────
   const [search, setSearch]                   = useState('')
-  const [segment, setSegment]                 = useState('')
+  const [segments, setSegments]               = useState<string[]>([])
+  const [segmentDropdownOpen, setSegmentDropdownOpen] = useState(false)
+  const segmentDropdownRef = useRef<HTMLDivElement>(null)
   const [filterGaming, setFilterGaming]       = useState('')
   const [filterPanel, setFilterPanel]         = useState('')
   const [filterLinea, setFilterLinea]         = useState('')
@@ -294,7 +297,7 @@ export default function Contacts() {
     setLoading(true)
     const q = new URLSearchParams({
       q: search, page: String(pagination.pageIndex + 1),
-      segment, gaming: filterGaming, panel: filterPanel.trim(),
+      segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
       linea: filterLinea, actividad: filterActividad, antiguedad: filterAntiguedad,
       ...(filterList          ? { list_id: filterList }          : {}),
       ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
@@ -310,7 +313,7 @@ export default function Contacts() {
         setLoadError(e instanceof Error ? e.message : 'Error al cargar contactos')
       })
       .finally(() => setLoading(false))
-  }, [search, pagination.pageIndex, segment, filterGaming, filterPanel, filterLinea, filterActividad, filterAntiguedad, filterList, filterPlataforma, filterSinMovimiento, filterTag])
+  }, [search, pagination.pageIndex, segments, filterGaming, filterPanel, filterLinea, filterActividad, filterAntiguedad, filterList, filterPlataforma, filterSinMovimiento, filterTag])
 
   useEffect(() => { load() }, [load])
   const reloadLists = useCallback(() => {
@@ -332,6 +335,18 @@ export default function Contacts() {
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [showListsMenu])
+
+  // Cerrar dropdown de segmentación al hacer click fuera
+  useEffect(() => {
+    if (!segmentDropdownOpen) return
+    const handler = (e: MouseEvent) => {
+      if (segmentDropdownRef.current && !segmentDropdownRef.current.contains(e.target as Node)) {
+        setSegmentDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [segmentDropdownOpen])
 
   // Resetear página al cambiar filtros
   const resetPage = useCallback(() => setPagination(p => ({ ...p, pageIndex: 0 })), [])
@@ -403,7 +418,7 @@ export default function Contacts() {
     setSelectingAll(true)
     try {
       const q = new URLSearchParams({
-        q: search, segment, gaming: filterGaming, panel: filterPanel.trim(),
+        q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
         linea: filterLinea, actividad: filterActividad, antiguedad: filterAntiguedad,
         select_all: 'true',
         ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
@@ -537,7 +552,7 @@ export default function Contacts() {
     [
       filterPanel      && `panel-${filterPanel}`,
       filterGaming     && `juego-${filterGaming}`,
-      segment          && `nivel-${segment}`,
+      segments.length  && `nivel-${segments.join('-')}`,
       search           && `busq-${search}`,
       filterActividad  && `actividad-${filterActividad}`,
       filterAntiguedad && `antiguedad-${filterAntiguedad}`,
@@ -545,7 +560,7 @@ export default function Contacts() {
 
   const buildDownloadParams = (): URLSearchParams => {
     const p = new URLSearchParams({
-      q: search, segment, gaming: filterGaming, panel: filterPanel.trim(),
+      q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
       linea: filterLinea, actividad: filterActividad, antiguedad: filterAntiguedad,
     })
     if (filterList)          p.set('list_id', filterList)
@@ -1220,15 +1235,57 @@ export default function Contacts() {
             <SelectItem value="ambas">🎯 Ambas</SelectItem>
           </SelectContent>
         </Select>
-        <Select value={segment} onValueChange={v => { setSegment(v ?? ''); resetPage() }}>
-          <SelectTrigger className="w-40"><SelectValue placeholder="Nivel" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="">Todos los niveles</SelectItem>
-            {(Object.keys(NIVEL_DESC) as string[]).map(v => (
-              <SegmentItem key={v} value={v} label={NIVEL_LABEL[v] ?? v} desc={NIVEL_DESC[v]} />
-            ))}
-          </SelectContent>
-        </Select>
+        {/* Multi-select de nivel/segmentación */}
+        <div className="relative" ref={segmentDropdownRef}>
+          <button
+            onClick={() => setSegmentDropdownOpen(o => !o)}
+            className={`flex items-center gap-1.5 h-9 px-3 rounded-md border text-sm font-normal transition-colors
+              ${segments.length > 0
+                ? 'border-primary bg-primary/5 text-primary'
+                : 'border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+              }`}
+          >
+            {segments.length === 0
+              ? 'Nivel'
+              : segments.length === 1
+                ? NIVEL_LABEL[segments[0]] ?? segments[0]
+                : `${segments.length} niveles`
+            }
+            <ChevronDown size={14} className={`transition-transform ${segmentDropdownOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {segmentDropdownOpen && (
+            <div className="absolute z-50 top-full mt-1 left-0 w-52 rounded-md border bg-popover shadow-md p-1">
+              {segments.length > 0 && (
+                <button
+                  className="w-full text-left text-xs px-2 py-1.5 text-muted-foreground hover:bg-accent rounded-sm mb-0.5"
+                  onClick={() => { setSegments([]); resetPage() }}
+                >
+                  Limpiar selección
+                </button>
+              )}
+              {(Object.keys(NIVEL_DESC) as string[]).map(v => (
+                <label
+                  key={v}
+                  className="flex items-center gap-2.5 px-2 py-1.5 rounded-sm hover:bg-accent cursor-pointer text-sm"
+                >
+                  <Checkbox
+                    checked={segments.includes(v)}
+                    onCheckedChange={checked => {
+                      setSegments(prev => {
+                        const next = checked ? [...prev, v] : prev.filter(s => s !== v)
+                        return next
+                      })
+                      resetPage()
+                    }}
+                  />
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${SEGMENT_STYLE[v] ?? 'bg-gray-100 text-gray-600'}`}>
+                    {NIVEL_LABEL[v] ?? v}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Filtros — fila 2: dimensiones casino */}
