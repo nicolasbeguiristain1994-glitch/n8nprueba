@@ -1258,7 +1258,7 @@ export default function Contacts() {
             <ChevronDown size={14} className={`transition-transform ${segmentDropdownOpen ? 'rotate-180' : ''}`} />
           </button>
           {segmentDropdownOpen && (
-            <div className="absolute z-50 top-full mt-1 left-0 w-52 rounded-md border bg-popover shadow-md p-1">
+            <div className="absolute z-50 top-full mt-1 right-0 w-52 rounded-md border bg-popover shadow-md p-1">
               {segments.length > 0 && (
                 <button
                   className="w-full text-left text-xs px-2 py-1.5 text-muted-foreground hover:bg-accent rounded-sm mb-0.5"
