@@ -9,7 +9,7 @@ export interface RiskSummary {
   nuevos_extractores: number   // new players (<90d) withdrawing >60% of deposits
   jugadores_deficit:  number   // players where casino has net loss
   perdida_bruta:      number   // total casino net loss across deficit players
-  vip_recuperables:   number   // vip/alto in 'en_riesgo' (still saveable)
+  vip_recuperables:   number   // vip+ in 'en_riesgo' (still saveable)
 }
 
 export interface NuevoExtractor {
@@ -95,7 +95,7 @@ export async function GET(req: Request) {
           ), 0)::bigint AS perdida_bruta,
 
           COUNT(*) FILTER (
-            WHERE seg_monto    IN ('super_vip','vip')
+            WHERE seg_monto    IN ('super_vip','vip_alto','vip_medio','vip')
               AND seg_actividad = 'en_riesgo'
               AND ($1::text IS NULL OR agente = $1)
           )::int AS vip_recuperables
@@ -163,7 +163,7 @@ export async function GET(req: Request) {
           (CURRENT_DATE - fecha_ultima)::int AS dias_ultimo,
           fecha_ultima::text
         FROM casino_players
-        WHERE seg_monto    IN ('super_vip','vip')
+        WHERE seg_monto    IN ('super_vip','vip_alto','vip_medio','vip')
           AND seg_actividad = 'en_riesgo'
           AND fecha_ultima IS NOT NULL
           AND agente = ANY(${agentsSql})

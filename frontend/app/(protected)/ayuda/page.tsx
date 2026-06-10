@@ -153,9 +153,9 @@ const MODULES: ModuleSection[] = [
       'Cada jugador importado desde el panel del casino recibe automáticamente tres clasificaciones: Nivel de monto (cuánto cargó en total), Actividad (qué tan activo está) y Antigüedad (hace cuánto es cliente). Estas etiquetas permiten filtrar contactos y crear listas ultra-segmentadas para campañas precisas.',
     steps: [
       {
-        title: 'Nivel de monto (seg_monto) — 4 categorías',
+        title: 'Nivel de monto (seg_monto) — 6 categorías',
         detail:
-          'Se calcula sobre el total histórico de cargas de cada jugador usando umbrales fijos:\n• Bajo → menos de $250.000 en cargas históricas\n• Medio → entre $250.000 y $499.999\n• VIP → entre $500.000 y $999.999\n• Super VIP → $1.000.000 o más',
+          'Se calcula sobre el promedio mensual activo de cargas de cada jugador usando umbrales fijos:\n• Bajo → menos de $100.000/mes activo\n• Medio → entre $100.000 y $499.999/mes activo\n• VIP Bajo → entre $500.000 y $999.999/mes activo\n• VIP Medio → entre $1.000.000 y $1.499.999/mes activo\n• VIP Alto → entre $1.500.000 y $3.199.999/mes activo\n• Super VIP → $3.200.000 o más/mes activo',
       },
       {
         title: 'Actividad (seg_actividad) — 7 estados',
@@ -170,27 +170,27 @@ const MODULES: ModuleSection[] = [
       {
         title: 'Valor en riesgo (combinación monto + actividad)',
         detail:
-          'Cuando un jugador de alto valor deja de estar activo, se genera automáticamente una etiqueta adicional de alerta:\n• Riesgo crítico → (Perdido / Inactivo / En riesgo) + (Super VIP o VIP)\n• Riesgo medio → (Perdido / Inactivo / En riesgo) + Medio\n• Riesgo bajo → (Perdido / Inactivo / En riesgo) + Bajo\nEstas etiquetas son ideales para campañas de reactivación priorizadas.',
+          'Cuando un jugador de alto valor deja de estar activo, se genera automáticamente una etiqueta adicional de alerta:\n• Riesgo crítico → (Perdido / Inactivo / En riesgo) + (Super VIP / VIP Alto / VIP Medio / VIP Bajo)\n• Riesgo medio → (Perdido / Inactivo / En riesgo) + Medio\n• Riesgo bajo → (Perdido / Inactivo / En riesgo) + Bajo\nEstas etiquetas son ideales para campañas de reactivación priorizadas.',
       },
       {
         title: 'Sin movimiento — jugadores sin actividad hace 12+ meses',
         detail:
-          'La categoría "Sin movimiento" identifica a los jugadores que no registraron ningún depósito en los últimos 12 meses (o que nunca depositaron).\n\nCómo usarla:\n• En el módulo de Contactos activá el filtro "Sin movimiento" (botón en la barra de filtros).\n• Estos jugadores son candidatos a campañas de reactivación agresiva o acciones de limpieza de base.\n• También podés cruzarlos con el filtro de Nivel para priorizar: primero los VIP sin movimiento, luego los Medio, etc.\n\nCriterio técnico: la plataforma considera "sin movimiento" cuando el campo last_deposit_at es nulo o está antes del 12 meses atrás desde hoy.',
+          'La categoría "Sin movimiento" identifica a los jugadores que no registraron ningún depósito en los últimos 12 meses (o que nunca depositaron).\n\nCómo usarla:\n• En el módulo de Contactos activá el filtro "Sin movimiento" (botón en la barra de filtros).\n• Estos jugadores son candidatos a campañas de reactivación agresiva o acciones de limpieza de base.\n• También podés cruzarlos con el filtro de Nivel para priorizar: primero los Super VIP y VIP Alto sin movimiento, luego los VIP Medio, VIP Bajo, etc.\n\nCriterio técnico: la plataforma considera "sin movimiento" cuando el campo last_deposit_at es nulo o está antes del 12 meses atrás desde hoy.',
       },
       {
         title: 'Dónde ver y usar la segmentación',
         detail:
-          'En el módulo de Contactos podés filtrar por cualquiera de estas dimensiones usando los selectores de "Nivel", "Actividad", "Antigüedad" y el botón "Sin movimiento". Al crear una lista dinámica, podés combinar varios filtros (ej: Nivel = Super VIP + "Sin movimiento") para construir audiencias muy específicas para tus campañas.',
+          'En el módulo de Contactos podés filtrar por cualquiera de estas dimensiones usando los selectores de "Nivel", "Actividad", "Antigüedad" y el botón "Sin movimiento". Al crear una lista dinámica, podés combinar varios filtros (ej: Nivel = Super VIP o VIP Alto + "Sin movimiento") para construir audiencias muy específicas para tus campañas.',
       },
     ],
     tips: [
       {
         type: 'info',
-        text: 'Los umbrales de Nivel (Bajo / Medio / VIP / Super VIP) son dinámicos: se calculan sobre el percentil del dataset completo cada vez que se corre la segmentación. No son valores fijos en pesos.',
+        text: 'Los umbrales de Nivel (Bajo / Medio / VIP Bajo / VIP Medio / VIP Alto / Super VIP) se calculan sobre el promedio mensual activo de cada jugador. Los valores fijos son: $100k, $500k, $1M, $1.5M y $3.2M/mes.',
       },
       {
         type: 'example',
-        text: 'Ejemplo de campaña de reactivación: filtrás Nivel = VIP o Super VIP + Actividad = En riesgo o Inactivo. Obtenés la lista de tus mejores clientes que dejaron de jugar en los últimos 1–6 meses. Les mandás una oferta exclusiva de bienvenida de vuelta.',
+        text: 'Ejemplo de campaña de reactivación: filtrás Nivel = VIP Alto o Super VIP + Actividad = En riesgo o Inactivo. Obtenés la lista de tus mejores clientes que dejaron de jugar en los últimos 1–6 meses. Les mandás una oferta exclusiva de bienvenida de vuelta.',
       },
       {
         type: 'example',
@@ -312,7 +312,7 @@ const MODULES: ModuleSection[] = [
       },
       {
         type: 'example',
-        text: 'Ejemplo segmentado: Filtrás en Contactos: Nivel = Super VIP + Actividad = En riesgo. Creás la lista "VIP en riesgo" con esos 80 contactos. Campaña de reactivación con mensaje personalizado y delay conservador 8–15s. Resultado: alta tasa de lectura porque es un mensaje relevante para una audiencia chica y específica.',
+        text: 'Ejemplo segmentado: Filtrás en Contactos: Nivel = Super VIP o VIP Alto + Actividad = En riesgo. Creás la lista "VIP en riesgo" con esos 80 contactos. Campaña de reactivación con mensaje personalizado y delay conservador 8–15s. Resultado: alta tasa de lectura porque es un mensaje relevante para una audiencia chica y específica.',
       },
       {
         type: 'warning',

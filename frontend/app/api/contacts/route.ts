@@ -97,7 +97,7 @@ export async function GET(req: NextRequest) {
     // 7 base params: $1=%search%, $2=segment, $3=gaming, $4=panel, $5=linea, $6=actividad, $7=antiguedad
     const vis2         = visibilityClause(user.role, user.user_id, 7)
     const agentFilter2 = agentAllowed
-      ? ` AND panel = ANY($${8 + vis2.params.length}::text[])`
+      ? ` AND panels_assigned && $${8 + vis2.params.length}::text[]`
       : ''
     const agentParams2 = agentAllowed ? [agentAllowed] : []
     try {
@@ -106,7 +106,7 @@ export async function GET(req: NextRequest) {
         WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
           AND ($2 = '' OR segment::text = $2)
           AND ($3 = '' OR gaming::text = $3)
-          AND ($4 = '' OR LOWER(panel) = $4)
+          AND ($4 = '' OR $4 = ANY(panels_assigned))
           AND ($5 = '' OR linea::text = $5)
           AND ($6 = '' OR EXISTS (
             SELECT 1 FROM contact_tags ct
@@ -133,7 +133,7 @@ export async function GET(req: NextRequest) {
   //                 $6=panel, $7=linea, $8=actividad, $9=antiguedad, $10=list_id
   const vis         = visibilityClause(user.role, user.user_id, 10)
   const agentFilter = agentAllowed
-    ? ` AND panel = ANY($${11 + vis.params.length}::text[])`
+    ? ` AND panels_assigned && $${11 + vis.params.length}::text[]`
     : ''
   const agentParams = agentAllowed ? [agentAllowed] : []
 
@@ -147,7 +147,7 @@ export async function GET(req: NextRequest) {
   // 8 base params for count query (no limit/offset): $1-$7 same, $8=list_id
   const vis7          = visibilityClause(user.role, user.user_id, 8)
   const agentFilterCt = agentAllowed
-    ? ` AND panel = ANY($${9 + vis7.params.length}::text[])`
+    ? ` AND panels_assigned && $${9 + vis7.params.length}::text[]`
     : ''
   const tagCountIdx    = 9 + vis7.params.length + agentParams.length
   const tagFilterCount = filterTag
@@ -172,6 +172,7 @@ export async function GET(req: NextRequest) {
               WHERE contact_id = contacts.id AND tag LIKE 'casino:antiguedad:%'
               LIMIT 1) AS antiguedad,
              platforms,
+             casino_accounts,
              COALESCE((
                SELECT ARRAY_AGG(tag ORDER BY tag)
                FROM contact_tags
@@ -181,7 +182,7 @@ export async function GET(req: NextRequest) {
       WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
         AND ($4 = '' OR segment::text = $4)
         AND ($5 = '' OR gaming::text = $5)
-        AND ($6 = '' OR LOWER(panel) = $6)
+        AND ($6 = '' OR $6 = ANY(panels_assigned))
         AND ($7 = '' OR linea::text = $7)
         AND ($8 = '' OR EXISTS (
           SELECT 1 FROM contact_tags ct
@@ -205,7 +206,7 @@ export async function GET(req: NextRequest) {
        WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
          AND ($2 = '' OR segment::text = $2)
          AND ($3 = '' OR gaming::text = $3)
-         AND ($4 = '' OR LOWER(panel) = $4)
+         AND ($4 = '' OR $4 = ANY(panels_assigned))
          AND ($5 = '' OR linea::text = $5)
          AND ($6 = '' OR EXISTS (
            SELECT 1 FROM contact_tags ct

@@ -16,7 +16,7 @@
  * └─────────────────────────────────────────────────────────────────────────┘
  */
 
-export type ValueTier = 'super_vip' | 'vip' | 'medio' | 'bajo'
+export type ValueTier = 'super_vip' | 'vip_alto' | 'vip_medio' | 'vip' | 'medio' | 'bajo'
 
 export type ReactivationSegment =
   | 'REACTIVACION_URGENTE'          // SUPER_VIP/VIP recién inactivos (7–30d) — prob. retorno alta
@@ -55,8 +55,10 @@ export interface SegmentRule {
 //
 // [CALIBRAR] Ajustar con datos reales de tasa de conversión por tier y franja temporal.
 export const INACTIVITY_WINDOWS: Record<ValueTier, InactivityWindow> = {
-  super_vip: { minDays: 7,  maxDays: 180 },  // Extendido: Super VIP frío incluye hasta 6 meses
-  vip:       { minDays: 7,  maxDays: 150 },  // Extendido: VIP frío hasta 5 meses
+  super_vip: { minDays: 7,  maxDays: 180 },
+  vip_alto:  { minDays: 7,  maxDays: 175 },
+  vip_medio: { minDays: 7,  maxDays: 165 },
+  vip:       { minDays: 7,  maxDays: 150 },
   medio:     { minDays: 14, maxDays: 60  },
   bajo:      { minDays: 30, maxDays: 45  },
 }
@@ -71,6 +73,8 @@ export const INACTIVITY_WINDOWS: Record<ValueTier, InactivityWindow> = {
 // [DB-READY] Candidato directo para tabla priority_score_configs.
 export const VALUE_SCORES: Record<ValueTier, number> = {
   super_vip: 60,
+  vip_alto:  56,
+  vip_medio: 52,
   vip:       45,
   medio:     25,
   bajo:      10,
@@ -93,38 +97,47 @@ export const VALUE_SCORES: Record<ValueTier, number> = {
 // [DB-READY] Toda esta tabla es candidata para moverse a una config DB en v2,
 //            permitiendo que el admin agregue/modifique segmentos sin deploy.
 export const REACTIVATION_SEGMENT_RULES: SegmentRule[] = [
-  // ── SUPER_VIP y VIP — de más reciente a más antiguo ─────────────────────
+  // ── SUPER_VIP, VIP_ALTO, VIP_MEDIO, VIP — de más reciente a más antiguo ──
   {
     segment: 'REACTIVACION_URGENTE',
-    tiers:   ['super_vip', 'vip'],
+    tiers:   ['super_vip', 'vip_alto', 'vip_medio', 'vip'],
     minDays: 7,
     maxDays: 30,
   },
   {
     segment: 'REACTIVACION_PRIORITARIA',
-    tiers:   ['super_vip', 'vip'],
+    tiers:   ['super_vip', 'vip_alto', 'vip_medio', 'vip'],
     minDays: 31,
     maxDays: 90,
   },
   {
     segment: 'REACTIVACION_ESTANDAR',
-    tiers:   ['super_vip', 'vip'],
+    tiers:   ['super_vip', 'vip_alto', 'vip_medio', 'vip'],
     minDays: 91,
     maxDays: 120,
   },
   {
-    // Win-back: Super VIP hasta 6 meses, VIP hasta 5 meses.
-    // Requiere oferta máxima — no enviar mensaje genérico a este segmento.
     segment: 'REACTIVACION_FRIA_ALTO_VALOR',
-    tiers:   ['super_vip', 'vip'],
+    tiers:   ['super_vip', 'vip_alto', 'vip_medio', 'vip'],
     minDays: 121,
     maxDays: 150,
   },
   {
-    // Solo Super VIP llega hasta 180 días (6 meses). VIP termina en 150d.
+    segment: 'REACTIVACION_FRIA_ALTO_VALOR',
+    tiers:   ['super_vip', 'vip_alto', 'vip_medio'],
+    minDays: 151,
+    maxDays: 165,
+  },
+  {
+    segment: 'REACTIVACION_FRIA_ALTO_VALOR',
+    tiers:   ['super_vip', 'vip_alto'],
+    minDays: 166,
+    maxDays: 175,
+  },
+  {
     segment: 'REACTIVACION_FRIA_ALTO_VALOR',
     tiers:   ['super_vip'],
-    minDays: 151,
+    minDays: 176,
     maxDays: 180,
   },
   // ── MEDIO ────────────────────────────────────────────────────────────────
@@ -158,6 +171,8 @@ export const REACTIVATION_SEGMENT_RULES: SegmentRule[] = [
 // [CALIBRAR] El cooldown óptimo depende de la tasa de apertura y unsubscribe.
 export const RECONTACT_COOLDOWN_DAYS: Record<ValueTier, number> = {
   super_vip: 3,
+  vip_alto:  3,
+  vip_medio: 4,
   vip:       5,
   medio:     7,
   bajo:      14,
@@ -173,8 +188,10 @@ export const RECONTACT_COOLDOWN_DAYS: Record<ValueTier, number> = {
 //            Pasos: 1) importar montos, 2) ver percentil p75/p90/p99, 3) ajustar.
 // [DB-READY] Candidato para tabla priority_score_configs junto con los demás umbrales.
 export const DEPOSIT_AMOUNT_TIERS: Array<{ minAmount: number; tier: ValueTier }> = [
-  { minAmount: 10_000, tier: 'super_vip' },
-  { minAmount: 3_000,  tier: 'vip'       },
-  { minAmount: 500,    tier: 'medio'     },
-  { minAmount: 0,      tier: 'bajo'      },
+  { minAmount: 3_200_000, tier: 'super_vip' },
+  { minAmount: 1_500_000, tier: 'vip_alto'  },
+  { minAmount: 1_000_000, tier: 'vip_medio' },
+  { minAmount:   500_000, tier: 'vip'       },
+  { minAmount:   100_000, tier: 'medio'     },
+  { minAmount:         0, tier: 'bajo'      },
 ]

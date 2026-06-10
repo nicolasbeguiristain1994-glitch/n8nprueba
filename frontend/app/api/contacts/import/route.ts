@@ -11,8 +11,10 @@ export async function POST(req: NextRequest) {
   let body: {
     contacts?:      Array<{ phone: string; name?: string; segment?: string; casino_username?: string }>
     panel?:         string
+    panels?:        string[]
     linea?:         number
     skip_existing?: boolean
+    conflict_mode?: 'update' | 'panels_only' | 'skip'
   }
   try {
     body = await req.json()
@@ -20,13 +22,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { contacts, panel, linea, skip_existing = false } = body
+  const { contacts, panel, panels, linea, skip_existing = false, conflict_mode } = body
+  // conflict_mode takes precedence over legacy skip_existing
+  const resolvedMode: 'update' | 'panels_only' | 'skip' =
+    conflict_mode ?? (skip_existing ? 'skip' : 'update')
   if (!contacts?.length) return NextResponse.json({ error: 'No contacts provided' }, { status: 400 })
   if (!Array.isArray(contacts) || contacts.length > 10_000) {
     return NextResponse.json({ error: 'contacts debe ser un array de máximo 10.000 filas por chunk' }, { status: 400 })
   }
 
-  const panelValue = panel?.trim().toLowerCase() || null
+  // panels param takes precedence over legacy panel param
+  const panelsRaw = (panels && panels.length > 0)
+    ? panels.map(p => p.trim().toLowerCase()).filter(Boolean)
+    : panel?.trim().toLowerCase() ? [panel.trim().toLowerCase()] : []
+
+  const panelValue = panelsRaw[0] ?? null  // primary panel (first one)
+  const panelsValue = panelsRaw            // all panels for panels_assigned
   const lineaValue = linea ? Number(linea) : null
   if (lineaValue !== null && (lineaValue < 1 || lineaValue > 100)) {
     return NextResponse.json({ error: 'Línea inválida (1-100)' }, { status: 400 })
@@ -47,7 +58,7 @@ export async function POST(req: NextRequest) {
     // casino_username: campo explícito > fallback al campo name
     const casinoUsername = (c.casino_username || c.name || '').trim() || null
     const rawSeg = (c.segment || '').trim().toLowerCase()
-    const VALID_SEGMENTS = ['casual', 'regular', 'super_vip', 'vip', 'whale', 'bajo', 'medio']
+    const VALID_SEGMENTS = ['casual', 'regular', 'super_vip', 'vip_alto', 'vip_medio', 'vip', 'whale', 'bajo', 'medio']
     const rawName = (c.name || '').trim()
     normalized.push({
       phone:           rawPhone,
@@ -68,35 +79,86 @@ export async function POST(req: NextRequest) {
   try {
     const [row] = await query<{ inserted: string; updated: string }>(
       `WITH input AS (
-         SELECT phone, name, segment, casino_username
+         SELECT phone, name, segment, casino_username,
+                $2::text AS panel_val
          FROM   jsonb_to_recordset($1::jsonb)
                 AS x(phone text, name text, segment text, casino_username text)
        ), upserted AS (
          INSERT INTO contacts
-           (external_id, phone_number, first_name, segment, panel, linea, status,
+           (external_id, phone_number, first_name, segment, panel, panels_assigned, casino_accounts, linea, status,
             opt_in_marketing, opt_in_sms, platform_source, created_at, updated_at)
          SELECT
            gen_random_uuid()::text,
            phone,
            NULLIF(name, ''),
            NULLIF(segment, '')::contact_segment,
-           $2,
+           panel_val,
+           ARRAY(SELECT jsonb_array_elements_text($4::jsonb)),
+           CASE
+             WHEN panel_val IS NOT NULL AND NULLIF(name, '') IS NOT NULL
+               THEN jsonb_build_array(jsonb_build_object('panel', panel_val, 'username', NULLIF(name, '')))
+             ELSE '[]'::jsonb
+           END,
            $3,
            'active', true, true, 'import', NOW(), NOW()
          FROM input
-         ON CONFLICT (phone_number) DO ${ skip_existing ? 'NOTHING' : `UPDATE
-           SET first_name = COALESCE(EXCLUDED.first_name, contacts.first_name),
-               segment    = COALESCE(EXCLUDED.segment,    contacts.segment),
-               panel      = COALESCE(EXCLUDED.panel,      contacts.panel),
-               linea      = COALESCE(EXCLUDED.linea,      contacts.linea),
-               updated_at = NOW()`}
+         ON CONFLICT (phone_number) DO ${
+           resolvedMode === 'skip' ? 'NOTHING'
+         : resolvedMode === 'panels_only' ? `UPDATE
+           SET panels_assigned = (
+                 SELECT ARRAY(
+                   SELECT DISTINCT unnest
+                   FROM unnest(contacts.panels_assigned || EXCLUDED.panels_assigned)
+                   WHERE unnest IS NOT NULL
+                   ORDER BY unnest
+                 )
+               ),
+               casino_accounts = CASE
+                 WHEN EXCLUDED.first_name IS NULL OR EXCLUDED.panel IS NULL
+                   THEN contacts.casino_accounts
+                 WHEN EXISTS (
+                   SELECT 1 FROM jsonb_array_elements(contacts.casino_accounts) e
+                   WHERE (e->>'panel') = EXCLUDED.panel AND (e->>'username') = EXCLUDED.first_name
+                 )
+                   THEN contacts.casino_accounts
+                 ELSE contacts.casino_accounts || jsonb_build_array(
+                   jsonb_build_object('panel', EXCLUDED.panel, 'username', EXCLUDED.first_name)
+                 )
+               END,
+               updated_at = NOW()`
+         : /* update */ `UPDATE
+           SET first_name        = COALESCE(EXCLUDED.first_name, contacts.first_name),
+               segment           = COALESCE(EXCLUDED.segment,    contacts.segment),
+               panel             = COALESCE(EXCLUDED.panel,      contacts.panel),
+               panels_assigned   = (
+                 SELECT ARRAY(
+                   SELECT DISTINCT unnest
+                   FROM unnest(contacts.panels_assigned || EXCLUDED.panels_assigned)
+                   WHERE unnest IS NOT NULL
+                   ORDER BY unnest
+                 )
+               ),
+               casino_accounts = CASE
+                 WHEN EXCLUDED.first_name IS NULL OR EXCLUDED.panel IS NULL
+                   THEN contacts.casino_accounts
+                 WHEN EXISTS (
+                   SELECT 1 FROM jsonb_array_elements(contacts.casino_accounts) e
+                   WHERE (e->>'panel') = EXCLUDED.panel AND (e->>'username') = EXCLUDED.first_name
+                 )
+                   THEN contacts.casino_accounts
+                 ELSE contacts.casino_accounts || jsonb_build_array(
+                   jsonb_build_object('panel', EXCLUDED.panel, 'username', EXCLUDED.first_name)
+                 )
+               END,
+               linea             = COALESCE(EXCLUDED.linea,      contacts.linea),
+               updated_at        = NOW()`}
          RETURNING id, xmax::text
        )
        SELECT
          COUNT(*) FILTER (WHERE xmax = '0')  AS inserted,
          COUNT(*) FILTER (WHERE xmax != '0') AS updated
        FROM upserted`,
-      [JSON.stringify(normalized), panelValue, lineaValue]
+      [JSON.stringify(normalized), panelValue, lineaValue, JSON.stringify(panelsValue)]
     )
 
     const inserted = Number(row?.inserted || 0)
@@ -179,7 +241,7 @@ export async function POST(req: NextRequest) {
                  'casino:actividad:' || seg_actividad,
                  'casino:agente:'    || agente,
                  CASE
-                   WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto IN ('super_vip','vip') THEN 'casino:valor_riesgo:critico'
+                   WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto IN ('super_vip','vip_alto','vip_medio','vip') THEN 'casino:valor_riesgo:critico'
                    WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto = 'medio'         THEN 'casino:valor_riesgo:medio'
                    WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto = 'bajo'          THEN 'casino:valor_riesgo:bajo'
                    ELSE NULL
@@ -200,9 +262,11 @@ export async function POST(req: NextRequest) {
            UPDATE contacts
              SET panel      = COALESCE(contacts.panel, m.agente),
                  segment    = CASE
-                   WHEN COALESCE(r.max_30d, 0) >= 1000000 THEN 'super_vip'::contact_segment
+                   WHEN COALESCE(r.max_30d, 0) >= 3200000 THEN 'super_vip'::contact_segment
+                   WHEN COALESCE(r.max_30d, 0) >= 1500000 THEN 'vip_alto'::contact_segment
+                   WHEN COALESCE(r.max_30d, 0) >= 1000000 THEN 'vip_medio'::contact_segment
                    WHEN COALESCE(r.max_30d, 0) >= 500000  THEN 'vip'::contact_segment
-                   WHEN r.max_30d IS NOT NULL AND m.seg_monto IN ('super_vip','vip') THEN 'medio'::contact_segment
+                   WHEN r.max_30d IS NOT NULL AND m.seg_monto IN ('super_vip','vip_alto','vip_medio','vip') THEN 'medio'::contact_segment
                    ELSE m.seg_monto::contact_segment
                  END,
                  updated_at = NOW()

@@ -45,7 +45,7 @@ const OP_B = 'bbbbbbbb-0000-0000-0000-000000000000'
 describe('resolveApplicableRule — sin reglas', () => {
 
   it('lista vacía → DEFAULT_GLOBAL_RULE', () => {
-    const result = resolveApplicableRule([], OP_A, 'alto', 'frecuente')
+    const result = resolveApplicableRule([], OP_A, 'vip', 'frecuente')
     expect(result).toBe(DEFAULT_GLOBAL_RULE)
     expect(result.max_per_day).toBe(1)
     expect(result.max_per_week).toBe(2)
@@ -66,7 +66,7 @@ describe('resolveApplicableRule — comodines', () => {
 
   it('regla global (todos null) aplica a cualquier contexto', () => {
     const globalRule = makeRule({ max_per_day: 99 })
-    const result = resolveApplicableRule([globalRule], OP_A, 'alto', 'frecuente')
+    const result = resolveApplicableRule([globalRule], OP_A, 'vip', 'frecuente')
     expect(result.max_per_day).toBe(99)
   })
 
@@ -121,16 +121,16 @@ describe('resolveApplicableRule — especificidad', () => {
   it('orden en el array no afecta el resultado (el más específico siempre gana)', () => {
     const specificRule = makeRule({
       operator_id:   OP_A,
-      seg_monto:     'alto',
+      seg_monto:     'vip',
       seg_actividad: 'regular',
       max_per_day:   99,
     })
     const globalRule = makeRule({ max_per_day: 1 })
 
     // Primero global, luego específico
-    const r1 = resolveApplicableRule([globalRule, specificRule], OP_A, 'alto', 'regular')
+    const r1 = resolveApplicableRule([globalRule, specificRule], OP_A, 'vip', 'regular')
     // Primero específico, luego global
-    const r2 = resolveApplicableRule([specificRule, globalRule], OP_A, 'alto', 'regular')
+    const r2 = resolveApplicableRule([specificRule, globalRule], OP_A, 'vip', 'regular')
 
     expect(r1.max_per_day).toBe(99)
     expect(r2.max_per_day).toBe(99)

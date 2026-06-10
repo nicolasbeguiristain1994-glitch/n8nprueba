@@ -42,7 +42,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     if (panel !== undefined) {
-      await query(`UPDATE contacts SET panel = $1, updated_at = NOW() WHERE id = $2`, [panel, id])
+      await query(
+        `UPDATE contacts
+         SET panel           = $1,
+             panels_assigned = CASE
+               WHEN $1 IS NULL THEN panels_assigned
+               WHEN $1 = ANY(panels_assigned) THEN panels_assigned
+               ELSE (SELECT ARRAY(SELECT DISTINCT unnest FROM unnest(panels_assigned || ARRAY[$1]) ORDER BY unnest))
+             END,
+             updated_at = NOW()
+         WHERE id = $2`,
+        [panel, id]
+      )
       changedFields.push('panel')
     }
 

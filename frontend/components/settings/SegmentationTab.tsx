@@ -11,7 +11,7 @@ import { useCurrentUser } from '@/lib/useCurrentUser'
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
-type TierName = 'super_vip' | 'vip' | 'medio' | 'bajo'
+type TierName = 'super_vip' | 'vip_alto' | 'vip_medio' | 'vip' | 'medio' | 'bajo'
 
 interface SegmentationTier {
   tier: TierName
@@ -34,9 +34,11 @@ const FIELD_LABELS: Record<EditableField, string> = {
   deposit_threshold_min:   'Depósito mín ($)',
   recontact_cooldown_days: 'Cooldown (días)',
 }
-const TIER_LABELS: Record<TierName, string> = { super_vip: 'Super Vip', vip: 'Vip', medio: 'Medio', bajo: 'Bajo' }
+const TIER_LABELS: Record<TierName, string> = { super_vip: 'Super Vip', vip_alto: 'Vip Alto', vip_medio: 'Vip Medio', vip: 'Vip Bajo', medio: 'Medio', bajo: 'Bajo' }
 const TIER_COLORS: Record<TierName, string> = {
   super_vip: 'bg-purple-50 text-purple-800 font-semibold',
+  vip_alto:  'bg-red-50 text-red-800 font-semibold',
+  vip_medio: 'bg-orange-50 text-orange-800 font-semibold',
   vip:       'bg-yellow-50 text-yellow-800 font-semibold',
   medio:     'bg-gray-50 text-gray-700 font-medium',
   bajo:      'bg-gray-50 text-gray-400 font-medium',

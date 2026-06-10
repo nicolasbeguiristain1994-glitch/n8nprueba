@@ -39,7 +39,7 @@ interface Contact {
   email: string; status: string; opt_in: boolean; created_at: string; segment: string; panel: string; gaming: string; linea: number | null
   actividad?: string; valor_riesgo?: string; antiguedad?: string
   last_deposit_at?: string | null; total_deposits?: number; total_withdrawals?: number
-  platforms?: string[]; custom_tags?: string[]
+  platforms?: string[]; casino_accounts?: Array<{ panel: string; username: string }>; custom_tags?: string[]
 }
 interface ImportRow   { phone: string; name?: string; segment?: string }
 interface ContactList { id: string; name: string; contact_count: number; created_at: string }
@@ -51,7 +51,8 @@ interface ContactList { id: string; name: string; contact_count: number; created
 const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
 
 const NIVEL_LABEL: Record<string, string> = {
-  bajo: 'Bajo', medio: 'Medio', vip: 'Vip', super_vip: 'Super Vip',
+  bajo: 'Bajo', medio: 'Medio', vip: 'Vip Bajo',
+  vip_medio: 'Vip Medio', vip_alto: 'Vip Alto', super_vip: 'Super Vip',
 }
 
 const SEGMENT_STYLE: Record<string, string> = {
@@ -59,6 +60,8 @@ const SEGMENT_STYLE: Record<string, string> = {
   super_vip: 'bg-purple-100 text-purple-700', whale: 'bg-amber-100 text-amber-700',
   bajo: 'bg-orange-50 text-orange-700', medio: 'bg-slate-100 text-slate-600',
   vip: 'bg-yellow-100 text-yellow-700',
+  vip_medio: 'bg-orange-100 text-orange-700',
+  vip_alto:  'bg-red-100 text-red-700',
 }
 const ACTIVIDAD_STYLE: Record<string, string> = {
   frecuente: 'bg-green-100 text-green-700', regular: 'bg-blue-100 text-blue-700',
@@ -83,10 +86,12 @@ const ANTIGUEDAD_DESC: Record<string, string> = {
   nuevo:       'Menos de 1 mes',
 }
 const NIVEL_DESC: Record<string, string> = {
-  super_vip: 'Super Vip — jugador de alto valor, depósitos frecuentes y altos',
-  vip:       'Vip — jugador activo con buen historial de depósitos',
-  medio:     'Medio — actividad regular, potencial de crecimiento',
-  bajo:      'Bajo — actividad baja o reciente, en etapa de calificación',
+  super_vip: 'Super Vip — depósitos >= $3.200.000/mes activo',
+  vip_alto:  'Vip Alto — depósitos $1.500.001 – $3.199.999/mes activo',
+  vip_medio: 'Vip Medio — depósitos $1.000.000 – $1.500.000/mes activo',
+  vip:       'Vip Bajo — depósitos $500.000 – $999.999/mes activo',
+  medio:     'Medio — depósitos $100.000 – $499.999/mes activo',
+  bajo:      'Bajo — depósitos < $100.000/mes activo',
 }
 const VALOR_RIESGO_STYLE: Record<string, string> = {
   critico: 'bg-red-100 text-red-700', medio: 'bg-orange-100 text-orange-700',
@@ -191,6 +196,7 @@ export default function Contacts() {
   const [showImport, setShowImport]     = useState(false)
   const [importRows, setImportRows]     = useState<ImportRow[]>([])
   const [importPanel, setImportPanel]   = useState('')
+  const [importPanel2, setImportPanel2] = useState('')
   const [importLinea, setImportLinea]   = useState('')
   const [importing, setImporting]       = useState(false)
   const [importProgress, setImportProgress] = useState(0)
@@ -198,7 +204,7 @@ export default function Contacts() {
   const [importError, setImportError]   = useState<string | null>(null)
   const [importCheck, setImportCheck]   = useState<{ total: number; by_panel: Record<string, number> } | null>(null)
   const [checkLoading, setCheckLoading] = useState(false)
-  const [skipExisting, setSkipExisting] = useState(false)
+  const [conflictMode, setConflictMode] = useState<'update' | 'panels_only' | 'skip'>('update')
   const fileRef = useRef<HTMLInputElement>(null)
 
   // ── Add contact modal ─────────────────────────────────────────────────────
@@ -471,7 +477,7 @@ export default function Contacts() {
       }
       setImportRows(rows)
       setImportCheck(null)
-      setSkipExisting(false)
+      setConflictMode('update')
       // Verificar cuántos ya existen en la DB
       if (rows.length > 0) {
         setCheckLoading(true)
@@ -495,7 +501,7 @@ export default function Contacts() {
     setImporting(true); setImportError(null); setImportProgress(0)
 
     const CHUNK_SIZE = 5_000
-    const panel  = importPanel || undefined
+    const panels = [importPanel, importPanel2].filter(Boolean) as string[]
     const linea  = importLinea ? Number(importLinea) : undefined
     const chunks: ImportRow[][] = []
     for (let i = 0; i < importRows.length; i += CHUNK_SIZE) chunks.push(importRows.slice(i, i + CHUNK_SIZE))
@@ -506,7 +512,7 @@ export default function Contacts() {
       for (let i = 0; i < chunks.length; i++) {
         const res = await fetch('/api/contacts/import', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contacts: chunks[i], panel, linea, skip_existing: skipExisting }),
+          body: JSON.stringify({ contacts: chunks[i], panels, linea, conflict_mode: conflictMode }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) { setImportError(data.error || 'Error al importar'); return }
@@ -860,7 +866,9 @@ export default function Contacts() {
           value={row.original.segment || ''}
           options={[
             { value: 'super_vip', label: 'Super Vip' },
-            { value: 'vip',       label: 'Vip' },
+            { value: 'vip_alto',  label: 'Vip Alto' },
+            { value: 'vip_medio', label: 'Vip Medio' },
+            { value: 'vip',       label: 'Vip Bajo' },
             { value: 'medio',     label: 'Medio' },
             { value: 'bajo',      label: 'Bajo' },
           ]}
@@ -1365,7 +1373,7 @@ export default function Contacts() {
       <Dialog open={showImport} onOpenChange={v => {
         if (importing) return
         setShowImport(v)
-        if (!v) { setImportRows([]); setImportResult(null); setImporting(false); setImportError(null); setImportPanel(''); setImportLinea(''); setImportCheck(null); setSkipExisting(false) }
+        if (!v) { setImportRows([]); setImportResult(null); setImporting(false); setImportError(null); setImportPanel(''); setImportPanel2(''); setImportLinea(''); setImportCheck(null); setConflictMode('update') }
       }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
@@ -1378,7 +1386,7 @@ export default function Contacts() {
                 <div className="bg-blue-50 rounded-lg p-4"><p className="text-2xl font-bold text-blue-600">{importResult.updated}</p><p className="text-xs text-muted-foreground">Actualizados</p></div>
                 <div className="bg-muted rounded-lg p-4"><p className="text-2xl font-bold text-muted-foreground">{importResult.skipped}</p><p className="text-xs text-muted-foreground">Omitidos</p></div>
               </div>
-              <Button className="w-full" onClick={() => { setShowImport(false); setImportRows([]); setImportResult(null); setImportPanel(''); setImportLinea('') }}>Cerrar</Button>
+              <Button className="w-full" onClick={() => { setShowImport(false); setImportRows([]); setImportResult(null); setImportPanel(''); setImportPanel2(''); setImportLinea('') }}>Cerrar</Button>
             </div>
           ) : (
             <div className="space-y-3">
@@ -1421,24 +1429,18 @@ export default function Contacts() {
                       </div>
                     ))}
                   </div>
-                  <div className="flex gap-3 pt-1">
+                  <div className="flex flex-col gap-1.5 pt-1">
                     <label className="flex items-center gap-2 cursor-pointer text-sm">
-                      <input
-                        type="radio"
-                        checked={!skipExisting}
-                        onChange={() => setSkipExisting(false)}
-                        className="accent-amber-600"
-                      />
-                      <span>Actualizar existentes (cambiar agente/nivel)</span>
+                      <input type="radio" checked={conflictMode === 'update'} onChange={() => setConflictMode('update')} className="accent-amber-600" />
+                      <span>Actualizar existentes (nombre, nivel, agente, línea)</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer text-sm">
-                      <input
-                        type="radio"
-                        checked={skipExisting}
-                        onChange={() => setSkipExisting(true)}
-                        className="accent-amber-600"
-                      />
-                      <span>Omitir existentes (solo nuevos)</span>
+                      <input type="radio" checked={conflictMode === 'panels_only'} onChange={() => setConflictMode('panels_only')} className="accent-amber-600" />
+                      <span className="font-medium text-blue-700">Solo agregar agente — no toca nombre ni nivel</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer text-sm">
+                      <input type="radio" checked={conflictMode === 'skip'} onChange={() => setConflictMode('skip')} className="accent-amber-600" />
+                      <span>Omitir existentes (solo importa nuevos)</span>
                     </label>
                   </div>
                 </div>
@@ -1449,7 +1451,7 @@ export default function Contacts() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Agente (opcional)</label>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Agente 1</label>
                   <Select value={importPanel || 'none'} onValueChange={v => setImportPanel(v === 'none' ? '' : (v ?? ''))}>
                     <SelectTrigger><SelectValue placeholder="Sin asignar" /></SelectTrigger>
                     <SelectContent>
@@ -1458,6 +1460,18 @@ export default function Contacts() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Agente 2 <span className="text-muted-foreground/60">(opcional)</span></label>
+                  <Select value={importPanel2 || 'none'} onValueChange={v => setImportPanel2(v === 'none' ? '' : (v ?? ''))}>
+                    <SelectTrigger><SelectValue placeholder="Sin asignar" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Sin asignar</SelectItem>
+                      {PANEL_OPTIONS.filter(p => p !== importPanel).map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">Línea (opcional)</label>
                   <Select value={importLinea || 'none'} onValueChange={v => setImportLinea(v === 'none' ? '' : (v ?? ''))}>
@@ -1523,7 +1537,7 @@ export default function Contacts() {
                   {[
                     { label: 'Agente', value: criteriaPanel, set: setCriteriaPanel, key: 'all-agent', items: PANEL_OPTIONS.map(p => ({ v: p, l: p })) },
                     { label: 'Juego', value: criteriaGaming, set: setCriteriaGaming, key: 'all-game', items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }] },
-                    { label: 'Nivel', value: criteriaSegment, set: setCriteriaSegment, key: 'all-seg', items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip', l: 'Vip' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }] },
+                    { label: 'Nivel', value: criteriaSegment, set: setCriteriaSegment, key: 'all-seg', items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip_alto', l: 'Vip Alto' }, { v: 'vip_medio', l: 'Vip Medio' }, { v: 'vip', l: 'Vip Bajo' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }] },
                   ].map(({ label, value, set, key, items }) => (
                     <div key={key}>
                       <label className="text-xs font-medium text-muted-foreground mb-1 block">{label}</label>
@@ -1597,7 +1611,7 @@ export default function Contacts() {
                 { label: 'Panel', value: newPanel, set: setNewPanel, items: PANEL_OPTIONS.map(p => ({ v: p, l: p })), ph: 'Panel' },
                 { label: 'Línea', value: newLinea, set: setNewLinea, items: Array.from({ length: 100 }, (_, i) => ({ v: String(i + 1), l: `Línea ${i + 1}` })), ph: 'Línea' },
                 { label: 'Juego', value: newGaming, set: setNewGaming, items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }], ph: 'Juego' },
-                { label: 'Nivel', value: newSegment, set: setNewSegment, items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip', l: 'Vip' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }], ph: 'Nivel' },
+                { label: 'Nivel', value: newSegment, set: setNewSegment, items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip_alto', l: 'Vip Alto' }, { v: 'vip_medio', l: 'Vip Medio' }, { v: 'vip', l: 'Vip Bajo' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }], ph: 'Nivel' },
               ].map(({ label, value, set, items, ph }) => (
                 <div key={label}>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">{label}</label>
@@ -1633,12 +1647,23 @@ export default function Contacts() {
             <div className="space-y-3">
               <p className="font-mono text-sm text-muted-foreground">{viewContact.phone_number}</p>
               <div className="flex flex-wrap gap-1.5">
-                {viewContact.panel    && <span className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full">{viewContact.panel}</span>}
                 {viewContact.segment  && <span className={`text-xs px-2 py-0.5 rounded-full ${SEGMENT_STYLE[viewContact.segment] ?? 'bg-gray-100 text-gray-600'}`}>{NIVEL_LABEL[viewContact.segment] ?? viewContact.segment}</span>}
                 {viewContact.gaming   && <span className={`text-xs px-2 py-0.5 rounded-full ${GAMING_STYLE[viewContact.gaming] ?? 'bg-gray-100 text-gray-600'}`}>{viewContact.gaming}</span>}
                 {viewContact.actividad && <span className={`text-xs px-2 py-0.5 rounded-full ${ACTIVIDAD_STYLE[viewContact.actividad] ?? 'bg-gray-100 text-gray-600'}`}>{viewContact.actividad}</span>}
                 {viewContact.antiguedad && <span className={`text-xs px-2 py-0.5 rounded-full ${ANTIGUEDAD_STYLE[viewContact.antiguedad] ?? 'bg-gray-100 text-gray-600'}`}>{viewContact.antiguedad}</span>}
               </div>
+              {/* Cuentas de casino por agente */}
+              {(viewContact.casino_accounts?.length ?? 0) > 0 && (
+                <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 space-y-1">
+                  <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-wide">Usuarios de casino</p>
+                  {viewContact.casino_accounts!.map((acc, i) => (
+                    <div key={i} className="flex items-center justify-between">
+                      <span className="text-xs text-gray-500 capitalize">{acc.panel}</span>
+                      <span className="text-xs font-mono font-medium text-gray-800">{acc.username}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
               {/* Zeus stats (or primary platform when contact has only one) */}
               <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                 <div className="flex items-center justify-between mb-2">
@@ -1769,7 +1794,7 @@ export default function Contacts() {
                 { label: 'Panel',  value: editPanel,   set: setEditPanel,   items: PANEL_OPTIONS.map(p => ({ v: p, l: p })),                                                                                          ph: 'Panel'  },
                 { label: 'Línea',  value: editLinea,   set: setEditLinea,   items: Array.from({ length: 100 }, (_, i) => ({ v: String(i + 1), l: `Línea ${i + 1}` })),                                               ph: 'Línea'  },
                 { label: 'Juego',  value: editGaming,  set: setEditGaming,  items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }],                         ph: 'Juego'  },
-                { label: 'Nivel',  value: editSegment, set: setEditSegment, items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip', l: 'Vip' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }],                   ph: 'Nivel'  },
+                { label: 'Nivel',  value: editSegment, set: setEditSegment, items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip_alto', l: 'Vip Alto' }, { v: 'vip_medio', l: 'Vip Medio' }, { v: 'vip', l: 'Vip Bajo' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }], ph: 'Nivel' },
               ].map(({ label, value, set, items, ph }) => (
                 <div key={label}>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">{label}</label>

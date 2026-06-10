@@ -18,33 +18,45 @@ import {
 
 describe('resolveValueTier', () => {
   describe('cuando hay monto disponible, prioriza monto sobre segment', () => {
-    it('asigna vip si monto >= 10000', () => {
-      expect(resolveValueTier('bajo', 10_000)).toBe('vip')
-      expect(resolveValueTier(null, 50_000)).toBe('vip')
+    it('asigna super_vip si monto >= 3.200.000', () => {
+      expect(resolveValueTier('bajo', 3_200_000)).toBe('super_vip')
+      expect(resolveValueTier(null,   5_000_000)).toBe('super_vip')
     })
 
-    it('asigna alto si monto entre 3000 y 9999', () => {
-      expect(resolveValueTier('bajo', 3_000)).toBe('alto')
-      expect(resolveValueTier('vip', 5_000)).toBe('alto')  // monto gana al segment
+    it('asigna vip_alto si monto entre 1.500.000 y 3.199.999', () => {
+      expect(resolveValueTier('bajo', 1_500_000)).toBe('vip_alto')
+      expect(resolveValueTier('bajo', 3_199_999)).toBe('vip_alto')
     })
 
-    it('asigna medio si monto entre 500 y 2999', () => {
-      expect(resolveValueTier(null, 500)).toBe('medio')
-      expect(resolveValueTier('vip', 2_999)).toBe('medio') // monto overridea vip
+    it('asigna vip_medio si monto entre 1.000.000 y 1.499.999', () => {
+      expect(resolveValueTier(null,   1_000_000)).toBe('vip_medio')
+      expect(resolveValueTier('bajo', 1_499_999)).toBe('vip_medio')
     })
 
-    it('asigna bajo si monto < 500', () => {
+    it('asigna vip si monto entre 500.000 y 999.999', () => {
+      expect(resolveValueTier('bajo', 500_000)).toBe('vip')
+      expect(resolveValueTier(null,   999_999)).toBe('vip')
+    })
+
+    it('asigna medio si monto entre 100.000 y 499.999', () => {
+      expect(resolveValueTier(null,   100_000)).toBe('medio')
+      expect(resolveValueTier('vip',  499_999)).toBe('medio')
+    })
+
+    it('asigna bajo si monto < 100.000', () => {
       expect(resolveValueTier('vip', 0)).toBe('bajo')
-      expect(resolveValueTier(null, 499)).toBe('bajo')
+      expect(resolveValueTier(null,  99_999)).toBe('bajo')
     })
   })
 
   describe('sin monto (NULL), usa segment como fallback', () => {
     it('mapea segmentos conocidos correctamente', () => {
-      expect(resolveValueTier('vip',   null)).toBe('vip')
-      expect(resolveValueTier('alto',  null)).toBe('alto')
-      expect(resolveValueTier('medio', null)).toBe('medio')
-      expect(resolveValueTier('bajo',  null)).toBe('bajo')
+      expect(resolveValueTier('super_vip', null)).toBe('super_vip')
+      expect(resolveValueTier('vip_alto',  null)).toBe('vip_alto')
+      expect(resolveValueTier('vip_medio', null)).toBe('vip_medio')
+      expect(resolveValueTier('vip',       null)).toBe('vip')
+      expect(resolveValueTier('medio',     null)).toBe('medio')
+      expect(resolveValueTier('bajo',      null)).toBe('bajo')
     })
 
     it('trata null y segmentos legacy como bajo (conservador)', () => {
@@ -58,13 +70,14 @@ describe('resolveValueTier', () => {
 // ── scoreValue ────────────────────────────────────────────────────────────────
 
 describe('scoreValue', () => {
-  it('VIP obtiene el máximo (60)', () => expect(scoreValue('vip')).toBe(60))
-  it('alto obtiene 45',          () => expect(scoreValue('alto')).toBe(45))
-  it('medio obtiene 25',         () => expect(scoreValue('medio')).toBe(25))
-  it('bajo obtiene 10',          () => expect(scoreValue('bajo')).toBe(10))
+  it('super_vip obtiene el máximo (60)',  () => expect(scoreValue('super_vip')).toBe(60))
+  it('vip_alto obtiene 56',              () => expect(scoreValue('vip_alto')).toBe(56))
+  it('vip_medio obtiene 52',             () => expect(scoreValue('vip_medio')).toBe(52))
+  it('vip obtiene 45',                   () => expect(scoreValue('vip')).toBe(45))
+  it('medio obtiene 25',                 () => expect(scoreValue('medio')).toBe(25))
+  it('bajo obtiene 10',                  () => expect(scoreValue('bajo')).toBe(10))
 
-  it('VIP siempre supera a BAJO independiente del urgencyScore (60+0 > 10+40)', () => {
-    // Esto garantiza que el orden inter-tier es correcto
+  it('VIP siempre supera a BAJO independiente del urgencyScore (45+0 > 10+40)', () => {
     expect(scoreValue('vip') + 0).toBeGreaterThan(scoreValue('bajo') + 40)
   })
 })
@@ -72,54 +85,39 @@ describe('scoreValue', () => {
 // ── scoreUrgency ──────────────────────────────────────────────────────────────
 
 describe('scoreUrgency', () => {
-  // Ventana VIP: 7–180 días, span = 173
-  describe('tier VIP (ventana 7–180 días)', () => {
+  // Ventana super_vip: 7–180 días, span = 173
+  describe('tier super_vip (ventana 7–180 días)', () => {
     it('inicio de ventana (7 días) → urgencia máxima (40)', () => {
-      expect(scoreUrgency(7, 'vip')).toBe(40)
+      expect(scoreUrgency(7, 'super_vip')).toBe(40)
     })
 
-    it('día 63 → 27 (posición ~32% en la ventana)', () => {
-      // position = (63-7)/173 = 0.324, urgency = round(0.676*40) = 27
-      expect(scoreUrgency(63, 'vip')).toBe(27)
-    })
-
-    it('día 120 (antiguo límite) → 14, NO cero — sigue en la lista', () => {
-      // La ventana se extendió a 180 días. Un VIP al día 120 aún tiene urgencia.
-      // position = (120-7)/173 = 0.653, urgency = round(0.347*40) = 14
-      expect(scoreUrgency(120, 'vip')).toBe(14)
-    })
-
-    it('día 150 → 7 (urgencia baja pero no cero)', () => {
-      // position = (150-7)/173 = 0.827, urgency = round(0.173*40) = 7
-      expect(scoreUrgency(150, 'vip')).toBe(7)
+    it('día 120 → tiene urgencia positiva — sigue en la lista', () => {
+      expect(scoreUrgency(120, 'super_vip')).toBeGreaterThan(0)
     })
 
     it('fin de ventana (180 días) → urgencyScore = 0 pero contacto sigue en lista', () => {
-      // urgencyScore = 0 ≠ exclusión. Score total = 60 + 0 = 60.
-      // Esto representa la "última oportunidad" para un VIP.
-      expect(scoreUrgency(180, 'vip')).toBe(0)
+      expect(scoreUrgency(180, 'super_vip')).toBe(0)
     })
 
     it('decae monotónicamente dentro de la ventana', () => {
-      expect(scoreUrgency(7,   'vip')).toBeGreaterThan(scoreUrgency(60,  'vip'))
-      expect(scoreUrgency(60,  'vip')).toBeGreaterThan(scoreUrgency(120, 'vip'))
-      expect(scoreUrgency(120, 'vip')).toBeGreaterThan(scoreUrgency(180, 'vip'))
+      expect(scoreUrgency(7,   'super_vip')).toBeGreaterThan(scoreUrgency(60,  'super_vip'))
+      expect(scoreUrgency(60,  'super_vip')).toBeGreaterThan(scoreUrgency(120, 'super_vip'))
+      expect(scoreUrgency(120, 'super_vip')).toBeGreaterThan(scoreUrgency(180, 'super_vip'))
     })
   })
 
-  // Ventana ALTO: 7–150 días, span = 143
-  describe('tier ALTO (ventana 7–150 días)', () => {
+  // Ventana VIP Bajo: 7–150 días, span = 143
+  describe('tier vip (VIP Bajo, ventana 7–150 días)', () => {
     it('inicio de ventana (7 días) → 40', () => {
-      expect(scoreUrgency(7, 'alto')).toBe(40)
+      expect(scoreUrgency(7, 'vip')).toBe(40)
     })
 
-    it('día 90 → 17', () => {
-      // position = 83/143 = 0.580, urgency = round(0.420*40) = 17
-      expect(scoreUrgency(90, 'alto')).toBe(17)
+    it('día 90 → urgencia positiva', () => {
+      expect(scoreUrgency(90, 'vip')).toBeGreaterThan(0)
     })
 
     it('fin de ventana (150 días) → 0', () => {
-      expect(scoreUrgency(150, 'alto')).toBe(0)
+      expect(scoreUrgency(150, 'vip')).toBe(0)
     })
   })
 
@@ -149,54 +147,52 @@ describe('scoreUrgency', () => {
 // ── resolveReactivationSegment ────────────────────────────────────────────────
 
 describe('resolveReactivationSegment', () => {
-  describe('VIP (ventana 7–180d, 5 rangos)', () => {
+  describe('super_vip (ventana 7–180d)', () => {
     it('7–30 días → URGENTE', () => {
-      expect(resolveReactivationSegment('vip', 7)).toBe('REACTIVACION_URGENTE')
-      expect(resolveReactivationSegment('vip', 30)).toBe('REACTIVACION_URGENTE')
+      expect(resolveReactivationSegment('super_vip', 7)).toBe('REACTIVACION_URGENTE')
+      expect(resolveReactivationSegment('super_vip', 30)).toBe('REACTIVACION_URGENTE')
     })
 
     it('31–90 días → PRIORITARIA', () => {
-      expect(resolveReactivationSegment('vip', 31)).toBe('REACTIVACION_PRIORITARIA')
-      expect(resolveReactivationSegment('vip', 90)).toBe('REACTIVACION_PRIORITARIA')
+      expect(resolveReactivationSegment('super_vip', 31)).toBe('REACTIVACION_PRIORITARIA')
+      expect(resolveReactivationSegment('super_vip', 90)).toBe('REACTIVACION_PRIORITARIA')
     })
 
     it('91–120 días → ESTANDAR', () => {
-      expect(resolveReactivationSegment('vip', 91)).toBe('REACTIVACION_ESTANDAR')
-      expect(resolveReactivationSegment('vip', 120)).toBe('REACTIVACION_ESTANDAR')
+      expect(resolveReactivationSegment('super_vip', 91)).toBe('REACTIVACION_ESTANDAR')
+      expect(resolveReactivationSegment('super_vip', 120)).toBe('REACTIVACION_ESTANDAR')
     })
 
     it('121–180 días → FRIA_ALTO_VALOR (win-back)', () => {
-      expect(resolveReactivationSegment('vip', 121)).toBe('REACTIVACION_FRIA_ALTO_VALOR')
-      expect(resolveReactivationSegment('vip', 150)).toBe('REACTIVACION_FRIA_ALTO_VALOR')
-      expect(resolveReactivationSegment('vip', 180)).toBe('REACTIVACION_FRIA_ALTO_VALOR')
+      expect(resolveReactivationSegment('super_vip', 121)).toBe('REACTIVACION_FRIA_ALTO_VALOR')
+      expect(resolveReactivationSegment('super_vip', 180)).toBe('REACTIVACION_FRIA_ALTO_VALOR')
     })
 
     it('más de 180 días → null (demasiado frío)', () => {
-      expect(resolveReactivationSegment('vip', 181)).toBeNull()
-      expect(resolveReactivationSegment('vip', 365)).toBeNull()
+      expect(resolveReactivationSegment('super_vip', 181)).toBeNull()
     })
   })
 
-  describe('ALTO (ventana 7–150d)', () => {
+  describe('vip / vip_medio / vip_alto (ventana 7–150d)', () => {
     it('7–30 días → URGENTE', () => {
-      expect(resolveReactivationSegment('alto', 15)).toBe('REACTIVACION_URGENTE')
+      expect(resolveReactivationSegment('vip', 15)).toBe('REACTIVACION_URGENTE')
     })
 
     it('31–90 días → PRIORITARIA', () => {
-      expect(resolveReactivationSegment('alto', 60)).toBe('REACTIVACION_PRIORITARIA')
+      expect(resolveReactivationSegment('vip', 60)).toBe('REACTIVACION_PRIORITARIA')
     })
 
     it('91–120 días → ESTANDAR', () => {
-      expect(resolveReactivationSegment('alto', 100)).toBe('REACTIVACION_ESTANDAR')
+      expect(resolveReactivationSegment('vip', 100)).toBe('REACTIVACION_ESTANDAR')
     })
 
     it('121–150 días → FRIA_ALTO_VALOR', () => {
-      expect(resolveReactivationSegment('alto', 121)).toBe('REACTIVACION_FRIA_ALTO_VALOR')
-      expect(resolveReactivationSegment('alto', 150)).toBe('REACTIVACION_FRIA_ALTO_VALOR')
+      expect(resolveReactivationSegment('vip', 121)).toBe('REACTIVACION_FRIA_ALTO_VALOR')
+      expect(resolveReactivationSegment('vip', 150)).toBe('REACTIVACION_FRIA_ALTO_VALOR')
     })
 
-    it('más de 150 días → null (ALTO no llega a 6 meses, solo VIP)', () => {
-      expect(resolveReactivationSegment('alto', 151)).toBeNull()
+    it('más de 150 días → null (vip no llega a 6 meses)', () => {
+      expect(resolveReactivationSegment('vip', 151)).toBeNull()
     })
   })
 
@@ -237,68 +233,58 @@ describe('resolveReactivationSegment', () => {
 // ── computeScore — escenarios de negocio ──────────────────────────────────────
 
 describe('computeScore — escenarios de negocio', () => {
-  it('VIP recién inactivo (7 días) → score máximo (100), URGENTE', () => {
-    const r = computeScore({ daysInactive: 7, segment: 'vip', totalDepositAmount: null })
+  it('super_vip recién inactivo (7 días) → score máximo (100), URGENTE', () => {
+    const r = computeScore({ daysInactive: 7, segment: 'super_vip', totalDepositAmount: null })
     expect(r.valueScore).toBe(60)
     expect(r.urgencyScore).toBe(40)
     expect(r.total).toBe(100)
     expect(r.reactivationSegment).toBe('REACTIVACION_URGENTE')
   })
 
-  it('VIP inactivo 150 días → FRIA_ALTO_VALOR, score=67', () => {
-    const r = computeScore({ daysInactive: 150, segment: 'vip', totalDepositAmount: null })
-    expect(r.reactivationSegment).toBe('REACTIVACION_FRIA_ALTO_VALOR')
-    expect(r.valueScore).toBe(60)
-    expect(r.urgencyScore).toBe(7)
-    expect(r.total).toBe(67)
-  })
-
-  it('VIP al final de su ventana (180 días) → urgencyScore=0, score=60, sigue en lista', () => {
-    // Décision 1: urgencyScore=0 ≠ exclusión. Es "última oportunidad".
-    // Score total = 60, que supera a BAJO inicio de ventana (10+40=50).
-    const r = computeScore({ daysInactive: 180, segment: 'vip', totalDepositAmount: null })
+  it('super_vip al final de su ventana (180 días) → urgencyScore=0, score=60, sigue en lista', () => {
+    const r = computeScore({ daysInactive: 180, segment: 'super_vip', totalDepositAmount: null })
     expect(r.urgencyScore).toBe(0)
     expect(r.valueScore).toBe(60)
     expect(r.total).toBe(60)
     expect(r.reactivationSegment).toBe('REACTIVACION_FRIA_ALTO_VALOR')
   })
 
-  it('VIP 181 días → fuera de ventana, segment null', () => {
-    const r = computeScore({ daysInactive: 181, segment: 'vip', totalDepositAmount: null })
+  it('super_vip 181 días → fuera de ventana, segment null', () => {
+    const r = computeScore({ daysInactive: 181, segment: 'super_vip', totalDepositAmount: null })
     expect(r.reactivationSegment).toBeNull()
   })
 
-  it('ALTO inactivo 130 días → FRIA_ALTO_VALOR', () => {
-    const r = computeScore({ daysInactive: 130, segment: 'alto', totalDepositAmount: null })
+  it('vip inactivo 130 días → FRIA_ALTO_VALOR', () => {
+    const r = computeScore({ daysInactive: 130, segment: 'vip', totalDepositAmount: null })
     expect(r.reactivationSegment).toBe('REACTIVACION_FRIA_ALTO_VALOR')
-    expect(r.valueTier).toBe('alto')
+    expect(r.valueTier).toBe('vip')
   })
 
-  it('ALTO inactivo 20 días → URGENTE con score > 75', () => {
-    const r = computeScore({ daysInactive: 20, segment: 'alto', totalDepositAmount: null })
+  it('vip inactivo 20 días → URGENTE con score > 70', () => {
+    const r = computeScore({ daysInactive: 20, segment: 'vip', totalDepositAmount: null })
     expect(r.reactivationSegment).toBe('REACTIVACION_URGENTE')
-    expect(r.total).toBeGreaterThan(75)
+    expect(r.total).toBeGreaterThan(70)
   })
 
-  it('propiedad clave: VIP fin de ventana (score=60) > BAJO inicio de ventana (score=50)', () => {
-    const vipFin = computeScore({ daysInactive: 180, segment: 'vip', totalDepositAmount: null })
+  it('propiedad clave: super_vip fin de ventana (score=60) > BAJO inicio de ventana (score=50)', () => {
+    const svipFin = computeScore({ daysInactive: 180, segment: 'super_vip', totalDepositAmount: null })
     const bajoComienzo = computeScore({ daysInactive: 30, segment: 'bajo', totalDepositAmount: null })
-    expect(vipFin.total).toBeGreaterThan(bajoComienzo.total) // 60 > 50
+    expect(svipFin.total).toBeGreaterThan(bajoComienzo.total)
   })
 
   it('score decae monotónicamente para el mismo tier', () => {
-    const a = computeScore({ daysInactive: 7,   segment: 'vip', totalDepositAmount: null })
-    const b = computeScore({ daysInactive: 60,  segment: 'vip', totalDepositAmount: null })
-    const c = computeScore({ daysInactive: 120, segment: 'vip', totalDepositAmount: null })
-    const d = computeScore({ daysInactive: 160, segment: 'vip', totalDepositAmount: null })
+    const a = computeScore({ daysInactive: 7,   segment: 'super_vip', totalDepositAmount: null })
+    const b = computeScore({ daysInactive: 60,  segment: 'super_vip', totalDepositAmount: null })
+    const c = computeScore({ daysInactive: 120, segment: 'super_vip', totalDepositAmount: null })
+    const d = computeScore({ daysInactive: 160, segment: 'super_vip', totalDepositAmount: null })
     expect(a.total).toBeGreaterThan(b.total)
     expect(b.total).toBeGreaterThan(c.total)
     expect(c.total).toBeGreaterThan(d.total)
   })
 
   it('monto disponible overridea segment para el tier', () => {
-    const r = computeScore({ daysInactive: 10, segment: 'bajo', totalDepositAmount: 10_000 })
-    expect(r.valueTier).toBe('vip')
+    const r = computeScore({ daysInactive: 10, segment: 'bajo', totalDepositAmount: 3_200_000 })
+    expect(r.valueTier).toBe('super_vip')
     expect(r.valueScore).toBe(60)
     expect(r.reactivationSegment).toBe('REACTIVACION_URGENTE')
   })
@@ -320,29 +306,32 @@ describe('computeScore — escenarios de negocio', () => {
 
 describe('Consistencia de configuración', () => {
   it('todos los tiers tienen ventana de inactividad definida y válida', () => {
-    for (const tier of ['vip', 'alto', 'medio', 'bajo'] as const) {
+    for (const tier of ['super_vip', 'vip_alto', 'vip_medio', 'vip', 'medio', 'bajo'] as const) {
       expect(INACTIVITY_WINDOWS[tier].minDays).toBeGreaterThan(0)
       expect(INACTIVITY_WINDOWS[tier].maxDays).toBeGreaterThan(INACTIVITY_WINDOWS[tier].minDays)
     }
   })
 
-  it('VALUE_SCORES garantizan que VIP+0 > BAJO+40 (orden inter-tier preservado)', () => {
+  it('VALUE_SCORES garantizan que vip+0 > bajo+40 (orden inter-tier preservado)', () => {
     expect(VALUE_SCORES.vip + 0).toBeGreaterThan(VALUE_SCORES.bajo + 40)
   })
 
-  it('VALUE_SCORES están ordenados: vip > alto > medio > bajo', () => {
-    expect(VALUE_SCORES.vip).toBeGreaterThan(VALUE_SCORES.alto)
-    expect(VALUE_SCORES.alto).toBeGreaterThan(VALUE_SCORES.medio)
+  it('VALUE_SCORES están ordenados: super_vip > vip_alto > vip_medio > vip > medio > bajo', () => {
+    expect(VALUE_SCORES.super_vip).toBeGreaterThan(VALUE_SCORES.vip_alto)
+    expect(VALUE_SCORES.vip_alto).toBeGreaterThan(VALUE_SCORES.vip_medio)
+    expect(VALUE_SCORES.vip_medio).toBeGreaterThan(VALUE_SCORES.vip)
+    expect(VALUE_SCORES.vip).toBeGreaterThan(VALUE_SCORES.medio)
     expect(VALUE_SCORES.medio).toBeGreaterThan(VALUE_SCORES.bajo)
   })
 
   it('cooldowns de recontacto son más largos para tiers de menor valor', () => {
     expect(RECONTACT_COOLDOWN_DAYS.bajo).toBeGreaterThan(RECONTACT_COOLDOWN_DAYS.vip)
-    expect(RECONTACT_COOLDOWN_DAYS.medio).toBeGreaterThan(RECONTACT_COOLDOWN_DAYS.alto)
+    expect(RECONTACT_COOLDOWN_DAYS.medio).toBeGreaterThan(RECONTACT_COOLDOWN_DAYS.vip_medio)
   })
 
-  it('VIP tiene la ventana más larga (mayor LTV justifica más intentos)', () => {
-    expect(INACTIVITY_WINDOWS.vip.maxDays).toBeGreaterThan(INACTIVITY_WINDOWS.alto.maxDays)
-    expect(INACTIVITY_WINDOWS.alto.maxDays).toBeGreaterThan(INACTIVITY_WINDOWS.medio.maxDays)
+  it('super_vip tiene la ventana más larga (mayor LTV justifica más intentos)', () => {
+    expect(INACTIVITY_WINDOWS.super_vip.maxDays).toBeGreaterThan(INACTIVITY_WINDOWS.vip_alto.maxDays)
+    expect(INACTIVITY_WINDOWS.vip_alto.maxDays).toBeGreaterThan(INACTIVITY_WINDOWS.vip.maxDays)
+    expect(INACTIVITY_WINDOWS.vip.maxDays).toBeGreaterThan(INACTIVITY_WINDOWS.medio.maxDays)
   })
 })

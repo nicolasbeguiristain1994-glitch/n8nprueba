@@ -8,10 +8,12 @@
  * (meses donde el jugador hizo al menos una carga en casino_transactions).
  * No penaliza los meses que no jugó.
  *
- *   bajo       → < $250.000/mes activo
- *   medio      → $250.000 – $499.999/mes activo
- *   alto (Vip) → $500.000 – $999.999/mes activo
- *   vip (Super VIP) → >= $1.000.000/mes activo
+ *   bajo      → < $100.000/mes activo
+ *   medio     → $100.000 – $499.999/mes activo
+ *   vip       → $500.000 – $999.999/mes activo  (VIP Bajo)
+ *   vip_medio → $1.000.000 – $1.500.000/mes activo
+ *   vip_alto  → $1.500.001 – $3.199.999/mes activo
+ *   super_vip → >= $3.200.000/mes activo
  *
  * seg_actividad (sin cambios):
  *   perdido    → fecha_ultima > 180 días atrás (o NULL)
@@ -67,18 +69,25 @@ const pool = new Pool({
 const AGENTES = ['bigwin','ofizeus','betcoin','royal','farabet','zeus','zeusroyal','btcuno','btcdos']
 
 // Umbrales de PROMEDIO MENSUAL sobre meses con actividad real (en pesos)
-const THRESHOLD_MEDIO = 250_000   // bajo  → < $250k/mes activo
-const THRESHOLD_ALTO  = 500_000   // medio → $250k–$499k/mes activo
-const THRESHOLD_VIP   = 1_000_000 // alto  → $500k–$999k/mes activo  /  vip → >= $1M/mes activo
+const THRESHOLD_MEDIO     =   100_000  // bajo      → < $100k/mes activo
+const THRESHOLD_VIP       =   500_000  // medio     → $100k–$499k
+const THRESHOLD_VIP_MEDIO = 1_000_000  // vip       → $500k–$999k
+const THRESHOLD_VIP_ALTO  = 1_500_000  // vip_medio → $1M–$1.5M
+const THRESHOLD_SUPER_VIP = 3_200_000  // vip_alto  → $1.5M–$3.2M  /  super_vip → >= $3.2M
 
-// CTE que calcula meses activos y promedio mensual por jugador
-// usando casino_transactions (tipo='carga'). Si no hay transacciones,
-// el fallback es meses calendario entre fecha_primera y fecha_ultima.
+// CTE que calcula meses activos, promedio mensual y FECHA REAL del último depósito
+// usando casino_transactions (tipo='carga'). Usar casino_transactions como fuente
+// de verdad para seg_actividad evita clasificar como "frecuente" a jugadores que
+// tuvieron actividad hace meses y cuya casino_players.fecha_ultima esté desactualizada.
 const CTE_MESES_ACTIVOS = `
+  has_tx AS (
+    SELECT EXISTS(SELECT 1 FROM casino_transactions WHERE tipo = 'carga') AS any_tx
+  ),
   active_months AS (
     SELECT
-      LOWER(ct.username)                           AS username_lower,
-      COUNT(DISTINCT DATE_TRUNC('month', ct.fecha))::int AS meses_con_cargas
+      LOWER(ct.username)                                AS username_lower,
+      COUNT(DISTINCT DATE_TRUNC('month', ct.fecha))::int AS meses_con_cargas,
+      MAX(ct.fecha)::date                               AS last_tx_date
     FROM casino_transactions ct
     WHERE ct.tipo = 'carga'
     GROUP BY LOWER(ct.username)
@@ -92,10 +101,19 @@ const CTE_MESES_ACTIVOS = `
       ROUND(
         cp.total_cargas::numeric /
         GREATEST(COALESCE(am.meses_con_cargas, 1), 1)
-      )                                             AS avg_mensual
+      )                                             AS avg_mensual,
+      -- Si la sync ya corrió (casino_transactions tiene datos) pero este jugador
+      -- no tiene registros, su última actividad es desconocida → NULL (perdido).
+      -- Solo usamos casino_players.fecha_ultima como fallback si casino_transactions
+      -- está completamente vacío (sync nunca ejecutada).
+      CASE
+        WHEN ht.any_tx AND am.last_tx_date IS NULL THEN NULL
+        ELSE COALESCE(am.last_tx_date, cp.fecha_ultima)
+      END                                          AS fecha_real_ultima
     FROM casino_players cp
+    CROSS JOIN has_tx ht
     LEFT JOIN active_months am ON am.username_lower = cp.username_lower
-    WHERE cp.agente = ANY($4::text[])
+    WHERE cp.agente = ANY($6::text[])
   )
 `
 
@@ -108,10 +126,12 @@ async function main() {
   console.log('')
   console.log('  Criterio: promedio sobre meses CON actividad (no meses totales)')
   console.log('  Umbrales:')
-  console.log(`    bajo       →       $0  a  $${Number(THRESHOLD_MEDIO - 1).toLocaleString('es-AR')}/mes activo`)
-  console.log(`    medio      → $${Number(THRESHOLD_MEDIO).toLocaleString('es-AR')}  a  $${Number(THRESHOLD_ALTO - 1).toLocaleString('es-AR')}/mes activo`)
-  console.log(`    alto (Vip) → $${Number(THRESHOLD_ALTO).toLocaleString('es-AR')}  a  $${Number(THRESHOLD_VIP - 1).toLocaleString('es-AR')}/mes activo`)
-  console.log(`    vip (Super VIP) → $${Number(THRESHOLD_VIP).toLocaleString('es-AR')}+/mes activo`)
+  console.log(`    bajo      →       $0  a  $${Number(THRESHOLD_MEDIO - 1).toLocaleString('es-AR')}/mes activo`)
+  console.log(`    medio     → $${Number(THRESHOLD_MEDIO).toLocaleString('es-AR')}  a  $${Number(THRESHOLD_VIP - 1).toLocaleString('es-AR')}/mes activo`)
+  console.log(`    vip       → $${Number(THRESHOLD_VIP).toLocaleString('es-AR')}  a  $${Number(THRESHOLD_VIP_MEDIO - 1).toLocaleString('es-AR')}/mes activo`)
+  console.log(`    vip_medio → $${Number(THRESHOLD_VIP_MEDIO).toLocaleString('es-AR')}  a  $${Number(THRESHOLD_VIP_ALTO - 1).toLocaleString('es-AR')}/mes activo`)
+  console.log(`    vip_alto  → $${Number(THRESHOLD_VIP_ALTO).toLocaleString('es-AR')}  a  $${Number(THRESHOLD_SUPER_VIP - 1).toLocaleString('es-AR')}/mes activo`)
+  console.log(`    super_vip → $${Number(THRESHOLD_SUPER_VIP).toLocaleString('es-AR')}+/mes activo`)
   console.log('')
 
   if (DRY_RUN) {
@@ -119,9 +139,11 @@ async function main() {
       WITH ${CTE_MESES_ACTIVOS}
       SELECT
         CASE
-          WHEN cm.avg_mensual >= $1 THEN 'vip'
-          WHEN cm.avg_mensual >= $2 THEN 'alto'
-          WHEN cm.avg_mensual >= $3 THEN 'medio'
+          WHEN cm.avg_mensual >= $1 THEN 'super_vip'
+          WHEN cm.avg_mensual >= $2 THEN 'vip_alto'
+          WHEN cm.avg_mensual >= $3 THEN 'vip_medio'
+          WHEN cm.avg_mensual >= $4 THEN 'vip'
+          WHEN cm.avg_mensual >= $5 THEN 'medio'
           ELSE                          'bajo'
         END AS seg_correcto,
         COUNT(*)::int AS n,
@@ -129,7 +151,7 @@ async function main() {
         ROUND(AVG(cm.meses_activos), 1) AS avg_meses_activos
       FROM carga_mensual cm
       GROUP BY 1 ORDER BY 1
-    `, [THRESHOLD_VIP, THRESHOLD_ALTO, THRESHOLD_MEDIO, AGENTES])
+    `, [THRESHOLD_SUPER_VIP, THRESHOLD_VIP_ALTO, THRESHOLD_VIP_MEDIO, THRESHOLD_VIP, THRESHOLD_MEDIO, AGENTES])
 
     console.log('  DRY RUN — distribución estimada de seg_monto:')
     for (const r of previewRes.rows) {
@@ -156,23 +178,28 @@ async function main() {
         ELSE 0
       END,
 
+      -- Usar fecha_real_ultima (de casino_transactions si hay datos, sino casino_players)
       dias_desde_ultimo = CASE
-        WHEN cp.fecha_ultima IS NOT NULL THEN (CURRENT_DATE - cp.fecha_ultima)
+        WHEN cm.fecha_real_ultima IS NOT NULL THEN (CURRENT_DATE - cm.fecha_real_ultima)
         ELSE NULL
       END,
 
       seg_monto = CASE
-        WHEN cm.avg_mensual >= $1 THEN 'vip'
-        WHEN cm.avg_mensual >= $2 THEN 'alto'
-        WHEN cm.avg_mensual >= $3 THEN 'medio'
+        WHEN cm.avg_mensual >= $1 THEN 'super_vip'
+        WHEN cm.avg_mensual >= $2 THEN 'vip_alto'
+        WHEN cm.avg_mensual >= $3 THEN 'vip_medio'
+        WHEN cm.avg_mensual >= $4 THEN 'vip'
+        WHEN cm.avg_mensual >= $5 THEN 'medio'
         ELSE                          'bajo'
       END,
 
+      -- seg_actividad usa fecha_real_ultima para no clasificar como activo
+      -- a jugadores cuya casino_players.fecha_ultima esté desactualizada
       seg_actividad = CASE
-        WHEN cp.fecha_ultima IS NULL
-          OR (CURRENT_DATE - cp.fecha_ultima) > 180               THEN 'perdido'
-        WHEN (CURRENT_DATE - cp.fecha_ultima) >  60               THEN 'inactivo'
-        WHEN (CURRENT_DATE - cp.fecha_ultima) >  30               THEN 'en_riesgo'
+        WHEN cm.fecha_real_ultima IS NULL
+          OR (CURRENT_DATE - cm.fecha_real_ultima) > 180          THEN 'perdido'
+        WHEN (CURRENT_DATE - cm.fecha_real_ultima) >  60          THEN 'inactivo'
+        WHEN (CURRENT_DATE - cm.fecha_real_ultima) >  30          THEN 'en_riesgo'
         WHEN cp.fecha_primera IS NOT NULL
           AND (CURRENT_DATE - cp.fecha_primera) <= 30             THEN 'nuevo'
         WHEN cp.fecha_primera IS NOT NULL
@@ -189,7 +216,7 @@ async function main() {
       updated_at = NOW()
     FROM carga_mensual cm
     WHERE cm.id = cp.id
-  `, [THRESHOLD_VIP, THRESHOLD_ALTO, THRESHOLD_MEDIO, AGENTES])
+  `, [THRESHOLD_SUPER_VIP, THRESHOLD_VIP_ALTO, THRESHOLD_VIP_MEDIO, THRESHOLD_VIP, THRESHOLD_MEDIO, AGENTES])
 
   const updatedPlayers = updateRes.rowCount ?? 0
 
@@ -240,11 +267,11 @@ async function main() {
         END,
         CASE
           WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
-            AND cp.seg_monto IN ('vip','alto')                     THEN 'casino:valor_riesgo:critico'
+            AND cp.seg_monto IN ('super_vip','vip_alto','vip_medio','vip') THEN 'casino:valor_riesgo:critico'
           WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
-            AND cp.seg_monto = 'medio'                             THEN 'casino:valor_riesgo:medio'
+            AND cp.seg_monto = 'medio'                                     THEN 'casino:valor_riesgo:medio'
           WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
-            AND cp.seg_monto = 'bajo'                              THEN 'casino:valor_riesgo:bajo'
+            AND cp.seg_monto = 'bajo'                                      THEN 'casino:valor_riesgo:bajo'
           ELSE NULL
         END
       ], NULL)),

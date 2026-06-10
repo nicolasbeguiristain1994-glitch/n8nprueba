@@ -18,10 +18,11 @@ const ACT_STYLE: Record<string, string> = {
   ocasional: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
 }
 
-/* VIP badge usa el token semántico --vip */
 const MONTO_STYLE: Record<string, string> = {
-  vip:  'bg-vip/15 text-vip border border-vip/30',
-  alto: 'bg-slate-100 text-slate-600 border border-slate-300 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700',
+  super_vip: 'bg-purple-100 text-purple-700 border border-purple-300',
+  vip_alto:  'bg-red-100 text-red-700 border border-red-300',
+  vip_medio: 'bg-orange-100 text-orange-700 border border-orange-300',
+  vip:       'bg-vip/15 text-vip border border-vip/30',
 }
 
 function fmt(n: number) {

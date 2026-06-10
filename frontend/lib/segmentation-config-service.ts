@@ -7,7 +7,7 @@ import {
 } from '@/lib/user-prioritization/config'
 import { getConfigRedisClient } from '@/lib/redis'
 
-export type TierName = 'super_vip' | 'vip' | 'medio' | 'bajo'
+export type TierName = 'super_vip' | 'vip_alto' | 'vip_medio' | 'vip' | 'medio' | 'bajo'
 
 export interface SegmentationTier {
   tier: TierName
@@ -32,8 +32,7 @@ interface TiersResult {
 const CACHE_TTL_SECONDS = 300
 
 // Orden de prioridad para resolución de solapamientos entre ventanas de inactividad.
-// VIP/ALTO comparten minDays=7 → vip toma precedencia sobre alto, etc.
-const TIER_PRIORITY: TierName[] = ['super_vip', 'vip', 'medio', 'bajo']
+const TIER_PRIORITY: TierName[] = ['super_vip', 'vip_alto', 'vip_medio', 'vip', 'medio', 'bajo']
 
 // ── Fallback hardcodeado ──────────────────────────────────────────────────────
 //

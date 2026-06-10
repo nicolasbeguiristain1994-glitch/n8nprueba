@@ -22,7 +22,7 @@ export type FrequencyDecision = 'ALLOW' | 'DELAY' | 'BLOCK'
 // ── Segmentos de casino (reflejan CHECK constraints en casino_players) ─────────
 
 /** Segmento de monto del jugador. Refleja casino_players.seg_monto. */
-export type SegMonto = 'bajo' | 'medio' | 'vip' | 'super_vip'
+export type SegMonto = 'bajo' | 'medio' | 'vip' | 'vip_medio' | 'vip_alto' | 'super_vip'
 
 /** Segmento de actividad del jugador. Refleja casino_players.seg_actividad. */
 export type SegActividad =
