@@ -285,7 +285,8 @@ export default function Contacts() {
   const [repopulateResult, setRepopulateResult] = useState<{ total_lists: number; lists: Array<{ nombre: string; members: number; created: boolean }> } | null>(null)
   const [repopulateError, setRepopulateError]   = useState<string | null>(null)
 
-  const { user: currentUser } = useCurrentUser()
+  const { user: currentUser, permissions } = useCurrentUser()
+  const canCreateContacts = permissions.contacts?.includes('create') ?? false
 
   // ── Carga de datos ────────────────────────────────────────────────────────
 
@@ -1136,14 +1137,18 @@ export default function Contacts() {
               className="border-indigo-200 text-indigo-700">
               <List size={14} className="mr-1" /> Lista por selección
             </Button>
-            <Button size="sm" onClick={() => setShowAdd(true)} className="bg-green-600 hover:bg-green-700 text-white">
-              <UserPlus size={14} className="mr-1" /> Nuevo contacto
-            </Button>
-            <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-input rounded-md bg-background hover:bg-muted transition-colors font-medium">
-              <Upload size={14} /> Importar
-              <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.vcf" className="hidden"
-                onChange={e => { const f = e.target.files?.[0]; if (f) { handleFile(f); setShowImport(true); e.target.value = '' } }} />
-            </label>
+            {canCreateContacts && (
+              <Button size="sm" onClick={() => setShowAdd(true)} className="bg-green-600 hover:bg-green-700 text-white">
+                <UserPlus size={14} className="mr-1" /> Nuevo contacto
+              </Button>
+            )}
+            {canCreateContacts && (
+              <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-input rounded-md bg-background hover:bg-muted transition-colors font-medium">
+                <Upload size={14} /> Importar
+                <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.vcf" className="hidden"
+                  onChange={e => { const f = e.target.files?.[0]; if (f) { handleFile(f); setShowImport(true); e.target.value = '' } }} />
+              </label>
+            )}
           </>
         }
       />
@@ -1436,7 +1441,7 @@ export default function Contacts() {
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer text-sm">
                       <input type="radio" checked={conflictMode === 'panels_only'} onChange={() => setConflictMode('panels_only')} className="accent-amber-600" />
-                      <span className="font-medium text-blue-700">Solo agregar agente — no toca nombre ni nivel</span>
+                      <span className="font-medium text-blue-700">Solo agregar agente y línea — no toca nombre ni nivel</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer text-sm">
                       <input type="radio" checked={conflictMode === 'skip'} onChange={() => setConflictMode('skip')} className="accent-amber-600" />

@@ -125,6 +125,7 @@ export async function POST(req: NextRequest) {
                    jsonb_build_object('panel', EXCLUDED.panel, 'username', EXCLUDED.first_name)
                  )
                END,
+               linea      = COALESCE(EXCLUDED.linea, contacts.linea),
                updated_at = NOW()`
          : /* update */ `UPDATE
            SET first_name        = COALESCE(EXCLUDED.first_name, contacts.first_name),
