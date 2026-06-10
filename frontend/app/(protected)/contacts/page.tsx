@@ -340,17 +340,6 @@ export default function Contacts() {
     return () => document.removeEventListener('mousedown', handler)
   }, [showListsMenu])
 
-  // Cerrar dropdown de segmentación al hacer click fuera
-  useEffect(() => {
-    if (!segmentDropdownOpen) return
-    const handler = (e: MouseEvent) => {
-      if (segmentDropdownRef.current && !segmentDropdownRef.current.contains(e.target as Node)) {
-        setSegmentDropdownOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [segmentDropdownOpen])
 
   // Resetear página al cambiar filtros
   const resetPage = useCallback(() => setPagination(p => ({ ...p, pageIndex: 0 })), [])
@@ -1258,7 +1247,8 @@ export default function Contacts() {
             <ChevronDown size={14} className={`transition-transform ${segmentDropdownOpen ? 'rotate-180' : ''}`} />
           </button>
           {segmentDropdownOpen && (
-            <div className="absolute z-50 top-full mt-1 right-0 w-52 rounded-md border bg-popover shadow-md p-1">
+            <div className="absolute z-50 top-full right-0 w-52 pt-1">
+            <div className="rounded-md border bg-popover shadow-md p-1">
               {segments.length > 0 && (
                 <button
                   className="w-full text-left text-xs px-2 py-1.5 text-muted-foreground hover:bg-accent rounded-sm mb-0.5"
@@ -1288,6 +1278,7 @@ export default function Contacts() {
                 </label>
               ))}
             </div>
+            </div>
           )}
         </div>
       </div>
@@ -1313,7 +1304,8 @@ export default function Contacts() {
             <ChevronDown size={14} className={`transition-transform ${actividadOpen ? 'rotate-180' : ''}`} />
           </button>
           {actividadOpen && (
-            <div className="absolute z-50 top-full mt-1 left-0 w-52 rounded-md border bg-popover shadow-md p-1">
+            <div className="absolute z-50 top-full left-0 w-52 pt-1">
+            <div className="rounded-md border bg-popover shadow-md p-1">
               {filterActividad.length > 0 && (
                 <button className="w-full text-left text-xs px-2 py-1.5 text-muted-foreground hover:bg-accent rounded-sm mb-0.5"
                   onClick={() => { setFilterActividad([]); resetPage() }}>
@@ -1334,6 +1326,7 @@ export default function Contacts() {
                   </span>
                 </label>
               ))}
+            </div>
             </div>
           )}
         </div>
@@ -1357,7 +1350,8 @@ export default function Contacts() {
             <ChevronDown size={14} className={`transition-transform ${antiguedadOpen ? 'rotate-180' : ''}`} />
           </button>
           {antiguedadOpen && (
-            <div className="absolute z-50 top-full mt-1 left-0 w-52 rounded-md border bg-popover shadow-md p-1">
+            <div className="absolute z-50 top-full left-0 w-52 pt-1">
+            <div className="rounded-md border bg-popover shadow-md p-1">
               {filterAntiguedad.length > 0 && (
                 <button className="w-full text-left text-xs px-2 py-1.5 text-muted-foreground hover:bg-accent rounded-sm mb-0.5"
                   onClick={() => { setFilterAntiguedad([]); resetPage() }}>
@@ -1376,6 +1370,7 @@ export default function Contacts() {
                   <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-700">{v}</span>
                 </label>
               ))}
+            </div>
             </div>
           )}
         </div>
