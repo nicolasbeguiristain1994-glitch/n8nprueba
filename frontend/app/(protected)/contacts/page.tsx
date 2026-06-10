@@ -1240,7 +1240,7 @@ export default function Contacts() {
           </SelectContent>
         </Select>
         {/* Multi-select de nivel/segmentación */}
-        <div className="relative" ref={segmentDropdownRef}>
+        <div className="relative" ref={segmentDropdownRef} onMouseLeave={() => setSegmentDropdownOpen(false)}>
           <button
             onClick={() => setSegmentDropdownOpen(o => !o)}
             className={`flex items-center gap-1.5 h-9 px-3 rounded-md border text-sm font-normal transition-colors
@@ -1295,7 +1295,7 @@ export default function Contacts() {
       {/* Filtros — fila 2: dimensiones casino */}
       <div className="flex gap-3 flex-wrap items-center">
         {/* Multi-select Actividad */}
-        <div className="relative" ref={actividadRef}>
+        <div className="relative" ref={actividadRef} onMouseLeave={() => setActividadOpen(false)}>
           <button
             onClick={() => setActividadOpen(o => !o)}
             className={`flex items-center gap-1.5 h-9 px-3 rounded-md border text-sm font-normal transition-colors
@@ -1339,7 +1339,7 @@ export default function Contacts() {
         </div>
 
         {/* Multi-select Antigüedad */}
-        <div className="relative" ref={antiguedadRef}>
+        <div className="relative" ref={antiguedadRef} onMouseLeave={() => setAntiguedadOpen(false)}>
           <button
             onClick={() => setAntiguedadOpen(o => !o)}
             className={`flex items-center gap-1.5 h-9 px-3 rounded-md border text-sm font-normal transition-colors
