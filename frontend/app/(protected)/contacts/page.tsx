@@ -1321,7 +1321,7 @@ export default function Contacts() {
                 </button>
               )}
               {(Object.keys(ACTIVIDAD_DESC) as string[]).map(v => (
-                <label key={v} className="flex items-center gap-2.5 px-2 py-1.5 rounded-sm hover:bg-accent cursor-pointer text-sm">
+                <label key={v} title={ACTIVIDAD_DESC[v]} className="flex items-center gap-2.5 px-2 py-1.5 rounded-sm hover:bg-accent cursor-pointer text-sm">
                   <Checkbox
                     checked={filterActividad.includes(v)}
                     onCheckedChange={checked => {
