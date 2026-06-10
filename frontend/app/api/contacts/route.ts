@@ -48,8 +48,12 @@ export async function GET(req: NextRequest) {
   const limit     = download ? 100000 : 50
   const offset    = download ? dlFrom + (page - 1) * limit : (page - 1) * limit
   const linea      = req.nextUrl.searchParams.get('linea') || ''
-  const actividad  = req.nextUrl.searchParams.get('actividad') || ''
-  const antiguedad = req.nextUrl.searchParams.get('antiguedad') || ''
+  const actividadRaw   = req.nextUrl.searchParams.get('actividad') || ''
+  const antiguedadRaw  = req.nextUrl.searchParams.get('antiguedad') || ''
+  const actividadList  = actividadRaw  ? actividadRaw.split(',').filter(v  => ACTIVIDAD_ALLOWED.has(v))  : []
+  const antiguedadList = antiguedadRaw ? antiguedadRaw.split(',').filter(v => ANTIGUEDAD_ALLOWED.has(v)) : []
+  const actividadParam  = actividadList.length  > 0 ? `{${actividadList.join(',')}}` : '{}'
+  const antiguedadParam = antiguedadList.length > 0 ? `{${antiguedadList.join(',')}}` : '{}'
   const listIdRaw  = req.nextUrl.searchParams.get('list_id') || ''
   const listId     = listIdRaw && /^[0-9a-f-]{36}$/i.test(listIdRaw) ? listIdRaw : ''
   const plataforma    = req.nextUrl.searchParams.get('plataforma') || ''
@@ -57,12 +61,7 @@ export async function GET(req: NextRequest) {
   // Filtro "Sin movimiento": contactos sin depósitos en los últimos 12 meses
   const sinMovimiento = req.nextUrl.searchParams.get('sin_movimiento') === 'true'
 
-  if (actividad && !ACTIVIDAD_ALLOWED.has(actividad)) {
-    return NextResponse.json({ error: `Invalid actividad "${actividad}"` }, { status: 400 })
-  }
-  if (antiguedad && !ANTIGUEDAD_ALLOWED.has(antiguedad)) {
-    return NextResponse.json({ error: `Invalid antiguedad "${antiguedad}"` }, { status: 400 })
-  }
+  // Los valores inválidos se descartan silenciosamente en el split+filter de arriba
   if (plataforma && !PLATAFORMA_ALLOWED.has(plataforma)) {
     return NextResponse.json({ error: `Invalid plataforma "${plataforma}"` }, { status: 400 })
   }
@@ -112,18 +111,20 @@ export async function GET(req: NextRequest) {
           AND ($3 = '' OR gaming::text = $3)
           AND ($4 = '' OR panel = $4)
           AND ($5 = '' OR linea::text = $5)
-          AND ($6 = '' OR EXISTS (
+          AND ($6 = '{}' OR EXISTS (
             SELECT 1 FROM contact_tags ct
-            WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:actividad:' || $6
+            WHERE ct.contact_id = contacts.id
+              AND ct.tag = ANY(SELECT 'casino:actividad:' || v FROM unnest($6::text[]) v)
           ))
-          AND ($7 = '' OR EXISTS (
+          AND ($7 = '{}' OR EXISTS (
             SELECT 1 FROM contact_tags ct
-            WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $7
+            WHERE ct.contact_id = contacts.id
+              AND ct.tag = ANY(SELECT 'casino:antiguedad:' || v FROM unnest($7::text[]) v)
           ))
           ${vis2.sql}${agentFilter2}${plataformaFilter}${sinMovimientoFilter}
         ORDER BY created_at DESC
         LIMIT 100000
-      `, [`%${search}%`, segmentParam, gaming, panel, linea, actividad, antiguedad,
+      `, [`%${search}%`, segmentParam, gaming, panel, linea, actividadParam, antiguedadParam,
           ...vis2.params, ...agentParams2])
       return NextResponse.json({ ids: idRows.map(r => r.id) })
     } catch (e) {
@@ -188,13 +189,15 @@ export async function GET(req: NextRequest) {
         AND ($5 = '' OR gaming::text = $5)
         AND ($6 = '' OR panel = $6)
         AND ($7 = '' OR linea::text = $7)
-        AND ($8 = '' OR EXISTS (
+        AND ($8 = '{}' OR EXISTS (
           SELECT 1 FROM contact_tags ct
-          WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:actividad:' || $8
+          WHERE ct.contact_id = contacts.id
+            AND ct.tag = ANY(SELECT 'casino:actividad:' || v FROM unnest($8::text[]) v)
         ))
-        AND ($9 = '' OR EXISTS (
+        AND ($9 = '{}' OR EXISTS (
           SELECT 1 FROM contact_tags ct
-          WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $9
+          WHERE ct.contact_id = contacts.id
+            AND ct.tag = ANY(SELECT 'casino:antiguedad:' || v FROM unnest($9::text[]) v)
         ))
         AND ($10 = '' OR id IN (
           SELECT contact_id FROM contact_list_members WHERE list_id = $10::uuid
@@ -202,7 +205,7 @@ export async function GET(req: NextRequest) {
         ${vis.sql}${agentFilter}${tagFilterMain}${plataformaFilter}${sinMovimientoFilter}
       ORDER BY created_at DESC
       LIMIT $2 OFFSET $3
-    `, [`%${search}%`, limit, offset, segmentParam, gaming, panel, linea, actividad, antiguedad, listId,
+    `, [`%${search}%`, limit, offset, segmentParam, gaming, panel, linea, actividadParam, antiguedadParam, listId,
         ...vis.params, ...agentParams, ...tagParams])
 
     const [{ count }] = await query<{ count: string }>(
@@ -212,19 +215,21 @@ export async function GET(req: NextRequest) {
          AND ($3 = '' OR gaming::text = $3)
          AND ($4 = '' OR panel = $4)
          AND ($5 = '' OR linea::text = $5)
-         AND ($6 = '' OR EXISTS (
+         AND ($6 = '{}' OR EXISTS (
            SELECT 1 FROM contact_tags ct
-           WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:actividad:' || $6
+           WHERE ct.contact_id = contacts.id
+             AND ct.tag = ANY(SELECT 'casino:actividad:' || v FROM unnest($6::text[]) v)
          ))
-         AND ($7 = '' OR EXISTS (
+         AND ($7 = '{}' OR EXISTS (
            SELECT 1 FROM contact_tags ct
-           WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $7
+           WHERE ct.contact_id = contacts.id
+             AND ct.tag = ANY(SELECT 'casino:antiguedad:' || v FROM unnest($7::text[]) v)
          ))
          AND ($8 = '' OR id IN (
            SELECT contact_id FROM contact_list_members WHERE list_id = $8::uuid
          ))
          ${vis7.sql}${agentFilterCt}${tagFilterCount}${plataformaFilter}${sinMovimientoFilter}`,
-      [`%${search}%`, segmentParam, gaming, panel, linea, actividad, antiguedad, listId,
+      [`%${search}%`, segmentParam, gaming, panel, linea, actividadParam, antiguedadParam, listId,
        ...vis7.params, ...agentParams, ...tagParams]
     )
 

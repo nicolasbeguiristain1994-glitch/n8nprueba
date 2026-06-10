@@ -174,8 +174,12 @@ export default function Contacts() {
   const [filterGaming, setFilterGaming]       = useState('')
   const [filterPanel, setFilterPanel]         = useState('')
   const [filterLinea, setFilterLinea]         = useState('')
-  const [filterActividad, setFilterActividad] = useState('')
-  const [filterAntiguedad, setFilterAntiguedad] = useState('')
+  const [filterActividad, setFilterActividad]   = useState<string[]>([])
+  const [actividadOpen, setActividadOpen]       = useState(false)
+  const actividadRef = useRef<HTMLDivElement>(null)
+  const [filterAntiguedad, setFilterAntiguedad] = useState<string[]>([])
+  const [antiguedadOpen, setAntiguedadOpen]     = useState(false)
+  const antiguedadRef = useRef<HTMLDivElement>(null)
   const [filterPlataforma, setFilterPlataforma] = useState('')
   const [filterSinMovimiento, setFilterSinMovimiento] = useState(false)
   const [filterTag, setFilterTag]                     = useState('')
@@ -298,7 +302,7 @@ export default function Contacts() {
     const q = new URLSearchParams({
       q: search, page: String(pagination.pageIndex + 1),
       segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
-      linea: filterLinea, actividad: filterActividad, antiguedad: filterAntiguedad,
+      linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
       ...(filterList          ? { list_id: filterList }          : {}),
       ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
       ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
@@ -419,7 +423,7 @@ export default function Contacts() {
     try {
       const q = new URLSearchParams({
         q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
-        linea: filterLinea, actividad: filterActividad, antiguedad: filterAntiguedad,
+        linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
         select_all: 'true',
         ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
         ...(filterList          ? { list_id: filterList }          : {}),
@@ -554,14 +558,14 @@ export default function Contacts() {
       filterGaming     && `juego-${filterGaming}`,
       segments.length  && `nivel-${segments.join('-')}`,
       search           && `busq-${search}`,
-      filterActividad  && `actividad-${filterActividad}`,
-      filterAntiguedad && `antiguedad-${filterAntiguedad}`,
+      filterActividad.length  && `actividad-${filterActividad.join('-')}`,
+      filterAntiguedad.length && `antiguedad-${filterAntiguedad.join('-')}`,
     ].filter(Boolean).join('_') || 'todos'
 
   const buildDownloadParams = (): URLSearchParams => {
     const p = new URLSearchParams({
       q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
-      linea: filterLinea, actividad: filterActividad, antiguedad: filterAntiguedad,
+      linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
     })
     if (filterList)          p.set('list_id', filterList)
     if (filterPlataforma)    p.set('plataforma', filterPlataforma)
@@ -1290,27 +1294,95 @@ export default function Contacts() {
 
       {/* Filtros — fila 2: dimensiones casino */}
       <div className="flex gap-3 flex-wrap items-center">
-        <Select value={filterActividad} onValueChange={v => { setFilterActividad(v ?? ''); resetPage() }}>
-          <SelectTrigger className="w-40"><SelectValue placeholder="Actividad" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="">Toda actividad</SelectItem>
-            {(Object.keys(ACTIVIDAD_DESC) as string[]).map(v => (
-              <SegmentItem key={v} value={v} label={v.replace('_', ' ')} desc={ACTIVIDAD_DESC[v]} />
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={filterAntiguedad} onValueChange={v => { setFilterAntiguedad(v ?? ''); resetPage() }}>
-          <SelectTrigger className="w-40"><SelectValue placeholder="Antigüedad" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="">Cualquier antigüedad</SelectItem>
-            {(Object.keys(ANTIGUEDAD_DESC) as string[]).map(v => (
-              <SegmentItem key={v} value={v} label={v} desc={ANTIGUEDAD_DESC[v]} />
-            ))}
-          </SelectContent>
-        </Select>
-        {(filterActividad || filterAntiguedad) && (
+        {/* Multi-select Actividad */}
+        <div className="relative" ref={actividadRef}>
+          <button
+            onClick={() => setActividadOpen(o => !o)}
+            className={`flex items-center gap-1.5 h-9 px-3 rounded-md border text-sm font-normal transition-colors
+              ${filterActividad.length > 0
+                ? 'border-primary bg-primary/5 text-primary'
+                : 'border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+              }`}
+          >
+            {filterActividad.length === 0
+              ? 'Actividad'
+              : filterActividad.length === 1
+                ? filterActividad[0].replace('_', ' ')
+                : `${filterActividad.length} actividades`
+            }
+            <ChevronDown size={14} className={`transition-transform ${actividadOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {actividadOpen && (
+            <div className="absolute z-50 top-full mt-1 left-0 w-52 rounded-md border bg-popover shadow-md p-1">
+              {filterActividad.length > 0 && (
+                <button className="w-full text-left text-xs px-2 py-1.5 text-muted-foreground hover:bg-accent rounded-sm mb-0.5"
+                  onClick={() => { setFilterActividad([]); resetPage() }}>
+                  Limpiar selección
+                </button>
+              )}
+              {(Object.keys(ACTIVIDAD_DESC) as string[]).map(v => (
+                <label key={v} className="flex items-center gap-2.5 px-2 py-1.5 rounded-sm hover:bg-accent cursor-pointer text-sm">
+                  <Checkbox
+                    checked={filterActividad.includes(v)}
+                    onCheckedChange={checked => {
+                      setFilterActividad(prev => checked ? [...prev, v] : prev.filter(s => s !== v))
+                      resetPage()
+                    }}
+                  />
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${ACTIVIDAD_STYLE[v] ?? 'bg-gray-100 text-gray-600'}`}>
+                    {v.replace('_', ' ')}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Multi-select Antigüedad */}
+        <div className="relative" ref={antiguedadRef}>
+          <button
+            onClick={() => setAntiguedadOpen(o => !o)}
+            className={`flex items-center gap-1.5 h-9 px-3 rounded-md border text-sm font-normal transition-colors
+              ${filterAntiguedad.length > 0
+                ? 'border-primary bg-primary/5 text-primary'
+                : 'border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+              }`}
+          >
+            {filterAntiguedad.length === 0
+              ? 'Antigüedad'
+              : filterAntiguedad.length === 1
+                ? filterAntiguedad[0]
+                : `${filterAntiguedad.length} antigüedades`
+            }
+            <ChevronDown size={14} className={`transition-transform ${antiguedadOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {antiguedadOpen && (
+            <div className="absolute z-50 top-full mt-1 left-0 w-52 rounded-md border bg-popover shadow-md p-1">
+              {filterAntiguedad.length > 0 && (
+                <button className="w-full text-left text-xs px-2 py-1.5 text-muted-foreground hover:bg-accent rounded-sm mb-0.5"
+                  onClick={() => { setFilterAntiguedad([]); resetPage() }}>
+                  Limpiar selección
+                </button>
+              )}
+              {(Object.keys(ANTIGUEDAD_DESC) as string[]).map(v => (
+                <label key={v} className="flex items-center gap-2.5 px-2 py-1.5 rounded-sm hover:bg-accent cursor-pointer text-sm">
+                  <Checkbox
+                    checked={filterAntiguedad.includes(v)}
+                    onCheckedChange={checked => {
+                      setFilterAntiguedad(prev => checked ? [...prev, v] : prev.filter(s => s !== v))
+                      resetPage()
+                    }}
+                  />
+                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-700">{v}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {(filterActividad.length > 0 || filterAntiguedad.length > 0) && (
           <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground h-8 px-2"
-            onClick={() => { setFilterActividad(''); setFilterAntiguedad(''); resetPage() }}>
+            onClick={() => { setFilterActividad([]); setFilterAntiguedad([]); resetPage() }}>
             <X size={13} className="mr-1" /> Limpiar casino
           </Button>
         )}
