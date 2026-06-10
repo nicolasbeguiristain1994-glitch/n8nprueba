@@ -66,7 +66,9 @@ export function canAccess(
   if (resource === 'users' || resource === 'audit' || resource === 'blacklist') return false
 
   // sector check — operator/viewer must have the resource in their sectors
-  if (!sectors.includes(resource)) return false
+  // 'lists' is part of the contacts module: access is implied by contacts access
+  const sectorKey = resource === 'lists' ? 'contacts' : resource
+  if (!sectors.includes(sectorKey)) return false
 
   if (user.role === 'viewer') {
     return action === 'read'
