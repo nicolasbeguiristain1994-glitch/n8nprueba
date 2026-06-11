@@ -195,6 +195,9 @@ export default function Contacts() {
   const selectedIds   = Object.keys(rowSelection)
   const selectedCount = selectedIds.length
 
+  const hasActiveFilters = !!(search || segments.length > 0 || filterGaming || filterPanel || filterLinea ||
+    filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag)
+
   // ── Listas ────────────────────────────────────────────────────────────────
   const [lists, setLists]             = useState<ContactList[]>([])
   const [filterList, setFilterList]   = useState('')
@@ -230,7 +233,7 @@ export default function Contacts() {
 
   // ── List modal ────────────────────────────────────────────────────────────
   const [showList, setShowList]               = useState(false)
-  const [listMode, setListMode]               = useState<'selection' | 'criteria'>('selection')
+  const [listMode, setListMode]               = useState<'selection' | 'criteria' | 'filters'>('selection')
   const [newListName, setNewListName]         = useState('')
   const [savingList, setSavingList]           = useState(false)
   const [listError, setListError]             = useState<string | null>(null)
@@ -576,6 +579,24 @@ export default function Contacts() {
     let body: object
     if (listMode === 'selection') {
       body = { name: newListName, contact_ids: selectedIds }
+    } else if (listMode === 'filters') {
+      try {
+        const q = new URLSearchParams({
+          q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
+          linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
+          select_all: 'true',
+          ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
+          ...(filterList          ? { list_id: filterList }          : {}),
+          ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
+          ...(filterTag           ? { tag: filterTag }               : {}),
+        })
+        const d = await fetchJson<{ ids: string[] }>(`/api/contacts?${q}`)
+        body = { name: newListName, contact_ids: d.ids || [] }
+      } catch {
+        setSavingList(false)
+        setListError('Error al obtener los contactos filtrados')
+        return
+      }
     } else {
       const tags: string[] = []
       if (criteriaActividad)  tags.push(`casino:actividad:${criteriaActividad}`)
@@ -1149,6 +1170,13 @@ export default function Contacts() {
                 </div>
               )}
             </div>
+            {hasActiveFilters && (
+              <Button size="sm" variant="outline"
+                onClick={() => { setListMode('filters'); setShowList(true) }}
+                className="border-violet-200 text-violet-700 hover:bg-violet-50">
+                <List size={14} className="mr-1" /> Crear lista ({total.toLocaleString()})
+              </Button>
+            )}
             <Button size="sm" variant="outline" onClick={() => { setListMode('selection'); setShowList(true) }}
               className="border-indigo-200 text-indigo-700">
               <List size={14} className="mr-1" /> Lista por selección
@@ -1656,18 +1684,49 @@ export default function Contacts() {
             <div className="flex rounded-lg border border-border overflow-hidden text-sm">
               <button onClick={() => setListMode('selection')}
                 className={`flex-1 py-2 font-medium transition-colors ${listMode === 'selection' ? 'bg-green-600 text-white' : 'bg-background text-muted-foreground hover:bg-muted'}`}>
-                Desde selección {selectedCount > 0 && `(${selectedCount})`}
+                Selección {selectedCount > 0 && `(${selectedCount})`}
+              </button>
+              <button onClick={() => setListMode('filters')}
+                className={`flex-1 py-2 font-medium transition-colors border-l border-border ${listMode === 'filters' ? 'bg-violet-600 text-white' : 'bg-background text-muted-foreground hover:bg-muted'}`}>
+                Filtros activos {hasActiveFilters && `(${total.toLocaleString()})`}
               </button>
               <button onClick={() => setListMode('criteria')}
-                className={`flex-1 py-2 font-medium transition-colors ${listMode === 'criteria' ? 'bg-indigo-600 text-white' : 'bg-background text-muted-foreground hover:bg-muted'}`}>
+                className={`flex-1 py-2 font-medium transition-colors border-l border-border ${listMode === 'criteria' ? 'bg-indigo-600 text-white' : 'bg-background text-muted-foreground hover:bg-muted'}`}>
                 Por criterios
               </button>
             </div>
-            {listMode === 'selection' ? (
+            {listMode === 'selection' && (
               <p className="text-sm text-muted-foreground">
                 {selectedCount === 0 ? 'Seleccioná contactos en la tabla primero.' : `${selectedCount} contactos seleccionados.`}
               </p>
-            ) : (
+            )}
+            {listMode === 'filters' && (
+              <div className="space-y-2">
+                {!hasActiveFilters ? (
+                  <p className="text-sm text-muted-foreground bg-muted/50 rounded-lg px-3 py-3">
+                    No hay filtros activos. Cerrá este modal, aplicá filtros en la tabla y volvé a abrir.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-xs text-muted-foreground">
+                      Se incluirán los <span className="font-semibold">{total.toLocaleString()} contactos</span> que coinciden con los filtros actuales:
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {search && <span className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full">Búsqueda: &quot;{search}&quot;</span>}
+                      {filterPanel && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Agente: {filterPanel}</span>}
+                      {segments.length > 0 && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">Nivel: {segments.join(', ')}</span>}
+                      {filterActividad.length > 0 && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Actividad: {filterActividad.join(', ')}</span>}
+                      {filterAntiguedad.length > 0 && <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">Antigüedad: {filterAntiguedad.join(', ')}</span>}
+                      {filterPlataforma && <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">Plataforma: {filterPlataforma}</span>}
+                      {filterGaming && <span className="text-xs bg-pink-100 text-pink-700 px-2 py-0.5 rounded-full">Juego: {filterGaming}</span>}
+                      {filterLinea && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Línea: {filterLinea}</span>}
+                      {filterSinMovimiento && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">Sin movimiento</span>}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            {listMode === 'criteria' && (
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">Se incluirán todos los contactos que cumplan los criterios elegidos.</p>
                 <div className="grid grid-cols-1 gap-2">
@@ -1715,9 +1774,14 @@ export default function Contacts() {
             <div className="flex gap-2">
               <Button variant="outline" className="flex-1" onClick={() => setShowList(false)} disabled={savingList}><X size={14} /> Cancelar</Button>
               <Button
-                className={`flex-1 ${listMode === 'criteria' ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-green-600 hover:bg-green-700'}`}
+                className={`flex-1 ${listMode === 'criteria' ? 'bg-indigo-600 hover:bg-indigo-700' : listMode === 'filters' ? 'bg-violet-600 hover:bg-violet-700' : 'bg-green-600 hover:bg-green-700'}`}
                 onClick={createList}
-                disabled={savingList || !newListName || (listMode === 'selection' && selectedCount === 0) || (listMode === 'criteria' && !criteriaPanel && !criteriaGaming && !criteriaSegment && !criteriaActividad && !criteriaAntiguedad)}>
+                disabled={
+                  savingList || !newListName ||
+                  (listMode === 'selection' && selectedCount === 0) ||
+                  (listMode === 'criteria' && !criteriaPanel && !criteriaGaming && !criteriaSegment && !criteriaActividad && !criteriaAntiguedad) ||
+                  (listMode === 'filters' && !hasActiveFilters)
+                }>
                 {savingList ? 'Guardando…' : 'Crear lista'}
               </Button>
             </div>
