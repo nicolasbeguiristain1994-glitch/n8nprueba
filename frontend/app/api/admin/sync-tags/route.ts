@@ -2,39 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getLongRunningClient } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
 
-/**
- * POST /api/admin/sync-tags
- *
- * Sincroniza contact_tags de casino (actividad, antiguedad, valor_riesgo)
- * directamente desde casino_players.
- *
- * Usa cliente raw con statement_timeout = 0 para evitar cortes en tablas grandes.
- *
- * El JOIN tokeniza first_name por '/', espacio y tab para manejar:
- *   "Emanuel5032ze"                    → ['emanuel5032ze']
- *   "(C.MUCHO)Mario46z3/mario46be"     → ['mario46z3', 'mario46be']
- *   "tamara618b tamara618z"            → ['tamara618b', 'tamara618z']
- *   "Cana93bt Cana93zz Cana93ga"       → ['cana93bt', 'cana93zz', 'cana93ga']
- */
-
-// Divide first_name por / y espacios, limpia prefijo "(X)" de cada token,
-// y compara contra casino_players.username_lower.
 const USERNAME_MATCH = `cp.username_lower = ANY(
   SELECT LOWER(TRIM(REGEXP_REPLACE(tok, '^\\([^)]*\\)\\s*', '', 'i')))
   FROM regexp_split_to_table(COALESCE(c.first_name, ''), '[/ \\t]+') AS tok
   WHERE LENGTH(TRIM(tok)) > 1
 )`
 
-export async function POST(req: NextRequest) {
-  const err = await checkPermission(req, 'lines', 'manage')
-  if (err) return err
-
-  const { getSessionFromRequest } = await import('@/lib/auth')
-  const session = getSessionFromRequest(req)
-  if (!session || session.role !== 'admin') {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
-
+async function runSyncTags() {
   const client = await getLongRunningClient()
   const results: { step: string; ok: boolean; rows?: number; error?: string }[] = []
 
@@ -48,8 +22,6 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-
-    // Paso 1: Sync contacts.segment desde casino_players
     await run('sync segment', `
       UPDATE contacts c
       SET segment = cp.seg_monto::contact_segment, updated_at = NOW()
@@ -59,7 +31,6 @@ export async function POST(req: NextRequest) {
         AND c.segment::text IS DISTINCT FROM cp.seg_monto
     `)
 
-    // Paso 2: Sync last_deposit_at desde casino_transactions
     await run('sync deposits', `
       UPDATE contacts c
       SET
@@ -84,7 +55,6 @@ export async function POST(req: NextRequest) {
         )
     `)
 
-    // Paso 3: Borrar tags stale de actividad/antiguedad/valor_riesgo
     await run('delete stale tags', `
       DELETE FROM contact_tags ct
       WHERE (ct.tag LIKE 'casino:actividad:%'
@@ -98,7 +68,6 @@ export async function POST(req: NextRequest) {
         )
     `)
 
-    // Paso 4: Insertar tags frescos
     await run('insert fresh tags', `
       INSERT INTO contact_tags (id, contact_id, tag, added_by, added_at)
       SELECT
@@ -129,17 +98,29 @@ export async function POST(req: NextRequest) {
       WHERE cp.seg_actividad IS NOT NULL AND cp.seg_monto IS NOT NULL
       ON CONFLICT (contact_id, tag) DO NOTHING
     `)
-
   } finally {
     await client.end()
   }
 
   const failed = results.filter(r => !r.ok)
+  console.log('[sync-tags background]', failed.length === 0 ? 'OK' : `${failed.length} pasos fallaron`, results)
+}
+
+export async function POST(req: NextRequest) {
+  const err = await checkPermission(req, 'lines', 'manage')
+  if (err) return err
+
+  const { getSessionFromRequest } = await import('@/lib/auth')
+  const session = getSessionFromRequest(req)
+  if (!session || session.role !== 'admin') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  // Corre en background para evitar timeout HTTP de Railway (~60s)
+  void runSyncTags()
+
   return NextResponse.json({
-    ok:      failed.length === 0,
-    results,
-    message: failed.length === 0
-      ? 'Tags sincronizados correctamente'
-      : `${failed.length} pasos fallaron`,
+    ok:      true,
+    message: 'Sync de tags iniciado en background (~3-5 minutos). Revisá los logs de Railway para el resultado.',
   })
 }
