@@ -19,10 +19,11 @@ import { checkPermissionWithUser } from '@/lib/permissions'
 export const maxDuration = 60  // Vercel: máximo 60s por chunk
 
 interface ImportRow {
-  phone:       string
-  first_name?: string | null
-  last_name?:  string | null
-  email?:      string | null
+  phone:        string
+  first_name?:  string | null
+  last_name?:   string | null
+  email?:       string | null
+  part_number?: number | null
 }
 
 export async function POST(req: NextRequest) {
@@ -55,7 +56,7 @@ export async function POST(req: NextRequest) {
   // ── 1. Normalización y validación ────────────────────────────────────────────
   let skippedInvalid = 0
   const seen = new Set<string>()
-  const normalized: Array<{ phone: string; first_name: string | null; last_name: string | null; email: string | null }> = []
+  const normalized: Array<{ phone: string; first_name: string | null; last_name: string | null; email: string | null; part_number: number | null }> = []
 
   for (const r of rows) {
     const phone = (r.phone || '').toString().trim().replace(/\s/g, '')
@@ -65,9 +66,10 @@ export async function POST(req: NextRequest) {
     seen.add(phone)
     normalized.push({
       phone,
-      first_name: r.first_name?.trim() || null,
-      last_name:  r.last_name?.trim()  || null,
-      email:      r.email?.trim()      || null,
+      first_name:  r.first_name?.trim()  || null,
+      last_name:   r.last_name?.trim()   || null,
+      email:       r.email?.trim()       || null,
+      part_number: r.part_number ?? null,
     })
   }
 
@@ -162,6 +164,30 @@ export async function POST(req: NextRequest) {
       )
     } catch (e) {
       console.error('[prospects/import] batch link error', e instanceof Error ? e.message : e)
+    }
+  }
+
+  // ── 5. Etiquetar partes ───────────────────────────────────────────────────────
+  const partsMap = new Map<number, string[]>()
+  for (const r of normalized) {
+    if (r.part_number) {
+      const phones = partsMap.get(r.part_number) ?? []
+      phones.push(r.phone)
+      partsMap.set(r.part_number, phones)
+    }
+  }
+  for (const [part, phones] of partsMap) {
+    const tag = `parte:${part}`
+    try {
+      await query(
+        `UPDATE prospects
+         SET tags = array_append(COALESCE(tags, '{}'), $1)
+         WHERE phone_number = ANY($2::text[])
+           AND NOT (COALESCE(tags, '{}') @> ARRAY[$1]::text[])`,
+        [tag, phones]
+      )
+    } catch (e) {
+      console.error('[prospects/import] parte tag error', e instanceof Error ? e.message : e)
     }
   }
 

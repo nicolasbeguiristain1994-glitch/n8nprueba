@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import * as XLSX from 'xlsx'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -143,6 +143,7 @@ export function ProspectsTab() {
   const [repeatName, setRepeatName]       = useState<string | null>(null) // nombre que se repite, si aplica
   const [mostlyNoNames, setMostlyNoNames] = useState(false) // mayoría sin nombre → ofrecer prefijo manual
   const [manualPrefix, setManualPrefix]   = useState('')    // prefijo ingresado por el usuario (ej: "Trebol")
+  const [splitParts, setSplitParts]       = useState(1)     // dividir importación en N partes etiquetadas
   const fileRef = useRef<HTMLInputElement>(null)
 
   // ── Modal agregar a campaña
@@ -515,7 +516,10 @@ export function ProspectsTab() {
       } else if (manualPrefix.trim() && !(r.first_name ?? '').trim()) {
         first_name = `${manualPrefix.trim()} ${i + 1}`
       }
-      return { phone, first_name, last_name: r.last_name, email: r.email }
+      const part_number = splitParts > 1
+        ? Math.floor((i * splitParts) / parsedRows.length) + 1
+        : undefined
+      return { phone, first_name, last_name: r.last_name, email: r.email, part_number }
     })
     const chunks: typeof allRows[] = []
     for (let i = 0; i < allRows.length; i += CHUNK_SIZE) chunks.push(allRows.slice(i, i + CHUNK_SIZE))
@@ -820,6 +824,17 @@ export function ProspectsTab() {
 
   // ── UI ────────────────────────────────────────────────────────────────────
 
+  const parteChips = useMemo(() => {
+    const parts = new Set<number>()
+    for (const p of prospects) {
+      for (const t of p.tags ?? []) {
+        const m = t.match(/^parte:(\d+)$/)
+        if (m) parts.add(Number(m[1]))
+      }
+    }
+    return [...parts].sort((a, b) => a - b)
+  }, [prospects])
+
   const totalPages = Math.ceil(total / limit)
   // true si todos los de la página actual están seleccionados
   const allCurrentPageSelected = prospects.length > 0 && prospects.every(p => selected.has(p.id))
@@ -859,6 +874,21 @@ export function ProspectsTab() {
             </button>
           )}
         </div>
+
+        {parteChips.map(n => (
+          <button
+            key={n}
+            type="button"
+            onClick={() => { setFilterTag(filterTag === `parte:${n}` ? '' : `parte:${n}`); setPage(1) }}
+            className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+              filterTag === `parte:${n}`
+                ? 'bg-violet-100 border-violet-400 text-violet-700 dark:bg-violet-950/40 dark:border-violet-600 dark:text-violet-300'
+                : 'bg-gray-100 border-gray-200 text-gray-600 hover:bg-violet-50 hover:border-violet-300 hover:text-violet-700 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400'
+            }`}
+          >
+            Parte {n}
+          </button>
+        ))}
 
         <Select value={filterStatus || 'all'} onValueChange={v => { setFilterStatus(!v || v === 'all' ? '' : v); setPage(1) }}>
           <SelectTrigger className="w-36">
@@ -1429,6 +1459,45 @@ export function ProspectsTab() {
                     )}
                   </div>
                 )}
+                {/* ── Dividir en partes ── */}
+                <div className={`rounded-md border px-4 py-3 text-sm space-y-2 ${
+                  splitParts > 1
+                    ? 'bg-violet-50 border-violet-200 dark:bg-violet-950/20 dark:border-violet-800'
+                    : 'bg-gray-50 border-gray-200 dark:bg-gray-800/30 dark:border-gray-700'
+                }`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className={`flex items-center gap-1.5 ${splitParts > 1 ? 'text-violet-700 dark:text-violet-300' : 'text-gray-600 dark:text-gray-400'}`}>
+                      <Tag className="h-4 w-4 shrink-0" />
+                      <span>Dividir en partes para crear listas separadas</span>
+                    </div>
+                    <button
+                      type="button"
+                      className={`text-xs underline hover:no-underline shrink-0 ${splitParts > 1 ? 'text-muted-foreground' : 'text-violet-600 dark:text-violet-400 font-medium'}`}
+                      onClick={() => setSplitParts(v => v === 1 ? 2 : 1)}
+                    >
+                      {splitParts > 1 ? 'Quitar' : 'Activar'}
+                    </button>
+                  </div>
+                  {splitParts > 1 && (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="number"
+                          min={2}
+                          max={50}
+                          value={splitParts}
+                          onChange={e => setSplitParts(Math.max(2, Math.min(50, Number(e.target.value) || 2)))}
+                          className="h-8 w-20 text-sm"
+                        />
+                        <span className="text-violet-700 dark:text-violet-300">partes</span>
+                      </div>
+                      <p className="text-xs text-violet-600 dark:text-violet-400">
+                        Los {parsedRows.length.toLocaleString()} contactos se dividirán en {splitParts} grupos de ≈{Math.ceil(parsedRows.length / splitParts).toLocaleString()} c/u, etiquetados como{' '}
+                        <span className="font-mono">parte:1</span>, <span className="font-mono">parte:2</span>…
+                      </p>
+                    </>
+                  )}
+                </div>
               </div>
 
               {importing && (
@@ -1488,6 +1557,24 @@ export function ProspectsTab() {
                   </div>
                 )}
               </div>
+
+              {splitParts > 1 && (
+                <div className="rounded-md border border-violet-200 bg-violet-50 dark:bg-violet-950/20 dark:border-violet-800 px-4 py-3 space-y-2">
+                  <p className="text-xs font-medium text-violet-700 dark:text-violet-300">Filtrar por parte:</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {Array.from({ length: splitParts }, (_, i) => i + 1).map(n => (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => { setFilterTag(`parte:${n}`); setPage(1); setImportOpen(false); setImportResult(null); setParsedRows([]) }}
+                        className="inline-flex items-center rounded-full border border-violet-300 bg-white dark:bg-violet-950/40 px-2.5 py-1 text-xs font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors"
+                      >
+                        Parte {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <DialogFooter>
                 <Button onClick={() => { setImportOpen(false); setImportResult(null); setParsedRows([]) }}>
