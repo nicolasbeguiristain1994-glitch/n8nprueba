@@ -12,8 +12,23 @@ const PLATAFORMA_ALLOWED = new Set(['zeus', 'bet30', 'otros'])
 const SEGMENT_ALLOWED    = new Set(['bajo', 'medio', 'vip', 'vip_medio', 'vip_alto', 'super_vip'])
 
 // Mapeo de nombres de agente en la UI → nombre real en la columna `panel` de la DB.
-// Si los contactos se importan con un nombre interno distinto al nombre de la UI, agregar aquí.
 const PANEL_ALIAS_MAP: Record<string, string> = {}
+
+// Aliases cross-plataforma: mismos agentes con distinto nombre en Zeus vs Bet30.
+// Al filtrar por cualquiera de los dos, se muestran los contactos de ambos.
+const PANEL_CROSS: Record<string, string[]> = {
+  betcoin:   ['betcoin',   'btcuno'],
+  btcuno:    ['btcuno',    'betcoin'],
+  farabet:   ['farabet',   'btcdos'],
+  btcdos:    ['btcdos',    'farabet'],
+  ofizeus:   ['ofizeus',   'zeus'],
+  zeus:      ['zeus',      'ofizeus'],
+  royal:     ['royal',     'zeusroyal'],
+  zeusroyal: ['zeusroyal', 'royal'],
+  bigwin:    ['bigwin'],
+  adminbet:  ['adminbet'],
+  surmar:    ['surmar'],
+}
 
 // Platform filters use the persisted `platforms` column (maintained by
 // trg_contact_platforms trigger in migration 075). GIN-indexed for fast lookups.
@@ -39,8 +54,11 @@ export async function GET(req: NextRequest) {
   // PostgreSQL array literal: '{}' means no filter, '{vip,super_vip}' filters to those values
   const segmentParam = segments.length > 0 ? `{${segments.join(',')}}` : '{}'
   const gaming    = req.nextUrl.searchParams.get('gaming') || ''
-  const panelRaw  = req.nextUrl.searchParams.get('panel') || ''
-  const panel     = (PANEL_ALIAS_MAP[panelRaw] ?? panelRaw).toLowerCase()
+  const panelRaw   = req.nextUrl.searchParams.get('panel') || ''
+  const panelNorm  = (PANEL_ALIAS_MAP[panelRaw] ?? panelRaw).toLowerCase()
+  // Incluye aliases cross-plataforma (ej: betcoin → [betcoin, btcuno])
+  const panelList  = panelNorm ? (PANEL_CROSS[panelNorm] ?? [panelNorm]) : []
+  const panelParam = panelList.length > 0 ? `{${panelList.join(',')}}` : '{}'
   const download  = req.nextUrl.searchParams.get('download') === 'true'
   const selectAll = req.nextUrl.searchParams.get('select_all') === 'true'
   const page      = Number(req.nextUrl.searchParams.get('page') || 1)
@@ -109,7 +127,7 @@ export async function GET(req: NextRequest) {
         WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
           AND ($2 = '{}' OR segment::text = ANY($2::text[]))
           AND ($3 = '' OR gaming::text = $3)
-          AND ($4 = '' OR panel = $4)
+          AND ($4 = '{}' OR panel = ANY($4::text[]))
           AND ($5 = '' OR linea::text = $5)
           AND ($6 = '{}' OR EXISTS (
             SELECT 1 FROM contact_tags ct
@@ -124,7 +142,7 @@ export async function GET(req: NextRequest) {
           ${vis2.sql}${agentFilter2}${plataformaFilter}${sinMovimientoFilter}
         ORDER BY created_at DESC
         LIMIT 100000
-      `, [`%${search}%`, segmentParam, gaming, panel, linea, actividadParam, antiguedadParam,
+      `, [`%${search}%`, segmentParam, gaming, panelParam, linea, actividadParam, antiguedadParam,
           ...vis2.params, ...agentParams2])
       return NextResponse.json({ ids: idRows.map(r => r.id) })
     } catch (e) {
@@ -187,7 +205,7 @@ export async function GET(req: NextRequest) {
       WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
         AND ($4 = '{}' OR segment::text = ANY($4::text[]))
         AND ($5 = '' OR gaming::text = $5)
-        AND ($6 = '' OR panel = $6)
+        AND ($6 = '{}' OR panel = ANY($6::text[]))
         AND ($7 = '' OR linea::text = $7)
         AND ($8 = '{}' OR EXISTS (
           SELECT 1 FROM contact_tags ct
@@ -205,7 +223,7 @@ export async function GET(req: NextRequest) {
         ${vis.sql}${agentFilter}${tagFilterMain}${plataformaFilter}${sinMovimientoFilter}
       ORDER BY created_at DESC
       LIMIT $2 OFFSET $3
-    `, [`%${search}%`, limit, offset, segmentParam, gaming, panel, linea, actividadParam, antiguedadParam, listId,
+    `, [`%${search}%`, limit, offset, segmentParam, gaming, panelParam, linea, actividadParam, antiguedadParam, listId,
         ...vis.params, ...agentParams, ...tagParams])
 
     const [{ count }] = await query<{ count: string }>(
@@ -213,7 +231,7 @@ export async function GET(req: NextRequest) {
        WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
          AND ($2 = '{}' OR segment::text = ANY($2::text[]))
          AND ($3 = '' OR gaming::text = $3)
-         AND ($4 = '' OR panel = $4)
+         AND ($4 = '{}' OR panel = ANY($4::text[]))
          AND ($5 = '' OR linea::text = $5)
          AND ($6 = '{}' OR EXISTS (
            SELECT 1 FROM contact_tags ct
@@ -229,7 +247,7 @@ export async function GET(req: NextRequest) {
            SELECT contact_id FROM contact_list_members WHERE list_id = $8::uuid
          ))
          ${vis7.sql}${agentFilterCt}${tagFilterCount}${plataformaFilter}${sinMovimientoFilter}`,
-      [`%${search}%`, segmentParam, gaming, panel, linea, actividadParam, antiguedadParam, listId,
+      [`%${search}%`, segmentParam, gaming, panelParam, linea, actividadParam, antiguedadParam, listId,
        ...vis7.params, ...agentParams, ...tagParams]
     )
 

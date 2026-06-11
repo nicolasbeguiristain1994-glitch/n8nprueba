@@ -106,8 +106,8 @@ async function main() {
   // Pasos 1 y 2: sync de transacciones del casino
   // failOk=true: si una plataforma falla (credenciales vencidas, API caída),
   // el pipeline sigue y al menos actualiza la otra
-  runScript('Paso 1: Sync Zeus',  'sync-casino-players-live.js', ['--platform=zeus',  '--auto'], { failOk: true })
-  runScript('Paso 2: Sync Bet30', 'sync-casino-players-live.js', ['--platform=bet30', '--auto'], { failOk: true })
+  runScript('Paso 1: Sync Zeus',  'sync-casino-players-live.js', ['--platform=zeus',  '--auto', '--agentes=betcoin,bigwin,farabet,ofizeus,royal'], { failOk: true })
+  runScript('Paso 2: Sync Bet30', 'sync-casino-players-live.js', ['--platform=bet30', '--auto', '--agentes=btcuno,btcdos,zeus,zeusroyal,bigwin'],  { failOk: true })
 
   // Paso 3: calcular segmentos y sincronizar contacts.last_deposit_at
   runScript('Paso 3: Segmentar jugadores', 'segmentar-casino-players.js', [], { failOk: true })
