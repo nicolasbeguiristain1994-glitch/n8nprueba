@@ -132,12 +132,14 @@ export async function GET(req: NextRequest) {
           AND ($6 = '{}' OR EXISTS (
             SELECT 1 FROM contact_tags ct
             WHERE ct.contact_id = contacts.id
-              AND ct.tag = ANY(SELECT 'casino:actividad:' || v FROM unnest($6::text[]) v)
+              AND ct.tag LIKE 'casino:actividad:%'
+              AND REPLACE(ct.tag, 'casino:actividad:', '') = ANY($6::text[])
           ))
           AND ($7 = '{}' OR EXISTS (
             SELECT 1 FROM contact_tags ct
             WHERE ct.contact_id = contacts.id
-              AND ct.tag = ANY(SELECT 'casino:antiguedad:' || v FROM unnest($7::text[]) v)
+              AND ct.tag LIKE 'casino:antiguedad:%'
+              AND REPLACE(ct.tag, 'casino:antiguedad:', '') = ANY($7::text[])
           ))
           ${vis2.sql}${agentFilter2}${plataformaFilter}${sinMovimientoFilter}
         ORDER BY created_at DESC
@@ -178,50 +180,61 @@ export async function GET(req: NextRequest) {
     : ''
 
   try {
+    // Un único LATERAL por fila reemplaza las 4 subqueries correlacionadas previas
+    // (actividad, valor_riesgo, antiguedad, custom_tags). Con el índice compuesto
+    // idx_contact_tags_contact_tag (contact_id, tag), cada LATERAL hace un solo
+    // index scan y extrae todos los valores en una pasada.
+    // Antes: 4 index seeks × 50 filas = 200 lookups/página
+    // Ahora: 1 index scan  × 50 filas =  50 lookups/página
     const rows = await query(`
-      SELECT id, phone_number, first_name, last_name, email,
-             status, opt_in_marketing AS opt_in, created_at, segment, panel, gaming::text AS gaming, linea,
-             last_deposit_at, total_deposits, total_withdrawals,
-             (SELECT REPLACE(tag, 'casino:actividad:', '')
-              FROM contact_tags
-              WHERE contact_id = contacts.id AND tag LIKE 'casino:actividad:%'
-              LIMIT 1) AS actividad,
-             (SELECT REPLACE(tag, 'casino:valor_riesgo:', '')
-              FROM contact_tags
-              WHERE contact_id = contacts.id AND tag LIKE 'casino:valor_riesgo:%'
-              LIMIT 1) AS valor_riesgo,
-             (SELECT REPLACE(tag, 'casino:antiguedad:', '')
-              FROM contact_tags
-              WHERE contact_id = contacts.id AND tag LIKE 'casino:antiguedad:%'
-              LIMIT 1) AS antiguedad,
-             platforms,
-             casino_accounts,
-             COALESCE((
-               SELECT ARRAY_AGG(tag ORDER BY tag)
-               FROM contact_tags
-               WHERE contact_id = contacts.id AND tag NOT LIKE 'casino:%'
-             ), '{}') AS custom_tags
+      SELECT
+        contacts.id, contacts.phone_number, contacts.first_name, contacts.last_name, contacts.email,
+        contacts.status, contacts.opt_in_marketing AS opt_in, contacts.created_at,
+        contacts.segment, contacts.panel, contacts.gaming::text AS gaming, contacts.linea,
+        contacts.last_deposit_at, contacts.total_deposits, contacts.total_withdrawals,
+        contacts.platforms, contacts.casino_accounts,
+        ct.actividad,
+        ct.valor_riesgo,
+        ct.antiguedad,
+        ct.custom_tags
       FROM contacts
-      WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
-        AND ($4 = '{}' OR segment::text = ANY($4::text[]))
-        AND ($5 = '' OR gaming::text = $5)
-        AND ($6 = '{}' OR panel = ANY($6::text[]))
-        AND ($7 = '' OR linea::text = $7)
+      LEFT JOIN LATERAL (
+        SELECT
+          MAX(CASE WHEN tag LIKE 'casino:actividad:%'
+            THEN REPLACE(tag, 'casino:actividad:', '') END)    AS actividad,
+          MAX(CASE WHEN tag LIKE 'casino:valor_riesgo:%'
+            THEN REPLACE(tag, 'casino:valor_riesgo:', '') END) AS valor_riesgo,
+          MAX(CASE WHEN tag LIKE 'casino:antiguedad:%'
+            THEN REPLACE(tag, 'casino:antiguedad:', '') END)   AS antiguedad,
+          COALESCE(
+            ARRAY_AGG(tag ORDER BY tag) FILTER (WHERE tag NOT LIKE 'casino:%'),
+            '{}'
+          ) AS custom_tags
+        FROM contact_tags
+        WHERE contact_id = contacts.id
+      ) ct ON true
+      WHERE ($1 = '' OR contacts.phone_number ILIKE $1 OR contacts.first_name ILIKE $1 OR contacts.last_name ILIKE $1)
+        AND ($4 = '{}' OR contacts.segment::text = ANY($4::text[]))
+        AND ($5 = '' OR contacts.gaming::text = $5)
+        AND ($6 = '{}' OR contacts.panel = ANY($6::text[]))
+        AND ($7 = '' OR contacts.linea::text = $7)
         AND ($8 = '{}' OR EXISTS (
-          SELECT 1 FROM contact_tags ct
-          WHERE ct.contact_id = contacts.id
-            AND ct.tag = ANY(SELECT 'casino:actividad:' || v FROM unnest($8::text[]) v)
+          SELECT 1 FROM contact_tags ct2
+          WHERE ct2.contact_id = contacts.id
+            AND ct2.tag LIKE 'casino:actividad:%'
+            AND REPLACE(ct2.tag, 'casino:actividad:', '') = ANY($8::text[])
         ))
         AND ($9 = '{}' OR EXISTS (
-          SELECT 1 FROM contact_tags ct
-          WHERE ct.contact_id = contacts.id
-            AND ct.tag = ANY(SELECT 'casino:antiguedad:' || v FROM unnest($9::text[]) v)
+          SELECT 1 FROM contact_tags ct3
+          WHERE ct3.contact_id = contacts.id
+            AND ct3.tag LIKE 'casino:antiguedad:%'
+            AND REPLACE(ct3.tag, 'casino:antiguedad:', '') = ANY($9::text[])
         ))
-        AND ($10 = '' OR id IN (
+        AND ($10 = '' OR contacts.id IN (
           SELECT contact_id FROM contact_list_members WHERE list_id = $10::uuid
         ))
         ${vis.sql}${agentFilter}${tagFilterMain}${plataformaFilter}${sinMovimientoFilter}
-      ORDER BY created_at DESC
+      ORDER BY contacts.created_at DESC
       LIMIT $2 OFFSET $3
     `, [`%${search}%`, limit, offset, segmentParam, gaming, panelParam, linea, actividadParam, antiguedadParam, listId,
         ...vis.params, ...agentParams, ...tagParams])
@@ -236,12 +249,14 @@ export async function GET(req: NextRequest) {
          AND ($6 = '{}' OR EXISTS (
            SELECT 1 FROM contact_tags ct
            WHERE ct.contact_id = contacts.id
-             AND ct.tag = ANY(SELECT 'casino:actividad:' || v FROM unnest($6::text[]) v)
+             AND ct.tag LIKE 'casino:actividad:%'
+             AND REPLACE(ct.tag, 'casino:actividad:', '') = ANY($6::text[])
          ))
          AND ($7 = '{}' OR EXISTS (
            SELECT 1 FROM contact_tags ct
            WHERE ct.contact_id = contacts.id
-             AND ct.tag = ANY(SELECT 'casino:antiguedad:' || v FROM unnest($7::text[]) v)
+             AND ct.tag LIKE 'casino:antiguedad:%'
+             AND REPLACE(ct.tag, 'casino:antiguedad:', '') = ANY($7::text[])
          ))
          AND ($8 = '' OR id IN (
            SELECT contact_id FROM contact_list_members WHERE list_id = $8::uuid

@@ -310,10 +310,14 @@ export class UserPrioritizationRepository {
         )::int AS days_since_last_message
       FROM contact_priority_scores cps
       JOIN contacts c ON c.id = cps.contact_id
+      -- LATERAL con ventana de 6 meses: usa idx_contact_send_history_contact_sent_at
+      -- (contact_id, sent_at DESC). Sin la ventana el planner podría ignorar el índice
+      -- en tablas contact_send_history muy grandes. 1 index seek por fila = O(log N).
       LEFT JOIN LATERAL (
         SELECT sent_at AS last_sent
         FROM contact_send_history
         WHERE contact_id = c.id
+          AND sent_at > NOW() - INTERVAL '180 days'
         ORDER BY sent_at DESC
         LIMIT 1
       ) csh ON true

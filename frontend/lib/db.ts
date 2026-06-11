@@ -60,7 +60,11 @@ export const pool = new Pool(
     ? {
         connectionString:        DATABASE_URL,
         ssl:                     sslConfig,
-        max:                     Number(trim(process.env.DB_POOL_MAX) || '3'),
+        // Supabase pooler (PgBouncer transaction mode) soporta ~25 conns simultáneas.
+        // Valor mínimo recomendado para 30 líneas WA + dashboard + recompute: 10.
+        // Sobreescribible via DB_POOL_MAX en Railway env vars.
+        min:                     2,
+        max:                     Number(trim(process.env.DB_POOL_MAX) || '10'),
         connectionTimeoutMillis: Number(trim(process.env.DB_CONNECTION_TIMEOUT_MS) || '10000'),
         idleTimeoutMillis:       Number(trim(process.env.DB_IDLE_TIMEOUT_MS)       || '30000'),
         maxLifetimeSeconds:      MAX_LIFETIME_S,
@@ -74,7 +78,8 @@ export const pool = new Pool(
         user:                    dbUser,
         password:                dbPassword,
         ssl:                     sslConfig,
-        max:                     Number(trim(process.env.DB_POOL_MAX) || '3'),
+        min:                     2,
+        max:                     Number(trim(process.env.DB_POOL_MAX) || '10'),
         connectionTimeoutMillis: Number(trim(process.env.DB_CONNECTION_TIMEOUT_MS) || '10000'),
         idleTimeoutMillis:       Number(trim(process.env.DB_IDLE_TIMEOUT_MS)       || '30000'),
         maxLifetimeSeconds:      MAX_LIFETIME_S,
