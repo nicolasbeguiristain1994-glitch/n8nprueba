@@ -38,14 +38,16 @@ export async function POST(req: NextRequest) {
           IF v_full ~* 'z(e|s|eus)?[0-9]*(\/|\s|$)' THEN
             v_is_zeus := true;
           ELSE
-            -- Fallback: token-level casino_players lookup (handles f/ff suffix users)
-            -- Splits by / and spaces; strips leading parenthesized prefix from each token
+            -- Fallback: strip all (xxx) groups first, then tokenize by / space tab
             SELECT EXISTS (
               SELECT 1 FROM casino_players cp
-              JOIN LATERAL regexp_split_to_table(v_full, '[/ \t]+') AS tok ON true
+              JOIN LATERAL regexp_split_to_table(
+                REGEXP_REPLACE(v_full, '\([^)]*\)\s*', '', 'gi'),
+                '[/ \t]+'
+              ) AS tok ON true
               WHERE LENGTH(TRIM(tok)) > 1
-                AND cp.username_lower = LOWER(TRIM(REGEXP_REPLACE(tok, '^\([^)]*\)\s*', '', 'i')))
-                AND cp.agente = ANY(ARRAY['bigwin','ofizeus','betcoin','royal','farabet'])
+                AND cp.username_lower = LOWER(TRIM(tok))
+                AND cp.agente = ANY(ARRAY['bigwin','ofizeus','betcoin','royal','farabet','btcuno','btcdos','zeus','zeusroyal'])
             ) INTO v_is_zeus;
           END IF;
 

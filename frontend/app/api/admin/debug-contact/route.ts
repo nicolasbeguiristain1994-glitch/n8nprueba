@@ -22,14 +22,25 @@ export async function GET(req: NextRequest) {
            FROM contacts WHERE LOWER(TRIM(first_name)) = $1`, [username]),
     query(`SELECT EXISTS(SELECT 1 FROM casino_transactions WHERE tipo = 'carga') AS any_tx,
                   COUNT(*) AS total_tx_global FROM casino_transactions WHERE tipo = 'carga'`),
-    // Verificar si el JOIN funciona para este usuario específico
+    // Verificar si el JOIN funciona para este usuario específico (usa tokenización mejorada)
     query(`SELECT c.id, c.first_name, cp.username_lower, cp.seg_actividad, cp.seg_monto, cp.cant_cargas
            FROM contacts c
-           JOIN casino_players cp ON LOWER(TRIM(c.first_name)) = cp.username_lower
-           WHERE LOWER(TRIM(c.first_name)) = $1`, [username]),
-    // Ver una muestra global del JOIN (cuántas filas coinciden en total)
+           JOIN casino_players cp ON cp.username_lower = ANY(
+             SELECT LOWER(TRIM(tok))
+             FROM regexp_split_to_table(
+               REGEXP_REPLACE(COALESCE(c.first_name,'') || ' ' || COALESCE(c.last_name,''), '\\([^)]*\\)\\s*','','gi'),
+               '[/ \\t]+'
+             ) AS tok WHERE LENGTH(TRIM(tok)) > 1
+           )
+           WHERE cp.username_lower = $1`, [username]),
     query(`SELECT COUNT(*) AS total_join_matches FROM contacts c
-           JOIN casino_players cp ON LOWER(TRIM(c.first_name)) = cp.username_lower`),
+           JOIN casino_players cp ON cp.username_lower = ANY(
+             SELECT LOWER(TRIM(tok))
+             FROM regexp_split_to_table(
+               REGEXP_REPLACE(COALESCE(c.first_name,'') || ' ' || COALESCE(c.last_name,''), '\\([^)]*\\)\\s*','','gi'),
+               '[/ \\t]+'
+             ) AS tok WHERE LENGTH(TRIM(tok)) > 1
+           )`),
   ])
 
   return NextResponse.json({

@@ -2,9 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getLongRunningClient } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
 
+// Estrategia: primero eliminar TODOS los grupos (xxx) del nombre completo,
+// luego tokenizar por / espacio y tab.
+// Ej: "(carga mucho)Maximo3214z/Maximo3214b G.Sorteo"
+//   → strip: "Maximo3214z/Maximo3214b G.Sorteo"
+//   → tokens: ["maximo3214z", "maximo3214b", "g.sorteo"]
 const USERNAME_MATCH = `cp.username_lower = ANY(
-  SELECT LOWER(TRIM(REGEXP_REPLACE(tok, '^\\([^)]*\\)\\s*', '', 'i')))
-  FROM regexp_split_to_table(COALESCE(c.first_name, ''), '[/ \\t]+') AS tok
+  SELECT LOWER(TRIM(tok))
+  FROM regexp_split_to_table(
+    REGEXP_REPLACE(COALESCE(c.first_name, '') || ' ' || COALESCE(c.last_name, ''), '\\([^)]*\\)\\s*', '', 'gi'),
+    '[/ \\t]+'
+  ) AS tok
   WHERE LENGTH(TRIM(tok)) > 1
 )`
 
