@@ -292,6 +292,14 @@ export default function Contacts() {
   // ── Blacklist ─────────────────────────────────────────────────────────────
   const [blacklistSaving, setBlacklistSaving] = useState(false)
 
+  // ── Confirmación bulk ─────────────────────────────────────────────────────
+  const [confirmBulk, setConfirmBulk] = useState<{
+    action: 'delete' | 'blacklist'
+    mode: 'selection' | 'filters'
+    count: number
+  } | null>(null)
+  const [confirmExecuting, setConfirmExecuting] = useState(false)
+
   // ── Split lista ───────────────────────────────────────────────────────────
   const [splitSource, setSplitSource]   = useState<ContactList | null>(null)
   const [splitParts, setSplitParts]     = useState<2 | 3>(2)
@@ -411,10 +419,9 @@ export default function Contacts() {
     setRowSelection(prev => { const n = { ...prev }; delete n[id]; return n })
   }, [])
 
-  const deleteSelected = async () => {
-    if (!confirm(`¿Eliminar ${selectedCount} contactos seleccionados?`)) return
+  const deleteBulk = async (ids: string[]) => {
     const responses = await Promise.all(
-      selectedIds.map(id => fetch(`/api/contacts/${id}`, { method: 'DELETE' })
+      ids.map(id => fetch(`/api/contacts/${id}`, { method: 'DELETE' })
         .then(r => ({ id, ok: r.ok })).catch(() => ({ id, ok: false })))
     )
     const deleted = new Set(responses.filter(r => r.ok).map(r => r.id))
@@ -422,6 +429,14 @@ export default function Contacts() {
     setContacts(prev => prev.filter(c => !deleted.has(c.id)))
     setTotal(prev => prev - deleted.size)
     setRowSelection({})
+  }
+
+  const deleteSelected = async () => {
+    if (selectedCount > 0) {
+      setConfirmBulk({ action: 'delete', mode: 'selection', count: selectedCount })
+    } else if (hasActiveFilters) {
+      setConfirmBulk({ action: 'delete', mode: 'filters', count: total })
+    }
   }
 
   const selectAllFiltered = async () => {
@@ -779,13 +794,46 @@ export default function Contacts() {
   }
 
   const blacklistSelected = async () => {
-    if (!selectedCount) return
-    if (!confirm(`¿Agregar ${selectedCount} contactos a la blacklist?`)) return
-    const phones = contacts.filter(c => rowSelection[c.id]).map(c => c.phone_number)
-    await sendToBlacklist(phones, () => {
-      setRowSelection({})
-      alert(`${phones.length} contactos agregados a la blacklist.`)
-    })
+    if (selectedCount > 0) {
+      setConfirmBulk({ action: 'blacklist', mode: 'selection', count: selectedCount })
+    } else if (hasActiveFilters) {
+      setConfirmBulk({ action: 'blacklist', mode: 'filters', count: total })
+    }
+  }
+
+  const executeConfirm = async () => {
+    if (!confirmBulk) return
+    setConfirmExecuting(true)
+    try {
+      if (confirmBulk.mode === 'selection') {
+        if (confirmBulk.action === 'delete') {
+          await deleteBulk(selectedIds)
+        } else {
+          const phones = contacts.filter(c => rowSelection[c.id]).map(c => c.phone_number)
+          await sendToBlacklist(phones, () => setRowSelection({}))
+        }
+      } else {
+        // filters mode: fetch all matching IDs + phones first
+        const q = new URLSearchParams({
+          q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
+          linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
+          select_all: 'true',
+          ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
+          ...(filterList          ? { list_id: filterList }          : {}),
+          ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
+          ...(filterTag           ? { tag: filterTag }               : {}),
+        })
+        const d = await fetchJson<{ ids: string[]; phones: string[] }>(`/api/contacts?${q}`)
+        if (confirmBulk.action === 'delete') {
+          await deleteBulk(d.ids || [])
+        } else {
+          await sendToBlacklist(d.phones || [], () => setRowSelection({}))
+        }
+      }
+    } finally {
+      setConfirmExecuting(false)
+      setConfirmBulk(null)
+    }
   }
 
   // ── Columnas del DataTable ────────────────────────────────────────────────
@@ -1188,18 +1236,18 @@ export default function Contacts() {
                 <Compass size={14} className="mr-1" /> Explorar
               </Button>
             )}
-            {selectedCount > 0 && (
+            {(selectedCount > 0 || hasActiveFilters) && (
               <>
                 <Button size="sm" variant="outline"
                   onClick={blacklistSelected}
                   disabled={blacklistSaving}
                   className="border-orange-200 text-orange-700 hover:bg-orange-50">
-                  <Ban size={14} className="mr-1" /> Blacklist ({selectedCount})
+                  <Ban size={14} className="mr-1" /> Blacklist ({selectedCount > 0 ? selectedCount : total.toLocaleString()})
                 </Button>
                 <Button size="sm" variant="outline"
                   onClick={deleteSelected}
                   className="border-destructive/30 text-destructive hover:bg-destructive/10">
-                  <Trash2 size={14} className="mr-1" /> Eliminar ({selectedCount})
+                  <Trash2 size={14} className="mr-1" /> Eliminar ({selectedCount > 0 ? selectedCount : total.toLocaleString()})
                 </Button>
               </>
             )}
@@ -2274,6 +2322,56 @@ export default function Contacts() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+      {/* ── Modal confirmación bulk (delete / blacklist) ── */}
+      <Dialog open={!!confirmBulk} onOpenChange={v => { if (!v && !confirmExecuting) setConfirmBulk(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {confirmBulk?.action === 'delete'
+                ? <><Trash2 size={16} className="text-destructive" /> Eliminar contactos</>
+                : <><Ban size={16} className="text-orange-600" /> Agregar a blacklist</>}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Vas a{' '}
+              <span className="font-semibold text-foreground">
+                {confirmBulk?.action === 'delete' ? 'eliminar' : 'agregar a la blacklist'}
+              </span>{' '}
+              <span className="font-semibold text-foreground">
+                {confirmBulk?.count.toLocaleString()} contactos
+              </span>{' '}
+              {confirmBulk?.mode === 'filters' ? 'que coinciden con los filtros actuales' : 'seleccionados'}.
+            </p>
+            {confirmBulk?.mode === 'filters' && (
+              <div className="flex flex-wrap gap-1.5 p-2 bg-muted/50 rounded-lg">
+                {filterPanel && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Agente: {filterPanel}</span>}
+                {segments.length > 0 && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">Nivel: {segments.join(', ')}</span>}
+                {filterActividad.length > 0 && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Actividad: {filterActividad.join(', ')}</span>}
+                {filterAntiguedad.length > 0 && <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">Antigüedad: {filterAntiguedad.join(', ')}</span>}
+                {filterPlataforma && <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">Plataforma: {filterPlataforma}</span>}
+                {filterLinea && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Línea: {filterLinea}</span>}
+                {filterGaming && <span className="text-xs bg-pink-100 text-pink-700 px-2 py-0.5 rounded-full">Juego: {filterGaming}</span>}
+                {filterSinMovimiento && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">Sin movimiento</span>}
+              </div>
+            )}
+            {confirmBulk?.action === 'delete' && (
+              <p className="text-xs text-destructive font-medium">Esta acción no se puede deshacer.</p>
+            )}
+            <div className="flex gap-2 pt-1">
+              <Button variant="outline" className="flex-1" onClick={() => setConfirmBulk(null)} disabled={confirmExecuting}>
+                <X size={14} className="mr-1" /> Cancelar
+              </Button>
+              <Button
+                className={`flex-1 text-white ${confirmBulk?.action === 'delete' ? 'bg-destructive hover:bg-destructive/90' : 'bg-orange-600 hover:bg-orange-700'}`}
+                onClick={executeConfirm}
+                disabled={confirmExecuting}>
+                {confirmExecuting ? 'Procesando…' : 'Confirmar'}
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
       </> /* fin activeTab === 'contacts' */}

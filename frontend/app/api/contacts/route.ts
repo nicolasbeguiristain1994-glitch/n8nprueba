@@ -122,8 +122,8 @@ export async function GET(req: NextRequest) {
       : ''
     const agentParams2 = agentAllowed ? [agentAllowed] : []
     try {
-      const idRows = await query<{ id: string }>(`
-        SELECT id FROM contacts
+      const idRows = await query<{ id: string; phone_number: string }>(`
+        SELECT id, phone_number FROM contacts
         WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
           AND ($2 = '{}' OR segment::text = ANY($2::text[]))
           AND ($3 = '' OR gaming::text = $3)
@@ -146,7 +146,7 @@ export async function GET(req: NextRequest) {
         LIMIT 100000
       `, [`%${search}%`, segmentParam, gaming, panelParam, linea, actividadParam, antiguedadParam,
           ...vis2.params, ...agentParams2])
-      return NextResponse.json({ ids: idRows.map(r => r.id) })
+      return NextResponse.json({ ids: idRows.map(r => r.id), phones: idRows.map(r => r.phone_number) })
     } catch (e) {
       console.error('[/api/contacts GET select_all]', e instanceof Error ? e.message : e)
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
