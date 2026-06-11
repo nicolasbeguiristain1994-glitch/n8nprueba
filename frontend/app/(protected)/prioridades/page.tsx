@@ -72,13 +72,17 @@ const SEGMENT_STYLE: Record<string, string> = {
 
 const TIER_STYLE: Record<string, string> = {
   super_vip: 'bg-purple-100 text-purple-700',
-  vip:       'bg-amber-100 text-amber-700',
+  vip_alto:  'bg-amber-100 text-amber-700',
+  vip_medio: 'bg-amber-50 text-amber-600',
+  vip:       'bg-yellow-100 text-yellow-700',
   medio:     'bg-blue-100 text-blue-700',
   bajo:      'bg-gray-100 text-gray-500',
 }
 
 const TIER_LABEL: Record<string, string> = {
   super_vip: 'Super Vip',
+  vip_alto:  'Vip Alto',
+  vip_medio: 'Vip Medio',
   vip:       'Vip',
   medio:     'Medio',
   bajo:      'Bajo',
@@ -490,8 +494,10 @@ export default function PrioridadesPage() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="todos">Todos</SelectItem>
-              <SelectItem value="vip">Super Vip</SelectItem>
-              <SelectItem value="alto">Vip</SelectItem>
+              <SelectItem value="super_vip">Super Vip</SelectItem>
+              <SelectItem value="vip_alto">Vip Alto</SelectItem>
+              <SelectItem value="vip_medio">Vip Medio</SelectItem>
+              <SelectItem value="vip">Vip</SelectItem>
               <SelectItem value="medio">Medio</SelectItem>
               <SelectItem value="bajo">Bajo</SelectItem>
             </SelectContent>

@@ -60,6 +60,8 @@ export function resolveValueTier(
 
   switch (segment) {
     case 'super_vip': return 'super_vip'
+    case 'vip_alto':  return 'vip_alto'
+    case 'vip_medio': return 'vip_medio'
     case 'vip':       return 'vip'
     case 'medio':     return 'medio'
     default:          return 'bajo'

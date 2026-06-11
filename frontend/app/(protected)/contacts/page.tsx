@@ -80,11 +80,11 @@ const ACTIVIDAD_DESC: Record<string, string> = {
   perdido:   'Sin actividad por más de 3 meses',
 }
 const ANTIGUEDAD_DESC: Record<string, string> = {
-  leal:        'Cliente por más de 1 año',
-  veterano:    'Entre 6 y 12 meses de historia',
-  establecido: 'Entre 3 y 6 meses',
-  reciente:    'Entre 1 y 3 meses',
-  nuevo:       'Menos de 1 mes',
+  leal:        'Más de 270 días como cliente',
+  veterano:    '150–269 días como cliente',
+  establecido: '90–149 días como cliente',
+  reciente:    '30–89 días como cliente',
+  nuevo:       'Menos de 30 días como cliente',
 }
 const NIVEL_DESC: Record<string, string> = {
   super_vip: 'Super Vip — depósitos >= $3.200.000/mes activo',
@@ -916,7 +916,7 @@ export default function Contacts() {
               </span>
             )}
             {c.antiguedad && (
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${ANTIGUEDAD_STYLE[c.antiguedad] ?? 'bg-gray-100 text-gray-600'}`}>
+              <span title={ANTIGUEDAD_DESC[c.antiguedad]} className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap cursor-help ${ANTIGUEDAD_STYLE[c.antiguedad] ?? 'bg-gray-100 text-gray-600'}`}>
                 {c.antiguedad}
               </span>
             )}
@@ -1364,7 +1364,7 @@ export default function Contacts() {
                 </button>
               )}
               {(Object.keys(ANTIGUEDAD_DESC) as string[]).map(v => (
-                <label key={v} className="flex items-center gap-2.5 px-2 py-1.5 rounded-sm hover:bg-accent cursor-pointer text-sm">
+                <label key={v} title={ANTIGUEDAD_DESC[v]} className="flex items-center gap-2.5 px-2 py-1.5 rounded-sm hover:bg-accent cursor-pointer text-sm">
                   <Checkbox
                     checked={filterAntiguedad.includes(v)}
                     onCheckedChange={checked => {
@@ -1784,7 +1784,7 @@ export default function Contacts() {
                 {viewContact.segment  && <span className={`text-xs px-2 py-0.5 rounded-full ${SEGMENT_STYLE[viewContact.segment] ?? 'bg-gray-100 text-gray-600'}`}>{NIVEL_LABEL[viewContact.segment] ?? viewContact.segment}</span>}
                 {viewContact.gaming   && <span className={`text-xs px-2 py-0.5 rounded-full ${GAMING_STYLE[viewContact.gaming] ?? 'bg-gray-100 text-gray-600'}`}>{viewContact.gaming}</span>}
                 {viewContact.actividad && <span className={`text-xs px-2 py-0.5 rounded-full ${ACTIVIDAD_STYLE[viewContact.actividad] ?? 'bg-gray-100 text-gray-600'}`}>{viewContact.actividad}</span>}
-                {viewContact.antiguedad && <span className={`text-xs px-2 py-0.5 rounded-full ${ANTIGUEDAD_STYLE[viewContact.antiguedad] ?? 'bg-gray-100 text-gray-600'}`}>{viewContact.antiguedad}</span>}
+                {viewContact.antiguedad && <span title={ANTIGUEDAD_DESC[viewContact.antiguedad]} className={`text-xs px-2 py-0.5 rounded-full cursor-help ${ANTIGUEDAD_STYLE[viewContact.antiguedad] ?? 'bg-gray-100 text-gray-600'}`}>{viewContact.antiguedad}</span>}
               </div>
               {/* Cuentas de casino por agente */}
               {(viewContact.casino_accounts?.length ?? 0) > 0 && (
