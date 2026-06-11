@@ -11,7 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import {
   Search, Upload, RefreshCw, List, CheckSquare, X, Users, UserPlus,
   Trash2, Download, DatabaseZap, Pencil, ChevronDown, Filter, Info, Scissors,
-  Tag, Ban,
+  Tag, Ban, ChevronLeft, ChevronRight, Compass,
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
@@ -245,6 +245,7 @@ export default function Contacts() {
 
   // ── View contact modal ────────────────────────────────────────────────────
   const [viewContact, setViewContact]   = useState<Contact | null>(null)
+  const [viewContactIdx, setViewContactIdx] = useState<number>(-1)
   const [casinoStats, setCasinoStats]   = useState<{
     monto_cargas_mes: number; monto_retiros_mes: number; last_deposit_at: string | null
     mes_referencia: string | null; fuente: 'transactions' | 'historico' | null
@@ -254,10 +255,20 @@ export default function Contacts() {
   const openViewContact = (c: Contact) => {
     setViewContact(c)
     setCasinoStats(null)
+    setViewContactIdx(contacts.findIndex(x => x.id === c.id))
     fetch(`/api/contacts/${c.id}/casino-stats`)
       .then(r => r.json())
       .then(d => setCasinoStats(d))
       .catch(() => {})
+  }
+
+  const goNextContact = () => {
+    if (viewContactIdx >= 0 && viewContactIdx < contacts.length - 1)
+      openViewContact(contacts[viewContactIdx + 1])
+  }
+  const goPrevContact = () => {
+    if (viewContactIdx > 0)
+      openViewContact(contacts[viewContactIdx - 1])
   }
 
   // ── Edit contact modal ────────────────────────────────────────────────────
@@ -1170,6 +1181,28 @@ export default function Contacts() {
                 </div>
               )}
             </div>
+            {contacts.length > 0 && (
+              <Button size="sm" variant="outline"
+                onClick={() => openViewContact(contacts[0])}
+                className="border-sky-200 text-sky-700 hover:bg-sky-50">
+                <Compass size={14} className="mr-1" /> Explorar
+              </Button>
+            )}
+            {selectedCount > 0 && (
+              <>
+                <Button size="sm" variant="outline"
+                  onClick={blacklistSelected}
+                  disabled={blacklistSaving}
+                  className="border-orange-200 text-orange-700 hover:bg-orange-50">
+                  <Ban size={14} className="mr-1" /> Blacklist ({selectedCount})
+                </Button>
+                <Button size="sm" variant="outline"
+                  onClick={deleteSelected}
+                  className="border-destructive/30 text-destructive hover:bg-destructive/10">
+                  <Trash2 size={14} className="mr-1" /> Eliminar ({selectedCount})
+                </Button>
+              </>
+            )}
             {hasActiveFilters && (
               <Button size="sm" variant="outline"
                 onClick={() => { setListMode('filters'); setShowList(true) }}
@@ -1840,9 +1873,28 @@ export default function Contacts() {
       <Dialog open={!!viewContact} onOpenChange={v => { if (!v) setViewContact(null) }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle className="text-base">
-              {viewContact ? `${viewContact.first_name || ''} ${viewContact.last_name || ''}`.trim() || viewContact.phone_number : ''}
-            </DialogTitle>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={goPrevContact}
+                disabled={viewContactIdx <= 0}
+                className="p-1 rounded hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                title="Contacto anterior">
+                <ChevronLeft size={16} />
+              </button>
+              <DialogTitle className="text-base flex-1 truncate">
+                {viewContact ? `${viewContact.first_name || ''} ${viewContact.last_name || ''}`.trim() || viewContact.phone_number : ''}
+              </DialogTitle>
+              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                {viewContactIdx + 1}/{contacts.length}
+              </span>
+              <button
+                onClick={goNextContact}
+                disabled={viewContactIdx >= contacts.length - 1}
+                className="p-1 rounded hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                title="Siguiente contacto">
+                <ChevronRight size={16} />
+              </button>
+            </div>
           </DialogHeader>
           {viewContact && (
             <div className="space-y-3">
