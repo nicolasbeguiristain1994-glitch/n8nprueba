@@ -382,6 +382,87 @@ export async function POST(req: NextRequest) {
       AND NOT ('bet30' = ANY(platforms))
   `)
 
+  // ── 115: Tokenized-regex platform detection ───────────────────────────────────
+  // Strips all (xxx) groups, then splits by / and spaces, and checks if any
+  // individual token ends with [digit]z(e|s|eus)?[digits] (zeus) or
+  // [digit]b(t|e)?[digits] (bet30). The required digit before the letter suffix
+  // prevents false positives on real surnames like "Diaz" or "Gonzalez".
+  // This catches old players not present in casino_players.
+  await run('115a: update trigger — tokenized regex + DB-lookup hybrid', `
+    CREATE OR REPLACE FUNCTION compute_contact_platforms()
+    RETURNS trigger AS $$
+    DECLARE
+      v_full    text;
+      v_cleaned text;
+    BEGIN
+      v_full    := COALESCE(NEW.first_name, '') || ' ' || COALESCE(NEW.last_name, '');
+      v_cleaned := REGEXP_REPLACE(v_full, '\\([^)]*\\)\\s*', '', 'gi');
+
+      NEW.platforms := ARRAY_REMOVE(ARRAY[
+        CASE WHEN
+          EXISTS (
+            SELECT 1 FROM regexp_split_to_table(v_cleaned, '[/ \\t]+') AS tok
+            WHERE LENGTH(TRIM(tok)) > 2
+              AND LOWER(TRIM(tok)) ~* '[0-9]z(e|s|eus)?[0-9]*$'
+          )
+          OR EXISTS (
+            SELECT 1 FROM casino_players cp
+            JOIN LATERAL regexp_split_to_table(v_cleaned, '[/ \\t]+') AS tok ON true
+            WHERE LENGTH(TRIM(tok)) > 1
+              AND cp.username_lower = LOWER(TRIM(tok))
+              AND cp.agente = ANY(ARRAY['bigwin','ofizeus','betcoin','royal','farabet'])
+          )
+        THEN 'zeus' END,
+        CASE WHEN
+          EXISTS (
+            SELECT 1 FROM regexp_split_to_table(v_cleaned, '[/ \\t]+') AS tok
+            WHERE LENGTH(TRIM(tok)) > 2
+              AND LOWER(TRIM(tok)) ~* '[0-9]b(t|e)?[0-9]*$'
+          )
+          OR EXISTS (
+            SELECT 1 FROM casino_players cp
+            JOIN LATERAL regexp_split_to_table(v_cleaned, '[/ \\t]+') AS tok ON true
+            WHERE LENGTH(TRIM(tok)) > 1
+              AND cp.username_lower = LOWER(TRIM(tok))
+              AND cp.agente = ANY(ARRAY['btcuno','btcdos','zeus','zeusroyal','bigwin'])
+          )
+        THEN 'bet30' END
+      ], NULL);
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql
+  `)
+
+  await run('115b: backfill zeus — tokenized regex', `
+    UPDATE contacts c
+    SET platforms  = array_append(platforms, 'zeus'),
+        updated_at = NOW()
+    WHERE EXISTS (
+      SELECT 1 FROM regexp_split_to_table(
+        REGEXP_REPLACE(COALESCE(c.first_name,'') || ' ' || COALESCE(c.last_name,''), '\\([^)]*\\)\\s*', '', 'gi'),
+        '[/ \\t]+'
+      ) AS tok
+      WHERE LENGTH(TRIM(tok)) > 2
+        AND LOWER(TRIM(tok)) ~* '[0-9]z(e|s|eus)?[0-9]*$'
+    )
+    AND NOT ('zeus' = ANY(COALESCE(platforms, ARRAY[]::text[])))
+  `)
+
+  await run('115c: backfill bet30 — tokenized regex', `
+    UPDATE contacts c
+    SET platforms  = array_append(platforms, 'bet30'),
+        updated_at = NOW()
+    WHERE EXISTS (
+      SELECT 1 FROM regexp_split_to_table(
+        REGEXP_REPLACE(COALESCE(c.first_name,'') || ' ' || COALESCE(c.last_name,''), '\\([^)]*\\)\\s*', '', 'gi'),
+        '[/ \\t]+'
+      ) AS tok
+      WHERE LENGTH(TRIM(tok)) > 2
+        AND LOWER(TRIM(tok)) ~* '[0-9]b(t|e)?[0-9]*$'
+    )
+    AND NOT ('bet30' = ANY(COALESCE(platforms, ARRAY[]::text[])))
+  `)
+
   const failed = results.filter(r => !r.ok)
   return NextResponse.json({
     ok: failed.length === 0,

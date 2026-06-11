@@ -33,7 +33,7 @@ async function runFixPlatforms() {
   }
 
   try {
-    // Step 1: Update trigger with full DB-lookup logic for both platforms
+    // Step 1: Update trigger — tokenized regex (digit before suffix) + DB lookup
     await run('trigger_update', `
       CREATE OR REPLACE FUNCTION compute_contact_platforms()
       RETURNS trigger AS $$
@@ -45,42 +45,86 @@ async function runFixPlatforms() {
         v_cleaned := REGEXP_REPLACE(v_full, '\\([^)]*\\)\\s*', '', 'gi');
 
         NEW.platforms := ARRAY_REMOVE(ARRAY[
-          CASE WHEN EXISTS (
-            SELECT 1 FROM casino_players cp
-            JOIN LATERAL regexp_split_to_table(v_cleaned, '[/ \\t]+') AS tok ON true
-            WHERE LENGTH(TRIM(tok)) > 1
-              AND cp.username_lower = LOWER(TRIM(tok))
-              AND cp.agente = ANY(ARRAY['bigwin','ofizeus','betcoin','royal','farabet'])
-          ) THEN 'zeus' END,
-          CASE WHEN EXISTS (
-            SELECT 1 FROM casino_players cp
-            JOIN LATERAL regexp_split_to_table(v_cleaned, '[/ \\t]+') AS tok ON true
-            WHERE LENGTH(TRIM(tok)) > 1
-              AND cp.username_lower = LOWER(TRIM(tok))
-              AND cp.agente = ANY(ARRAY['btcuno','btcdos','zeus','zeusroyal','bigwin'])
-          ) THEN 'bet30' END
+          CASE WHEN
+            EXISTS (
+              SELECT 1 FROM regexp_split_to_table(v_cleaned, '[/ \\t]+') AS tok
+              WHERE LENGTH(TRIM(tok)) > 2
+                AND LOWER(TRIM(tok)) ~* '[0-9]z(e|s|eus)?[0-9]*$'
+            )
+            OR EXISTS (
+              SELECT 1 FROM casino_players cp
+              JOIN LATERAL regexp_split_to_table(v_cleaned, '[/ \\t]+') AS tok ON true
+              WHERE LENGTH(TRIM(tok)) > 1
+                AND cp.username_lower = LOWER(TRIM(tok))
+                AND cp.agente = ANY(ARRAY['bigwin','ofizeus','betcoin','royal','farabet'])
+            )
+          THEN 'zeus' END,
+          CASE WHEN
+            EXISTS (
+              SELECT 1 FROM regexp_split_to_table(v_cleaned, '[/ \\t]+') AS tok
+              WHERE LENGTH(TRIM(tok)) > 2
+                AND LOWER(TRIM(tok)) ~* '[0-9]b(t|e)?[0-9]*$'
+            )
+            OR EXISTS (
+              SELECT 1 FROM casino_players cp
+              JOIN LATERAL regexp_split_to_table(v_cleaned, '[/ \\t]+') AS tok ON true
+              WHERE LENGTH(TRIM(tok)) > 1
+                AND cp.username_lower = LOWER(TRIM(tok))
+                AND cp.agente = ANY(ARRAY['btcuno','btcdos','zeus','zeusroyal','bigwin'])
+            )
+          THEN 'bet30' END
         ], NULL);
         RETURN NEW;
       END;
       $$ LANGUAGE plpgsql
     `)
 
-    // Step 2: Backfill zeus via DB lookup (catches fa/fe/f suffixes y todos los agentes)
+    // Step 2: Backfill zeus — regex (old players not in casino_players) + DB lookup
+    await run('backfill_zeus_regex', `
+      UPDATE contacts c
+      SET platforms  = array_append(platforms, 'zeus'),
+          updated_at = NOW()
+      WHERE EXISTS (
+        SELECT 1 FROM regexp_split_to_table(
+          REGEXP_REPLACE(COALESCE(c.first_name,'') || ' ' || COALESCE(c.last_name,''), '\\([^)]*\\)\\s*', '', 'gi'),
+          '[/ \\t]+'
+        ) AS tok
+        WHERE LENGTH(TRIM(tok)) > 2
+          AND LOWER(TRIM(tok)) ~* '[0-9]z(e|s|eus)?[0-9]*$'
+      )
+      AND NOT ('zeus' = ANY(COALESCE(platforms, ARRAY[]::text[])))
+    `)
+
     await run('backfill_zeus_db', `
       UPDATE contacts c
       SET platforms  = array_append(platforms, 'zeus'),
           updated_at = NOW()
       WHERE ${TOKEN_JOIN(ZEUS_AGENTS)}
-        AND NOT ('zeus' = ANY(platforms))
+        AND NOT ('zeus' = ANY(COALESCE(platforms, ARRAY[]::text[])))
     `)
 
-    // Step 3: Backfill bet30 via DB lookup
+    // Step 3: Backfill bet30 — regex + DB lookup
+    await run('backfill_bet30_regex', `
+      UPDATE contacts c
+      SET platforms  = array_append(platforms, 'bet30'),
+          updated_at = NOW()
+      WHERE EXISTS (
+        SELECT 1 FROM regexp_split_to_table(
+          REGEXP_REPLACE(COALESCE(c.first_name,'') || ' ' || COALESCE(c.last_name,''), '\\([^)]*\\)\\s*', '', 'gi'),
+          '[/ \\t]+'
+        ) AS tok
+        WHERE LENGTH(TRIM(tok)) > 2
+          AND LOWER(TRIM(tok)) ~* '[0-9]b(t|e)?[0-9]*$'
+      )
+      AND NOT ('bet30' = ANY(COALESCE(platforms, ARRAY[]::text[])))
+    `)
+
     await run('backfill_bet30_db', `
       UPDATE contacts c
       SET platforms  = array_append(platforms, 'bet30'),
           updated_at = NOW()
       WHERE ${TOKEN_JOIN(BET30_AGENTS)}
-        AND NOT ('bet30' = ANY(platforms))
+        AND NOT ('bet30' = ANY(COALESCE(platforms, ARRAY[]::text[])))
     `)
 
   } finally {
