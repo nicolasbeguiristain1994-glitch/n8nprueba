@@ -79,6 +79,7 @@ export default function Lines() {
   const isAdmin = user?.role === 'admin'
 
   const [lines, setLines]         = useState<Line[]>([])
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [metaConfigured, setMetaConfigured] = useState(false)
   const [metaAppId,      setMetaAppId]      = useState('')
   const [metaConfigId,   setMetaConfigId]   = useState('')
@@ -269,11 +270,15 @@ export default function Lines() {
     fetchJson<{ lines: Line[], metaConfigured?: boolean, metaAppId?: string, metaConfigId?: string }>('/api/lines')
       .then(d => {
         setLines(d.lines || [])
+        setLoadError(null)
         setMetaConfigured(d.metaConfigured ?? false)
         setMetaAppId(d.metaAppId ?? '')
         setMetaConfigId(d.metaConfigId ?? '')
       })
-      .catch(() => { /* error transitorio — no limpiar la lista */ })
+      .catch((e) => {
+        console.error('[lines] load error:', e)
+        setLoadError(e instanceof Error ? e.message : 'Error al cargar líneas')
+      })
       .finally(() => setLoading(false))
   }, [])
 
@@ -628,6 +633,17 @@ export default function Lines() {
           </Button>
         </div>
       </div>
+
+      {/* Error al cargar */}
+      {loadError && (
+        <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          <AlertCircle size={16} className="shrink-0" />
+          <span className="flex-1">Error al cargar las líneas: <span className="font-mono">{loadError}</span></span>
+          <Button size="sm" variant="outline" className="text-red-700 border-red-300 hover:bg-red-100" onClick={load}>
+            Reintentar
+          </Button>
+        </div>
+      )}
 
       {/* Resumen */}
       <div className="grid grid-cols-4 gap-4">
