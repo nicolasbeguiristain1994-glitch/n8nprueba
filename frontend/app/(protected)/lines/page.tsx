@@ -344,7 +344,12 @@ export default function Lines() {
         stopPoll(); setCanCreate(data.canCreate ?? false); setQrState('not-found'); return
       }
       if (data.state === 'connecting') {
-        setQrState('connecting'); return
+        // Evolution/Baileys pone la instancia en 'connecting' inmediatamente al
+        // llamar /instance/connect (antes de que el usuario escanee). Si seguimos
+        // mostrando el QR, NO cambiamos el estado para que el usuario pueda escanear.
+        // Si ya estábamos en 'connecting', lo mantenemos.
+        setQrState(prev => prev === 'qr' ? 'qr' : 'connecting')
+        return
       }
       // state === 'close' → esperando scan, no hacer nada
     } catch {
@@ -1387,12 +1392,6 @@ export default function Lines() {
                 <label className="text-xs font-medium text-gray-700">Nombre para mostrar</label>
                 <Input placeholder="ej: Línea 01" value={addDisplayName}
                   onChange={e => setAddDisplayName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && addLine()} />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-700">Teléfono <span className="text-gray-400 font-normal">(opcional)</span></label>
-                <Input placeholder="ej: +5491168618237" value={addPhone}
-                  onChange={e => setAddPhone(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && addLine()} />
               </div>
               {addError && (
