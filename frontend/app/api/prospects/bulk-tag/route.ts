@@ -4,14 +4,17 @@ import { isUUID } from '@/lib/validate'
 import { checkPermissionWithUser } from '@/lib/permissions'
 
 // POST /api/prospects/bulk-tag
-// Modo IDs:      { tag: string, ids: string[] }
-// Modo filtros:  { tag: string, filters: { q?, status?, stage?, batch_id?, list_id? } }
+// Modo add por IDs:     { tag, mode?: 'add', ids: string[] }
+// Modo add por filtros: { tag, mode?: 'add', filters: {...} }
+// Modo remove por IDs:  { tag, mode: 'remove', ids: string[] }
+// Modo remove por filtros: { tag, mode: 'remove', filters: {...} }
 export async function POST(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'contacts', 'manage')
   if (!auth.ok) return auth.response
 
   let body: {
     tag?:     string
+    mode?:    'add' | 'remove'
     ids?:     string[]
     filters?: { q?: string; status?: string; stage?: string; batch_id?: string; list_id?: string }
   }
@@ -22,6 +25,15 @@ export async function POST(req: NextRequest) {
   const tag = (body.tag || '').trim().toLowerCase().slice(0, 100)
   if (!tag) return NextResponse.json({ error: 'tag requerido' }, { status: 400 })
   if (!/^[a-z0-9_\-: ]+$/.test(tag)) return NextResponse.json({ error: 'tag inválido' }, { status: 400 })
+
+  const mode = body.mode === 'remove' ? 'remove' : 'add'
+
+  // SQL según el modo:
+  // add:    array_append + solo actualiza si el tag no existe aún
+  // remove: array_remove + solo actualiza si el tag existe
+  const tagSql = mode === 'add'
+    ? { set: `array_append(COALESCE(tags, '{}'), $1)`,    guard: `NOT (COALESCE(tags, '{}') @> ARRAY[$1]::text[])` }
+    : { set: `array_remove(COALESCE(tags, '{}'), $1)`,    guard: `(COALESCE(tags, '{}') @> ARRAY[$1]::text[])` }
 
   try {
     // ── Modo filtros: "Seleccionar todos" ─────────────────────────────────────
@@ -44,15 +56,14 @@ export async function POST(req: NextRequest) {
       const [{ count }] = await query<{ count: string }>(
         `WITH updated AS (
            UPDATE prospects
-           SET tags = array_append(COALESCE(tags, '{}'), $1)
-           WHERE ${where}
-             AND NOT (COALESCE(tags, '{}') @> ARRAY[$1]::text[])
+           SET tags = ${tagSql.set}
+           WHERE ${where} AND ${tagSql.guard}
            RETURNING 1
          )
          SELECT COUNT(*)::text AS count FROM updated`,
         params,
       )
-      return NextResponse.json({ tagged: Number(count) })
+      return NextResponse.json({ count: Number(count) })
     }
 
     // ── Modo IDs: selección manual ────────────────────────────────────────────
@@ -62,15 +73,14 @@ export async function POST(req: NextRequest) {
     const [{ count }] = await query<{ count: string }>(
       `WITH updated AS (
          UPDATE prospects
-         SET tags = array_append(COALESCE(tags, '{}'), $1)
-         WHERE id = ANY($2::uuid[])
-           AND NOT (COALESCE(tags, '{}') @> ARRAY[$1]::text[])
+         SET tags = ${tagSql.set}
+         WHERE id = ANY($2::uuid[]) AND ${tagSql.guard}
          RETURNING 1
        )
        SELECT COUNT(*)::text AS count FROM updated`,
       [tag, ids],
     )
-    return NextResponse.json({ tagged: Number(count) })
+    return NextResponse.json({ count: Number(count) })
   } catch (e) {
     console.error('[prospects/bulk-tag]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

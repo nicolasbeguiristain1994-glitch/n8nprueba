@@ -180,6 +180,7 @@ export function ProspectsTab() {
   const [tagProspectsOpen, setTagProspectsOpen]   = useState(false)
   const [tagProspectsInput, setTagProspectsInput] = useState('')
   const [tagProspectsSaving, setTagProspectsSaving] = useState(false)
+  const [tagProspectsMode, setTagProspectsMode]   = useState<'add' | 'remove'>('add')
 
   // ── Blacklist
   const [blacklistSaving, setBlacklistSaving] = useState(false)
@@ -708,22 +709,22 @@ export function ProspectsTab() {
     if (!tag) return
     setTagProspectsSaving(true)
     try {
-      // selectAllMode → etiqueta TODOS los que coincidan con los filtros activos
-      const bodyPayload = selectAllMode
-        ? { tag, filters: { q: search, status: filterStatus, stage: filterStage, batch_id: filterBatch, list_id: filterList } }
-        : { tag, ids: [...selected] }
+      const base = selectAllMode
+        ? { tag, mode: tagProspectsMode, filters: { q: search, status: filterStatus, stage: filterStage, batch_id: filterBatch, list_id: filterList } }
+        : { tag, mode: tagProspectsMode, ids: [...selected] }
 
       const res = await fetch('/api/prospects/bulk-tag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(bodyPayload),
+        body: JSON.stringify(base),
       })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) {
         showInfo({ title: 'Error', message: d.error || 'Error al aplicar etiqueta.', variant: 'error' })
         return
       }
-      showInfo({ title: 'Etiqueta aplicada', message: `${d.tagged} prospecto(s) etiquetados como "${tag}".`, variant: 'success' })
+      const verb = tagProspectsMode === 'remove' ? 'eliminada de' : 'aplicada a'
+      showInfo({ title: 'Listo', message: `Etiqueta "${tag}" ${verb} ${d.count} prospecto(s).`, variant: 'success' })
       setTagProspectsOpen(false)
       setTagProspectsInput('')
       load()
@@ -1167,11 +1168,19 @@ export function ProspectsTab() {
             )}
             <Button
               size="sm" variant="outline"
-              onClick={() => { setTagProspectsOpen(true); setTagProspectsInput('') }}
+              onClick={() => { setTagProspectsMode('add'); setTagProspectsOpen(true); setTagProspectsInput('') }}
               className="border-violet-200 text-violet-700 hover:bg-violet-50"
             >
               <Tag className="h-4 w-4 mr-1" />
               {selectAllMode ? `Etiquetar todos (${total.toLocaleString()})` : `Etiquetar (${selected.size})`}
+            </Button>
+            <Button
+              size="sm" variant="outline"
+              onClick={() => { setTagProspectsMode('remove'); setTagProspectsOpen(true); setTagProspectsInput('') }}
+              className="border-rose-200 text-rose-700 hover:bg-rose-50"
+            >
+              <Tag className="h-4 w-4 mr-1" />
+              {selectAllMode ? `Quitar etiqueta (todos)` : `Quitar etiqueta (${selected.size})`}
             </Button>
             <Button
               size="sm" variant="outline"
@@ -2158,15 +2167,20 @@ export function ProspectsTab() {
         </div>
       )}
 
-      {/* ── Modal etiquetar prospectos ── */}
+      {/* ── Modal etiquetar / quitar etiqueta ── */}
       <Dialog open={tagProspectsOpen} onOpenChange={v => { if (!tagProspectsSaving) setTagProspectsOpen(v) }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Etiquetar {selectAllMode ? `${total.toLocaleString()} (todos)` : selected.size} prospecto(s)</DialogTitle>
+            <DialogTitle>
+              {tagProspectsMode === 'remove' ? 'Quitar etiqueta' : 'Etiquetar'}{' '}
+              {selectAllMode ? `${total.toLocaleString()} (todos)` : selected.size} prospecto(s)
+            </DialogTitle>
           </DialogHeader>
           <div className="py-2 space-y-2">
             <p className="text-sm text-muted-foreground">
-              Se agregará la etiqueta a todos los prospectos seleccionados sin reemplazar las existentes.
+              {tagProspectsMode === 'remove'
+                ? 'Se eliminará la etiqueta de todos los prospectos seleccionados que la tengan.'
+                : 'Se agregará la etiqueta a todos los prospectos seleccionados sin reemplazar las existentes.'}
             </p>
             <Input
               placeholder="Ej: difundido, pendiente, junio…"
@@ -2178,8 +2192,14 @@ export function ProspectsTab() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setTagProspectsOpen(false)} disabled={tagProspectsSaving}>Cancelar</Button>
-            <Button onClick={applyTagToProspects} disabled={tagProspectsSaving || !tagProspectsInput.trim()}>
-              {tagProspectsSaving ? 'Aplicando…' : 'Aplicar etiqueta'}
+            <Button
+              onClick={applyTagToProspects}
+              disabled={tagProspectsSaving || !tagProspectsInput.trim()}
+              variant={tagProspectsMode === 'remove' ? 'destructive' : 'default'}
+            >
+              {tagProspectsSaving
+                ? (tagProspectsMode === 'remove' ? 'Quitando…' : 'Aplicando…')
+                : (tagProspectsMode === 'remove' ? 'Quitar etiqueta' : 'Aplicar etiqueta')}
             </Button>
           </DialogFooter>
         </DialogContent>
