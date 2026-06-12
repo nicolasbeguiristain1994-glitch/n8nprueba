@@ -273,7 +273,7 @@ export default function Lines() {
         setMetaAppId(d.metaAppId ?? '')
         setMetaConfigId(d.metaConfigId ?? '')
       })
-      .catch(() => setLines([]))
+      .catch(() => { /* error transitorio — no limpiar la lista */ })
       .finally(() => setLoading(false))
   }, [])
 
@@ -337,7 +337,11 @@ export default function Lines() {
       const data = await res.json()
 
       if (data.connected) {
-        setQrState('connected'); stopPoll(); load(); return
+        setQrState('connected'); stopPoll()
+        load()
+        // Reintento: si la primera carga falla por error transitorio, reintenta
+        setTimeout(() => load(), 1500)
+        return
       }
       if (data.notFound) {
         // La instancia desapareció de Evolution durante el polling
