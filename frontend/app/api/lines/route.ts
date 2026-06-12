@@ -45,8 +45,9 @@ export async function GET(req: NextRequest) {
     const metaConfigured = !!metaConfigId
     return NextResponse.json({ lines, metaConfigured, metaAppId, metaConfigId })
   } catch (e) {
-    console.error('[/api/lines GET]', e instanceof Error ? e.message : e)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error('[/api/lines GET]', msg)
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
 
