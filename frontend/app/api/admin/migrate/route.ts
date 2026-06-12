@@ -58,6 +58,130 @@ export async function POST(req: NextRequest) {
       ADD COLUMN IF NOT EXISTS evolution_url TEXT
   `)
 
+  // ── 067: cloud_numbers table ──────────────────────────────────────────────
+  await run('067a: create cloud_numbers table', `
+    CREATE TABLE IF NOT EXISTS cloud_numbers (
+      id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      waba_id              TEXT NOT NULL,
+      phone_number_id      TEXT NOT NULL UNIQUE,
+      display_phone        TEXT NOT NULL,
+      verified_name        TEXT,
+      access_token         TEXT NOT NULL DEFAULT '',
+      token_expires_at     TIMESTAMPTZ,
+      status               TEXT NOT NULL DEFAULT 'pending',
+      coexistence_enabled  BOOLEAN NOT NULL DEFAULT true,
+      contacts_synced      BOOLEAN NOT NULL DEFAULT false,
+      history_synced       BOOLEAN NOT NULL DEFAULT false,
+      history_sync_days    INT DEFAULT 180,
+      quality_rating       TEXT DEFAULT 'GREEN',
+      messaging_limit_tier TEXT DEFAULT 'TIER_1K',
+      whatsapp_line_id     UUID REFERENCES whatsapp_lines(id) ON DELETE SET NULL,
+      onboarded_by         UUID REFERENCES users(id) ON DELETE SET NULL,
+      onboarded_at         TIMESTAMPTZ,
+      created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+  await run('067b: cloud_numbers indexes', `
+    CREATE INDEX IF NOT EXISTS idx_cloud_numbers_waba   ON cloud_numbers(waba_id);
+    CREATE INDEX IF NOT EXISTS idx_cloud_numbers_status ON cloud_numbers(status);
+    CREATE INDEX IF NOT EXISTS idx_cloud_numbers_line   ON cloud_numbers(whatsapp_line_id)
+  `)
+  await run('067c: create cloud_sync_state table', `
+    CREATE TABLE IF NOT EXISTS cloud_sync_state (
+      phone_number_id TEXT PRIMARY KEY REFERENCES cloud_numbers(phone_number_id) ON DELETE CASCADE,
+      last_webhook_at TIMESTAMPTZ,
+      sync_error      TEXT,
+      updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+
+  // ── 073: line ownership + visibility function ─────────────────────────────
+  await run('073a: users hierarchy columns', `
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN NOT NULL DEFAULT false,
+      ADD COLUMN IF NOT EXISTS manager_id     UUID REFERENCES users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS created_by     UUID REFERENCES users(id) ON DELETE SET NULL
+  `)
+  await run('073b: users hierarchy indexes', `
+    CREATE INDEX IF NOT EXISTS idx_users_manager    ON users(manager_id)     WHERE manager_id    IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_users_superadmin ON users(is_super_admin) WHERE is_super_admin = true
+  `)
+  await run('073c: whatsapp_lines.owner_user_id', `
+    ALTER TABLE whatsapp_lines
+      ADD COLUMN IF NOT EXISTS owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS idx_lines_owner ON whatsapp_lines(owner_user_id)
+  `)
+  await run('073d: create line_grants table', `
+    CREATE TABLE IF NOT EXISTS line_grants (
+      id         UUID        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+      line_id    UUID        NOT NULL REFERENCES whatsapp_lines(id) ON DELETE CASCADE,
+      granted_to UUID        NOT NULL REFERENCES users(id)          ON DELETE CASCADE,
+      granted_by UUID        NOT NULL REFERENCES users(id)          ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT uq_line_grant UNIQUE (line_id, granted_to)
+    );
+    CREATE INDEX IF NOT EXISTS idx_line_grants_line_id    ON line_grants(line_id);
+    CREATE INDEX IF NOT EXISTS idx_line_grants_granted_to ON line_grants(granted_to);
+    CREATE INDEX IF NOT EXISTS idx_line_grants_granted_by ON line_grants(granted_by)
+  `)
+  await run('073e: create get_accessible_line_ids function', `
+    CREATE OR REPLACE FUNCTION get_accessible_line_ids(p_user_id UUID)
+    RETURNS SETOF UUID
+    LANGUAGE plpgsql STABLE SECURITY INVOKER AS $$
+    DECLARE
+      v_role     text;
+      v_is_super BOOLEAN;
+    BEGIN
+      SELECT role::text, is_super_admin
+        INTO v_role, v_is_super
+        FROM users
+       WHERE id = p_user_id AND is_active = true;
+      IF NOT FOUND THEN RETURN; END IF;
+      IF v_is_super THEN
+        RETURN QUERY SELECT id FROM whatsapp_lines;
+        RETURN;
+      END IF;
+      IF v_role = 'admin' THEN
+        RETURN QUERY
+          WITH my_operators AS (
+            SELECT id FROM users WHERE manager_id = p_user_id AND is_active = true
+          )
+          SELECT DISTINCT wl.id FROM whatsapp_lines wl
+          WHERE wl.owner_user_id = p_user_id
+             OR wl.owner_user_id IN (SELECT id FROM my_operators)
+             OR wl.owner_user_id IS NULL
+             OR EXISTS (
+               SELECT 1 FROM line_grants lg
+               WHERE lg.line_id = wl.id AND lg.granted_to IN (SELECT id FROM my_operators)
+             );
+        RETURN;
+      END IF;
+      RETURN QUERY
+        SELECT DISTINCT wl.id FROM whatsapp_lines wl
+        WHERE wl.owner_user_id = p_user_id
+           OR EXISTS (
+             SELECT 1 FROM line_grants lg
+             WHERE lg.line_id = wl.id AND lg.granted_to = p_user_id
+           );
+    END;
+    $$
+  `)
+
+  // ── 089: whatsapp_lines.line_type ─────────────────────────────────────────
+  await run('089: add line_type to whatsapp_lines', `
+    ALTER TABLE whatsapp_lines
+      ADD COLUMN IF NOT EXISTS line_type TEXT NOT NULL DEFAULT 'evolution'
+  `)
+
+  // ── 090: cloud_numbers chatwoot fields ────────────────────────────────────
+  await run('090: add chatwoot fields to cloud_numbers', `
+    ALTER TABLE cloud_numbers
+      ADD COLUMN IF NOT EXISTS chatwoot_inbox_id   TEXT UNIQUE,
+      ADD COLUMN IF NOT EXISTS chatwoot_inbox_name TEXT,
+      ADD COLUMN IF NOT EXISTS chatwoot_created_at TIMESTAMPTZ
+  `)
+
   // ── 109: casino_accounts column ───────────────────────────────────────────
   await run('109a: add casino_accounts column', `
     ALTER TABLE contacts
