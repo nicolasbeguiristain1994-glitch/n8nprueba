@@ -535,10 +535,10 @@ export default function Lines() {
       // Si la instancia ya existe (409) mostrar el QR igual (paso evolution-qr dentro del wizard)
       if (res.status === 409 && data.id) {
         setAddStep('evolution-qr')
-        // Iniciar fetch del QR dentro del mismo wizard
         setQrState('loading'); setQrBase64(null); setQrError(null); setQrExpiresAt(null)
         const inst = addInstance.trim()
-        fetchQr(inst, false).then(done => {
+        // restart=true: fuerza DELETE+CREATE en Evolution para limpiar sesiones previas
+        fetchQr(inst, true).then(done => {
           if (!done) {
             stopPoll()
             pollRef.current = setInterval(() => pollStatus(inst), STATUS_INTERVAL_MS)
@@ -554,7 +554,8 @@ export default function Lines() {
       setAddStep('evolution-qr')
       setQrState('loading'); setQrBase64(null); setQrError(null); setQrExpiresAt(null)
       const inst = addInstance.trim()
-      fetchQr(inst, false).then(done => {
+      // restart=true: fuerza creación limpia en Evolution (DELETE si existe + CREATE)
+      fetchQr(inst, true).then(done => {
         if (!done) {
           stopPoll()
           pollRef.current = setInterval(() => pollStatus(inst), STATUS_INTERVAL_MS)
@@ -1419,7 +1420,7 @@ export default function Lines() {
                 <div className="flex flex-col items-center gap-3 py-8">
                   <Loader2 size={32} className="animate-spin text-gray-400" />
                   <p className="text-sm text-gray-500">
-                    {qrState === 'creating' ? 'Creando instancia en Evolution…' : 'Verificando instancia…'}
+                    {qrState === 'creating' ? 'Creando instancia en Evolution…' : 'Preparando instancia Evolution…'}
                   </p>
                 </div>
               )}
