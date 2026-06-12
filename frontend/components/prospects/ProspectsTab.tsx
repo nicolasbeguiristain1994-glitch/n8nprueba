@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import * as XLSX from 'xlsx'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -118,6 +118,10 @@ export function ProspectsTab() {
   const [filterStatus, setFilterStatus] = useState('')   // '' = todos
   const [filterStage, setFilterStage]   = useState('')   // '' = todas las etapas
   const [filterTag, setFilterTag]       = useState('')   // '' = todas las etiquetas
+  const [filterParts, setFilterParts]         = useState<number[]>([])    // partes seleccionadas (multi)
+  const [filterPartsOpen, setFilterPartsOpen] = useState(false)
+  const [knownParts, setKnownParts]           = useState<number[]>([])    // acumula partes detectadas
+  const partsMenuRef = useRef<HTMLDivElement>(null)
   const [page, setPage]             = useState(1)
   const limit = 50
 
@@ -173,6 +177,9 @@ export function ProspectsTab() {
   // ── Tags de prospecto
   const [tagsInput, setTagsInput]   = useState('')
   const [tagsSaving, setTagsSaving] = useState(false)
+  const [tagProspectsOpen, setTagProspectsOpen]   = useState(false)
+  const [tagProspectsInput, setTagProspectsInput] = useState('')
+  const [tagProspectsSaving, setTagProspectsSaving] = useState(false)
 
   // ── Blacklist
   const [blacklistSaving, setBlacklistSaving] = useState(false)
@@ -221,14 +228,27 @@ export function ProspectsTab() {
         stage:    filterStage,
         list_id:  filterList,
         tag:      filterTag,
+        parts:    filterParts.join(','),
       })
       const data = await fetchJson<{ prospects: Prospect[]; total: number }>(`/api/prospects?${q}`)
       setProspects(data.prospects ?? [])
       setTotal(data.total ?? 0)
+      if (data.prospects?.length) {
+        setKnownParts(prev => {
+          const s = new Set(prev)
+          for (const p of data.prospects) {
+            for (const t of p.tags ?? []) {
+              const m = t.match(/^parte:(\d+)$/)
+              if (m) s.add(Number(m[1]))
+            }
+          }
+          return [...s].sort((a, b) => a - b)
+        })
+      }
     } finally {
       setLoading(false)
     }
-  }, [search, page, filterBatch, filterStatus, filterStage, filterList, filterTag])
+  }, [search, page, filterBatch, filterStatus, filterStage, filterList, filterTag, filterParts])
 
   // Limpiar selección cuando cambian los filtros (pero NO al cambiar de página)
   useEffect(() => {
@@ -286,6 +306,17 @@ export function ProspectsTab() {
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [showBatchMenu])
+
+  useEffect(() => {
+    if (!filterPartsOpen) return
+    const handler = (e: MouseEvent) => {
+      if (partsMenuRef.current && !partsMenuRef.current.contains(e.target as Node)) {
+        setFilterPartsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [filterPartsOpen])
 
   // ── Selección ─────────────────────────────────────────────────────────────
 
@@ -670,6 +701,35 @@ export function ProspectsTab() {
     }
   }
 
+  // ── Etiquetar en bulk ─────────────────────────────────────────────────────
+
+  const applyTagToProspects = async () => {
+    const tag = tagProspectsInput.trim().toLowerCase().replace(/[^a-z0-9_\- :]/g, '')
+    if (!tag) return
+    setTagProspectsSaving(true)
+    try {
+      const ids = [...selected]
+      const res = await fetch('/api/prospects/bulk-tag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag, ids }),
+      })
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        showInfo({ title: 'Error', message: d.error || 'Error al aplicar etiqueta.', variant: 'error' })
+        return
+      }
+      showInfo({ title: 'Etiqueta aplicada', message: `${d.tagged} prospecto(s) etiquetados como "${tag}".`, variant: 'success' })
+      setTagProspectsOpen(false)
+      setTagProspectsInput('')
+      load()
+    } catch {
+      showInfo({ title: 'Error', message: 'Error de conexión.', variant: 'error' })
+    } finally {
+      setTagProspectsSaving(false)
+    }
+  }
+
   // ── Blacklist ─────────────────────────────────────────────────────────────
 
   const sendToBlacklist = async (phones: string[], onDone?: () => void) => {
@@ -827,17 +887,6 @@ export function ProspectsTab() {
 
   // ── UI ────────────────────────────────────────────────────────────────────
 
-  const parteChips = useMemo(() => {
-    const parts = new Set<number>()
-    for (const p of prospects) {
-      for (const t of p.tags ?? []) {
-        const m = t.match(/^parte:(\d+)$/)
-        if (m) parts.add(Number(m[1]))
-      }
-    }
-    return [...parts].sort((a, b) => a - b)
-  }, [prospects])
-
   const totalPages = Math.ceil(total / limit)
   // true si todos los de la página actual están seleccionados
   const allCurrentPageSelected = prospects.length > 0 && prospects.every(p => selected.has(p.id))
@@ -878,20 +927,45 @@ export function ProspectsTab() {
           )}
         </div>
 
-        {parteChips.map(n => (
-          <button
-            key={n}
-            type="button"
-            onClick={() => { setFilterTag(filterTag === `parte:${n}` ? '' : `parte:${n}`); setPage(1) }}
-            className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
-              filterTag === `parte:${n}`
-                ? 'bg-violet-100 border-violet-400 text-violet-700 dark:bg-violet-950/40 dark:border-violet-600 dark:text-violet-300'
-                : 'bg-gray-100 border-gray-200 text-gray-600 hover:bg-violet-50 hover:border-violet-300 hover:text-violet-700 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400'
-            }`}
-          >
-            Parte {n}
-          </button>
-        ))}
+        {knownParts.length > 0 && (
+          <div className="relative" ref={partsMenuRef}>
+            <Button
+              size="sm" variant="outline"
+              onClick={() => setFilterPartsOpen(v => !v)}
+              className={`${filterParts.length > 0 ? 'border-violet-400 bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-400' : ''}`}
+            >
+              <Tag className="h-4 w-4 mr-1" />
+              {filterParts.length > 0 ? `Partes (${filterParts.length})` : 'Partes'}
+              {filterParts.length > 0
+                ? <X className="ml-1.5 h-3 w-3 opacity-60 hover:opacity-100" onClick={e => { e.stopPropagation(); setFilterParts([]); setPage(1) }} />
+                : <ChevronDown className="ml-1 h-3 w-3 opacity-60" />}
+            </Button>
+            {filterPartsOpen && (
+              <div className="absolute left-0 top-full mt-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg z-30 w-48 py-1">
+                <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-800">
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Filtrar por parte</span>
+                </div>
+                {knownParts.map(n => {
+                  const active = filterParts.includes(n)
+                  return (
+                    <div
+                      key={n}
+                      className={`flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer ${active ? 'bg-violet-50 dark:bg-violet-950/30' : ''}`}
+                      onClick={() => { setFilterParts(prev => prev.includes(n) ? prev.filter(p => p !== n) : [...prev, n]); setPage(1) }}
+                    >
+                      <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${active ? 'bg-violet-500 border-violet-500' : 'border-gray-300 dark:border-gray-600'}`}>
+                        {active && <span className="text-white text-[10px] leading-none font-bold">✓</span>}
+                      </div>
+                      <span className={`text-sm ${active ? 'font-semibold text-violet-700 dark:text-violet-400' : 'text-gray-700 dark:text-gray-200'}`}>
+                        Parte {n}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         <Select value={filterStatus || 'all'} onValueChange={v => { setFilterStatus(!v || v === 'all' ? '' : v); setPage(1) }}>
           <SelectTrigger className="w-36">
@@ -1084,6 +1158,13 @@ export function ProspectsTab() {
                 </Button>
                 <Button size="sm" variant="outline" onClick={openAddToCampaign}>
                   <Send className="h-4 w-4 mr-1" /> Agregar a campaña ({selected.size})
+                </Button>
+                <Button
+                  size="sm" variant="outline"
+                  onClick={() => { setTagProspectsOpen(true); setTagProspectsInput('') }}
+                  className="border-violet-200 text-violet-700 hover:bg-violet-50"
+                >
+                  <Tag className="h-4 w-4 mr-1" /> Etiquetar ({selected.size})
                 </Button>
               </>
             )}
@@ -2071,6 +2152,33 @@ export function ProspectsTab() {
           </div>
         </div>
       )}
+
+      {/* ── Modal etiquetar prospectos ── */}
+      <Dialog open={tagProspectsOpen} onOpenChange={v => { if (!tagProspectsSaving) setTagProspectsOpen(v) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Etiquetar {selected.size} prospecto(s)</DialogTitle>
+          </DialogHeader>
+          <div className="py-2 space-y-2">
+            <p className="text-sm text-muted-foreground">
+              Se agregará la etiqueta a todos los prospectos seleccionados sin reemplazar las existentes.
+            </p>
+            <Input
+              placeholder="Ej: difundido, pendiente, junio…"
+              value={tagProspectsInput}
+              onChange={e => setTagProspectsInput(e.target.value.toLowerCase())}
+              onKeyDown={e => e.key === 'Enter' && applyTagToProspects()}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTagProspectsOpen(false)} disabled={tagProspectsSaving}>Cancelar</Button>
+            <Button onClick={applyTagToProspects} disabled={tagProspectsSaving || !tagProspectsInput.trim()}>
+              {tagProspectsSaving ? 'Aplicando…' : 'Aplicar etiqueta'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <DownloadContactsModal
         open={showDownloadModal}
