@@ -150,8 +150,13 @@ export async function POST(req: NextRequest) {
        evolution_instance, evo_url, ownerUserId]
     )
 
-    if (!inserted.length)
-      return NextResponse.json({ error: 'Esta instancia ya existe como línea' }, { status: 409 })
+    if (!inserted.length) {
+      const [existing] = await query<{ id: string }>(
+        `SELECT id FROM whatsapp_lines WHERE evolution_instance = $1`,
+        [evolution_instance]
+      )
+      return NextResponse.json({ error: 'Esta instancia ya existe como línea', id: existing?.id ?? null }, { status: 409 })
+    }
 
     void audit({ req, action: 'create', resource: 'lines', resource_id: inserted[0].id,
       metadata: { evolution_instance, display_name, owner_user_id: ownerUserId } })
