@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
     // ── Modo filtros: "Seleccionar todos" ─────────────────────────────────────
     if (body.filters !== undefined) {
       const f = body.filters
-      const conditions: string[] = ['deleted_at IS NULL']
+      const conditions: string[] = ['TRUE']
       const params: unknown[] = [tag]
       let p = 2
 
