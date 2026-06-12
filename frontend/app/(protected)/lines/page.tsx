@@ -553,7 +553,7 @@ export default function Lines() {
           cloud_status:                null,
         }
         closeAddFlow()
-        openQrModal(existingLine)
+        setTimeout(() => openQrModal(existingLine), 150)
         return
       }
 
@@ -589,7 +589,7 @@ export default function Lines() {
         cloud_status:                null,
       }
       closeAddFlow()
-      openQrModal(newLine)
+      setTimeout(() => openQrModal(newLine), 150)
     } catch {
       setAddError('Error de conexión')
     } finally {
