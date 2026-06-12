@@ -522,7 +522,39 @@ export default function Lines() {
       })
       const data = await res.json()
       if (!res.ok) { setAddError(data.error || 'Error al agregar'); return }
+
+      // Construir objeto de línea mínimo para abrir el QR modal inmediatamente
+      const newLine: Line = {
+        id:                          data.id,
+        evolution_instance:          addInstance.trim(),
+        display_name:                addDisplayName.trim() || addInstance.trim(),
+        phone_number:                addPhone.trim() || '',
+        line_key:                    '',
+        status:                      'active',
+        is_connected:                false,
+        sending_enabled:             true,
+        eligible:                    false,
+        line_type:                   'evolution',
+        msgs_sent_today:             0,
+        msgs_sent_hour:              0,
+        msg_per_day:                 0,
+        msg_per_hour:                0,
+        total_sent:                  0,
+        total_failed:                0,
+        priority:                    0,
+        last_seen_at:                '',
+        cloud_phone_number_id:       null,
+        cloud_waba_id:               null,
+        cloud_quality_rating:        null,
+        cloud_messaging_limit_tier:  null,
+        cloud_coexistence_enabled:   null,
+        chatwoot_inbox_id:           null,
+        chatwoot_inbox_name:         null,
+        cloud_status:                null,
+      }
       closeAddFlow()
+      load()
+      openQrModal(newLine)
     } catch {
       setAddError('Error de conexión')
     } finally {
