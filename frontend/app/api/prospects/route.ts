@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
             WHERE plm.prospect_id = p.id AND plm.prospect_list_id::text = $5
           ))
           AND ($9 = '' OR EXISTS (SELECT 1 FROM unnest(p.tags) t(tag) WHERE t.tag ILIKE '%' || $9 || '%'))
-          AND ($10::jsonb = '[]'::jsonb OR p.tags && ARRAY(SELECT jsonb_array_elements_text($10::jsonb)))
+          AND (jsonb_array_length($10::jsonb) = 0 OR COALESCE(p.tags, '{}') && ARRAY(SELECT jsonb_array_elements_text($10::jsonb)))
         ORDER BY
           CASE
             WHEN $8 = '' THEN NULL::int
@@ -85,7 +85,7 @@ export async function GET(req: NextRequest) {
             AND ($2 = '' OR p.status = $2)
             AND ($3 = '' OR p.import_batch_id::text = $3)
             AND ($7 = '' OR EXISTS (SELECT 1 FROM unnest(p.tags) t(tag) WHERE t.tag ILIKE '%' || $7 || '%'))
-            AND ($8::jsonb = '[]'::jsonb OR p.tags && ARRAY(SELECT jsonb_array_elements_text($8::jsonb)))
+            AND (jsonb_array_length($8::jsonb) = 0 OR COALESCE(p.tags, '{}') && ARRAY(SELECT jsonb_array_elements_text($8::jsonb)))
           ORDER BY
             CASE
               WHEN $6 = '' THEN NULL::int
@@ -114,7 +114,7 @@ export async function GET(req: NextRequest) {
                WHERE plm.prospect_id = p.id AND plm.prospect_list_id::text = $4
              ))
              AND ($5 = '' OR EXISTS (SELECT 1 FROM unnest(p.tags) t(tag) WHERE t.tag ILIKE '%' || $5 || '%'))
-             AND ($6::jsonb = '[]'::jsonb OR p.tags && ARRAY(SELECT jsonb_array_elements_text($6::jsonb)))`,
+             AND (jsonb_array_length($6::jsonb) = 0 OR COALESCE(p.tags, '{}') && ARRAY(SELECT jsonb_array_elements_text($6::jsonb)))`,
           [`%${search}%`, status, batchId, listId, filterTag, partTagsJson]
         )
       : await query<{ count: string }>(
@@ -128,7 +128,7 @@ export async function GET(req: NextRequest) {
                WHERE plm.prospect_id = p.id AND plm.prospect_list_id::text = $5
              ))
              AND ($6 = '' OR EXISTS (SELECT 1 FROM unnest(p.tags) t(tag) WHERE t.tag ILIKE '%' || $6 || '%'))
-             AND ($7::jsonb = '[]'::jsonb OR p.tags && ARRAY(SELECT jsonb_array_elements_text($7::jsonb)))`,
+             AND (jsonb_array_length($7::jsonb) = 0 OR COALESCE(p.tags, '{}') && ARRAY(SELECT jsonb_array_elements_text($7::jsonb)))`,
           [`%${search}%`, status, stage, batchId, listId, filterTag, partTagsJson]
         )
 

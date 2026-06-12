@@ -185,13 +185,14 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 4. Vincular prospectos al batch ───────────────────────────────────────────
-  if (resolvedBatchId && (importedCount > 0 || updatedCount > 0)) {
+  // Vincula TODOS los teléfonos del chunk al batch (incluyendo duplicados), para que
+  // filtrar por batch siempre muestre los contactos de esa importación.
+  if (resolvedBatchId && normalized.length > 0) {
     try {
       await query(
         `UPDATE prospects
          SET import_batch_id = $1
-         WHERE phone_number = ANY($2::text[])
-           AND import_batch_id IS NULL`,
+         WHERE phone_number = ANY($2::text[])`,
         [resolvedBatchId, normalized.map(r => r.phone)]
       )
     } catch (e) {
