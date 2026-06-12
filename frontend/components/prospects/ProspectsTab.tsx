@@ -143,7 +143,8 @@ export function ProspectsTab() {
   const [repeatName, setRepeatName]       = useState<string | null>(null) // nombre que se repite, si aplica
   const [mostlyNoNames, setMostlyNoNames] = useState(false) // mayoría sin nombre → ofrecer prefijo manual
   const [manualPrefix, setManualPrefix]   = useState('')    // prefijo ingresado por el usuario (ej: "Trebol")
-  const [splitParts, setSplitParts]       = useState(1)     // dividir importación en N partes etiquetadas
+  const [splitParts, setSplitParts]           = useState(1)     // dividir importación en N partes etiquetadas
+  const [replaceExisting, setReplaceExisting] = useState(false) // reemplazar datos de prospectos ya cargados
   const fileRef = useRef<HTMLInputElement>(null)
 
   // ── Modal agregar a campaña
@@ -525,14 +526,14 @@ export function ProspectsTab() {
     for (let i = 0; i < allRows.length; i += CHUNK_SIZE) chunks.push(allRows.slice(i, i + CHUNK_SIZE))
 
     let batchId: string | null = null
-    let totalImported = 0, totalDuplicates = 0, totalInvalid = 0
+    let totalImported = 0, totalUpdated = 0, totalDuplicates = 0, totalInvalid = 0
 
     try {
       for (let i = 0; i < chunks.length; i++) {
         const isFirst = i === 0
         const body: Record<string, unknown> = isFirst
-          ? { rows: chunks[i], filename: importFilename, total_rows: allRows.length }
-          : { rows: chunks[i], batch_id: batchId }
+          ? { rows: chunks[i], filename: importFilename, total_rows: allRows.length, replace: replaceExisting }
+          : { rows: chunks[i], batch_id: batchId, replace: replaceExisting }
 
         const result = await fetchJson<ProspectImportResult>('/api/prospects/import', {
           method: 'POST',
@@ -542,6 +543,7 @@ export function ProspectsTab() {
 
         if (isFirst) batchId = result.batch_id
         totalImported   += result.imported
+        totalUpdated    += result.updated ?? 0
         totalDuplicates += result.skipped_duplicates
         totalInvalid    += result.skipped_invalid
         setImportProgress(Math.round(((i + 1) / chunks.length) * 100))
@@ -550,6 +552,7 @@ export function ProspectsTab() {
       const finalResult: ProspectImportResult = {
         batch_id: batchId,
         imported: totalImported,
+        updated: totalUpdated,
         skipped_duplicates: totalDuplicates,
         skipped_invalid: totalInvalid,
         warned_existing_contacts: 0,
@@ -1459,6 +1462,32 @@ export function ProspectsTab() {
                     )}
                   </div>
                 )}
+                {/* ── Reemplazar existentes ── */}
+                <div className={`rounded-md border px-4 py-3 text-sm ${
+                  replaceExisting
+                    ? 'bg-amber-50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800'
+                    : 'bg-gray-50 border-gray-200 dark:bg-gray-800/30 dark:border-gray-700'
+                }`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className={`flex items-center gap-1.5 ${replaceExisting ? 'text-amber-700 dark:text-amber-300' : 'text-gray-600 dark:text-gray-400'}`}>
+                      <RefreshCw className="h-4 w-4 shrink-0" />
+                      <span>Reemplazar datos de contactos ya cargados</span>
+                    </div>
+                    <button
+                      type="button"
+                      className={`text-xs underline hover:no-underline shrink-0 ${replaceExisting ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400 font-medium'}`}
+                      onClick={() => setReplaceExisting(v => !v)}
+                    >
+                      {replaceExisting ? 'Quitar' : 'Activar'}
+                    </button>
+                  </div>
+                  {replaceExisting && (
+                    <p className="mt-1.5 text-xs text-amber-600 dark:text-amber-400">
+                      Los teléfonos duplicados actualizarán nombre y email en lugar de omitirse.
+                    </p>
+                  )}
+                </div>
+
                 {/* ── Dividir en partes ── */}
                 <div className={`rounded-md border px-4 py-3 text-sm space-y-2 ${
                   splitParts > 1
@@ -1525,22 +1554,51 @@ export function ProspectsTab() {
           ) : (
             <>
               <div className="space-y-3 py-2">
-                <div className="grid grid-cols-2 gap-3">
+                <div className={`grid gap-3 ${importResult.updated > 0 ? 'grid-cols-3' : 'grid-cols-2'}`}>
                   <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3">
                     <CheckCircle className="h-5 w-5 text-emerald-600 shrink-0" />
                     <div>
                       <div className="text-xl font-bold text-emerald-700">{importResult.imported.toLocaleString()}</div>
-                      <div className="text-xs text-emerald-600">importados</div>
+                      <div className="text-xs text-emerald-600">nuevos</div>
                     </div>
                   </div>
+                  {importResult.updated > 0 && (
+                    <div className="flex items-center gap-2 rounded-lg bg-blue-50 border border-blue-200 px-4 py-3">
+                      <RefreshCw className="h-5 w-5 text-blue-600 shrink-0" />
+                      <div>
+                        <div className="text-xl font-bold text-blue-700">{importResult.updated.toLocaleString()}</div>
+                        <div className="text-xs text-blue-600">actualizados</div>
+                      </div>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2 rounded-lg bg-muted/50 border px-4 py-3">
                     <XCircle className="h-5 w-5 text-muted-foreground shrink-0" />
                     <div>
                       <div className="text-xl font-bold">{(importResult.skipped_duplicates + importResult.skipped_invalid).toLocaleString()}</div>
-                      <div className="text-xs text-muted-foreground">omitidos ({importResult.skipped_duplicates} dup · {importResult.skipped_invalid} inv)</div>
+                      <div className="text-xs text-muted-foreground">
+                        {importResult.skipped_duplicates > 0 && importResult.skipped_invalid > 0
+                          ? `${importResult.skipped_duplicates} dup · ${importResult.skipped_invalid} inv`
+                          : importResult.skipped_duplicates > 0 ? 'duplicados' : 'inválidos'}
+                      </div>
                     </div>
                   </div>
                 </div>
+
+                {importResult.skipped_duplicates > 0 && !replaceExisting && (
+                  <div className="flex items-center gap-2 rounded-md bg-amber-50 border border-amber-200 px-4 py-2.5">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                    <span className="text-sm text-amber-800 flex-1">
+                      {importResult.skipped_duplicates} ya existían y fueron omitidos.
+                    </span>
+                    <button
+                      type="button"
+                      className="text-xs font-medium text-amber-700 underline hover:no-underline shrink-0"
+                      onClick={() => { setImportResult(null); setReplaceExisting(true) }}
+                    >
+                      Reimportar reemplazando
+                    </button>
+                  </div>
+                )}
 
                 {importResult.warned_existing_contacts > 0 && (
                   <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">

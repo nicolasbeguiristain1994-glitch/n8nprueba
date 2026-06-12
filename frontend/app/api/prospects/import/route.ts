@@ -36,12 +36,13 @@ export async function POST(req: NextRequest) {
     notes?:      string
     batch_id?:   string
     total_rows?: number
+    replace?:    boolean
   }
   try { body = await req.json() } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { rows = [], filename = 'importación', notes, batch_id, total_rows } = body
+  const { rows = [], filename = 'importación', notes, batch_id, total_rows, replace = false } = body
 
   if (!Array.isArray(rows) || rows.length === 0) {
     return NextResponse.json({ error: 'No se enviaron filas para importar' }, { status: 400 })
@@ -75,35 +76,66 @@ export async function POST(req: NextRequest) {
 
   const chunkTotalRows = rows.length
 
-  // ── 2. Bulk INSERT ────────────────────────────────────────────────────────────
+  // ── 2. Bulk INSERT / UPSERT ──────────────────────────────────────────────────
   let importedCount     = 0
+  let updatedCount      = 0
   let skippedDuplicates = 0
 
   if (normalized.length > 0) {
     try {
-      const [result] = await query<{ inserted: string }>(
-        `WITH input AS (
-           SELECT phone, first_name, last_name, email
-           FROM   jsonb_to_recordset($1::jsonb)
-                  AS x(phone text, first_name text, last_name text, email text)
-         ), ins AS (
-           INSERT INTO prospects (phone_number, first_name, last_name, email, source, consent_source)
-           SELECT phone, NULLIF(first_name,''), NULLIF(last_name,''), NULLIF(email,''),
-                  'csv_import', 'csv_import'
-           FROM   input
-           ON CONFLICT (phone_number) DO NOTHING
-           RETURNING id
-         )
-         SELECT COUNT(*)::text AS inserted FROM ins`,
-        [JSON.stringify(normalized.map(r => ({
-          phone:      r.phone,
-          first_name: r.first_name,
-          last_name:  r.last_name,
-          email:      r.email,
-        })))]
-      )
-      importedCount     = Number(result?.inserted ?? 0)
-      skippedDuplicates = normalized.length - importedCount
+      const jsonInput = JSON.stringify(normalized.map(r => ({
+        phone:      r.phone,
+        first_name: r.first_name,
+        last_name:  r.last_name,
+        email:      r.email,
+      })))
+
+      if (replace) {
+        const [result] = await query<{ inserted: string; updated: string }>(
+          `WITH input AS (
+             SELECT phone, first_name, last_name, email
+             FROM   jsonb_to_recordset($1::jsonb)
+                    AS x(phone text, first_name text, last_name text, email text)
+           ), ins AS (
+             INSERT INTO prospects (phone_number, first_name, last_name, email, source, consent_source)
+             SELECT phone, NULLIF(first_name,''), NULLIF(last_name,''), NULLIF(email,''),
+                    'csv_import', 'csv_import'
+             FROM   input
+             ON CONFLICT (phone_number) DO UPDATE SET
+               first_name = EXCLUDED.first_name,
+               last_name  = EXCLUDED.last_name,
+               email      = EXCLUDED.email,
+               updated_at = NOW()
+             RETURNING id, (xmax = 0) AS is_new
+           )
+           SELECT
+             COUNT(*) FILTER (WHERE is_new)::text  AS inserted,
+             COUNT(*) FILTER (WHERE NOT is_new)::text AS updated
+           FROM ins`,
+          [jsonInput]
+        )
+        importedCount = Number(result?.inserted ?? 0)
+        updatedCount  = Number(result?.updated  ?? 0)
+      } else {
+        const [result] = await query<{ inserted: string }>(
+          `WITH input AS (
+             SELECT phone, first_name, last_name, email
+             FROM   jsonb_to_recordset($1::jsonb)
+                    AS x(phone text, first_name text, last_name text, email text)
+           ), ins AS (
+             INSERT INTO prospects (phone_number, first_name, last_name, email, source, consent_source)
+             SELECT phone, NULLIF(first_name,''), NULLIF(last_name,''), NULLIF(email,''),
+                    'csv_import', 'csv_import'
+             FROM   input
+             ON CONFLICT (phone_number) DO NOTHING
+             RETURNING id
+           )
+           SELECT COUNT(*)::text AS inserted FROM ins`,
+          [jsonInput]
+        )
+        importedCount     = Number(result?.inserted ?? 0)
+        skippedDuplicates = normalized.length - importedCount
+      }
     } catch (e) {
       console.error('[prospects/import] bulk insert error', e instanceof Error ? e.message : e)
       return NextResponse.json({ error: 'Error al insertar prospectos' }, { status: 500 })
@@ -125,7 +157,7 @@ export async function POST(req: NextRequest) {
         [
           filename,
           total_rows ?? chunkTotalRows,
-          importedCount,
+          importedCount + updatedCount,
           skippedDuplicates,
           skippedInvalid,
           auth.user.user_id,
@@ -145,7 +177,7 @@ export async function POST(req: NextRequest) {
              skipped_duplicates = skipped_duplicates + $3,
              skipped_invalid    = skipped_invalid    + $4
          WHERE id = $1`,
-        [batch_id, importedCount, skippedDuplicates, skippedInvalid]
+        [batch_id, importedCount + updatedCount, skippedDuplicates, skippedInvalid]
       )
     } catch (e) {
       console.error('[prospects/import] batch update error', e instanceof Error ? e.message : e)
@@ -153,7 +185,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 4. Vincular prospectos al batch ───────────────────────────────────────────
-  if (resolvedBatchId && importedCount > 0) {
+  if (resolvedBatchId && (importedCount > 0 || updatedCount > 0)) {
     try {
       await query(
         `UPDATE prospects
@@ -194,6 +226,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     batch_id:           resolvedBatchId,
     imported:           importedCount,
+    updated:            updatedCount,
     skipped_duplicates: skippedDuplicates,
     skipped_invalid:    skippedInvalid,
     total_rows:         chunkTotalRows,

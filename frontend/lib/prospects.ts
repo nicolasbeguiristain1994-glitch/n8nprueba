@@ -43,6 +43,7 @@ export interface ProspectImportBatch {
 export interface ProspectImportResult {
   batch_id:                 string | null
   imported:                 number
+  updated:                  number
   skipped_duplicates:       number
   skipped_invalid:          number
   warned_existing_contacts: number
