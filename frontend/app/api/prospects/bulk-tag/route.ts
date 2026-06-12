@@ -4,12 +4,17 @@ import { isUUID } from '@/lib/validate'
 import { checkPermissionWithUser } from '@/lib/permissions'
 
 // POST /api/prospects/bulk-tag
-// Body: { tag: string, ids: string[] }
+// Modo IDs:      { tag: string, ids: string[] }
+// Modo filtros:  { tag: string, filters: { q?, status?, stage?, batch_id?, list_id? } }
 export async function POST(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'contacts', 'manage')
   if (!auth.ok) return auth.response
 
-  let body: { tag?: string; ids?: string[] }
+  let body: {
+    tag?:     string
+    ids?:     string[]
+    filters?: { q?: string; status?: string; stage?: string; batch_id?: string; list_id?: string }
+  }
   try { body = await req.json() } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
@@ -18,10 +23,42 @@ export async function POST(req: NextRequest) {
   if (!tag) return NextResponse.json({ error: 'tag requerido' }, { status: 400 })
   if (!/^[a-z0-9_\-: ]+$/.test(tag)) return NextResponse.json({ error: 'tag inválido' }, { status: 400 })
 
-  const ids = (body.ids ?? []).filter(isUUID)
-  if (!ids.length) return NextResponse.json({ error: 'ids requeridos' }, { status: 400 })
-
   try {
+    // ── Modo filtros: "Seleccionar todos" ─────────────────────────────────────
+    if (body.filters !== undefined) {
+      const f = body.filters
+      const conditions: string[] = ['deleted_at IS NULL']
+      const params: unknown[] = [tag]
+      let p = 2
+
+      if (f.q)        { conditions.push(`(phone_number ILIKE $${p} OR first_name ILIKE $${p} OR last_name ILIKE $${p})`); params.push(`%${f.q}%`); p++ }
+      if (f.status)   { conditions.push(`status = $${p++}`);    params.push(f.status) }
+      if (f.stage)    { conditions.push(`stage = $${p++}`);     params.push(f.stage) }
+      if (f.batch_id && isUUID(f.batch_id)) { conditions.push(`batch_id = $${p++}`); params.push(f.batch_id) }
+      if (f.list_id  && isUUID(f.list_id))  {
+        conditions.push(`id IN (SELECT prospect_id FROM prospect_list_members WHERE list_id = $${p++}::uuid)`)
+        params.push(f.list_id)
+      }
+
+      const where = conditions.join(' AND ')
+      const [{ count }] = await query<{ count: string }>(
+        `WITH updated AS (
+           UPDATE prospects
+           SET tags = array_append(COALESCE(tags, '{}'), $1)
+           WHERE ${where}
+             AND NOT (COALESCE(tags, '{}') @> ARRAY[$1]::text[])
+           RETURNING 1
+         )
+         SELECT COUNT(*)::text AS count FROM updated`,
+        params,
+      )
+      return NextResponse.json({ tagged: Number(count) })
+    }
+
+    // ── Modo IDs: selección manual ────────────────────────────────────────────
+    const ids = (body.ids ?? []).filter(isUUID)
+    if (!ids.length) return NextResponse.json({ error: 'ids o filters requeridos' }, { status: 400 })
+
     const [{ count }] = await query<{ count: string }>(
       `WITH updated AS (
          UPDATE prospects
@@ -31,7 +68,7 @@ export async function POST(req: NextRequest) {
          RETURNING 1
        )
        SELECT COUNT(*)::text AS count FROM updated`,
-      [tag, ids]
+      [tag, ids],
     )
     return NextResponse.json({ tagged: Number(count) })
   } catch (e) {

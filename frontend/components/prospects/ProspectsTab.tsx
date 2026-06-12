@@ -708,11 +708,15 @@ export function ProspectsTab() {
     if (!tag) return
     setTagProspectsSaving(true)
     try {
-      const ids = [...selected]
+      // selectAllMode → etiqueta TODOS los que coincidan con los filtros activos
+      const bodyPayload = selectAllMode
+        ? { tag, filters: { q: search, status: filterStatus, stage: filterStage, batch_id: filterBatch, list_id: filterList } }
+        : { tag, ids: [...selected] }
+
       const res = await fetch('/api/prospects/bulk-tag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tag, ids }),
+        body: JSON.stringify(bodyPayload),
       })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -1159,15 +1163,16 @@ export function ProspectsTab() {
                 <Button size="sm" variant="outline" onClick={openAddToCampaign}>
                   <Send className="h-4 w-4 mr-1" /> Agregar a campaña ({selected.size})
                 </Button>
-                <Button
-                  size="sm" variant="outline"
-                  onClick={() => { setTagProspectsOpen(true); setTagProspectsInput('') }}
-                  className="border-violet-200 text-violet-700 hover:bg-violet-50"
-                >
-                  <Tag className="h-4 w-4 mr-1" /> Etiquetar ({selected.size})
-                </Button>
               </>
             )}
+            <Button
+              size="sm" variant="outline"
+              onClick={() => { setTagProspectsOpen(true); setTagProspectsInput('') }}
+              className="border-violet-200 text-violet-700 hover:bg-violet-50"
+            >
+              <Tag className="h-4 w-4 mr-1" />
+              {selectAllMode ? `Etiquetar todos (${total.toLocaleString()})` : `Etiquetar (${selected.size})`}
+            </Button>
             <Button
               size="sm" variant="outline"
               onClick={blacklistSelected}
@@ -2157,7 +2162,7 @@ export function ProspectsTab() {
       <Dialog open={tagProspectsOpen} onOpenChange={v => { if (!tagProspectsSaving) setTagProspectsOpen(v) }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Etiquetar {selected.size} prospecto(s)</DialogTitle>
+            <DialogTitle>Etiquetar {selectAllMode ? `${total.toLocaleString()} (todos)` : selected.size} prospecto(s)</DialogTitle>
           </DialogHeader>
           <div className="py-2 space-y-2">
             <p className="text-sm text-muted-foreground">
