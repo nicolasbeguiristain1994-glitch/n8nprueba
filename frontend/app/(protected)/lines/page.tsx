@@ -48,7 +48,7 @@ interface Line {
 
 // connecting = QR escaneado, handshake en curso — NO regenerar QR en este estado
 type QrState = 'idle' | 'loading' | 'not-found' | 'creating' | 'qr' | 'connecting' | 'connected' | 'error'
-type AddStep = 'choose-type' | 'evolution' | 'cloud-mode' | 'cloud-signup'
+type AddStep = 'choose-type' | 'evolution' | 'evolution-qr' | 'cloud-mode' | 'cloud-signup'
 
 const EVO_MANAGER  = process.env.NEXT_PUBLIC_EVOLUTION_MANAGER_URL ?? ''
 
@@ -222,6 +222,10 @@ export default function Lines() {
     setAddStep(null); setCloudMode(null)
     setAddInstance(''); setAddDisplayName(''); setAddPhone(''); setAddError(null); setAddLoading(false)
     setCloudResult(null); setCloudError(null); setCloudLineId(''); setSdkReady(false); setCloudLoading(false)
+    // Reset QR state in case we were in the evolution-qr step
+    stopPoll()
+    setQrLine(null); setQrState('idle'); setQrBase64(null)
+    setQrError(null); setCanCreate(false); setQrExpiresAt(null)
     load()
   }
 
@@ -414,27 +418,29 @@ export default function Lines() {
 
   // ── handleRegenerate ────────────────────────────────────────────────────────
   // Para el polling de estado, hace restart + genera QR nuevo, reanuda polling.
-  const handleRegenerate = () => {
-    if (!qrLine) return
+  const handleRegenerate = (instance?: string) => {
+    const inst = instance ?? qrLine?.evolution_instance
+    if (!inst) return
     stopPoll()
     setQrState('loading')
     setQrBase64(null)
-    fetchQr(qrLine.evolution_instance, true).then(done => {
+    fetchQr(inst, true).then(done => {
       if (!done) {
-        pollRef.current = setInterval(() => pollStatus(qrLine.evolution_instance), STATUS_INTERVAL_MS)
+        pollRef.current = setInterval(() => pollStatus(inst), STATUS_INTERVAL_MS)
       }
     })
   }
 
   // ── createInstance ──────────────────────────────────────────────────────────
-  const createInstance = async () => {
-    if (!qrLine) return
+  const createInstance = async (instanceOverride?: string) => {
+    const inst = instanceOverride ?? qrLine?.evolution_instance
+    if (!inst) return
     setQrState('creating'); setQrError(null)
     try {
       const res  = await fetch('/api/lines/qr', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instance: qrLine.evolution_instance }),
+        body: JSON.stringify({ instance: inst }),
       })
       const data = await res.json()
 
@@ -454,8 +460,7 @@ export default function Lines() {
         setQrExpiresAt(Date.now() + QR_TTL_MS)
         setTimeLeft(60)
         stopPoll()
-        // Polling de estado, no de QR
-        pollRef.current = setInterval(() => pollStatus(qrLine.evolution_instance), STATUS_INTERVAL_MS)
+        pollRef.current = setInterval(() => pollStatus(inst), STATUS_INTERVAL_MS)
       } else {
         setQrError('Instancia creada pero no se pudo obtener el QR. Intentá "Obtener QR" de nuevo.')
         setQrState('not-found')
@@ -522,74 +527,35 @@ export default function Lines() {
       })
       const data = await res.json()
 
-      // Si la instancia ya existe (409) igualmente abrimos el QR para esa línea
+      // Si la instancia ya existe (409) mostrar el QR igual (paso evolution-qr dentro del wizard)
       if (res.status === 409 && data.id) {
-        const existingLine: Line = {
-          id:                          data.id,
-          evolution_instance:          addInstance.trim(),
-          display_name:                addDisplayName.trim() || addInstance.trim(),
-          phone_number:                addPhone.trim() || '',
-          line_key:                    '',
-          status:                      'active',
-          is_connected:                false,
-          sending_enabled:             true,
-          eligible:                    false,
-          line_type:                   'evolution',
-          msgs_sent_today:             0,
-          msgs_sent_hour:              0,
-          msg_per_day:                 0,
-          msg_per_hour:                0,
-          total_sent:                  0,
-          total_failed:                0,
-          priority:                    0,
-          last_seen_at:                '',
-          cloud_phone_number_id:       null,
-          cloud_waba_id:               null,
-          cloud_quality_rating:        null,
-          cloud_messaging_limit_tier:  null,
-          cloud_coexistence_enabled:   null,
-          chatwoot_inbox_id:           null,
-          chatwoot_inbox_name:         null,
-          cloud_status:                null,
-        }
-        closeAddFlow()
-        setTimeout(() => openQrModal(existingLine), 150)
+        setAddStep('evolution-qr')
+        // Iniciar fetch del QR dentro del mismo wizard
+        setQrState('loading'); setQrBase64(null); setQrError(null); setQrExpiresAt(null)
+        const inst = addInstance.trim()
+        fetchQr(inst, false).then(done => {
+          if (!done) {
+            stopPoll()
+            pollRef.current = setInterval(() => pollStatus(inst), STATUS_INTERVAL_MS)
+          }
+        })
+        load()
         return
       }
 
       if (!res.ok) { setAddError(data.error || 'Error al agregar'); return }
 
-      // Construir objeto de línea mínimo para abrir el QR modal inmediatamente
-      const newLine: Line = {
-        id:                          data.id,
-        evolution_instance:          addInstance.trim(),
-        display_name:                addDisplayName.trim() || addInstance.trim(),
-        phone_number:                addPhone.trim() || '',
-        line_key:                    '',
-        status:                      'active',
-        is_connected:                false,
-        sending_enabled:             true,
-        eligible:                    false,
-        line_type:                   'evolution',
-        msgs_sent_today:             0,
-        msgs_sent_hour:              0,
-        msg_per_day:                 0,
-        msg_per_hour:                0,
-        total_sent:                  0,
-        total_failed:                0,
-        priority:                    0,
-        last_seen_at:                '',
-        cloud_phone_number_id:       null,
-        cloud_waba_id:               null,
-        cloud_quality_rating:        null,
-        cloud_messaging_limit_tier:  null,
-        cloud_coexistence_enabled:   null,
-        chatwoot_inbox_id:           null,
-        chatwoot_inbox_name:         null,
-        cloud_status:                null,
-      }
-      closeAddFlow()
-      setTimeout(() => openQrModal(newLine), 150)
+      // Transicionar al paso QR dentro del mismo wizard (evita abrir un segundo Dialog)
+      setAddStep('evolution-qr')
+      setQrState('loading'); setQrBase64(null); setQrError(null); setQrExpiresAt(null)
+      const inst = addInstance.trim()
+      fetchQr(inst, false).then(done => {
+        if (!done) {
+          stopPoll()
+          pollRef.current = setInterval(() => pollStatus(inst), STATUS_INTERVAL_MS)
+        }
+      })
+      load()
     } catch {
       setAddError('Error de conexión')
     } finally {
@@ -604,20 +570,30 @@ export default function Lines() {
   const evolutionLines = lines.filter(l => l.line_type === 'evolution').length
 
   // Stepper: pasos y posición actual — se adapta a la rama elegida
-  const stepperSteps: string[] = addStep === 'evolution'
-    ? ['Tipo de línea', 'Configurar instancia']
-    : ['Tipo de línea', 'Modo de conexión', 'Conectar con Meta']
+  const stepperSteps: string[] =
+    addStep === 'evolution' || addStep === 'evolution-qr'
+      ? ['Tipo de línea', 'Configurar instancia', 'Vincular QR']
+      : ['Tipo de línea', 'Modo de conexión', 'Conectar con Meta']
   const stepperIndex =
-    addStep === 'evolution'    ? 1 :
-    addStep === 'cloud-mode'   ? 1 :
-    addStep === 'cloud-signup' ? 2 : 0
+    addStep === 'evolution'     ? 1 :
+    addStep === 'evolution-qr'  ? 2 :
+    addStep === 'cloud-mode'    ? 1 :
+    addStep === 'cloud-signup'  ? 2 : 0
 
   const handleStepperBack = (targetIdx: number) => {
     if (targetIdx >= stepperIndex) return
     if (targetIdx === 0) {
+      stopPoll()
+      setQrState('idle'); setQrBase64(null); setQrError(null); setCanCreate(false)
       setAddStep('choose-type'); setCloudMode(null); setAddError(null); setCloudError(null)
-    } else if (targetIdx === 1 && addStep === 'cloud-signup') {
-      setAddStep('cloud-mode'); setCloudError(null)
+    } else if (targetIdx === 1 && (addStep === 'cloud-signup' || addStep === 'evolution-qr')) {
+      if (addStep === 'evolution-qr') {
+        stopPoll()
+        setQrState('idle'); setQrBase64(null); setQrError(null); setCanCreate(false)
+        setAddStep('evolution')
+      } else {
+        setAddStep('cloud-mode'); setCloudError(null)
+      }
     }
   }
 
@@ -1301,10 +1277,11 @@ export default function Lines() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              {addStep === 'choose-type'  && <><Plus  size={16} /> Agregar línea</>}
-              {addStep === 'evolution'    && <><Zap   size={16} className="text-slate-500" /> Agregar línea Evolution</>}
-              {addStep === 'cloud-mode'   && <><Cloud size={16} className="text-blue-500"  /> WhatsApp Cloud API</>}
-              {addStep === 'cloud-signup' && <><Cloud size={16} className="text-blue-500"  /> Conectar número de WhatsApp</>}
+              {addStep === 'choose-type'   && <><Plus    size={16} /> Agregar línea</>}
+              {addStep === 'evolution'     && <><Zap    size={16} className="text-slate-500" /> Agregar línea Evolution</>}
+              {addStep === 'evolution-qr'  && <><QrCode size={16} className="text-indigo-500" /> Vincular línea Evolution</>}
+              {addStep === 'cloud-mode'    && <><Cloud  size={16} className="text-blue-500"  /> WhatsApp Cloud API</>}
+              {addStep === 'cloud-signup'  && <><Cloud  size={16} className="text-blue-500"  /> Conectar número de WhatsApp</>}
             </DialogTitle>
           </DialogHeader>
 
@@ -1432,6 +1409,125 @@ export default function Lines() {
                   Agregar
                 </Button>
               </div>
+            </div>
+          )}
+
+          {/* ── Paso 3a: QR Evolution (inline, sin abrir otro Dialog) ──────── */}
+          {addStep === 'evolution-qr' && (
+            <div className="flex flex-col items-center gap-4 py-2">
+
+              {(qrState === 'loading' || qrState === 'creating') && (
+                <div className="flex flex-col items-center gap-3 py-8">
+                  <Loader2 size={32} className="animate-spin text-gray-400" />
+                  <p className="text-sm text-gray-500">
+                    {qrState === 'creating' ? 'Creando instancia en Evolution…' : 'Verificando instancia…'}
+                  </p>
+                </div>
+              )}
+
+              {qrState === 'not-found' && (
+                <div className="w-full space-y-4">
+                  <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 text-sm">
+                    <p className="font-medium text-orange-800 mb-1">Instancia no registrada en Evolution</p>
+                    <p className="text-orange-600 text-xs">
+                      La instancia <code className="bg-orange-100 px-1 rounded font-mono">{addInstance}</code> no existe en Evolution API.
+                    </p>
+                  </div>
+                  {qrError && (
+                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-3">{qrError}</p>
+                  )}
+                  {canCreate && (
+                    <Button className="w-full bg-green-600 hover:bg-green-700 text-sm"
+                      onClick={() => createInstance(addInstance)}>
+                      Crear instancia y obtener QR
+                    </Button>
+                  )}
+                  <div className="flex gap-2">
+                    {EVO_MANAGER && (
+                      <a href={EVO_MANAGER} target="_blank" rel="noreferrer" className="flex-1">
+                        <Button variant="outline" size="sm" className="w-full text-xs">
+                          <ExternalLink size={12} className="mr-1" /> Abrir Evolution Manager
+                        </Button>
+                      </a>
+                    )}
+                    <Button size="sm" variant="outline" className="flex-1 text-xs"
+                      onClick={() => { setQrState('loading'); fetchQr(addInstance, false).then(done => { if (!done) { stopPoll(); pollRef.current = setInterval(() => pollStatus(addInstance), STATUS_INTERVAL_MS) } }) }}>
+                      <RefreshCw size={12} className="mr-1" /> Obtener QR
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {qrState === 'qr' && qrBase64 && (
+                <>
+                  <div className="border-4 border-gray-200 rounded-xl p-2 bg-white">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={qrBase64.startsWith('data:') ? qrBase64 : `data:image/png;base64,${qrBase64}`}
+                      alt="QR WhatsApp"
+                      className="w-56 h-56 object-contain"
+                    />
+                  </div>
+                  <div className="text-center space-y-1">
+                    <p className="text-sm font-medium">Escaneá con WhatsApp</p>
+                    <p className="text-xs text-gray-400">WhatsApp → Dispositivos vinculados → Vincular un dispositivo</p>
+                    {timeLeft > 10
+                      ? <p className="text-xs text-orange-500 flex items-center justify-center gap-1 mt-1">
+                          <Loader2 size={11} className="animate-spin" />Escaneá ahora · expira en {timeLeft}s
+                        </p>
+                      : timeLeft > 0
+                      ? <p className="text-xs text-red-500 font-semibold flex items-center justify-center gap-1 mt-1">
+                          <Loader2 size={11} className="animate-spin" />Apurate — expira en {timeLeft}s
+                        </p>
+                      : <p className="text-xs text-red-500 font-medium mt-1">QR expirado · hacé clic en Regenerar</p>
+                    }
+                  </div>
+                  <Button variant="outline" size="sm" className="w-full"
+                    disabled={timeLeft > 0 && timeLeft <= 3}
+                    onClick={() => handleRegenerate(addInstance)}>
+                    <RefreshCw size={13} className="mr-1" />
+                    {timeLeft === 0 ? 'Obtener nuevo QR' : 'Regenerar QR'}
+                  </Button>
+                </>
+              )}
+
+              {qrState === 'connecting' && (
+                <div className="flex flex-col items-center gap-3 py-8">
+                  <Loader2 size={36} className="animate-spin text-blue-500" />
+                  <p className="text-sm font-semibold text-blue-700">Vinculando dispositivo…</p>
+                  <p className="text-xs text-gray-500 text-center">
+                    Confirmá en tu teléfono si WhatsApp lo solicita.<br />
+                    No cierres esta ventana ni regeneres el QR.
+                  </p>
+                  <button onClick={() => handleRegenerate(addInstance)}
+                    className="mt-2 text-xs text-gray-400 underline hover:text-gray-600">
+                    ¿Sigue cargando? Forzar nuevo QR
+                  </button>
+                </div>
+              )}
+
+              {qrState === 'connected' && (
+                <div className="flex flex-col items-center gap-3 py-6">
+                  <CheckCircle size={48} className="text-green-500" />
+                  <p className="text-base font-semibold text-green-700">¡Línea conectada!</p>
+                  <p className="text-sm text-gray-500 text-center">
+                    {addDisplayName || addInstance} está lista para enviar mensajes.
+                  </p>
+                  <Button className="w-full bg-green-600 hover:bg-green-700" onClick={closeAddFlow}>Cerrar</Button>
+                </div>
+              )}
+
+              {qrState === 'error' && (
+                <div className="flex flex-col items-center gap-3 py-6">
+                  <AlertCircle size={40} className="text-red-400" />
+                  <p className="text-sm text-red-600 text-center">{qrError}</p>
+                  <Button variant="outline" size="sm"
+                    onClick={() => { setQrState('loading'); fetchQr(addInstance, false).then(done => { if (!done) { stopPoll(); pollRef.current = setInterval(() => pollStatus(addInstance), STATUS_INTERVAL_MS) } }) }}>
+                    Reintentar
+                  </Button>
+                </div>
+              )}
+
             </div>
           )}
 
@@ -1633,8 +1729,8 @@ export default function Lines() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Modal QR ── */}
-      <Dialog open={!!qrLine} onOpenChange={open => { if (!open) closeQr() }}>
+      {/* ── Modal QR — solo para líneas existentes (no para el flujo evolution-qr del wizard) ── */}
+      <Dialog open={!!qrLine && addStep === null} onOpenChange={open => { if (!open) closeQr() }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1669,7 +1765,7 @@ export default function Lines() {
                 {canCreate && (
                   <div className="border rounded-lg p-4 space-y-3">
                     <p className="text-xs font-medium text-gray-700">Crear instancia automáticamente</p>
-                    <Button className="w-full bg-green-600 hover:bg-green-700 text-sm" onClick={createInstance}>
+                    <Button className="w-full bg-green-600 hover:bg-green-700 text-sm" onClick={() => createInstance()}>
                       Crear instancia y obtener QR
                     </Button>
                   </div>
@@ -1730,7 +1826,7 @@ export default function Lines() {
                 <Button
                   variant="outline" size="sm" className="w-full"
                   disabled={timeLeft > 0 && timeLeft <= 3}
-                  onClick={handleRegenerate}
+                  onClick={() => handleRegenerate()}
                 >
                   <RefreshCw size={13} className="mr-1" />
                   {timeLeft === 0 ? 'Obtener nuevo QR' : 'Regenerar QR'}
@@ -1748,7 +1844,7 @@ export default function Lines() {
                   No cierres esta ventana ni regeneres el QR.
                 </p>
                 <button
-                  onClick={handleRegenerate}
+                  onClick={() => handleRegenerate()}
                   className="mt-2 text-xs text-gray-400 underline hover:text-gray-600"
                 >
                   ¿Sigue cargando? Forzar nuevo QR
