@@ -32,6 +32,8 @@ interface PrioritizedContact {
   isBroadcasted:       boolean
   broadcastedAt:       string | null
   broadcastedBy:       string | null
+  ltvScore:            number | null
+  ltvTier:             string | null
 }
 
 interface PaginatedResult {
@@ -566,6 +568,7 @@ export default function PrioridadesPage() {
                   <th className="px-4 py-3 text-left w-24">Agente</th>
                   <th className="px-4 py-3 text-left">Segmento</th>
                   <th className="px-4 py-3 text-left w-24">Nivel</th>
+                  <th className="px-4 py-3 text-right w-20">LTV</th>
                   <th className="px-4 py-3 text-right w-28">Días inactivo</th>
                   <th className="px-4 py-3 text-left">Plataformas</th>
                   {tab === 'broadcasted' && (
@@ -607,6 +610,19 @@ export default function PrioridadesPage() {
                       <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${TIER_STYLE[c.valueTier] ?? 'bg-gray-100 text-gray-500'}`}>
                         {TIER_LABEL[c.valueTier] ?? c.valueTier}
                       </span>
+                    </td>
+
+                    <td className="px-4 py-3 text-right">
+                      {c.ltvScore != null ? (
+                        <span
+                          title={`LTV Tier: ${TIER_LABEL[c.ltvTier ?? ''] ?? c.ltvTier ?? '—'}`}
+                          className={`inline-flex items-center justify-center w-8 h-6 rounded text-xs font-semibold tabular-nums ${TIER_STYLE[c.ltvTier ?? ''] ?? 'bg-gray-100 text-gray-500'}`}
+                        >
+                          {c.ltvScore}
+                        </span>
+                      ) : (
+                        <span className="text-gray-300 text-xs">—</span>
+                      )}
                     </td>
 
                     <td className="px-4 py-3 text-right tabular-nums text-gray-600">

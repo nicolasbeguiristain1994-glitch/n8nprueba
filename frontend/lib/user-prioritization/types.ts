@@ -18,6 +18,9 @@ export interface ContactMetricsRow {
   doNotContact:       boolean
   optInMarketing:     boolean
   deletedAt:          Date | null
+  // LTV dinámico: NULL si el contacto no tiene registro en player_ltv
+  ltvScore:           number | null
+  ltvTier:            import('./config').ValueTier | null
 }
 
 // ── Resultado del cálculo de score para un contacto ──────────────────────────
@@ -54,6 +57,8 @@ export interface ContactPriorityScore {
   skipReasons:         string[]
   runId:               string | null   // UUID de la corrida de recompute que calculó este score
   computedAt:          Date
+  ltvScore:            number | null
+  ltvTier:             import('./config').ValueTier | null
 }
 
 // ── DTO público para el listado de operadores ─────────────────────────────────
@@ -76,6 +81,8 @@ export interface PrioritizedContact {
   isBroadcasted:       boolean
   broadcastedAt:       Date | null
   broadcastedBy:       string | null
+  ltvScore:            number | null
+  ltvTier:             import('./config').ValueTier | null
 }
 
 // ── Filtros para la consulta de operadores ────────────────────────────────────

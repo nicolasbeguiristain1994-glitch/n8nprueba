@@ -38,6 +38,8 @@ function makeContact(overrides: Partial<ContactMetricsRow> = {}): ContactMetrics
     doNotContact:       false,
     optInMarketing:     true,
     deletedAt:          null,
+    ltvScore:           null,
+    ltvTier:            null,
     ...overrides,
   }
 }
@@ -66,6 +68,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
     vi.mocked(repo.upsertScores).mockResolvedValue()
     vi.mocked(repo.insertRecomputeRun).mockResolvedValue()
     vi.mocked(repo.getLastMessagedDaysMap).mockResolvedValue(new Map())
+    vi.mocked(repo.getLtvMapForContacts).mockResolvedValue(new Map())
     vi.mocked(repo.getLastCompleteRunId).mockResolvedValue(null)
   })
 
@@ -144,7 +147,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -164,7 +167,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -183,7 +186,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -200,7 +203,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -218,7 +221,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -238,7 +241,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -257,7 +260,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -273,7 +276,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -289,7 +292,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -305,7 +308,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -322,7 +325,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -341,7 +344,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -357,7 +360,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -374,7 +377,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -391,7 +394,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -408,7 +411,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -424,7 +427,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -440,7 +443,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -461,7 +464,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce([contact])
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await service.recomputeAll()
@@ -521,7 +524,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
       .mockResolvedValueOnce(contacts)
       .mockResolvedValueOnce([])
 
-    let capturedScores: Omit<ContactPriorityScore, 'id'>[] = []
+    let capturedScores: Omit<ContactPriorityScore, 'id' | 'runId'>[] = []
     vi.mocked(repo.upsertScores).mockImplementation(async (s) => { capturedScores = s })
 
     await expect(service.recomputeAll()).resolves.not.toThrow()
@@ -610,6 +613,7 @@ describe('UserPrioritizationService — heartbeat', () => {
     vi.mocked(repo.upsertScores).mockResolvedValue()
     vi.mocked(repo.insertRecomputeRun).mockResolvedValue()
     vi.mocked(repo.getLastMessagedDaysMap).mockResolvedValue(new Map())
+    vi.mocked(repo.getLtvMapForContacts).mockResolvedValue(new Map())
     vi.mocked(repo.getLastCompleteRunId).mockResolvedValue(null)
   })
 
@@ -730,6 +734,7 @@ describe('UserPrioritizationService — historial de corridas', () => {
     vi.mocked(repo.upsertScores).mockResolvedValue()
     vi.mocked(repo.insertRecomputeRun).mockResolvedValue()
     vi.mocked(repo.getLastMessagedDaysMap).mockResolvedValue(new Map())
+    vi.mocked(repo.getLtvMapForContacts).mockResolvedValue(new Map())
     vi.mocked(repo.getLastCompleteRunId).mockResolvedValue(null)
   })
 
@@ -826,6 +831,7 @@ describe('UserPrioritizationService — logging', () => {
     vi.mocked(repo.upsertScores).mockResolvedValue()
     vi.mocked(repo.insertRecomputeRun).mockResolvedValue()
     vi.mocked(repo.getLastMessagedDaysMap).mockResolvedValue(new Map())
+    vi.mocked(repo.getLtvMapForContacts).mockResolvedValue(new Map())
     vi.mocked(repo.getLastCompleteRunId).mockResolvedValue(null)
   })
 
@@ -838,7 +844,7 @@ describe('UserPrioritizationService — logging', () => {
 
     await service.recomputeAll()
 
-    const written = stdoutSpy.mock.calls.map(c => String(c[0])).join('')
+    const written = stdoutSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('')
     expect(written).toContain('prioritization_recompute_start')
   })
 
@@ -847,7 +853,7 @@ describe('UserPrioritizationService — logging', () => {
 
     await service.recomputeAll()
 
-    const written = stdoutSpy.mock.calls.map(c => String(c[0])).join('')
+    const written = stdoutSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('')
     expect(written).toContain('prioritization_recompute_end')
     expect(written).toContain('"status":"success"')
   })
@@ -860,7 +866,7 @@ describe('UserPrioritizationService — logging', () => {
 
     await service.recomputeAll()
 
-    const written = stdoutSpy.mock.calls.map(c => String(c[0])).join('')
+    const written = stdoutSpy.mock.calls.map((c: unknown[]) => String(c[0])).join('')
     expect(written).toContain('prioritization_recompute_batch')
     expect(written).toContain('"batch_num":1')
   })

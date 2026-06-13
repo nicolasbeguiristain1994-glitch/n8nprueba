@@ -45,6 +45,14 @@ interface PrioritizedDbRow {
   is_broadcasted:          boolean
   broadcasted_at:          Date | null
   broadcasted_by:          string | null
+  ltv_score:               string | null
+  ltv_tier:                string | null
+}
+
+interface LtvDbRow {
+  contact_id: string
+  ltv_score:  string
+  ltv_tier:   string
 }
 
 interface CountRow { total: string }
@@ -156,7 +164,9 @@ export class UserPrioritizationRepository {
         is_eligible,
         skip_reasons,
         run_id,
-        computed_at
+        computed_at,
+        ltv_score,
+        ltv_tier
       )
       SELECT
         t.contact_id,
@@ -171,7 +181,9 @@ export class UserPrioritizationRepository {
         t.is_eligible,
         ARRAY(SELECT jsonb_array_elements_text(COALESCE(t.skip_reasons_json, '[]'::jsonb))),
         $12::uuid,
-        NOW()
+        NOW(),
+        t.ltv_score,
+        t.ltv_tier
       FROM UNNEST(
         $1::uuid[],
         $2::numeric[],
@@ -183,7 +195,9 @@ export class UserPrioritizationRepository {
         $8::text[],
         $9::numeric[],
         $10::boolean[],
-        $11::jsonb[]
+        $11::jsonb[],
+        $13::smallint[],
+        $14::text[]
       ) AS t(
         contact_id,
         priority_score,
@@ -195,7 +209,9 @@ export class UserPrioritizationRepository {
         deposit_segment,
         total_deposit_amount,
         is_eligible,
-        skip_reasons_json
+        skip_reasons_json,
+        ltv_score,
+        ltv_tier
       )
       ON CONFLICT (contact_id) DO UPDATE SET
         priority_score       = EXCLUDED.priority_score,
@@ -209,7 +225,9 @@ export class UserPrioritizationRepository {
         is_eligible          = EXCLUDED.is_eligible,
         skip_reasons         = EXCLUDED.skip_reasons,
         run_id               = EXCLUDED.run_id,
-        computed_at          = NOW()
+        computed_at          = NOW(),
+        ltv_score            = EXCLUDED.ltv_score,
+        ltv_tier             = EXCLUDED.ltv_tier
     `
 
     await query(sql, [
@@ -225,6 +243,8 @@ export class UserPrioritizationRepository {
       scores.map(s => s.isEligible),
       scores.map(s => JSON.stringify(s.skipReasons)),
       runId ?? null,
+      scores.map(s => s.ltvScore ?? null),
+      scores.map(s => s.ltvTier ?? null),
     ])
   }
 
@@ -305,6 +325,8 @@ export class UserPrioritizationRepository {
         cps.reactivation_segment,
         cps.value_tier,
         cps.days_inactive,
+        cps.ltv_score,
+        cps.ltv_tier,
         FLOOR(
           EXTRACT(EPOCH FROM (NOW() - csh.last_sent)) / 86400
         )::int AS days_since_last_message
@@ -334,6 +356,49 @@ export class UserPrioritizationRepository {
       pageSize,
       totalPages: Math.ceil(total / pageSize),
     }
+  }
+
+  /**
+   * Retorna un mapa contactId → { ltvScore, ltvTier } para un batch de contactos.
+   *
+   * Une contacts → casino_players (por first_name o casino_accounts[].username)
+   * → player_ltv. Si un contacto tiene múltiples cuentas de casino, toma la de
+   * mayor ltv_score (DISTINCT ON con ORDER BY ltv_score DESC).
+   *
+   * Contactos sin datos LTV no aparecen en el mapa (caller recibe null al lookup).
+   */
+  async getLtvMapForContacts(
+    contactIds: string[],
+  ): Promise<Map<string, { ltvScore: number; ltvTier: ValueTier }>> {
+    if (contactIds.length === 0) return new Map()
+
+    const sql = `
+      SELECT DISTINCT ON (c.id)
+        c.id        AS contact_id,
+        pl.ltv_score,
+        pl.tier_ltv AS ltv_tier
+      FROM contacts c
+      JOIN casino_players cp ON (
+        LOWER(TRIM(c.first_name)) = cp.username_lower
+        OR EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements(c.casino_accounts) acc
+          WHERE LOWER(acc->>'username') = cp.username_lower
+        )
+      )
+      JOIN player_ltv pl ON pl.casino_player_id = cp.id
+      WHERE c.id = ANY($1::uuid[])
+      ORDER BY c.id, pl.ltv_score DESC NULLS LAST
+    `
+    const rows = await query<LtvDbRow>(sql, [contactIds])
+    const map = new Map<string, { ltvScore: number; ltvTier: ValueTier }>()
+    for (const row of rows) {
+      map.set(row.contact_id, {
+        ltvScore: parseInt(row.ltv_score, 10),
+        ltvTier:  row.ltv_tier as ValueTier,
+      })
+    }
+    return map
   }
 
   // ── Locking distribuido (PostgreSQL-native, multi-instancia) ──────────────
@@ -507,6 +572,9 @@ function mapMetrics(row: MetricsDbRow): ContactMetricsRow {
     doNotContact:       row.do_not_contact,
     optInMarketing:     row.opt_in_marketing,
     deletedAt:          row.deleted_at ? new Date(row.deleted_at) : null,
+    // Enriquecido por el servicio vía getLtvMapForContacts; null hasta ese momento.
+    ltvScore:           null,
+    ltvTier:            null,
   }
 }
 
@@ -531,5 +599,7 @@ function mapPrioritized(row: PrioritizedDbRow): PrioritizedContact {
     isBroadcasted:       row.is_broadcasted,
     broadcastedAt:       row.broadcasted_at ? new Date(row.broadcasted_at) : null,
     broadcastedBy:       row.broadcasted_by ?? null,
+    ltvScore:            row.ltv_score ? parseInt(row.ltv_score, 10) : null,
+    ltvTier:             (row.ltv_tier as ValueTier | null) ?? null,
   }
 }

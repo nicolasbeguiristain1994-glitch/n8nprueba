@@ -127,10 +127,19 @@ export class UserPrioritizationService {
         if (contacts.length === 0) break
 
         const contactIds      = contacts.map(c => c.contactId)
-        const lastMessagedMap = await this.repo.getLastMessagedDaysMap(contactIds)
+        const [lastMessagedMap, ltvMap] = await Promise.all([
+          this.repo.getLastMessagedDaysMap(contactIds),
+          this.repo.getLtvMapForContacts(contactIds),
+        ])
         if (heartbeatRevoked) throw new LockRevokedError()
 
-        const scores = contacts.map(contact =>
+        // Enriquecer cada ContactMetricsRow con su LTV dinámico (si existe)
+        const enriched = contacts.map(c => {
+          const ltv = ltvMap.get(c.contactId)
+          return ltv ? { ...c, ltvScore: ltv.ltvScore, ltvTier: ltv.ltvTier } : c
+        })
+
+        const scores = enriched.map(contact =>
           this.scoreContact(contact, lastMessagedMap.get(contact.contactId) ?? null, tierCfg),
         )
 
@@ -227,13 +236,19 @@ export class UserPrioritizationService {
     const contact = await this.repo.fetchContactById(contactId)
     if (!contact) throw new Error(`Contact not found: ${contactId}`)
 
-    const [lastMessagedMap, lastRunId, tierCfg] = await Promise.all([
+    const [lastMessagedMap, lastRunId, tierCfg, ltvMap] = await Promise.all([
       this.repo.getLastMessagedDaysMap([contactId]),
       this.repo.getLastCompleteRunId(),
       getAllTiers().then(buildTierRuntimeConfigs).catch(() => undefined),
+      this.repo.getLtvMapForContacts([contactId]),
     ])
 
-    const score = this.scoreContact(contact, lastMessagedMap.get(contactId) ?? null, tierCfg)
+    const ltv = ltvMap.get(contactId)
+    const enrichedContact = ltv
+      ? { ...contact, ltvScore: ltv.ltvScore, ltvTier: ltv.ltvTier }
+      : contact
+
+    const score = this.scoreContact(enrichedContact, lastMessagedMap.get(contactId) ?? null, tierCfg)
     await this.repo.upsertScores([score], lastRunId ?? undefined)
     return score as ContactPriorityScore
   }
@@ -296,6 +311,8 @@ export class UserPrioritizationService {
           daysInactive,
           segment:            contact.segment,
           totalDepositAmount: contact.totalDepositAmount,
+          ltvScore:           contact.ltvScore,
+          ltvTier:            contact.ltvTier,
         }, tierCfg?.scoring)
       : null
 
@@ -312,6 +329,8 @@ export class UserPrioritizationService {
       isEligible:          eligible,
       skipReasons,
       computedAt:          new Date(),
+      ltvScore:            contact.ltvScore,
+      ltvTier:             contact.ltvTier,
     }
   }
 }

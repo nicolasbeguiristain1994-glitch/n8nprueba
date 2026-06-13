@@ -5,6 +5,7 @@ import { SegmentationTab } from '@/components/settings/SegmentationTab'
 import { ScoringTab } from '@/components/settings/ScoringTab'
 import { FrequencyRulesTab } from '@/components/settings/FrequencyRulesTab'
 import { AuditLogTab } from '@/components/settings/AuditLogTab'
+import { LtvTab } from '@/components/settings/LtvTab'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -210,6 +211,7 @@ export default function SettingsPage() {
           <TabsTrigger value="scoring">Motor de Prioridades</TabsTrigger>
           <TabsTrigger value="frecuencia">Frecuencia</TabsTrigger>
           <TabsTrigger value="auditoria">Auditoría</TabsTrigger>
+          <TabsTrigger value="ltv">LTV</TabsTrigger>
         </TabsList>
 
         {/* ── General ─────────────────────────────────────────────────── */}
@@ -508,6 +510,11 @@ export default function SettingsPage() {
         {/* ── Auditoría ────────────────────────────────────────────────── */}
         <TabsContent value="auditoria" className="mt-4">
           <AuditLogTab />
+        </TabsContent>
+
+        {/* ── LTV ──────────────────────────────────────────────────────── */}
+        <TabsContent value="ltv" className="mt-4">
+          <LtvTab isAdmin={isAdmin} />
         </TabsContent>
       </Tabs>
     </div>

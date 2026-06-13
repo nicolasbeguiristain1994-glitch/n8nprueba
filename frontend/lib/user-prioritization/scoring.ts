@@ -130,11 +130,23 @@ export function computeScore(
     daysInactive:       number
     segment:            string | null
     totalDepositAmount: number | null
+    // LTV dinámico: cuando están presentes reemplazan el tier/score plano del tier.
+    // Si son null/undefined el comportamiento es idéntico al de antes (backward compat).
+    ltvScore?:          number | null
+    ltvTier?:           ValueTier | null
   },
   cfg: ScoringConfig = DEFAULT_SCORING_CONFIG,
 ): ScoreBreakdown {
-  const tier    = resolveValueTier(metrics.segment, metrics.totalDepositAmount, cfg.depositAmountTiers)
-  const vScore  = scoreValue(tier, cfg)
+  // Tier: priorizar ltvTier (basado en percentil real) sobre el fallback de monto/segmento.
+  // El tier determina la ventana de inactividad para urgency_score.
+  const tier = metrics.ltvTier
+    ?? resolveValueTier(metrics.segment, metrics.totalDepositAmount, cfg.depositAmountTiers)
+
+  // Value score: priorizar ltvScore dinámico (0–60 continuo) sobre el constante del tier.
+  const vScore = (metrics.ltvScore != null)
+    ? metrics.ltvScore
+    : scoreValue(tier, cfg)
+
   const uScore  = scoreUrgency(metrics.daysInactive, tier, cfg)
   const segment = resolveReactivationSegment(tier, metrics.daysInactive, cfg)
 
