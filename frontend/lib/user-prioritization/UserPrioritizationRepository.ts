@@ -390,15 +390,20 @@ export class UserPrioritizationRepository {
       WHERE c.id = ANY($1::uuid[])
       ORDER BY c.id, pl.ltv_score DESC NULLS LAST
     `
-    const rows = await query<LtvDbRow>(sql, [contactIds])
-    const map = new Map<string, { ltvScore: number; ltvTier: ValueTier }>()
-    for (const row of rows) {
-      map.set(row.contact_id, {
-        ltvScore: parseInt(row.ltv_score, 10),
-        ltvTier:  row.ltv_tier as ValueTier,
-      })
+    try {
+      const rows = await query<LtvDbRow>(sql, [contactIds])
+      const map = new Map<string, { ltvScore: number; ltvTier: ValueTier }>()
+      for (const row of rows) {
+        map.set(row.contact_id, {
+          ltvScore: parseInt(row.ltv_score, 10),
+          ltvTier:  row.ltv_tier as ValueTier,
+        })
+      }
+      return map
+    } catch {
+      // LTV table unavailable (e.g. missing GRANT) — scoring falls back to tier-based value_score
+      return new Map()
     }
-    return map
   }
 
   // ── Locking distribuido (PostgreSQL-native, multi-instancia) ──────────────
