@@ -105,7 +105,7 @@ RETURNS TABLE (
   line_b_status       TEXT,
   line_b_evo_url      TEXT,
   line_b_current_day  INT
-) LANGUAGE plpgsql AS $$
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
 BEGIN
   RETURN QUERY
   SELECT
