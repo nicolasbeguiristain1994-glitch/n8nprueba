@@ -10,9 +10,11 @@ import { query }                     from '@/lib/db'
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const { id } = await params
+
     const [script] = await query<{
       id:          string
       name:        string
@@ -23,7 +25,7 @@ export async function GET(
       SELECT id, name, description, total_steps, created_at
       FROM   warmup_scripts
       WHERE  id = $1
-    `, [params.id])
+    `, [id])
 
     if (!script) {
       return NextResponse.json({ error: 'Script no encontrado' }, { status: 404 })
@@ -39,7 +41,7 @@ export async function GET(
       FROM   warmup_script_steps
       WHERE  script_id = $1
       ORDER  BY step_order ASC
-    `, [params.id])
+    `, [id])
 
     return NextResponse.json({ ...script, steps })
   } catch (err) {
@@ -52,16 +54,17 @@ export async function GET(
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    // Verificar que no tenga conversaciones activas
+    const { id } = await params
+
     const [active] = await query<{ count: string }>(`
       SELECT COUNT(*)::text AS count
       FROM   warmup_conversations
       WHERE  script_id = $1
         AND  status IN ('pending', 'in_progress')
-    `, [params.id])
+    `, [id])
 
     if (parseInt(active?.count ?? '0') > 0) {
       return NextResponse.json(
@@ -70,7 +73,7 @@ export async function DELETE(
       )
     }
 
-    await query(`DELETE FROM warmup_scripts WHERE id = $1`, [params.id])
+    await query(`DELETE FROM warmup_scripts WHERE id = $1`, [id])
 
     return NextResponse.json({ ok: true })
   } catch (err) {

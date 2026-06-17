@@ -1,6 +1,6 @@
 /**
  * PATCH  /api/warmup/conversations/[id]  — pausa, reanuda o cancela
- * DELETE /api/warmup/conversations/[id]  — elimina conversación (solo si no está in_progress)
+ * DELETE /api/warmup/conversations/[id]  — elimina conversación
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -14,9 +14,10 @@ interface PatchBody {
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const { id } = await params
     const body: PatchBody = await req.json()
 
     const allowed = ['paused', 'pending', 'failed'] as const
@@ -34,7 +35,7 @@ export async function PATCH(
       WHERE  id         = $1
         AND  status NOT IN ('completed')
       RETURNING id
-    `, [params.id, body.status])
+    `, [id, body.status])
 
     if (!updated) {
       return NextResponse.json(
@@ -54,13 +55,15 @@ export async function PATCH(
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const { id } = await params
+
     await query(`
       DELETE FROM warmup_conversations
       WHERE id = $1
-    `, [params.id])
+    `, [id])
 
     return NextResponse.json({ ok: true })
   } catch (err) {
