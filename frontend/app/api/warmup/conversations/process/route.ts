@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
   try {
     // 1. Conversaciones listas para enviar (SKIP LOCKED para concurrencia)
     const conversations = await query<ReadyConversation>(
-      `SELECT * FROM get_ready_conversations(30)`,
+      `SELECT * FROM public.get_ready_conversations(30)`,
     )
 
     for (const conv of conversations) {
