@@ -80,9 +80,37 @@ export async function POST(req: NextRequest) {
 
   try {
     // 1. Conversaciones listas para enviar (SKIP LOCKED para concurrencia)
-    const conversations = await query<ReadyConversation>(
-      `SELECT * FROM public.get_ready_conversations(30)`,
-    )
+    const conversations = await query<ReadyConversation>(`
+      SELECT
+        wc.id                  AS conv_id,
+        wc.script_id,
+        wc.line_a_id,
+        wc.line_b_id,
+        wc.alias_a             ::text,
+        wc.alias_b             ::text,
+        wc.current_step,
+        wc.status              ::text AS conv_status,
+        wc.next_send_at,
+        wc.messages_sent,
+        la.instance_name       ::text AS line_a_instance,
+        la.phone_number        ::text AS line_a_phone,
+        la.warmup_status       ::text AS line_a_status,
+        la.evolution_url       ::text AS line_a_evo_url,
+        la.current_day              AS line_a_current_day,
+        lb.instance_name       ::text AS line_b_instance,
+        lb.phone_number        ::text AS line_b_phone,
+        lb.warmup_status       ::text AS line_b_status,
+        lb.evolution_url       ::text AS line_b_evo_url,
+        lb.current_day              AS line_b_current_day
+      FROM  warmup_conversations wc
+      JOIN  warmup_numbers       la ON la.id = wc.line_a_id
+      JOIN  warmup_numbers       lb ON lb.id = wc.line_b_id
+      WHERE wc.status IN ('pending', 'in_progress')
+        AND (wc.next_send_at IS NULL OR wc.next_send_at <= NOW())
+      ORDER BY wc.next_send_at ASC NULLS FIRST
+      LIMIT 30
+      FOR UPDATE OF wc SKIP LOCKED
+    `)
 
     for (const conv of conversations) {
 
