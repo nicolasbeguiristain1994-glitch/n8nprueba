@@ -35,6 +35,7 @@ const UNPROTECTED_API_PREFIXES: readonly string[] = [
   '/api/warmup/schedule',
   '/api/warmup/daily-reset',
   '/api/warmup/orchestrator/run',
+  '/api/warmup/conversations/process',
 ]
 
 const UNPROTECTED_PAGES: readonly string[] = [
