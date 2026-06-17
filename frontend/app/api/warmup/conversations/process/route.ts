@@ -245,7 +245,8 @@ export async function POST(req: NextRequest) {
     })
 
   } catch (err) {
-    console.error('[conversations/process POST]', err instanceof Error ? err.message : err)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[conversations/process POST]', msg)
+    return NextResponse.json({ error: 'Internal server error', detail: msg }, { status: 500 })
   }
 }
