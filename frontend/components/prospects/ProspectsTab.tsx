@@ -234,18 +234,6 @@ export function ProspectsTab() {
       const data = await fetchJson<{ prospects: Prospect[]; total: number }>(`/api/prospects?${q}`)
       setProspects(data.prospects ?? [])
       setTotal(data.total ?? 0)
-      if (data.prospects?.length) {
-        setKnownParts(prev => {
-          const s = new Set(prev)
-          for (const p of data.prospects) {
-            for (const t of p.tags ?? []) {
-              const m = t.match(/^parte:(\d+)$/)
-              if (m) s.add(Number(m[1]))
-            }
-          }
-          return [...s].sort((a, b) => a - b)
-        })
-      }
     } finally {
       setLoading(false)
     }
@@ -266,6 +254,14 @@ export function ProspectsTab() {
   }, [])
 
   useEffect(() => { loadBatches() }, [loadBatches])
+
+  // Carga las partes disponibles desde la DB (no sólo las de la página actual)
+  useEffect(() => {
+    const qs = filterBatch ? `?batch_id=${filterBatch}` : ''
+    fetchJson<{ parts: number[] }>(`/api/prospects/parts${qs}`)
+      .then(d => setKnownParts(d.parts ?? []))
+      .catch(() => {})
+  }, [filterBatch])
 
   const deleteBatch = async (batchId: string) => {
     setDeletingBatchId(batchId)
