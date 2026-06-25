@@ -144,6 +144,8 @@ const PLATFORM_LABELS: Record<Platform, string> = {
   zeus:        'Zeus',
   bet30:       'Bet30',
   consolidado: 'Consolidado',
+  ganamos:     'Ganamos',
+  argenbet:    'Argenbet',
 }
 
 interface PlatformSelectorProps {
