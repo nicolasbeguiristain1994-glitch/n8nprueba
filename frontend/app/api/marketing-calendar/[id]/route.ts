@@ -30,7 +30,7 @@ export async function PUT(
     if (existing.length === 0) {
       return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
     }
-    if (session.role !== 'admin' && existing[0].created_by !== session.id) {
+    if (session.role !== 'admin' && existing[0].created_by !== session.user_id) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
@@ -76,7 +76,7 @@ export async function DELETE(
     if (existing.length === 0) {
       return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
     }
-    if (session.role !== 'admin' && existing[0].created_by !== session.id) {
+    if (session.role !== 'admin' && existing[0].created_by !== session.user_id) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 

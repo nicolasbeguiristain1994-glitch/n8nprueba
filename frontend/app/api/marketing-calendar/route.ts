@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
         title.trim(),
         consigna?.trim() || null,
         image_url || null,
-        session.id,
+        session.user_id,
       ],
     )
     return NextResponse.json({ entry: rows[0] }, { status: 201 })
