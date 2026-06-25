@@ -15,7 +15,7 @@ export async function PUT(
   if (session.role === 'viewer') return NextResponse.json({ error: 'Forbidden' },    { status: 403 })
 
   const { id } = await params
-  const body = await req.json()
+  const body   = await req.json()
   const { date, hour, title, consigna, image_url } = body
 
   if (!date || !title?.trim()) {
@@ -23,18 +23,18 @@ export async function PUT(
   }
 
   try {
-    const existing = await query(
+    const existing = await query<{ created_by: string }>(
       'SELECT created_by FROM marketing_calendar WHERE id = $1',
       [id],
     )
-    if (existing.rows.length === 0) {
+    if (existing.length === 0) {
       return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
     }
-    if (session.role !== 'admin' && existing.rows[0].created_by !== session.id) {
+    if (session.role !== 'admin' && existing[0].created_by !== session.id) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    const result = await query(
+    const rows = await query(
       `UPDATE marketing_calendar
        SET date = $1, hour = $2, title = $3, consigna = $4,
            image_url = $5, updated_at = NOW()
@@ -49,7 +49,7 @@ export async function PUT(
         id,
       ],
     )
-    return NextResponse.json({ entry: result.rows[0] })
+    return NextResponse.json({ entry: rows[0] })
   } catch (err) {
     console.error('[marketing-calendar PUT]', err)
     return NextResponse.json({ error: 'Error interno' }, { status: 500 })
@@ -69,14 +69,14 @@ export async function DELETE(
   const { id } = await params
 
   try {
-    const existing = await query(
+    const existing = await query<{ created_by: string }>(
       'SELECT created_by FROM marketing_calendar WHERE id = $1',
       [id],
     )
-    if (existing.rows.length === 0) {
+    if (existing.length === 0) {
       return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
     }
-    if (session.role !== 'admin' && existing.rows[0].created_by !== session.id) {
+    if (session.role !== 'admin' && existing[0].created_by !== session.id) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 

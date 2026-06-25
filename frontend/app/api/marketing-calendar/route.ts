@@ -1,8 +1,8 @@
 // frontend/app/api/marketing-calendar/route.ts
 
-import { NextRequest, NextResponse }  from 'next/server'
-import { getSessionFromRequest }      from '@/lib/auth'
-import { query }                      from '@/lib/db'
+import { NextRequest, NextResponse } from 'next/server'
+import { getSessionFromRequest }     from '@/lib/auth'
+import { query }                     from '@/lib/db'
 
 // ── GET /api/marketing-calendar?start=YYYY-MM-DD&end=YYYY-MM-DD ──────────────
 
@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const result = await query(
+    const entries = await query(
       `SELECT
          mc.id, mc.date, mc.hour, mc.title, mc.consigna, mc.image_url,
          mc.created_by, mc.created_at,
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
        ORDER BY mc.date, mc.hour NULLS LAST, mc.created_at`,
       [start, end],
     )
-    return NextResponse.json({ entries: result.rows })
+    return NextResponse.json({ entries })
   } catch (err) {
     console.error('[marketing-calendar GET]', err)
     return NextResponse.json({ error: 'Error interno' }, { status: 500 })
@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await query(
+    const rows = await query(
       `INSERT INTO marketing_calendar (date, hour, title, consigna, image_url, created_by)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
         session.id,
       ],
     )
-    return NextResponse.json({ entry: result.rows[0] }, { status: 201 })
+    return NextResponse.json({ entry: rows[0] }, { status: 201 })
   } catch (err) {
     console.error('[marketing-calendar POST]', err)
     return NextResponse.json({ error: 'Error interno' }, { status: 500 })
