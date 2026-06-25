@@ -1,24 +1,21 @@
 'use strict'
 
-const { ZeusConnector }  = require('./zeus/ZeusConnector')
-const { Bet30Connector } = require('./bet30/Bet30Connector')
+const { ZeusConnector }     = require('./zeus/ZeusConnector')
+const { Bet30Connector }    = require('./bet30/Bet30Connector')
+const { GanamosConnector }  = require('./ganamos/GanamosConnector')
+const { ArgenBetConnector } = require('./argenbet/ArgenBetConnector')
 
 /**
  * Maps platform `type` values (from platforms.config.json) to their connector classes.
  * Register new platforms here when adding support for a new backend.
  */
 const CONNECTOR_MAP = {
-  zeus:  ZeusConnector,
-  bet30: Bet30Connector,
+  zeus:     ZeusConnector,
+  bet30:    Bet30Connector,
+  ganamos:  GanamosConnector,
+  argenbet: ArgenBetConnector,
 }
 
-/**
- * Factory: loads the platform config and returns the correct connector instance.
- *
- * @param {string}            platformName  Must match a `name` in platforms.config.json
- * @param {import('pg').Pool} pool          Shared PG connection pool
- * @returns {import('./base/BaseCasinoConnector').BaseCasinoConnector}
- */
 function createConnector(platformName, pool) {
   const config = _loadPlatformConfig(platformName)
 
@@ -35,17 +32,11 @@ function createConnector(platformName, pool) {
   return new ConnectorClass(config, pool)
 }
 
-/**
- * Returns the default platform name defined in platforms.config.json.
- * @returns {string}
- */
 function getDefaultPlatform() {
   const { defaultPlatform } = require('../config/platforms.config.json')
   if (!defaultPlatform) throw new Error('platforms.config.json is missing "defaultPlatform"')
   return defaultPlatform
 }
-
-// ── Internal ──────────────────────────────────────────────────────────────────
 
 function _loadPlatformConfig(platformName) {
   const { platforms } = require('../config/platforms.config.json')

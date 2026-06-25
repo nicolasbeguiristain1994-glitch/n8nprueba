@@ -10,7 +10,7 @@ export const AGENTES_SQL_ARRAY = `'{bigwin,ofizeus,betcoin,royal,farabet}'::text
 
 // ── Multi-platform support ────────────────────────────────────────────────────
 
-export const PLATFORMS = ['zeus', 'bet30', 'consolidado'] as const
+export const PLATFORMS = ['zeus', 'bet30', 'ganamos', 'argenbet', 'consolidado'] as const
 export type Platform = typeof PLATFORMS[number]
 
 /**
@@ -22,8 +22,11 @@ export type Platform = typeof PLATFORMS[number]
 const PLATFORM_AGENTS: Record<Platform, string[]> = {
   zeus:        ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet'],
   bet30:       ['bigwin', 'zeus', 'zeusroyal', 'btcuno', 'btcdos'],
+  ganamos:     ['royalauto'],
+  argenbet:    ['Horus', 'Hades', 'generalfranqui', 'peaky'],
   consolidado: ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet',
-                'zeus', 'zeusroyal', 'btcuno', 'btcdos'],
+                'zeus', 'zeusroyal', 'btcuno', 'btcdos',
+                'royalauto', 'Horus', 'Hades', 'generalfranqui', 'peaky'],
 }
 
 /**
@@ -76,8 +79,8 @@ export function isValidPlatform(p: unknown): p is Platform {
 }
 
 /** Solo zeus y bet30 son targets válidos de sync (no 'consolidado'). */
-export function isValidSyncPlatform(p: unknown): p is 'zeus' | 'bet30' {
-  return p === 'zeus' || p === 'bet30'
+export function isValidSyncPlatform(p: unknown): p is 'zeus' | 'bet30' | 'ganamos' | 'argenbet' {
+  return p === 'zeus' || p === 'bet30' || p === 'ganamos' || p === 'argenbet'
 }
 
 /**
@@ -88,6 +91,9 @@ export function getAgentsForPlatform(platform: Platform): string[] {
   switch (platform) {
     case 'zeus':        return ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet']
     case 'bet30':       return ['bigwin', 'zeus', 'zeusroyal', 'btcuno', 'btcdos']
+    case 'ganamos':     return ['royalauto']
+    case 'argenbet':    return ['Horus', 'Hades', 'generalfranqui', 'peaky']
     case 'consolidado': return ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet']
   }
+
 }

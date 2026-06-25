@@ -275,7 +275,7 @@ async function main() {
           ELSE NULL
         END
       ], NULL)),
-      'segmentar',
+      NULL,
       NOW()
     FROM contacts c
     JOIN casino_players cp ON LOWER(TRIM(c.first_name)) = cp.username_lower

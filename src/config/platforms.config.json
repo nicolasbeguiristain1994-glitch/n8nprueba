@@ -48,6 +48,46 @@
         "detailsField": "detalles",
         "dateField": "fecha"
       }
+    },
+    {
+      "name": "ganamos",
+      "type": "ganamos",
+      "baseUrl": "https://agents.ganamosnet.org",
+      "baseUrlEnvVar": "GANAMOS_API_BASE",
+      "apiKeyEnvVar": "GANAMOS_API_KEY",
+      "playerTokenEnvVar": "GANAMOS_PLAYER_TOKEN",
+      "adminUserEnvVar": "GANAMOS_ADMIN_USER",
+      "adminPasswordEnvVar": "GANAMOS_ADMIN_PASSWORD",
+      "endpoint": "/api/agent_admin/user",
+      "timezone": "-03",
+      "responseMapping": {
+        "idField": "id",
+        "usernameField": "to_user",
+        "agentField": "from_user",
+        "valueField": "amount",
+        "detailsField": "note",
+        "dateField": "created_at"
+      }
+    },
+    {
+      "name": "argenbet",
+      "type": "argenbet",
+      "baseUrl": "https://admin.argenbet.net",
+      "baseUrlEnvVar": "ARGENBET_API_BASE",
+      "apiKeyEnvVar": "ARGENBET_API_KEY",
+      "playerTokenEnvVar": "ARGENBET_PLAYER_TOKEN",
+      "adminUserEnvVar": "ARGENBET_ADMIN_USER",
+      "adminPasswordEnvVar": "ARGENBET_ADMIN_PASSWORD",
+      "endpoint": "/api/backoffice/v1/account-transfers",
+      "timezone": "-03",
+      "responseMapping": {
+        "idField": "id",
+        "usernameField": "toUsername",
+        "agentField": "fromUsername",
+        "valueField": "amount",
+        "detailsField": "note",
+        "dateField": "createdAt"
+      }
     }
   ]
 }
