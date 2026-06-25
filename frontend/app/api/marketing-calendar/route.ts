@@ -1,13 +1,13 @@
 // frontend/app/api/marketing-calendar/route.ts
 
-import { NextRequest, NextResponse } from 'next/server'
-import { getSession }                from '@/lib/auth'
-import { query }                     from '@/lib/db'
+import { NextRequest, NextResponse }  from 'next/server'
+import { getSessionFromRequest }      from '@/lib/auth'
+import { query }                      from '@/lib/db'
 
 // ── GET /api/marketing-calendar?start=YYYY-MM-DD&end=YYYY-MM-DD ──────────────
 
 export async function GET(req: NextRequest) {
-  const session = await getSession(req)
+  const session = getSessionFromRequest(req)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(req.url)
@@ -19,11 +19,7 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const result = await query<{
-      id: string; date: string; hour: number | null
-      title: string; consigna: string | null; image_url: string | null
-      created_by: string | null; creator_name: string | null; created_at: string
-    }>(
+    const result = await query(
       `SELECT
          mc.id, mc.date, mc.hour, mc.title, mc.consigna, mc.image_url,
          mc.created_by, mc.created_at,
@@ -45,9 +41,9 @@ export async function GET(req: NextRequest) {
 // ── POST /api/marketing-calendar ─────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const session = await getSession(req)
-  if (!session)                   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (session.role === 'viewer')  return NextResponse.json({ error: 'Forbidden' },    { status: 403 })
+  const session = getSessionFromRequest(req)
+  if (!session)                  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (session.role === 'viewer') return NextResponse.json({ error: 'Forbidden' },    { status: 403 })
 
   const body = await req.json()
   const { date, hour, title, consigna, image_url } = body
@@ -67,7 +63,7 @@ export async function POST(req: NextRequest) {
         title.trim(),
         consigna?.trim() || null,
         image_url || null,
-        session.userId,
+        session.id,
       ],
     )
     return NextResponse.json({ entry: result.rows[0] }, { status: 201 })

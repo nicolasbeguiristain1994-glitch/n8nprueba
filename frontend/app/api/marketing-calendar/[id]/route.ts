@@ -1,19 +1,20 @@
 // frontend/app/api/marketing-calendar/[id]/route.ts
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getSession }                from '@/lib/auth'
+import { getSessionFromRequest }     from '@/lib/auth'
 import { query }                     from '@/lib/db'
 
 // ── PUT /api/marketing-calendar/[id] ─────────────────────────────────────────
 
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  const session = await getSession(req)
+  const session = getSessionFromRequest(req)
   if (!session)                  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (session.role === 'viewer') return NextResponse.json({ error: 'Forbidden' },    { status: 403 })
 
+  const { id } = await params
   const body = await req.json()
   const { date, hour, title, consigna, image_url } = body
 
@@ -22,18 +23,14 @@ export async function PUT(
   }
 
   try {
-    // Solo admin puede editar entradas ajenas
     const existing = await query(
       'SELECT created_by FROM marketing_calendar WHERE id = $1',
-      [params.id],
+      [id],
     )
     if (existing.rows.length === 0) {
       return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
     }
-    if (
-      session.role !== 'admin' &&
-      existing.rows[0].created_by !== session.userId
-    ) {
+    if (session.role !== 'admin' && existing.rows[0].created_by !== session.id) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
@@ -49,7 +46,7 @@ export async function PUT(
         title.trim(),
         consigna?.trim() || null,
         image_url || null,
-        params.id,
+        id,
       ],
     )
     return NextResponse.json({ entry: result.rows[0] })
@@ -63,28 +60,27 @@ export async function PUT(
 
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ) {
-  const session = await getSession(req)
+  const session = getSessionFromRequest(req)
   if (!session)                  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (session.role === 'viewer') return NextResponse.json({ error: 'Forbidden' },    { status: 403 })
+
+  const { id } = await params
 
   try {
     const existing = await query(
       'SELECT created_by FROM marketing_calendar WHERE id = $1',
-      [params.id],
+      [id],
     )
     if (existing.rows.length === 0) {
       return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
     }
-    if (
-      session.role !== 'admin' &&
-      existing.rows[0].created_by !== session.userId
-    ) {
+    if (session.role !== 'admin' && existing.rows[0].created_by !== session.id) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    await query('DELETE FROM marketing_calendar WHERE id = $1', [params.id])
+    await query('DELETE FROM marketing_calendar WHERE id = $1', [id])
     return NextResponse.json({ ok: true })
   } catch (err) {
     console.error('[marketing-calendar DELETE]', err)
