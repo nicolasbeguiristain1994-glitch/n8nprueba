@@ -417,7 +417,7 @@ export default function CalendarioPage() {
 
       {/* ── Filters ──────────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <Select value={filterType || '__all'} onValueChange={v => setFilterType(v === '__all' ? '' : v)}>
+        <Select value={filterType || '__all'} onValueChange={v => setFilterType((v ?? '') === '__all' ? '' : (v ?? ''))}>
           <SelectTrigger className="w-40 h-8 text-sm"><SelectValue placeholder="Tipo" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="__all">Todos los tipos</SelectItem>
@@ -425,7 +425,7 @@ export default function CalendarioPage() {
           </SelectContent>
         </Select>
 
-        <Select value={filterPriority || '__all'} onValueChange={v => setFilterPriority(v === '__all' ? '' : v)}>
+        <Select value={filterPriority || '__all'} onValueChange={v => setFilterPriority((v ?? '') === '__all' ? '' : (v ?? ''))}>
           <SelectTrigger className="w-40 h-8 text-sm"><SelectValue placeholder="Prioridad" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="__all">Todas las prioridades</SelectItem>
@@ -434,7 +434,7 @@ export default function CalendarioPage() {
         </Select>
 
         {isAdmin && operators.length > 0 && (
-          <Select value={filterOperator || '__all'} onValueChange={v => setFilterOperator(v === '__all' ? '' : v)}>
+          <Select value={filterOperator || '__all'} onValueChange={v => setFilterOperator((v ?? '') === '__all' ? '' : (v ?? ''))}>
             <SelectTrigger className="w-44 h-8 text-sm"><SelectValue placeholder="Operador" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__all">Todos los operadores</SelectItem>
@@ -803,7 +803,7 @@ export default function CalendarioPage() {
               <div>
                 <label className="text-xs text-gray-600 mb-1 block">Hora</label>
                 <Select value={mktForm.hour !== '' ? mktForm.hour : '__all'}
-                  onValueChange={v => setMktForm(f => ({ ...f, hour: v === '__all' ? '' : v }))}>
+                  onValueChange={v => setMktForm(f => ({ ...f, hour: (v ?? '') === '__all' ? '' : (v ?? '') }))}>
                   <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="__all">Todo el día</SelectItem>
