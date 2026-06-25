@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Input }    from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { Label }    from '@/components/ui/label'
+
 import {
   ChevronLeft, ChevronRight, CalendarDays, Calendar, Clock, AlertTriangle,
   Megaphone, Pencil, Trash2, Plus, ImageIcon,
@@ -795,13 +795,13 @@ export default function CalendarioPage() {
             {/* Date + Hour */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label className="text-xs text-gray-600 mb-1 block">Fecha *</Label>
+                <label className="text-xs text-gray-600 mb-1 block">Fecha *</label>
                 <Input type="date" value={mktForm.date}
                   onChange={e => setMktForm(f => ({ ...f, date: e.target.value }))}
                   className="h-8 text-sm" />
               </div>
               <div>
-                <Label className="text-xs text-gray-600 mb-1 block">Hora</Label>
+                <label className="text-xs text-gray-600 mb-1 block">Hora</label>
                 <Select value={mktForm.hour !== '' ? mktForm.hour : '__all'}
                   onValueChange={v => setMktForm(f => ({ ...f, hour: v === '__all' ? '' : v }))}>
                   <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
@@ -815,7 +815,7 @@ export default function CalendarioPage() {
 
             {/* Title */}
             <div>
-              <Label className="text-xs text-gray-600 mb-1 block">Título *</Label>
+              <label className="text-xs text-gray-600 mb-1 block">Título *</label>
               <Input placeholder="Ej: Campaña fin de semana"
                 value={mktForm.title}
                 onChange={e => setMktForm(f => ({ ...f, title: e.target.value }))}
@@ -824,7 +824,7 @@ export default function CalendarioPage() {
 
             {/* Consigna */}
             <div>
-              <Label className="text-xs text-gray-600 mb-1 block">Consigna / Mensaje</Label>
+              <label className="text-xs text-gray-600 mb-1 block">Consigna / Mensaje</label>
               <Textarea placeholder="Texto a difundir, instrucciones para el equipo..."
                 value={mktForm.consigna}
                 onChange={e => setMktForm(f => ({ ...f, consigna: e.target.value }))}
@@ -833,7 +833,7 @@ export default function CalendarioPage() {
 
             {/* Image */}
             <div>
-              <Label className="text-xs text-gray-600 mb-1 block">Imagen</Label>
+              <label className="text-xs text-gray-600 mb-1 block">Imagen</label>
               <div className="flex border border-gray-200 rounded-lg overflow-hidden mb-2 text-xs">
                 <button onClick={() => setMktForm(f => ({ ...f, imageMode: 'url' }))}
                   className={['flex-1 py-1 font-medium transition-colors',
