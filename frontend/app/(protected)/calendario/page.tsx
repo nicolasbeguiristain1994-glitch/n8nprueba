@@ -267,8 +267,9 @@ export default function CalendarioPage() {
   const marketingByDate = useMemo(() => {
     const map = new Map<string, MarketingEntry[]>()
     for (const e of marketing) {
-      if (!map.has(e.date)) map.set(e.date, [])
-      map.get(e.date)!.push(e)
+      const dateKey = e.date.slice(0, 10)
+      if (!map.has(dateKey)) map.set(dateKey, [])
+      map.get(dateKey)!.push(e)
     }
     return map
   }, [marketing])
