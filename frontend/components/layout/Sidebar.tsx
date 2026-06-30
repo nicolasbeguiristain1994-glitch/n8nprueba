@@ -21,7 +21,7 @@ import {
   Activity, Flame, UserCog, Settings, FileText,
   BarChart2, ShieldOff, Bot, ChevronLeft, LogOut, X,
   ClipboardList, CheckSquare, CalendarDays, HelpCircle, TrendingUp,
-  MessagesSquare,
+  Filter, Send,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useSidebar } from './sidebar-context'
@@ -44,10 +44,11 @@ const BASE_NAV: NavItem[] = [
   { href: '/contacts',       label: 'Contactos',        icon: Users,           sector: 'contacts' },
   { href: '/campaigns',      label: 'Campañas',         icon: Megaphone,       sector: 'campaigns' },
   { href: '/prioridades',    label: 'Prioridades',      icon: TrendingUp,      sector: 'contacts' },
+  { href: '/segmentacion',   label: 'Segmentación',     icon: Filter,          sector: 'contacts' },
+  { href: '/envio-whatsapp', label: 'Envío WA',         icon: Send,            sector: 'campaigns' },
   { href: '/conversations',  label: 'Conversaciones',   icon: MessageSquare,   sector: 'conversations' },
   { href: '/lines',          label: 'Líneas',           icon: Activity,        sector: 'lines' },
   { href: '/warmup',         label: 'Calentamiento',    icon: Flame,           sector: 'warmup' },
-  { href: '/warmup/scripts', label: 'Conv. líneas',     icon: MessagesSquare,  sector: 'warmup' },
   { href: '/mis-tareas',     label: 'Mis Tareas',       icon: CheckSquare,     sector: 'tasks' },
   { href: '/calendario',     label: 'Calendario',       icon: CalendarDays,    sector: 'tasks' },
   { href: '/estadisticas',   label: 'Estadísticas',     icon: BarChart2,       sector: 'estadisticas' },
