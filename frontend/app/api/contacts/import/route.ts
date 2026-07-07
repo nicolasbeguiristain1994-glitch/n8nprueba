@@ -13,6 +13,7 @@ export async function POST(req: NextRequest) {
     panel?:         string
     panels?:        string[]
     linea?:         number
+    linea_sub?:     string
     skip_existing?: boolean
     conflict_mode?: 'update' | 'panels_only' | 'skip'
   }
@@ -22,7 +23,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { contacts, panel, panels, linea, skip_existing = false, conflict_mode } = body
+  const { contacts, panel, panels, linea, linea_sub, skip_existing = false, conflict_mode } = body
   // conflict_mode takes precedence over legacy skip_existing
   const resolvedMode: 'update' | 'panels_only' | 'skip' =
     conflict_mode ?? (skip_existing ? 'skip' : 'update')
@@ -42,6 +43,9 @@ export async function POST(req: NextRequest) {
   if (lineaValue !== null && (lineaValue < 1 || lineaValue > 100)) {
     return NextResponse.json({ error: 'Línea inválida (1-100)' }, { status: 400 })
   }
+  // Sub-variante (a/b/c) solo válida cuando hay línea asignada
+  const lineaSubRaw = (linea_sub || '').toLowerCase()
+  const lineaSubValue = lineaValue !== null && ['a', 'b', 'c'].includes(lineaSubRaw) ? lineaSubRaw : null
 
   // Normalize and pre-filter in JS — count skipped rows before hitting DB
   // Deduplicate phones before SQL; only validate E.164 rows (skip invalid silently)
@@ -85,7 +89,7 @@ export async function POST(req: NextRequest) {
                 AS x(phone text, name text, segment text, casino_username text)
        ), upserted AS (
          INSERT INTO contacts
-           (external_id, phone_number, first_name, segment, panel, panels_assigned, casino_accounts, linea, status,
+           (external_id, phone_number, first_name, segment, panel, panels_assigned, casino_accounts, linea, linea_sub, status,
             opt_in_marketing, opt_in_sms, platform_source, created_at, updated_at)
          SELECT
            gen_random_uuid()::text,
@@ -100,6 +104,7 @@ export async function POST(req: NextRequest) {
              ELSE '[]'::jsonb
            END,
            $3,
+           $5,
            'active', true, true, 'import', NOW(), NOW()
          FROM input
          ON CONFLICT (phone_number) DO ${
@@ -126,6 +131,7 @@ export async function POST(req: NextRequest) {
                  )
                END,
                linea      = COALESCE(EXCLUDED.linea, contacts.linea),
+               linea_sub  = COALESCE(EXCLUDED.linea_sub, contacts.linea_sub),
                updated_at = NOW()`
          : /* update */ `UPDATE
            SET first_name        = COALESCE(EXCLUDED.first_name, contacts.first_name),
@@ -152,6 +158,7 @@ export async function POST(req: NextRequest) {
                  )
                END,
                linea             = COALESCE(EXCLUDED.linea,      contacts.linea),
+               linea_sub         = COALESCE(EXCLUDED.linea_sub,  contacts.linea_sub),
                updated_at        = NOW()`}
          RETURNING id, xmax::text
        )
@@ -159,7 +166,7 @@ export async function POST(req: NextRequest) {
          COUNT(*) FILTER (WHERE xmax = '0')  AS inserted,
          COUNT(*) FILTER (WHERE xmax != '0') AS updated
        FROM upserted`,
-      [JSON.stringify(normalized), panelValue, lineaValue, JSON.stringify(panelsValue)]
+      [JSON.stringify(normalized), panelValue, lineaValue, JSON.stringify(panelsValue), lineaSubValue]
     )
 
     const inserted = Number(row?.inserted || 0)
