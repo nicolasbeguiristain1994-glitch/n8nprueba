@@ -9,10 +9,27 @@ import { getAppSetting } from '@/lib/app-settings'
 const ACTIVIDAD_ALLOWED  = new Set(['nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido'])
 const ANTIGUEDAD_ALLOWED = new Set(['nuevo', 'reciente', 'establecido', 'veterano', 'leal'])
 const PLATAFORMA_ALLOWED = new Set(['zeus', 'bet30', 'otros'])
+const SEGMENT_ALLOWED    = new Set(['bajo', 'medio', 'vip', 'vip_medio', 'vip_alto', 'super_vip'])
 
 // Mapeo de nombres de agente en la UI → nombre real en la columna `panel` de la DB.
-// Si los contactos se importan con un nombre interno distinto al nombre de la UI, agregar aquí.
 const PANEL_ALIAS_MAP: Record<string, string> = {}
+
+// Aliases cross-plataforma: mismos agentes con distinto nombre en Zeus vs Bet30.
+// Al filtrar por cualquiera de los dos, se muestran los contactos de ambos.
+const PANEL_CROSS: Record<string, string[]> = {
+  betcoin:   ['betcoin',   'btcuno'],
+  btcuno:    ['btcuno',    'betcoin'],
+  farabet:   ['farabet',   'btcdos'],
+  btcdos:    ['btcdos',    'farabet'],
+  ofizeus:   ['ofizeus',   'zeus'],
+  zeus:      ['zeus',      'ofizeus'],
+  royal:     ['royal',     'zeusroyal'],
+  zeusroyal: ['zeusroyal', 'royal'],
+  bigwin:    ['bigwin'],
+  lasvegas:  ['lasvegas'],
+  adminbet:  ['adminbet'],
+  surmar:    ['surmar'],
+}
 
 // Platform filters use the persisted `platforms` column (maintained by
 // trg_contact_platforms trigger in migration 075). GIN-indexed for fast lookups.
@@ -21,15 +38,28 @@ const BET30_FILTER = `'bet30' = ANY(platforms)`
 const OTROS_FILTER = `NOT 'zeus' = ANY(platforms) AND NOT 'bet30' = ANY(platforms)`
 
 export async function GET(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'contacts', 'read')
+  let auth: Awaited<ReturnType<typeof checkPermissionWithUser>>
+  try {
+    auth = await checkPermissionWithUser(req, 'contacts', 'read')
+  } catch (e) {
+    const err = e as Record<string, unknown>
+    console.error('[/api/contacts GET auth]', { message: err?.message, code: err?.code, detail: err?.detail })
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
   if (!auth.ok) return auth.response
   const { user } = auth
 
   const search    = req.nextUrl.searchParams.get('q') || ''
-  const segment   = req.nextUrl.searchParams.get('segment') || ''
+  const segmentRaw = req.nextUrl.searchParams.get('segment') || ''
+  const segments   = segmentRaw ? segmentRaw.split(',').filter(s => SEGMENT_ALLOWED.has(s)) : []
+  // PostgreSQL array literal: '{}' means no filter, '{vip,super_vip}' filters to those values
+  const segmentParam = segments.length > 0 ? `{${segments.join(',')}}` : '{}'
   const gaming    = req.nextUrl.searchParams.get('gaming') || ''
-  const panelRaw  = req.nextUrl.searchParams.get('panel') || ''
-  const panel     = PANEL_ALIAS_MAP[panelRaw] ?? panelRaw
+  const panelRaw   = req.nextUrl.searchParams.get('panel') || ''
+  const panelNorm  = (PANEL_ALIAS_MAP[panelRaw] ?? panelRaw).toLowerCase()
+  // Incluye aliases cross-plataforma (ej: betcoin → [betcoin, btcuno])
+  const panelList  = panelNorm ? (PANEL_CROSS[panelNorm] ?? [panelNorm]) : []
+  const panelParam = panelList.length > 0 ? `{${panelList.join(',')}}` : '{}'
   const download  = req.nextUrl.searchParams.get('download') === 'true'
   const selectAll = req.nextUrl.searchParams.get('select_all') === 'true'
   const page      = Number(req.nextUrl.searchParams.get('page') || 1)
@@ -38,8 +68,12 @@ export async function GET(req: NextRequest) {
   const offset    = download ? dlFrom + (page - 1) * limit : (page - 1) * limit
   const linea      = req.nextUrl.searchParams.get('linea') || ''
   const lineaSub   = (req.nextUrl.searchParams.get('linea_sub') || '').toLowerCase()
-  const actividad  = req.nextUrl.searchParams.get('actividad') || ''
-  const antiguedad = req.nextUrl.searchParams.get('antiguedad') || ''
+  const actividadRaw   = req.nextUrl.searchParams.get('actividad') || ''
+  const antiguedadRaw  = req.nextUrl.searchParams.get('antiguedad') || ''
+  const actividadList  = actividadRaw  ? actividadRaw.split(',').filter(v  => ACTIVIDAD_ALLOWED.has(v))  : []
+  const antiguedadList = antiguedadRaw ? antiguedadRaw.split(',').filter(v => ANTIGUEDAD_ALLOWED.has(v)) : []
+  const actividadParam  = actividadList.length  > 0 ? `{${actividadList.join(',')}}` : '{}'
+  const antiguedadParam = antiguedadList.length > 0 ? `{${antiguedadList.join(',')}}` : '{}'
   const listIdRaw  = req.nextUrl.searchParams.get('list_id') || ''
   const listId     = listIdRaw && /^[0-9a-f-]{36}$/i.test(listIdRaw) ? listIdRaw : ''
   const plataforma    = req.nextUrl.searchParams.get('plataforma') || ''
@@ -53,12 +87,7 @@ export async function GET(req: NextRequest) {
     ? ` AND (last_activity_at IS NULL OR last_activity_at < NOW() - INTERVAL '${inactividadDias} days')`
     : ''
 
-  if (actividad && !ACTIVIDAD_ALLOWED.has(actividad)) {
-    return NextResponse.json({ error: `Invalid actividad "${actividad}"` }, { status: 400 })
-  }
-  if (antiguedad && !ANTIGUEDAD_ALLOWED.has(antiguedad)) {
-    return NextResponse.json({ error: `Invalid antiguedad "${antiguedad}"` }, { status: 400 })
-  }
+  // Los valores inválidos se descartan silenciosamente en el split+filter de arriba
   if (plataforma && !PLATAFORMA_ALLOWED.has(plataforma)) {
     return NextResponse.json({ error: `Invalid plataforma "${plataforma}"` }, { status: 400 })
   }
@@ -97,32 +126,36 @@ export async function GET(req: NextRequest) {
     // 8 base params: $1=%search%, $2=segment, $3=gaming, $4=panel, $5=linea, $6=actividad, $7=antiguedad, $8=linea_sub
     const vis2         = visibilityClause(user.role, user.user_id, 8)
     const agentFilter2 = agentAllowed
-      ? ` AND panel = ANY($${9 + vis2.params.length}::text[])`
+      ? ` AND panels_assigned && $${9 + vis2.params.length}::text[]`
       : ''
     const agentParams2 = agentAllowed ? [agentAllowed] : []
     try {
-      const idRows = await query<{ id: string }>(`
-        SELECT id FROM contacts
+      const idRows = await query<{ id: string; phone_number: string }>(`
+        SELECT id, phone_number FROM contacts
         WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
-          AND ($2 = '' OR segment::text = $2)
+          AND ($2 = '{}' OR segment::text = ANY($2::text[]))
           AND ($3 = '' OR gaming::text = $3)
-          AND ($4 = '' OR panel = $4)
+          AND ($4 = '{}' OR panel = ANY($4::text[]))
           AND ($5 = '' OR linea::text = $5)
-          AND ($6 = '' OR EXISTS (
+          AND ($6 = '{}' OR EXISTS (
             SELECT 1 FROM contact_tags ct
-            WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:actividad:' || $6
+            WHERE ct.contact_id = contacts.id
+              AND ct.tag LIKE 'casino:actividad:%'
+              AND REPLACE(ct.tag, 'casino:actividad:', '') = ANY($6::text[])
           ))
-          AND ($7 = '' OR EXISTS (
+          AND ($7 = '{}' OR EXISTS (
             SELECT 1 FROM contact_tags ct
-            WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $7
+            WHERE ct.contact_id = contacts.id
+              AND ct.tag LIKE 'casino:antiguedad:%'
+              AND REPLACE(ct.tag, 'casino:antiguedad:', '') = ANY($7::text[])
           ))
           AND ($8 = '' OR linea_sub = $8)
           ${vis2.sql}${agentFilter2}${plataformaFilter}${sinMovimientoFilter}${inactividadFilter}
         ORDER BY created_at DESC
         LIMIT 100000
-      `, [`%${search}%`, segment, gaming, panel, linea, actividad, antiguedad, lineaSub,
+      `, [`%${search}%`, segmentParam, gaming, panelParam, linea, actividadParam, antiguedadParam, lineaSub,
           ...vis2.params, ...agentParams2])
-      return NextResponse.json({ ids: idRows.map(r => r.id) })
+      return NextResponse.json({ ids: idRows.map(r => r.id), phones: idRows.map(r => r.phone_number) })
     } catch (e) {
       console.error('[/api/contacts GET select_all]', e instanceof Error ? e.message : e)
       return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
@@ -134,7 +167,7 @@ export async function GET(req: NextRequest) {
   //                 $6=panel, $7=linea, $8=actividad, $9=antiguedad, $10=list_id, $11=linea_sub
   const vis         = visibilityClause(user.role, user.user_id, 11)
   const agentFilter = agentAllowed
-    ? ` AND panel = ANY($${12 + vis.params.length}::text[])`
+    ? ` AND panels_assigned && $${12 + vis.params.length}::text[]`
     : ''
   const agentParams = agentAllowed ? [agentAllowed] : []
 
@@ -148,7 +181,7 @@ export async function GET(req: NextRequest) {
   // 9 base params for count query (no limit/offset): $1-$7 same, $8=list_id, $9=linea_sub
   const vis7          = visibilityClause(user.role, user.user_id, 9)
   const agentFilterCt = agentAllowed
-    ? ` AND panel = ANY($${10 + vis7.params.length}::text[])`
+    ? ` AND panels_assigned && $${10 + vis7.params.length}::text[]`
     : ''
   const tagCountIdx    = 10 + vis7.params.length + agentParams.length
   const tagFilterCount = filterTag
@@ -156,79 +189,100 @@ export async function GET(req: NextRequest) {
     : ''
 
   try {
+    // Un único LATERAL por fila reemplaza las 4 subqueries correlacionadas previas
+    // (actividad, valor_riesgo, antiguedad, custom_tags). Con el índice compuesto
+    // idx_contact_tags_contact_tag (contact_id, tag), cada LATERAL hace un solo
+    // index scan y extrae todos los valores en una pasada.
+    // Antes: 4 index seeks × 50 filas = 200 lookups/página
+    // Ahora: 1 index scan  × 50 filas =  50 lookups/página
     const rows = await query(`
-      SELECT id, phone_number, first_name, last_name, email,
-             status, opt_in_marketing AS opt_in, created_at, segment, panel, gaming::text AS gaming, linea, linea_sub,
-             last_deposit_at, total_deposits, total_withdrawals,
-             (SELECT REPLACE(tag, 'casino:actividad:', '')
-              FROM contact_tags
-              WHERE contact_id = contacts.id AND tag LIKE 'casino:actividad:%'
-              LIMIT 1) AS actividad,
-             (SELECT REPLACE(tag, 'casino:valor_riesgo:', '')
-              FROM contact_tags
-              WHERE contact_id = contacts.id AND tag LIKE 'casino:valor_riesgo:%'
-              LIMIT 1) AS valor_riesgo,
-             (SELECT REPLACE(tag, 'casino:antiguedad:', '')
-              FROM contact_tags
-              WHERE contact_id = contacts.id AND tag LIKE 'casino:antiguedad:%'
-              LIMIT 1) AS antiguedad,
-             platforms,
-             COALESCE((
-               SELECT ARRAY_AGG(tag ORDER BY tag)
-               FROM contact_tags
-               WHERE contact_id = contacts.id AND tag NOT LIKE 'casino:%'
-             ), '{}') AS custom_tags
+      SELECT
+        contacts.id, contacts.phone_number, contacts.first_name, contacts.last_name, contacts.email,
+        contacts.status, contacts.opt_in_marketing AS opt_in, contacts.created_at,
+        contacts.segment, contacts.panel, contacts.gaming::text AS gaming, contacts.linea, contacts.linea_sub,
+        contacts.last_deposit_at, contacts.total_deposits, contacts.total_withdrawals,
+        contacts.platforms, contacts.casino_accounts,
+        ct.actividad,
+        ct.valor_riesgo,
+        ct.antiguedad,
+        ct.custom_tags
       FROM contacts
-      WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
-        AND ($4 = '' OR segment::text = $4)
-        AND ($5 = '' OR gaming::text = $5)
-        AND ($6 = '' OR panel = $6)
-        AND ($7 = '' OR linea::text = $7)
-        AND ($8 = '' OR EXISTS (
-          SELECT 1 FROM contact_tags ct
-          WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:actividad:' || $8
+      LEFT JOIN LATERAL (
+        SELECT
+          MAX(CASE WHEN tag LIKE 'casino:actividad:%'
+            THEN REPLACE(tag, 'casino:actividad:', '') END)    AS actividad,
+          MAX(CASE WHEN tag LIKE 'casino:valor_riesgo:%'
+            THEN REPLACE(tag, 'casino:valor_riesgo:', '') END) AS valor_riesgo,
+          MAX(CASE WHEN tag LIKE 'casino:antiguedad:%'
+            THEN REPLACE(tag, 'casino:antiguedad:', '') END)   AS antiguedad,
+          COALESCE(
+            ARRAY_AGG(tag ORDER BY tag) FILTER (WHERE tag NOT LIKE 'casino:%'),
+            '{}'
+          ) AS custom_tags
+        FROM contact_tags
+        WHERE contact_id = contacts.id
+      ) ct ON true
+      WHERE ($1 = '' OR contacts.phone_number ILIKE $1 OR contacts.first_name ILIKE $1 OR contacts.last_name ILIKE $1)
+        AND ($4 = '{}' OR contacts.segment::text = ANY($4::text[]))
+        AND ($5 = '' OR contacts.gaming::text = $5)
+        AND ($6 = '{}' OR contacts.panel = ANY($6::text[]))
+        AND ($7 = '' OR contacts.linea::text = $7)
+        AND ($8 = '{}' OR EXISTS (
+          SELECT 1 FROM contact_tags ct2
+          WHERE ct2.contact_id = contacts.id
+            AND ct2.tag LIKE 'casino:actividad:%'
+            AND REPLACE(ct2.tag, 'casino:actividad:', '') = ANY($8::text[])
         ))
-        AND ($9 = '' OR EXISTS (
-          SELECT 1 FROM contact_tags ct
-          WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $9
+        AND ($9 = '{}' OR EXISTS (
+          SELECT 1 FROM contact_tags ct3
+          WHERE ct3.contact_id = contacts.id
+            AND ct3.tag LIKE 'casino:antiguedad:%'
+            AND REPLACE(ct3.tag, 'casino:antiguedad:', '') = ANY($9::text[])
         ))
-        AND ($10 = '' OR id IN (
+        AND ($10 = '' OR contacts.id IN (
           SELECT contact_id FROM contact_list_members WHERE list_id = $10::uuid
         ))
-        AND ($11 = '' OR linea_sub = $11)
+        AND ($11 = '' OR contacts.linea_sub = $11)
         ${vis.sql}${agentFilter}${tagFilterMain}${plataformaFilter}${sinMovimientoFilter}${inactividadFilter}
-      ORDER BY created_at DESC
+      ORDER BY contacts.created_at DESC
       LIMIT $2 OFFSET $3
-    `, [`%${search}%`, limit, offset, segment, gaming, panel, linea, actividad, antiguedad, listId, lineaSub,
+    `, [`%${search}%`, limit, offset, segmentParam, gaming, panelParam, linea, actividadParam, antiguedadParam, listId, lineaSub,
         ...vis.params, ...agentParams, ...tagParams])
 
     const [{ count }] = await query<{ count: string }>(
       `SELECT COUNT(*) FROM contacts
        WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
-         AND ($2 = '' OR segment::text = $2)
+         AND ($2 = '{}' OR segment::text = ANY($2::text[]))
          AND ($3 = '' OR gaming::text = $3)
-         AND ($4 = '' OR panel = $4)
+         AND ($4 = '{}' OR panel = ANY($4::text[]))
          AND ($5 = '' OR linea::text = $5)
-         AND ($6 = '' OR EXISTS (
+         AND ($6 = '{}' OR EXISTS (
            SELECT 1 FROM contact_tags ct
-           WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:actividad:' || $6
+           WHERE ct.contact_id = contacts.id
+             AND ct.tag LIKE 'casino:actividad:%'
+             AND REPLACE(ct.tag, 'casino:actividad:', '') = ANY($6::text[])
          ))
-         AND ($7 = '' OR EXISTS (
+         AND ($7 = '{}' OR EXISTS (
            SELECT 1 FROM contact_tags ct
-           WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $7
+           WHERE ct.contact_id = contacts.id
+             AND ct.tag LIKE 'casino:antiguedad:%'
+             AND REPLACE(ct.tag, 'casino:antiguedad:', '') = ANY($7::text[])
          ))
          AND ($8 = '' OR id IN (
            SELECT contact_id FROM contact_list_members WHERE list_id = $8::uuid
          ))
          AND ($9 = '' OR linea_sub = $9)
          ${vis7.sql}${agentFilterCt}${tagFilterCount}${plataformaFilter}${sinMovimientoFilter}${inactividadFilter}`,
-      [`%${search}%`, segment, gaming, panel, linea, actividad, antiguedad, listId, lineaSub,
+      [`%${search}%`, segmentParam, gaming, panelParam, linea, actividadParam, antiguedadParam, listId, lineaSub,
        ...vis7.params, ...agentParams, ...tagParams]
     )
 
     return NextResponse.json({ contacts: rows, total: Number(count), page, limit })
   } catch (e) {
-    console.error('[/api/contacts GET]', e instanceof Error ? e.message : e)
+    const err = e as Record<string, unknown>
+    console.error('[/api/contacts GET]', {
+      message: err?.message, code: err?.code, detail: err?.detail, stack: err?.stack,
+    })
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
