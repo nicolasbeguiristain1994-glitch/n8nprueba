@@ -32,7 +32,7 @@ type AppSettings = {
   perms_zeus_sync_global: boolean
 }
 
-const ALL_AGENTS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas']
+const ALL_AGENTS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
 
 const TIMEZONES = [
   'America/Argentina/Buenos_Aires',

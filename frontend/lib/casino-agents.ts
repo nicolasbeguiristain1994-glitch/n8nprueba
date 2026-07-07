@@ -3,10 +3,10 @@
  * adminbet y surmar son agentes internos/de capital — se excluyen de todas
  * las vistas del dashboard para no distorsionar métricas de operación.
  */
-export const AGENTES_PERMITIDOS = ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet', 'lasvegas'] as const
+export const AGENTES_PERMITIDOS = ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet'] as const
 
 /** Literal SQL para filtrar por agentes permitidos en queries de Postgres. */
-export const AGENTES_SQL_ARRAY = `'{bigwin,ofizeus,betcoin,royal,farabet,lasvegas}'::text[]`
+export const AGENTES_SQL_ARRAY = `'{bigwin,ofizeus,betcoin,royal,farabet}'::text[]`
 
 // ── Multi-platform support ────────────────────────────────────────────────────
 
@@ -20,11 +20,11 @@ export type Platform = typeof PLATFORMS[number]
  * Los nombres en bet30 se normalizan al operador canónico via BET30_TO_CANONICAL.
  */
 const PLATFORM_AGENTS: Record<Platform, string[]> = {
-  zeus:        ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet', 'lasvegas'],
+  zeus:        ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet'],
   bet30:       ['bigwin', 'zeus', 'zeusroyal', 'btcuno', 'btcdos'],
   ganamos:     ['royalauto'],
   argenbet:    ['Horus', 'Hades', 'generalfranqui', 'peaky'],
-  consolidado: ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet', 'lasvegas',
+  consolidado: ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet',
                 'zeus', 'zeusroyal', 'btcuno', 'btcdos',
                 'royalauto', 'Horus', 'Hades', 'generalfranqui', 'peaky'],
 }
@@ -89,11 +89,11 @@ export function isValidSyncPlatform(p: unknown): p is 'zeus' | 'bet30' | 'ganamo
  */
 export function getAgentsForPlatform(platform: Platform): string[] {
   switch (platform) {
-    case 'zeus':        return ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet', 'lasvegas']
+    case 'zeus':        return ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet']
     case 'bet30':       return ['bigwin', 'zeus', 'zeusroyal', 'btcuno', 'btcdos']
     case 'ganamos':     return ['royalauto']
     case 'argenbet':    return ['Horus', 'Hades', 'generalfranqui', 'peaky']
-    case 'consolidado': return ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet', 'lasvegas']
+    case 'consolidado': return ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet']
   }
 
 }

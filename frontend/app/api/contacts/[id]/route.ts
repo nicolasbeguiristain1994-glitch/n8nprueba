@@ -23,7 +23,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const parsed  = parseBody(UpdateContactSchema, rawBody)
   if (!parsed.ok) return handleValidationError(req, parsed.error, 'contacts')
 
-  const { segment, gaming, panel, linea, linea_sub, first_name, last_name } = parsed.data
+  const { segment, gaming, panel, linea, first_name, last_name } = parsed.data
 
   try {
     const existing = await query<{ id: string }>('SELECT id FROM contacts WHERE id = $1', [id])
@@ -58,28 +58,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     if (linea !== undefined) {
-      // Al quitar la línea también se limpia la sub-variante (el CHECK exige linea NOT NULL)
-      await query(
-        `UPDATE contacts
-         SET linea = $1,
-             linea_sub = CASE WHEN $1::smallint IS NULL THEN NULL ELSE linea_sub END,
-             updated_at = NOW()
-         WHERE id = $2`,
-        [linea, id]
-      )
+      await query(`UPDATE contacts SET linea = $1, updated_at = NOW() WHERE id = $2`, [linea, id])
       changedFields.push('linea')
-    }
-
-    if (linea_sub !== undefined) {
-      // Solo se aplica si el contacto ya tiene línea; si no, queda en NULL
-      await query(
-        `UPDATE contacts
-         SET linea_sub = CASE WHEN linea IS NULL THEN NULL ELSE $1 END,
-             updated_at = NOW()
-         WHERE id = $2`,
-        [linea_sub, id]
-      )
-      changedFields.push('linea_sub')
     }
 
     if (first_name !== undefined) {

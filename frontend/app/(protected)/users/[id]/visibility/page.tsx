@@ -45,7 +45,7 @@ type OperatorUser = {
   role: string
 }
 
-const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas']
+const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
 const SEGMENT_LABEL: Record<string, string> = { bajo: 'Bajo', medio: 'Medio', vip: 'Vip', super_vip: 'Super Vip' }
 
 // ── Sub-component: contact card ───────────────────────────────────────────────

@@ -90,7 +90,7 @@ const TIER_LABEL: Record<string, string> = {
   bajo:      'Bajo',
 }
 
-const AGENTS: string[] = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas']
+const AGENTS: string[] = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
 
 const PLATFORMS: { key: Platform; label: string }[] = [
   { key: 'todas', label: 'Todas' },

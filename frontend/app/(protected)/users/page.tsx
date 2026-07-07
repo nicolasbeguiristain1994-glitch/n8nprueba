@@ -41,7 +41,7 @@ type User = {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const ALL_AGENTS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas'] as const
+const ALL_AGENTS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal'] as const
 
 const ALL_SECTORS = [
   'dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup',
