@@ -37,7 +37,7 @@ import type { ColumnDef, RowSelectionState, PaginationState } from '@/components
 
 interface Contact {
   id: string; phone_number: string; first_name: string; last_name: string
-  email: string; status: string; opt_in: boolean; created_at: string; segment: string; panel: string; gaming: string; linea: number | null
+  email: string; status: string; opt_in: boolean; created_at: string; segment: string; panel: string; gaming: string; linea: number | null; linea_sub: string | null
   actividad?: string; valor_riesgo?: string; antiguedad?: string
   last_deposit_at?: string | null; total_deposits?: number; total_withdrawals?: number
   platforms?: string[]; casino_accounts?: Array<{ panel: string; username: string }>; custom_tags?: string[]
@@ -49,7 +49,10 @@ interface ContactList { id: string; name: string; contact_count: number; created
 // Constantes de dominio
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal']
+const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas']
+
+// Sub-variantes de línea: permiten diferenciar una misma línea (ej. "Línea 9 a")
+const LINEA_SUB_OPTIONS = [{ v: 'a', l: 'a' }, { v: 'b', l: 'b' }, { v: 'c', l: 'c' }]
 
 const NIVEL_LABEL: Record<string, string> = {
   bajo: 'Bajo', medio: 'Medio', vip: 'Vip Bajo',
@@ -177,6 +180,7 @@ export default function Contacts() {
   const [filterGaming, setFilterGaming]       = useState('')
   const [filterPanel, setFilterPanel]         = useState('')
   const [filterLinea, setFilterLinea]         = useState('')
+  const [filterLineaSub, setFilterLineaSub]   = useState('')
   const [filterActividad, setFilterActividad]   = useState<string[]>([])
   const [actividadOpen, setActividadOpen]       = useState(false)
   const actividadRef = useRef<HTMLDivElement>(null)
@@ -195,7 +199,7 @@ export default function Contacts() {
   const selectedIds   = Object.keys(rowSelection)
   const selectedCount = selectedIds.length
 
-  const hasActiveFilters = !!(search || segments.length > 0 || filterGaming || filterPanel || filterLinea ||
+  const hasActiveFilters = !!(search || segments.length > 0 || filterGaming || filterPanel || filterLinea || filterLineaSub ||
     filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag)
 
   // ── Listas ────────────────────────────────────────────────────────────────
@@ -211,6 +215,7 @@ export default function Contacts() {
   const [importPanel, setImportPanel]   = useState('')
   const [importPanel2, setImportPanel2] = useState('')
   const [importLinea, setImportLinea]   = useState('')
+  const [importLineaSub, setImportLineaSub] = useState('')
   const [importing, setImporting]       = useState(false)
   const [importProgress, setImportProgress] = useState(0)
   const [importResult, setImportResult] = useState<{ inserted: number; updated: number; skipped: number } | null>(null)
@@ -228,6 +233,7 @@ export default function Contacts() {
   const [newGaming, setNewGaming]   = useState('')
   const [newSegment, setNewSegment] = useState('')
   const [newLinea, setNewLinea]     = useState('')
+  const [newLineaSub, setNewLineaSub] = useState('')
   const [addError, setAddError]     = useState('')
   const [addSaving, setAddSaving]   = useState(false)
 
@@ -277,6 +283,7 @@ export default function Contacts() {
   const [editLastName, setEditLastName]   = useState('')
   const [editPanel, setEditPanel]         = useState('')
   const [editLinea, setEditLinea]         = useState('')
+  const [editLineaSub, setEditLineaSub]   = useState('')
   const [editSegment, setEditSegment]     = useState('')
   const [editGaming, setEditGaming]       = useState('')
   const [editSaving, setEditSaving]       = useState(false)
@@ -328,6 +335,7 @@ export default function Contacts() {
       q: search, page: String(pagination.pageIndex + 1),
       segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
       linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
+      ...(filterLineaSub      ? { linea_sub: filterLineaSub }    : {}),
       ...(filterList          ? { list_id: filterList }          : {}),
       ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
       ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
@@ -342,7 +350,7 @@ export default function Contacts() {
         setLoadError(e instanceof Error ? e.message : 'Error al cargar contactos')
       })
       .finally(() => setLoading(false))
-  }, [search, pagination.pageIndex, segments, filterGaming, filterPanel, filterLinea, filterActividad, filterAntiguedad, filterList, filterPlataforma, filterSinMovimiento, filterTag])
+  }, [search, pagination.pageIndex, segments, filterGaming, filterPanel, filterLinea, filterLineaSub, filterActividad, filterAntiguedad, filterList, filterPlataforma, filterSinMovimiento, filterTag])
 
   useEffect(() => { load() }, [load])
   const reloadLists = useCallback(() => {
@@ -396,13 +404,13 @@ export default function Contacts() {
     setAddSaving(true); setAddError('')
     const res = await fetch('/api/contacts', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone: newPhone, name: newName, panel: newPanel, gaming: newGaming || null, segment: newSegment || null, linea: newLinea ? Number(newLinea) : null }),
+      body: JSON.stringify({ phone: newPhone, name: newName, panel: newPanel, gaming: newGaming || null, segment: newSegment || null, linea: newLinea ? Number(newLinea) : null, linea_sub: newLinea ? (newLineaSub || null) : null }),
     })
     const data = await res.json()
     setAddSaving(false)
     if (!res.ok) { setAddError(data.error || 'Error al guardar'); return }
     setShowAdd(false); setNewPhone(''); setNewName(''); setNewPanel('')
-    setNewGaming(''); setNewSegment(''); setNewLinea(''); setAddError('')
+    setNewGaming(''); setNewSegment(''); setNewLinea(''); setNewLineaSub(''); setAddError('')
     load()
   }
 
@@ -445,6 +453,7 @@ export default function Contacts() {
       const q = new URLSearchParams({
         q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
         linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
+        ...(filterLineaSub ? { linea_sub: filterLineaSub } : {}),
         select_all: 'true',
         ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
         ...(filterList          ? { list_id: filterList }          : {}),
@@ -544,6 +553,7 @@ export default function Contacts() {
     const CHUNK_SIZE = 5_000
     const panels = [importPanel, importPanel2].filter(Boolean) as string[]
     const linea  = importLinea ? Number(importLinea) : undefined
+    const linea_sub = importLinea && importLineaSub ? importLineaSub : undefined
     const chunks: ImportRow[][] = []
     for (let i = 0; i < importRows.length; i += CHUNK_SIZE) chunks.push(importRows.slice(i, i + CHUNK_SIZE))
 
@@ -553,7 +563,7 @@ export default function Contacts() {
       for (let i = 0; i < chunks.length; i++) {
         const res = await fetch('/api/contacts/import', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contacts: chunks[i], panels, linea, conflict_mode: conflictMode }),
+          body: JSON.stringify({ contacts: chunks[i], panels, linea, linea_sub, conflict_mode: conflictMode }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) { setImportError(data.error || 'Error al importar'); return }
@@ -588,6 +598,7 @@ export default function Contacts() {
       q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
       linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
     })
+    if (filterLineaSub)      p.set('linea_sub', filterLineaSub)
     if (filterList)          p.set('list_id', filterList)
     if (filterPlataforma)    p.set('plataforma', filterPlataforma)
     if (filterSinMovimiento) p.set('sin_movimiento', 'true')
@@ -610,6 +621,7 @@ export default function Contacts() {
         const q = new URLSearchParams({
           q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
           linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
+          ...(filterLineaSub ? { linea_sub: filterLineaSub } : {}),
           select_all: 'true',
           ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
           ...(filterList          ? { list_id: filterList }          : {}),
@@ -697,6 +709,7 @@ export default function Contacts() {
     setEditLastName(c.last_name || '')
     setEditPanel(c.panel || '')
     setEditLinea(c.linea != null ? String(c.linea) : '')
+    setEditLineaSub(c.linea_sub || '')
     setEditSegment(c.segment || '')
     setEditGaming(c.gaming || '')
     setEditError(null)
@@ -710,6 +723,7 @@ export default function Contacts() {
       last_name:  editLastName.trim()  || null,
       panel:      editPanel  || null,
       linea:      editLinea  ? Number(editLinea) : null,
+      linea_sub:  editLinea  ? (editLineaSub || null) : null,
       segment:    editSegment || null,
       gaming:     editGaming  || null,
     }
@@ -817,6 +831,7 @@ export default function Contacts() {
         const q = new URLSearchParams({
           q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
           linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
+          ...(filterLineaSub ? { linea_sub: filterLineaSub } : {}),
           select_all: 'true',
           ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
           ...(filterList          ? { list_id: filterList }          : {}),
@@ -920,13 +935,24 @@ export default function Contacts() {
       header: 'Línea',
       enableSorting: false,
       cell: ({ row }) => (
-        <EditableCell
-          value={row.original.linea != null ? String(row.original.linea) : ''}
-          options={Array.from({ length: 100 }, (_, i) => ({ value: String(i + 1), label: `Línea ${i + 1}` }))}
-          activeClass="bg-orange-50 text-orange-700"
-          placeholder="— sin línea"
-          onChange={v => updateField(row.original.id, 'linea', v ? Number(v) : null)}
-        />
+        <div className="flex items-center gap-0.5">
+          <EditableCell
+            value={row.original.linea != null ? String(row.original.linea) : ''}
+            options={Array.from({ length: 100 }, (_, i) => ({ value: String(i + 1), label: `Línea ${i + 1}` }))}
+            activeClass="bg-orange-50 text-orange-700"
+            placeholder="— sin línea"
+            onChange={v => updateField(row.original.id, 'linea', v ? Number(v) : null)}
+          />
+          {row.original.linea != null && (
+            <EditableCell
+              value={row.original.linea_sub || ''}
+              options={LINEA_SUB_OPTIONS.map(o => ({ value: o.v, label: o.l }))}
+              activeClass="bg-orange-50 text-orange-700"
+              placeholder="—"
+              onChange={v => updateField(row.original.id, 'linea_sub', v || null)}
+            />
+          )}
+        </div>
       ),
       meta: { mobileLabel: 'Línea' },
     },
@@ -1336,6 +1362,13 @@ export default function Contacts() {
             ))}
           </SelectContent>
         </Select>
+        <Select value={filterLineaSub} onValueChange={v => { setFilterLineaSub(v ?? ''); resetPage() }}>
+          <SelectTrigger className="w-24"><SelectValue placeholder="Var." /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="">Todas</SelectItem>
+            {LINEA_SUB_OPTIONS.map(o => <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>)}
+          </SelectContent>
+        </Select>
         <Select value={filterGaming} onValueChange={v => { setFilterGaming(v ?? ''); resetPage() }}>
           <SelectTrigger className="w-40"><SelectValue placeholder="Juego" /></SelectTrigger>
           <SelectContent>
@@ -1619,7 +1652,7 @@ export default function Contacts() {
       <Dialog open={showImport} onOpenChange={v => {
         if (importing) return
         setShowImport(v)
-        if (!v) { setImportRows([]); setImportResult(null); setImporting(false); setImportError(null); setImportPanel(''); setImportPanel2(''); setImportLinea(''); setImportCheck(null); setConflictMode('update') }
+        if (!v) { setImportRows([]); setImportResult(null); setImporting(false); setImportError(null); setImportPanel(''); setImportPanel2(''); setImportLinea(''); setImportLineaSub(''); setImportCheck(null); setConflictMode('update') }
       }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
@@ -1632,7 +1665,7 @@ export default function Contacts() {
                 <div className="bg-blue-50 rounded-lg p-4"><p className="text-2xl font-bold text-blue-600">{importResult.updated}</p><p className="text-xs text-muted-foreground">Actualizados</p></div>
                 <div className="bg-muted rounded-lg p-4"><p className="text-2xl font-bold text-muted-foreground">{importResult.skipped}</p><p className="text-xs text-muted-foreground">Omitidos</p></div>
               </div>
-              <Button className="w-full" onClick={() => { setShowImport(false); setImportRows([]); setImportResult(null); setImportPanel(''); setImportPanel2(''); setImportLinea('') }}>Cerrar</Button>
+              <Button className="w-full" onClick={() => { setShowImport(false); setImportRows([]); setImportResult(null); setImportPanel(''); setImportPanel2(''); setImportLinea(''); setImportLineaSub('') }}>Cerrar</Button>
             </div>
           ) : (
             <div className="space-y-3">
@@ -1730,6 +1763,16 @@ export default function Contacts() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Variante (opcional)</label>
+                  <Select value={importLineaSub || 'none'} onValueChange={v => setImportLineaSub(v === 'none' ? '' : (v ?? ''))} disabled={!importLinea}>
+                    <SelectTrigger><SelectValue placeholder="Sin variante" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Sin variante</SelectItem>
+                      {LINEA_SUB_OPTIONS.map(o => <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
               {importError && <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded px-3 py-2">{importError}</p>}
               {importing && (
@@ -1801,6 +1844,7 @@ export default function Contacts() {
                       {filterPlataforma && <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">Plataforma: {filterPlataforma}</span>}
                       {filterGaming && <span className="text-xs bg-pink-100 text-pink-700 px-2 py-0.5 rounded-full">Juego: {filterGaming}</span>}
                       {filterLinea && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Línea: {filterLinea}</span>}
+                      {filterLineaSub && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Variante: {filterLineaSub}</span>}
                       {filterSinMovimiento && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">Sin movimiento</span>}
                     </div>
                   </>
@@ -1892,6 +1936,7 @@ export default function Contacts() {
               {[
                 { label: 'Panel', value: newPanel, set: setNewPanel, items: PANEL_OPTIONS.map(p => ({ v: p, l: p })), ph: 'Panel' },
                 { label: 'Línea', value: newLinea, set: setNewLinea, items: Array.from({ length: 100 }, (_, i) => ({ v: String(i + 1), l: `Línea ${i + 1}` })), ph: 'Línea' },
+                { label: 'Var.', value: newLineaSub, set: setNewLineaSub, items: LINEA_SUB_OPTIONS, ph: 'Var.' },
                 { label: 'Juego', value: newGaming, set: setNewGaming, items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }], ph: 'Juego' },
                 { label: 'Nivel', value: newSegment, set: setNewSegment, items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip_alto', l: 'Vip Alto' }, { v: 'vip_medio', l: 'Vip Medio' }, { v: 'vip', l: 'Vip Bajo' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }], ph: 'Nivel' },
               ].map(({ label, value, set, items, ph }) => (
@@ -2101,6 +2146,7 @@ export default function Contacts() {
               {[
                 { label: 'Panel',  value: editPanel,   set: setEditPanel,   items: PANEL_OPTIONS.map(p => ({ v: p, l: p })),                                                                                          ph: 'Panel'  },
                 { label: 'Línea',  value: editLinea,   set: setEditLinea,   items: Array.from({ length: 100 }, (_, i) => ({ v: String(i + 1), l: `Línea ${i + 1}` })),                                               ph: 'Línea'  },
+                { label: 'Var.',   value: editLineaSub, set: setEditLineaSub, items: LINEA_SUB_OPTIONS,                                                                                                             ph: 'Var.'   },
                 { label: 'Juego',  value: editGaming,  set: setEditGaming,  items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }],                         ph: 'Juego'  },
                 { label: 'Nivel',  value: editSegment, set: setEditSegment, items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip_alto', l: 'Vip Alto' }, { v: 'vip_medio', l: 'Vip Medio' }, { v: 'vip', l: 'Vip Bajo' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }], ph: 'Nivel' },
               ].map(({ label, value, set, items, ph }) => (
@@ -2353,6 +2399,7 @@ export default function Contacts() {
                 {filterAntiguedad.length > 0 && <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">Antigüedad: {filterAntiguedad.join(', ')}</span>}
                 {filterPlataforma && <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">Plataforma: {filterPlataforma}</span>}
                 {filterLinea && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Línea: {filterLinea}</span>}
+                {filterLineaSub && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Variante: {filterLineaSub}</span>}
                 {filterGaming && <span className="text-xs bg-pink-100 text-pink-700 px-2 py-0.5 rounded-full">Juego: {filterGaming}</span>}
                 {filterSinMovimiento && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">Sin movimiento</span>}
               </div>
