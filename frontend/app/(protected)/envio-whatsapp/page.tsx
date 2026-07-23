@@ -1,11 +1,14 @@
 'use client'
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { Upload, MessageSquareText, ExternalLink, Trash2, CheckCircle2 } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Upload, MessageSquareText, ExternalLink, Trash2, CheckCircle2, Plus, Pencil, Check, X } from 'lucide-react'
 import { normalizePhone } from '@/lib/validate'
 import { PageHeader } from '@/components/layout/PageHeader'
+
+// ─── tipos ───────────────────────────────────────────────────────────────────
 
 interface Recipient {
   phone: string
@@ -13,7 +16,38 @@ interface Recipient {
   sent?: boolean
 }
 
-const DEFAULT_MESSAGE = 'Hola {nombre}! Te escribo desde GBecon.'
+interface Template {
+  id: string
+  name: string
+  body: string
+}
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+const STORAGE_KEY = 'wa_envio_templates'
+
+const DEFAULT_TEMPLATES: Template[] = [
+  { id: 'default', name: 'Mensaje base', body: 'Hola {nombre}! Te escribo desde GBecon.' },
+]
+
+function loadTemplates(): Template[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return DEFAULT_TEMPLATES
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_TEMPLATES
+  } catch {
+    return DEFAULT_TEMPLATES
+  }
+}
+
+function saveTemplates(templates: Template[]) {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(templates)) } catch {}
+}
+
+function uid() {
+  return Math.random().toString(36).slice(2, 10)
+}
 
 function parseVcfText(text: string): Recipient[] {
   const cards = text.split('BEGIN:VCARD')
@@ -36,12 +70,80 @@ function parseVcfText(text: string): Recipient[] {
   return rows
 }
 
+// ─── componente ──────────────────────────────────────────────────────────────
+
 export default function EnvioWhatsappPage() {
+  const [templates, setTemplates]       = useState<Template[]>(DEFAULT_TEMPLATES)
+  const [activeId, setActiveId]         = useState<string>('default')
+  const [editingId, setEditingId]       = useState<string | null>(null)
+  const [editName, setEditName]         = useState('')
+  const [editBody, setEditBody]         = useState('')
+  const [addingNew, setAddingNew]       = useState(false)
+  const [newName, setNewName]           = useState('')
+  const [newBody, setNewBody]           = useState('')
+
   const [recipients, setRecipients] = useState<Recipient[]>([])
-  const [message, setMessage]       = useState(DEFAULT_MESSAGE)
   const [fileName, setFileName]     = useState('')
   const [error, setError]           = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Cargar plantillas de localStorage al montar
+  useEffect(() => {
+    const loaded = loadTemplates()
+    setTemplates(loaded)
+    setActiveId(loaded[0]?.id ?? 'default')
+  }, [])
+
+  const activeTemplate = templates.find(t => t.id === activeId) ?? templates[0]
+  const activeBody = activeTemplate?.body ?? ''
+
+  // ── CRUD plantillas ────────────────────────────────────────────────────────
+
+  const startEdit = (t: Template) => {
+    setEditingId(t.id)
+    setEditName(t.name)
+    setEditBody(t.body)
+  }
+
+  const saveEdit = () => {
+    if (!editName.trim() || !editBody.trim()) return
+    const updated = templates.map(t =>
+      t.id === editingId ? { ...t, name: editName.trim(), body: editBody.trim() } : t
+    )
+    setTemplates(updated)
+    saveTemplates(updated)
+    setEditingId(null)
+  }
+
+  const cancelEdit = () => setEditingId(null)
+
+  const deleteTemplate = (id: string) => {
+    if (templates.length <= 1) return // siempre dejar al menos 1
+    const updated = templates.filter(t => t.id !== id)
+    setTemplates(updated)
+    saveTemplates(updated)
+    if (activeId === id) setActiveId(updated[0].id)
+  }
+
+  const confirmNew = () => {
+    if (!newName.trim() || !newBody.trim()) return
+    const t: Template = { id: uid(), name: newName.trim(), body: newBody.trim() }
+    const updated = [...templates, t]
+    setTemplates(updated)
+    saveTemplates(updated)
+    setActiveId(t.id)
+    setAddingNew(false)
+    setNewName('')
+    setNewBody('')
+  }
+
+  const cancelNew = () => {
+    setAddingNew(false)
+    setNewName('')
+    setNewBody('')
+  }
+
+  // ── archivo ────────────────────────────────────────────────────────────────
 
   const handleFile = useCallback((file: File) => {
     setError('')
@@ -75,7 +177,6 @@ export default function EnvioWhatsappPage() {
             return (norm ? { phone: norm, name: row[nameKey] || undefined } : null) as Recipient | null
           }).filter((r): r is Recipient => !!r)
         }
-        // dedupe
         const seen = new Set<string>()
         rows = rows.filter(r => (seen.has(r.phone) ? false : (seen.add(r.phone), true)))
         if (rows.length === 0) setError('No se encontraron números válidos en el archivo.')
@@ -92,10 +193,10 @@ export default function EnvioWhatsappPage() {
   }, [])
 
   const buildText = useCallback((r: Recipient) => {
-    return message
+    return activeBody
       .replaceAll('{nombre}', r.name || '')
       .replaceAll('{telefono}', r.phone)
-  }, [message])
+  }, [activeBody])
 
   const openChat = useCallback((r: Recipient, idx: number) => {
     const text = encodeURIComponent(buildText(r))
@@ -113,13 +214,126 @@ export default function EnvioWhatsappPage() {
 
   const sentCount = recipients.filter(r => r.sent).length
 
+  // ── render ─────────────────────────────────────────────────────────────────
+
   return (
     <div className="space-y-5">
       <PageHeader
         title="Envío por WhatsApp"
-        description="Subí contactos (CSV o VCF), escribí el mensaje y abrí cada chat con el texto pre-armado. El envío final lo confirmás vos en WhatsApp."
+        description="Subí contactos (CSV o VCF), elegí un mensaje y abrí cada chat con el texto pre-armado. El envío final lo confirmás vos en WhatsApp."
       />
 
+      {/* ── Plantillas ── */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <label className="text-xs text-muted-foreground">Plantillas de mensaje</label>
+          <Button variant="ghost" size="sm" className="text-xs h-7 px-2" onClick={() => setAddingNew(true)}>
+            <Plus size={13} className="mr-1" /> Nueva plantilla
+          </Button>
+        </div>
+
+        <div className="border rounded-lg divide-y">
+          {templates.map(t => (
+            <div key={t.id} className={`p-3 transition-colors ${activeId === t.id ? 'bg-violet-50/60 dark:bg-violet-950/20' : ''}`}>
+              {editingId === t.id ? (
+                /* ── modo edición ── */
+                <div className="space-y-2">
+                  <Input
+                    value={editName}
+                    onChange={e => setEditName(e.target.value)}
+                    placeholder="Nombre de la plantilla"
+                    className="h-8 text-sm"
+                  />
+                  <Textarea
+                    value={editBody}
+                    onChange={e => setEditBody(e.target.value)}
+                    rows={3}
+                    className="resize-y text-sm"
+                    placeholder="Texto del mensaje. Usá {nombre} y {telefono}."
+                  />
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={saveEdit} className="h-7 px-3 text-xs">
+                      <Check size={12} className="mr-1" /> Guardar
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={cancelEdit} className="h-7 px-3 text-xs">
+                      <X size={12} className="mr-1" /> Cancelar
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                /* ── modo vista ── */
+                <div className="flex items-start gap-2">
+                  <button
+                    onClick={() => setActiveId(t.id)}
+                    className="flex-1 text-left group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${activeId === t.id ? 'bg-violet-500' : 'bg-zinc-300'}`} />
+                      <span className={`text-sm font-medium ${activeId === t.id ? 'text-violet-700 dark:text-violet-300' : ''}`}>
+                        {t.name}
+                      </span>
+                      {activeId === t.id && (
+                        <span className="text-xs text-violet-500 font-normal">activa</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1 ml-4 line-clamp-2">{t.body}</p>
+                  </button>
+                  <div className="flex gap-1 flex-shrink-0">
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => startEdit(t)}>
+                      <Pencil size={12} />
+                    </Button>
+                    <Button
+                      variant="ghost" size="sm"
+                      className="h-7 w-7 p-0 text-red-400 hover:text-red-600"
+                      onClick={() => deleteTemplate(t.id)}
+                      disabled={templates.length <= 1}
+                    >
+                      <Trash2 size={12} />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+
+          {/* ── formulario nueva plantilla ── */}
+          {addingNew && (
+            <div className="p-3 space-y-2 bg-muted/20">
+              <Input
+                value={newName}
+                onChange={e => setNewName(e.target.value)}
+                placeholder="Nombre de la plantilla"
+                className="h-8 text-sm"
+                autoFocus
+              />
+              <Textarea
+                value={newBody}
+                onChange={e => setNewBody(e.target.value)}
+                rows={3}
+                className="resize-y text-sm"
+                placeholder="Texto del mensaje. Usá {nombre} y {telefono}."
+              />
+              <div className="flex gap-2">
+                <Button size="sm" onClick={confirmNew} className="h-7 px-3 text-xs">
+                  <Check size={12} className="mr-1" /> Agregar
+                </Button>
+                <Button size="sm" variant="ghost" onClick={cancelNew} className="h-7 px-3 text-xs">
+                  <X size={12} className="mr-1" /> Cancelar
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* preview del mensaje activo */}
+        {activeTemplate && (
+          <p className="text-xs text-muted-foreground px-1">
+            <span className="font-medium">Preview:</span> {activeBody.slice(0, 120)}{activeBody.length > 120 ? '…' : ''}
+          </p>
+        )}
+      </div>
+
+      {/* ── Archivo ── */}
       <div className="space-y-1.5">
         <label className="text-xs text-muted-foreground block">Archivo de contactos (.csv o .vcf)</label>
         <div className="flex items-center gap-3">
@@ -142,24 +356,16 @@ export default function EnvioWhatsappPage() {
         />
       </div>
 
-      <div className="space-y-1.5">
-        <label className="text-xs text-muted-foreground block">
-          Mensaje (variables: {'{nombre}'} y {'{telefono}'})
-        </label>
-        <Textarea
-          value={message}
-          onChange={e => setMessage(e.target.value)}
-          rows={4}
-          className="resize-y"
-        />
-      </div>
-
       {error && <p className="text-sm text-red-600">{error}</p>}
 
+      {/* ── Tabla de contactos ── */}
       {recipients.length > 0 && (
         <div className="border rounded-lg overflow-hidden">
           <div className="px-3 py-2 text-xs text-muted-foreground bg-muted/40 border-b flex items-center justify-between">
-            <span>{recipients.length} contacto{recipients.length === 1 ? '' : 's'} listos para enviar</span>
+            <span>
+              {recipients.length} contacto{recipients.length === 1 ? '' : 's'} —
+              plantilla: <span className="font-medium text-violet-600">{activeTemplate?.name}</span>
+            </span>
             <span className="flex items-center gap-1">
               <CheckCircle2 size={13} className={sentCount > 0 ? 'text-green-600' : ''} />
               {sentCount}/{recipients.length} abiertos
