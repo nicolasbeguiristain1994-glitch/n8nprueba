@@ -27,7 +27,7 @@ interface Template {
 const STORAGE_KEY = 'wa_envio_templates'
 
 const DEFAULT_TEMPLATES: Template[] = [
-  { id: 'default', name: 'Mensaje base', body: 'Hola {nombre}! Te escribo desde...' },
+  { id: 'default', name: 'Mensaje base', body: 'Hola {nombre}! ' },
 ]
 
 function loadTemplates(): Template[] {
