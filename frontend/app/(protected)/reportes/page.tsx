@@ -44,7 +44,7 @@ const TODAY = new Date().toISOString().slice(0, 10)
 
 const EMPTY_FORM = {
   oficina: '', linea: '', base_datos: '', mensaje: '',
-  segmentacion: '', enviados: '', observaciones: '', fecha: TODAY,
+  segmentacion: '', enviados: '', respuestas: '', cargas: '', observaciones: '', fecha: TODAY,
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -124,7 +124,13 @@ export default function ReportesPage() {
       await fetchJson('/api/reports', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, linea: Number(form.linea), enviados: Number(form.enviados) }),
+        body: JSON.stringify({
+          ...form,
+          linea: Number(form.linea),
+          enviados: Number(form.enviados),
+          respuestas: form.respuestas !== '' ? Number(form.respuestas) : undefined,
+          cargas: form.cargas !== '' ? Number(form.cargas) : undefined,
+        }),
       })
       setShowForm(false); setForm(EMPTY_FORM); loadReports()
     } catch (e) {
@@ -249,6 +255,14 @@ export default function ReportesPage() {
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Enviados *</label>
                   <Input type="number" min={0} value={form.enviados} onChange={e => setForm(f => ({ ...f, enviados: e.target.value }))} className="h-8 text-sm" placeholder="0" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Respuestas</label>
+                  <Input type="number" min={0} value={form.respuestas} onChange={e => setForm(f => ({ ...f, respuestas: e.target.value }))} className="h-8 text-sm" placeholder="0" />
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Cargas</label>
+                  <Input type="number" min={0} value={form.cargas} onChange={e => setForm(f => ({ ...f, cargas: e.target.value }))} className="h-8 text-sm" placeholder="0" />
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Fecha *</label>

@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Body inválido' }, { status: 400 })
   }
 
-  const { oficina, linea, base_datos, mensaje, segmentacion, enviados, observaciones, fecha } = body
+  const { oficina, linea, base_datos, mensaje, segmentacion, enviados, observaciones, fecha, respuestas, cargas } = body
 
   if (!oficina || !linea || !base_datos || !mensaje || enviados == null) {
     return NextResponse.json({ error: 'Faltan campos obligatorios' }, { status: 400 })
@@ -64,24 +64,23 @@ export async function POST(req: NextRequest) {
 
   const u = user as Record<string, unknown>
   const operadorNombre = String(u.name ?? u.display_name ?? u.username ?? u.email ?? 'Operador')
+  const respVal = respuestas != null ? Number(respuestas) : null
+  const cargasVal = cargas != null ? Number(cargas) : null
+  const estado = (respVal != null && cargasVal != null) ? 'completo' : 'pendiente'
 
   try {
     const rows = await query(
       `INSERT INTO sending_reports
-         (oficina, linea, base_datos, mensaje, segmentacion, enviados, observaciones, fecha, operador_id, operador_nombre)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         (oficina, linea, base_datos, mensaje, segmentacion, enviados, respuestas, cargas, observaciones, fecha, operador_id, operador_nombre, estado)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        RETURNING *`,
       [
-        String(oficina),
-        Number(linea),
-        String(base_datos),
-        String(mensaje),
-        segmentacion ? String(segmentacion) : null,
-        Number(enviados),
+        String(oficina), Number(linea), String(base_datos), String(mensaje),
+        segmentacion ? String(segmentacion) : null, Number(enviados),
+        respVal, cargasVal,
         observaciones ? String(observaciones) : null,
         fecha ? String(fecha) : new Date().toISOString().slice(0, 10),
-        String(user.user_id),
-        operadorNombre,
+        String(user.user_id), operadorNombre, estado,
       ],
     )
     return NextResponse.json({ report: rows[0] }, { status: 201 })
