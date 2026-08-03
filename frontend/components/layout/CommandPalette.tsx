@@ -35,7 +35,7 @@ import {
   Search,
   LayoutDashboard, Users, Megaphone, MessageSquare,
   Activity, Flame, BarChart2, Bot, ShieldOff, FileText,
-  UserCog, Settings, UserPlus, SendHorizonal, ArrowRight, Filter, Send,
+  UserCog, Settings, UserPlus, SendHorizonal, ArrowRight, Filter, Send, BarChart2 as ReportIcon,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
@@ -74,9 +74,10 @@ const COMMAND_ITEMS: CommandItem[] = [
   // Navegación principal
   { id: 'dashboard',     type: 'navigate', label: 'Dashboard',       icon: LayoutDashboard, href: '/',                 group: 'Navegación', keywords: ['inicio', 'home', 'resumen'] },
   { id: 'contacts',      type: 'navigate', label: 'Contactos',        icon: Users,           href: '/contacts',         group: 'Navegación', keywords: ['clientes', 'jugadores', 'lista'] },
-  { id: 'campaigns',     type: 'navigate', label: 'Campañas',         icon: Megaphone,       href: '/campaigns',        group: 'Navegación', keywords: ['envios', 'masivo', 'whatsapp'] },
-  { id: 'segmentacion',  type: 'navigate', label: 'Segmentación',     icon: Filter,          href: '/segmentacion',     group: 'Navegación', keywords: ['filtros', 'export', 'csv', 'oficina'] },
-  { id: 'envio-whatsapp',type: 'navigate', label: 'Envío WA',         icon: Send,            href: '/envio-whatsapp',   group: 'Navegación', keywords: ['mensaje', 'masivo', 'whatsapp', 'csv'] },
+  { id: 'campaigns',      type: 'navigate', label: 'Campañas',         icon: Megaphone,     href: '/campaigns',        group: 'Navegación', keywords: ['envios', 'masivo', 'whatsapp'] },
+  { id: 'segmentacion',  type: 'navigate', label: 'Segmentación',     icon: Filter,        href: '/segmentacion',     group: 'Navegación', keywords: ['filtros', 'export', 'csv', 'oficina'] },
+  { id: 'envio-wa',      type: 'navigate', label: 'Envío WA',         icon: Send,          href: '/envio-whatsapp',   group: 'Navegación', keywords: ['mensaje', 'masivo', 'whatsapp', 'csv'] },
+  { id: 'reportes',      type: 'navigate', label: 'Reportes',         icon: ReportIcon,    href: '/reportes',         group: 'Navegación', keywords: ['reporte', 'efectividad', 'enviados', 'dashboard'] },
   { id: 'conversations', type: 'navigate', label: 'Conversaciones',   icon: MessageSquare,   href: '/conversations',    group: 'Navegación', keywords: ['mensajes', 'chats', 'inbox'] },
   { id: 'lines',         type: 'navigate', label: 'Líneas',           icon: Activity,        href: '/lines',            group: 'Navegación', keywords: ['numeros', 'telefonos'] },
   { id: 'warmup',        type: 'navigate', label: 'Calentamiento',    icon: Flame,           href: '/warmup',           group: 'Navegación', keywords: ['warming', 'activacion'] },

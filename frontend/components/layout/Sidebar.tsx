@@ -21,7 +21,7 @@ import {
   Activity, Flame, UserCog, Settings, FileText,
   BarChart2, ShieldOff, Bot, ChevronLeft, LogOut, X,
   ClipboardList, CheckSquare, CalendarDays, HelpCircle, TrendingUp,
-  Filter, Send,
+  Filter, Send, BarChart2 as ReportIcon,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useSidebar } from './sidebar-context'
@@ -46,6 +46,7 @@ const BASE_NAV: NavItem[] = [
   { href: '/prioridades',    label: 'Prioridades',      icon: TrendingUp,      sector: 'contacts' },
   { href: '/segmentacion',   label: 'Segmentación',     icon: Filter,          sector: 'contacts' },
   { href: '/envio-whatsapp', label: 'Envío WA',         icon: Send,            sector: 'campaigns' },
+  { href: '/reportes',       label: 'Reportes',         icon: ReportIcon,      sector: 'campaigns' },
   { href: '/conversations',  label: 'Conversaciones',   icon: MessageSquare,   sector: 'conversations' },
   { href: '/lines',          label: 'Líneas',           icon: Activity,        sector: 'lines' },
   { href: '/warmup',         label: 'Calentamiento',    icon: Flame,           sector: 'warmup' },
