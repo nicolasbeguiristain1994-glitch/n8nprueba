@@ -79,6 +79,15 @@ const pool = new Pool({
   idleTimeoutMillis:            600_000,  // longer than the slowest Zeus API call
 })
 
+// Sin este listener, un corte de red en una conexión ociosa emite un 'error' sin
+// manejar en el pool y Node mata el proceso en el acto. Es lo que venía pasando en
+// las corridas largas: caían con EADDRNOTAVAIL a mitad del histórico, dejando la
+// sincronización incompleta. Con el handler, la query en curso falla, ese agente
+// se reporta como fallido y el resto del run continúa.
+pool.on('error', err => {
+  log.error({ err: err.message, code: err.code }, 'Idle DB connection error — el run continúa')
+})
+
 // ── DB queries (orchestration-level, not platform-specific) ───────────────────
 
 async function resolveDesde(pool) {
@@ -92,23 +101,23 @@ async function resolveDesde(pool) {
 }
 
 async function getAgentes(pool) {
-  const { rows } = await pool.query(
-    `SELECT DISTINCT agente FROM casino_players
-     WHERE agente IS NOT NULL
-       AND ($1::text[] IS NULL OR agente = ANY($1::text[]))
-     ORDER BY agente`,
-    [AGENTES_FILTER]
-  )
-  const fromDb = rows.map(r => r.agente)
-
-  // Bootstrap: if casino_players is empty and --agentes was passed explicitly,
-  // use that list directly rather than silently doing nothing.
-  if (fromDb.length === 0 && AGENTES_FILTER !== null) {
-    log.info('casino_players is empty — using --agentes list as bootstrap')
+  // --agentes es un override explícito: se usa tal cual, sin intersectarlo con
+  // casino_players. Antes se filtraba contra la tabla y el bootstrap solo se
+  // activaba si la intersección quedaba vacía, así que pedir un agente que aún
+  // no existía en la DB junto a uno que sí existía descartaba al nuevo en
+  // silencio — y no había forma de dar de alta un agente nuevo salvo con la
+  // tabla completamente vacía.
+  if (AGENTES_FILTER !== null) {
+    log.info({ agents: AGENTES_FILTER }, 'Using --agentes override')
     return AGENTES_FILTER
   }
 
-  return fromDb
+  const { rows } = await pool.query(
+    `SELECT DISTINCT agente FROM casino_players
+     WHERE agente IS NOT NULL
+     ORDER BY agente`,
+  )
+  return rows.map(r => r.agente)
 }
 
 // ── Date chunking ─────────────────────────────────────────────────────────────

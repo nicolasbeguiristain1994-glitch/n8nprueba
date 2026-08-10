@@ -1,32 +1,46 @@
 'use strict'
 
-const { ZeusConnector }     = require('./zeus/ZeusConnector')
-const { Bet30Connector }    = require('./bet30/Bet30Connector')
-const { GanamosConnector }  = require('./ganamos/GanamosConnector')
-const { ArgenBetConnector } = require('./argenbet/ArgenBetConnector')
-
 /**
- * Maps platform `type` values (from platforms.config.json) to their connector classes.
- * Register new platforms here when adding support for a new backend.
+ * Maps platform `type` values (from platforms.config.json) to the module that
+ * implements them. Register new platforms here when adding support for a new
+ * backend.
+ *
+ * Los módulos se cargan bajo demanda, no al importar este archivo. platforms.config.json
+ * lista plataformas cuyo conector todavía no está escrito (ganamos, argenbet); con
+ * `require` en el tope, esa sola ausencia tiraba abajo el módulo entero y dejaba sin
+ * sincronizar también a Zeus y Bet30, que sí están implementados.
  */
 const CONNECTOR_MAP = {
-  zeus:     ZeusConnector,
-  bet30:    Bet30Connector,
-  ganamos:  GanamosConnector,
-  argenbet: ArgenBetConnector,
+  zeus:     { path: './zeus/ZeusConnector',       export: 'ZeusConnector' },
+  bet30:    { path: './bet30/Bet30Connector',     export: 'Bet30Connector' },
+  ganamos:  { path: './ganamos/GanamosConnector', export: 'GanamosConnector' },
+  argenbet: { path: './argenbet/ArgenBetConnector', export: 'ArgenBetConnector' },
 }
 
 function createConnector(platformName, pool) {
   const config = _loadPlatformConfig(platformName)
 
-  const ConnectorClass = CONNECTOR_MAP[config.type]
-  if (!ConnectorClass) {
+  const entry = CONNECTOR_MAP[config.type]
+  if (!entry) {
     const registered = Object.keys(CONNECTOR_MAP).join(', ')
     throw new Error(
       `No connector registered for platform type "${config.type}". ` +
       `Registered types: ${registered}. ` +
       `Add it to CONNECTOR_MAP in src/casino-connectors/index.js`
     )
+  }
+
+  let ConnectorClass
+  try {
+    ConnectorClass = require(entry.path)[entry.export]
+  } catch (err) {
+    if (err.code === 'MODULE_NOT_FOUND' && err.message.includes(entry.path.replace('./', ''))) {
+      throw new Error(
+        `Platform type "${config.type}" is declared in platforms.config.json but its ` +
+        `connector is not implemented yet (missing ${entry.path}).`
+      )
+    }
+    throw err
   }
 
   return new ConnectorClass(config, pool)

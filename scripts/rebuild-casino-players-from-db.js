@@ -49,7 +49,32 @@ const path     = require('path')
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const AGENTES_PERMITIDOS = ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet']
+// El mismo operador opera en las dos plataformas bajo nombres distintos:
+//   Zeus     betcoin   farabet   ofizeus   bigwin   royal
+//   Bet30    btcuno    btcdos    zeus      bigwin   zeusroyal
+// Ambos juegos de nombres son válidos como `agente` en casino_transactions.
+const AGENTES_PERMITIDOS = [
+  'bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet',   // Zeus
+  'btcuno', 'btcdos', 'zeus', 'zeusroyal',              // Bet30 (bigwin se repite)
+]
+
+// Un mismo operador se llama distinto en cada plataforma. casino_transactions
+// guarda el nombre real con que vino de cada casino —eso preserva la trazabilidad—
+// y acá se unifica al nombre de Zeus, que es el que usa el resto de la app:
+// contacts.panel, los filtros de la UI y la visibilidad por agente.
+const ALIAS_AGENTE = {
+  btcuno:    'betcoin',
+  btcdos:    'farabet',
+  zeus:      'ofizeus',
+  zeusroyal: 'royal',
+}
+
+const ALIAS_SQL = Object.entries(ALIAS_AGENTE)
+  .map(([de, a]) => `WHEN '${de}' THEN '${a}'`)
+  .join(' ')
+
+/** Expresión SQL que traduce un nombre de agente de Bet30 al de Zeus. */
+const AGENTE_NORMALIZADO = `CASE LOWER(TRIM(ct.agente)) ${ALIAS_SQL} ELSE LOWER(TRIM(ct.agente)) END`
 
 // ── CLI args ──────────────────────────────────────────────────────────────────
 
@@ -116,7 +141,7 @@ async function main() {
   // ── DRY RUN — preview ────────────────────────────────────────────────────────
   if (DRY_RUN) {
     const previewRes = await pool.query(
-      `SELECT COUNT(DISTINCT (LOWER(ct.username), ct.agente)) AS player_count
+      `SELECT COUNT(DISTINCT LOWER(ct.username)) AS player_count
        FROM casino_transactions ct
        WHERE ct.agente = ANY($1::text[])
          AND ct.username != ct.agente`,
@@ -142,26 +167,55 @@ async function main() {
   //   - El dashboard los muestra como '' vía COALESCE y sigue funcionando
 
   const upsertRes = await pool.query(
-    `INSERT INTO casino_players
+    // Se agrupa por username, NO por (username, agente).
+    //
+    // Un jugador con el mismo username en Zeus y en Bet30 es la misma persona, y
+    // su valor real es la suma de lo que cargó en las dos. Agrupando por
+    // (username, agente) salían dos filas que chocaban en el índice único de
+    // username_lower y se pisaban entre sí vía ON CONFLICT: el jugador terminaba
+    // con los datos de una sola plataforma, la que se procesara último, y el
+    // resultado dependía del orden del GROUP BY.
+    //
+    // `agente` se resuelve aparte: el de su transacción más reciente, porque ese
+    // campo se usa para saber por dónde contactarlo.
+    `WITH agente_reciente AS (
+       SELECT DISTINCT ON (LOWER(ct.username))
+              LOWER(ct.username)    AS uname,
+              ${AGENTE_NORMALIZADO} AS agente,
+              ct.username           AS username_original
+       FROM casino_transactions ct
+       WHERE ct.agente = ANY($1::text[])
+         AND ct.username != ct.agente
+       ORDER BY LOWER(ct.username), ct.fecha DESC, ct.id DESC
+     ),
+     agregado AS (
+       SELECT
+         LOWER(ct.username) AS uname,
+         COALESCE(SUM(ct.monto) FILTER (WHERE ct.tipo = 'carga'),  0)::bigint AS total_cargas,
+         COALESCE(SUM(ct.monto) FILTER (WHERE ct.tipo = 'retiro'), 0)::bigint AS total_retiros,
+         COALESCE(COUNT(*)      FILTER (WHERE ct.tipo = 'carga'),  0)::int    AS cant_cargas,
+         COALESCE(COUNT(*)      FILTER (WHERE ct.tipo = 'retiro'), 0)::int    AS cant_retiros,
+         MIN(ct.fecha) AS fecha_primera,
+         MAX(ct.fecha) AS fecha_ultima
+       FROM casino_transactions ct
+       WHERE ct.agente = ANY($1::text[])
+         AND ct.username != ct.agente
+       GROUP BY LOWER(ct.username)
+       HAVING
+         SUM(ct.monto) FILTER (WHERE ct.tipo = 'carga')  > 0
+         OR SUM(ct.monto) FILTER (WHERE ct.tipo = 'retiro') > 0
+     )
+     INSERT INTO casino_players
        (username, agente,
         total_cargas, total_retiros, cant_cargas, cant_retiros,
         fecha_primera, fecha_ultima)
      SELECT
-       ct.username,
-       ct.agente,
-       COALESCE(SUM(ct.monto) FILTER (WHERE ct.tipo = 'carga'),  0)::bigint AS total_cargas,
-       COALESCE(SUM(ct.monto) FILTER (WHERE ct.tipo = 'retiro'), 0)::bigint AS total_retiros,
-       COALESCE(COUNT(*)      FILTER (WHERE ct.tipo = 'carga'),  0)::int    AS cant_cargas,
-       COALESCE(COUNT(*)      FILTER (WHERE ct.tipo = 'retiro'), 0)::int    AS cant_retiros,
-       MIN(ct.fecha) AS fecha_primera,
-       MAX(ct.fecha) AS fecha_ultima
-     FROM casino_transactions ct
-     WHERE ct.agente = ANY($1::text[])
-       AND ct.username != ct.agente
-     GROUP BY ct.username, ct.agente
-     HAVING
-       SUM(ct.monto) FILTER (WHERE ct.tipo = 'carga')  > 0
-       OR SUM(ct.monto) FILTER (WHERE ct.tipo = 'retiro') > 0
+       ar.username_original,
+       ar.agente,
+       a.total_cargas, a.total_retiros, a.cant_cargas, a.cant_retiros,
+       a.fecha_primera, a.fecha_ultima
+     FROM agregado a
+     JOIN agente_reciente ar ON ar.uname = a.uname
      ON CONFLICT (username_lower) DO UPDATE SET
        agente        = EXCLUDED.agente,
        total_cargas  = EXCLUDED.total_cargas,
@@ -192,7 +246,10 @@ async function main() {
     totalPlayers += Number(r.players)
   }
 
-  const agentesSinResultado = AGENTES.filter(a => !resultRes.rows.find(r => r.agente === a))
+  // Comparar contra los nombres ya unificados: pedir 'btcuno' produce filas bajo
+  // 'betcoin', y sin traducir el aviso diría que no tuvo resultado.
+  const esperados = [...new Set(AGENTES.map(a => ALIAS_AGENTE[a] ?? a))]
+  const agentesSinResultado = esperados.filter(a => !resultRes.rows.find(r => r.agente === a))
   if (agentesSinResultado.length) {
     console.log(`  ⚠  Sin jugadores resultantes para: ${agentesSinResultado.join(', ')}`)
   }
