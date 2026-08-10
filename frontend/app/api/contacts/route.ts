@@ -53,11 +53,19 @@ export async function GET(req: NextRequest) {
     ? ` AND (last_activity_at IS NULL OR last_activity_at < NOW() - INTERVAL '${inactividadDias} days')`
     : ''
 
-  if (actividad && !ACTIVIDAD_ALLOWED.has(actividad)) {
-    return NextResponse.json({ error: `Invalid actividad "${actividad}"` }, { status: 400 })
+  // actividad y antigüedad llegan como CSV porque el filtro es de selección
+  // múltiple ("perdido,inactivo"). Validar el string entero contra la whitelist
+  // rechazaba cualquier combinación de más de un valor con un 400.
+  const invalidos = (csv: string, permitidos: Set<string>) =>
+    csv.split(',').map(v => v.trim()).filter(v => v && !permitidos.has(v))
+
+  const actividadInvalida = invalidos(actividad, ACTIVIDAD_ALLOWED)
+  if (actividadInvalida.length) {
+    return NextResponse.json({ error: `Invalid actividad "${actividadInvalida.join(', ')}"` }, { status: 400 })
   }
-  if (antiguedad && !ANTIGUEDAD_ALLOWED.has(antiguedad)) {
-    return NextResponse.json({ error: `Invalid antiguedad "${antiguedad}"` }, { status: 400 })
+  const antiguedadInvalida = invalidos(antiguedad, ANTIGUEDAD_ALLOWED)
+  if (antiguedadInvalida.length) {
+    return NextResponse.json({ error: `Invalid antiguedad "${antiguedadInvalida.join(', ')}"` }, { status: 400 })
   }
   if (plataforma && !PLATAFORMA_ALLOWED.has(plataforma)) {
     return NextResponse.json({ error: `Invalid plataforma "${plataforma}"` }, { status: 400 })
