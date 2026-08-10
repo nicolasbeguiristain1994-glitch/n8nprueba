@@ -103,7 +103,8 @@ export async function GET(req: NextRequest) {
     try {
       const idRows = await query<{ id: string }>(`
         SELECT id FROM contacts
-        WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
+        WHERE deleted_at IS NULL
+          AND ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
           AND ($2 = '' OR segment::text = $2)
           AND ($3 = '' OR gaming::text = $3)
           AND ($4 = '' OR panel = $4)
@@ -179,7 +180,8 @@ export async function GET(req: NextRequest) {
                WHERE contact_id = contacts.id AND tag NOT LIKE 'casino:%'
              ), '{}') AS custom_tags
       FROM contacts
-      WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
+      WHERE deleted_at IS NULL
+        AND ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
         AND ($4 = '' OR segment::text = $4)
         AND ($5 = '' OR gaming::text = $5)
         AND ($6 = '' OR panel = $6)
@@ -204,7 +206,8 @@ export async function GET(req: NextRequest) {
 
     const [{ count }] = await query<{ count: string }>(
       `SELECT COUNT(*) FROM contacts
-       WHERE ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
+       WHERE deleted_at IS NULL
+         AND ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
          AND ($2 = '' OR segment::text = $2)
          AND ($3 = '' OR gaming::text = $3)
          AND ($4 = '' OR panel = $4)

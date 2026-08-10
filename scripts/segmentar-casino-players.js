@@ -105,10 +105,29 @@ const CTE_MESES_ACTIVOS = `
       cp.id,
       cp.username_lower,
       cp.total_cargas,
-      COALESCE(am.meses_con_cargas, 1)             AS meses_activos,
+      -- Divisor del promedio mensual. Cuando el jugador no tiene ninguna
+      -- transacción en casino_transactions, meses_con_cargas es NULL y antes
+      -- se caía a 1: el total histórico completo pasaba a leerse como "lo que
+      -- carga por mes" y lo disparaba a super_vip. Un jugador con $3,2M
+      -- acumulados en 358 cargas a lo largo de 6 meses quedaba igual que uno
+      -- que carga $3,2M todos los meses. En ese caso se estima el período con
+      -- el propio span de actividad del jugador (fecha_primera → fecha_ultima).
+      CASE
+        WHEN COALESCE(am.meses_con_cargas, 0) > 0 THEN am.meses_con_cargas
+        ELSE GREATEST(
+               CEIL((cp.fecha_ultima - cp.fecha_primera)::numeric / 30.0)::int,
+               1
+             )
+      END                                           AS meses_activos,
       ROUND(
         cp.total_cargas::numeric /
-        GREATEST(COALESCE(am.meses_con_cargas, 1), 1)
+        CASE
+          WHEN COALESCE(am.meses_con_cargas, 0) > 0 THEN am.meses_con_cargas
+          ELSE GREATEST(
+                 CEIL((cp.fecha_ultima - cp.fecha_primera)::numeric / 30.0)::int,
+                 1
+               )
+        END
       )                                             AS avg_mensual,
       -- Si la sync ya corrió (casino_transactions tiene datos) pero este jugador
       -- no tiene registros, su última actividad es desconocida → NULL (perdido).
@@ -178,7 +197,12 @@ const CTE_CONTACT_ACCOUNTS = `
       AND LOWER(TRIM(cp.agente)) IN (${AGENTES_SQL})
   ),
   contact_cargas AS (
-    SELECT ca.contact_id, SUM(cp.total_cargas)::numeric AS total_cargas
+    SELECT ca.contact_id,
+           SUM(cp.total_cargas)::numeric AS total_cargas,
+           -- Span de actividad, para estimar el período cuando el jugador no
+           -- tiene transacciones registradas (ver contact_segmento).
+           MIN(cp.fecha_primera) AS fecha_primera,
+           MAX(cp.fecha_ultima)  AS fecha_ultima
     FROM contact_accounts ca
     JOIN casino_players cp ON cp.id = ca.player_id
     GROUP BY 1
@@ -193,20 +217,39 @@ const CTE_CONTACT_ACCOUNTS = `
       ON LOWER(ct.username) = ca.username_lower AND ct.tipo = 'carga'
     GROUP BY 1
   ),
-  contact_segmento AS (
+  -- Promedio mensual por contacto. El divisor son los meses en que realmente
+  -- cargó; si no tiene transacciones registradas se estima con su span de
+  -- actividad, porque dividir por 1 convierte el total histórico en "promedio
+  -- mensual" y manda a super_vip a cualquiera con volumen acumulado.
+  contact_avg AS (
     SELECT
       cc.contact_id,
-      ROUND(cc.total_cargas / GREATEST(COALESCE(cm.meses_activos, 1), 1)) AS avg_mensual,
-      CASE
-        WHEN ROUND(cc.total_cargas / GREATEST(COALESCE(cm.meses_activos, 1), 1)) >= ${THRESHOLD_SUPER_VIP} THEN 'super_vip'
-        WHEN ROUND(cc.total_cargas / GREATEST(COALESCE(cm.meses_activos, 1), 1)) >= ${THRESHOLD_VIP_ALTO}  THEN 'vip_alto'
-        WHEN ROUND(cc.total_cargas / GREATEST(COALESCE(cm.meses_activos, 1), 1)) >= ${THRESHOLD_VIP_MEDIO} THEN 'vip_medio'
-        WHEN ROUND(cc.total_cargas / GREATEST(COALESCE(cm.meses_activos, 1), 1)) >= ${THRESHOLD_VIP}       THEN 'vip'
-        WHEN ROUND(cc.total_cargas / GREATEST(COALESCE(cm.meses_activos, 1), 1)) >= ${THRESHOLD_MEDIO}     THEN 'medio'
-        ELSE 'bajo'
-      END AS seg_monto
+      ROUND(
+        cc.total_cargas /
+        CASE
+          WHEN COALESCE(cm.meses_activos, 0) > 0 THEN cm.meses_activos
+          ELSE GREATEST(
+                 CEIL((cc.fecha_ultima - cc.fecha_primera)::numeric / 30.0)::int,
+                 1
+               )
+        END
+      ) AS avg_mensual
     FROM contact_cargas cc
     LEFT JOIN contact_meses cm ON cm.contact_id = cc.contact_id
+  ),
+  contact_segmento AS (
+    SELECT
+      contact_id,
+      avg_mensual,
+      CASE
+        WHEN avg_mensual >= ${THRESHOLD_SUPER_VIP} THEN 'super_vip'
+        WHEN avg_mensual >= ${THRESHOLD_VIP_ALTO}  THEN 'vip_alto'
+        WHEN avg_mensual >= ${THRESHOLD_VIP_MEDIO} THEN 'vip_medio'
+        WHEN avg_mensual >= ${THRESHOLD_VIP}       THEN 'vip'
+        WHEN avg_mensual >= ${THRESHOLD_MEDIO}     THEN 'medio'
+        ELSE 'bajo'
+      END AS seg_monto
+    FROM contact_avg
   ),
   -- Perfil de la persona consolidando todas sus cuentas: la actividad se toma de
   -- la cuenta usada más recientemente (si juega en una sigue activo, aunque haya
@@ -442,35 +485,31 @@ async function main() {
   `)
   const syncedDeposits = depositSyncRes.rowCount ?? 0
 
-  // ── Paso 5: Limpiar segmento de las líneas internas del negocio ──────────────
+  // ── Paso 5: Limpiar segmentos sin respaldo ───────────────────────────────────
   //
-  // Los números propios ("Betcoin 2", "OFI 1 Bigwin", "Soporte Farabet") habían
-  // quedado marcados super_vip: matchearon las cuentas administrativas del agente
-  // adminbet, que mueven decenas de millones. Con eso entraban en las campañas
-  // dirigidas a VIP. Ya no reciben segmento nuevo —el matching excluye esos
-  // agentes— pero hay que borrar el que arrastran.
+  // El nivel de un contacto sale de lo que cargó en el casino. Si no matchea
+  // ningún jugador, no hay nada que lo sostenga: lo que tenga es un valor viejo
+  // que quedó pegado de una importación anterior o de un match que ya no vale.
+  // Mostrarlo es peor que no mostrar nada, porque mete a esos contactos en las
+  // campañas segmentadas por nivel.
   //
-  // El criterio es conservador: solo alcanza a contactos que no matchean ningún
-  // jugador real, cuyo nombre menciona una plataforma u oficina, y que NO tienen
-  // ningún token con forma de username (letras+dígitos). Así "Betcoin 2" se
-  // limpia pero "lautaro609zz Mismo Usuario Zeus Y Farabet" queda intacto.
-  const nombreCompleto = `(COALESCE(c.first_name,'') || ' ' || COALESCE(c.last_name,''))`
+  // Acá caen dos grupos: las líneas internas del negocio ("Betcoin 2",
+  // "OFI 1 Bigwin", "Soporte Farabet"), que figuraban como super_vip porque
+  // matcheaban las cuentas administrativas del agente adminbet, y los contactos
+  // cuyo jugador ya no existe en casino_players.
+  //
+  // Solo se tocan los niveles del esquema del casino. 'casual' y 'regular' son
+  // valores heredados de otro sistema, no los calcula este script y no le
+  // corresponde borrarlos.
+  //
+  // Incluye los borrados a propósito: aunque la UI ya no los liste, conviene que
+  // el dato quede coherente.
   const limpiezaRes = await pool.query(`
     WITH ${CTE_CONTACT_ACCOUNTS}
     UPDATE contacts c
     SET segment = NULL, updated_at = NOW()
-    WHERE c.deleted_at IS NULL
-      AND c.segment IS NOT NULL
+    WHERE c.segment::text IN ('bajo','medio','vip','vip_medio','vip_alto','super_vip')
       AND NOT EXISTS (SELECT 1 FROM contact_accounts ca WHERE ca.contact_id = c.id)
-      AND (
-        (
-          ${nombreCompleto} ~* '(betcoin|bigwin|royal|farabet|ofizeus|zeus|soporte|reclamos|difusi|\\mofi\\M|principal|linea)'
-          AND ${nombreCompleto} !~* '[a-z]+[0-9]+[a-z0-9]*'
-        )
-        -- "Royal I13", "Royal 8": plataforma al inicio y seguida de un
-        -- identificador corto de oficina, nunca de un username.
-        OR ${nombreCompleto} ~* '^(betcoin|bigwin|royal|farabet|ofizeus)\\s+[a-z]?[0-9]{1,3}\\s*$'
-      )
   `)
   const limpiados = limpiezaRes.rowCount ?? 0
 
@@ -527,7 +566,7 @@ async function main() {
   console.log(`  casino_players actualizados: ${Number(updatedPlayers).toLocaleString('es-AR')}`)
   console.log(`  contacts sincronizados:      ${Number(syncedContacts).toLocaleString('es-AR')}`)
   console.log(`  contact_tags resincronizados: ${Number(syncedTags).toLocaleString('es-AR')}`)
-  console.log(`  líneas internas despegadas:  ${Number(limpiados).toLocaleString('es-AR')}`)
+  console.log(`  segmentos sin respaldo limpiados: ${Number(limpiados).toLocaleString('es-AR')}`)
   console.log(`  contadores depósito sync'd:  ${Number(syncedDeposits).toLocaleString('es-AR')}`)
   console.log('  ✓  Segmentación completada.')
   console.log('')
