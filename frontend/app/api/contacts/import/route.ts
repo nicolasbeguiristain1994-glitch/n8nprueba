@@ -207,10 +207,13 @@ export async function POST(req: NextRequest) {
           [casinoInputJson]
         )
 
-        // Step 2: Insert current tags + set segment based on 30-day rolling deposit volume.
-        // Super Vip (vip)  = max 30-day deposits >= $1,000,000 in any period
-        // Vip       (alto) = max 30-day deposits >= $500,000   in any period
-        // Otherwise        = use casino's seg_monto as fallback
+        // Step 2: Insert current tags + set segment.
+        //
+        // El segmento se calcula igual que en scripts/segmentar-casino-players.js:
+        // promedio de cargas sobre los meses CON actividad real. Antes acá se usaba
+        // el máximo rolling de 30 días, un criterio distinto con otros umbrales, así
+        // que el segmento de un contacto cambiaba según si lo había tocado último el
+        // import o el script. Si se ajustan los umbrales, hay que ajustarlos en ambos.
         await query(
           `WITH matched AS (
              SELECT c.id AS contact_id,
@@ -226,20 +229,17 @@ export async function POST(req: NextRequest) {
              JOIN casino_players cp ON cp.username_lower = LOWER(inp.casino_username)
              WHERE cp.seg_monto IS NOT NULL AND cp.seg_actividad IS NOT NULL AND cp.agente IS NOT NULL
            ),
-           rolling AS (
-             SELECT LOWER(t.username) AS uname, MAX(t.window_sum) AS max_30d
-             FROM (
-               SELECT username,
-                      SUM(monto) OVER (
-                        PARTITION BY LOWER(username)
-                        ORDER BY fecha
-                        RANGE BETWEEN INTERVAL '30 days' PRECEDING AND CURRENT ROW
-                      ) AS window_sum
-               FROM casino_transactions
-               WHERE tipo = 'carga'
-                 AND LOWER(username) IN (SELECT username_lower FROM matched)
-             ) t
-             GROUP BY LOWER(t.username)
+           valor AS (
+             SELECT m.username_lower AS uname,
+                    ROUND(
+                      cp.total_cargas::numeric
+                      / GREATEST(COUNT(DISTINCT DATE_TRUNC('month', ct.fecha)), 1)
+                    ) AS avg_mensual
+             FROM matched m
+             JOIN casino_players cp ON cp.username_lower = m.username_lower
+             LEFT JOIN casino_transactions ct
+               ON LOWER(ct.username) = m.username_lower AND ct.tipo = 'carga'
+             GROUP BY m.username_lower, cp.total_cargas
            ),
            tags_insert AS (
              INSERT INTO contact_tags (id, contact_id, tag, added_by, added_at)
@@ -270,16 +270,17 @@ export async function POST(req: NextRequest) {
            UPDATE contacts
              SET panel      = COALESCE(contacts.panel, m.agente),
                  segment    = CASE
-                   WHEN COALESCE(r.max_30d, 0) >= 3200000 THEN 'super_vip'::contact_segment
-                   WHEN COALESCE(r.max_30d, 0) >= 1500000 THEN 'vip_alto'::contact_segment
-                   WHEN COALESCE(r.max_30d, 0) >= 1000000 THEN 'vip_medio'::contact_segment
-                   WHEN COALESCE(r.max_30d, 0) >= 500000  THEN 'vip'::contact_segment
-                   WHEN r.max_30d IS NOT NULL AND m.seg_monto IN ('super_vip','vip_alto','vip_medio','vip') THEN 'medio'::contact_segment
+                   WHEN v.avg_mensual >= 3200000 THEN 'super_vip'::contact_segment
+                   WHEN v.avg_mensual >= 1500000 THEN 'vip_alto'::contact_segment
+                   WHEN v.avg_mensual >= 1000000 THEN 'vip_medio'::contact_segment
+                   WHEN v.avg_mensual >=  500000 THEN 'vip'::contact_segment
+                   WHEN v.avg_mensual >=  100000 THEN 'medio'::contact_segment
+                   WHEN v.avg_mensual IS NOT NULL THEN 'bajo'::contact_segment
                    ELSE m.seg_monto::contact_segment
                  END,
                  updated_at = NOW()
            FROM matched m
-           LEFT JOIN rolling r ON r.uname = m.username_lower
+           LEFT JOIN valor v ON v.uname = m.username_lower
            WHERE contacts.id = m.contact_id`,
           [casinoInputJson]
         )

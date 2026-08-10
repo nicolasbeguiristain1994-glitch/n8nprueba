@@ -36,7 +36,15 @@ export async function POST(req: NextRequest) {
     child.stdout?.on('data', (d: Buffer) => process.stdout.write(`[segmentar] ${d}`))
     child.stderr?.on('data', (d: Buffer) => process.stderr.write(`[segmentar ERR] ${d}`))
     child.on('error', (err: Error) => console.error('[segmentar spawn error]', err.message))
-    child.on('exit', (code: number | null) => console.log(`[segmentar] exited with code ${code}`))
+    // El spawn casi nunca falla: los errores reales (DATABASE_URL ausente, valor
+    // de enum inexistente) aparecen recién en el exit code, cuando ya
+    // respondimos ok:true. Sin este log, una corrida que abortó a los 2 segundos
+    // se ve igual que una exitosa y el usuario queda esperando datos que no van
+    // a llegar.
+    child.on('exit', (code: number | null) => {
+      if (code === 0) console.log('[segmentar] completado OK')
+      else console.error(`[segmentar] FALLÓ con exit code ${code} — la segmentación NO se aplicó`)
+    })
     child.unref()
 
     return NextResponse.json({

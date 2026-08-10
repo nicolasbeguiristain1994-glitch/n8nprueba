@@ -55,6 +55,14 @@ const path     = require('path')
 
 const DRY_RUN = process.argv.includes('--dry-run')
 
+// seg_monto (el valor del jugador) sale de total_cargas / meses con actividad:
+// no depende de qué día es hoy, así que es seguro recalcularlo aunque la sync
+// del casino esté atrasada. seg_actividad sí depende de CURRENT_DATE — si los
+// datos vienen con semanas de retraso, marca como "perdido" a gente que sigue
+// jugando. Con --skip-actividad se actualiza solo el valor y se dejan intactos
+// la actividad y sus tags, para recalcularlos después de resincronizar.
+const SKIP_ACTIVIDAD = process.argv.includes('--skip-actividad')
+
 if (!process.env.DATABASE_URL) {
   console.error('[seg] ERROR: DATABASE_URL no configurada.')
   process.exit(1)
@@ -113,8 +121,131 @@ const CTE_MESES_ACTIVOS = `
     FROM casino_players cp
     CROSS JOIN has_tx ht
     LEFT JOIN active_months am ON am.username_lower = cp.username_lower
-    WHERE cp.agente = ANY($6::text[])
+    -- El valor de agente viene del casino sin normalizar: hay filas con espacio
+    -- al final ('zeusroyal ', 'btcdos ') y con mayúsculas ('Admincab'), que con
+    -- una comparación literal quedaban fuera y sin segmentar.
+    WHERE LOWER(TRIM(cp.agente)) = ANY($6::text[])
   )
+`
+
+// Largo mínimo de token para considerarlo un posible username. Por debajo de 4
+// los fragmentos genéricos que deja el import ("z", "zz", "bt") empiezan a
+// colisionar con usernames reales de otros jugadores.
+const MIN_TOKEN_LEN = 4
+
+// Lista de agentes en formato SQL, ya normalizada, para filtrar dentro de los CTE.
+const AGENTES_SQL = AGENTES.map(a => `'${a.replace(/'/g, "''")}'`).join(', ')
+
+// Tokens que jamás deben tomarse como username, aunque exista un jugador con ese
+// nombre. Los operadores anotan la plataforma dentro del nombre del contacto
+// ("Mabel18z(Farabet)", "Betcoin Reclamos", "Maria16 (Zeus y Farabet)") y del otro
+// lado existen cuentas administrativas homónimas —'betcoin' y 'bigwin' del agente
+// adminbet, con $21M y $10M en cargas—. Sin esta lista, las líneas internas del
+// negocio terminan clasificadas como super_vip y entran en campañas de VIP.
+const TOKENS_PROHIBIDOS = [
+  'farabet', 'betcoin', 'bigwin', 'royal', 'ofizeus', 'zeus', 'zeusroyal',
+  'btcuno', 'btcdos',   // los mismos agentes, como se llaman en Bet30
+  'adminbet', 'surmar', 'lemon', 'apolo', 'horus', 'peaky', 'soporte',
+  'reclamos', 'linea', 'admin', 'mismo', 'usuario', 'titular', 'carga', 'mucho',
+]
+const TOKENS_PROHIBIDOS_SQL = TOKENS_PROHIBIDOS.map(t => `'${t}'`).join(', ')
+
+// Vínculo contacto ↔ cuenta(s) de casino, y segmento agregado por contacto.
+//
+// No se puede joinear por teléfono: casino_players no lo tiene. El único nexo es
+// el username, que el import dejó dentro de first_name y casi siempre sucio:
+//   "Z/ Adrian249z"      → prefijo de línea pegado al username
+//   "Zz adriana404zs"    → prefijo separado por espacio
+//   "analia525zzz//analia525b" → dos cuentas de la misma persona en un campo
+// Por eso se tokeniza por separadores no alfanuméricos y se matchea cada token.
+//
+// Un contacto con varias cuentas es UNA persona: su valor es la SUMA de lo que
+// cargó en todas, no el de la cuenta que el join tomara primero.
+const CTE_CONTACT_ACCOUNTS = `
+  contact_accounts AS (
+    SELECT DISTINCT c.id AS contact_id, cp.id AS player_id, cp.username_lower
+    FROM contacts c
+    CROSS JOIN LATERAL regexp_split_to_table(
+      COALESCE(c.first_name, '') || ' ' || COALESCE(c.last_name, ''),
+      '[^a-zA-Z0-9]+'
+    ) AS tok
+    JOIN casino_players cp ON cp.username_lower = LOWER(tok)
+    WHERE c.deleted_at IS NULL
+      AND LENGTH(tok) >= ${MIN_TOKEN_LEN}
+      AND LOWER(tok) NOT IN (${TOKENS_PROHIBIDOS_SQL})
+      -- Solo agentes reales: 'adminbet' y 'surmar' son cuentas internas del
+      -- negocio, no jugadores, y su volumen distorsiona cualquier segmento.
+      AND LOWER(TRIM(cp.agente)) IN (${AGENTES_SQL})
+  ),
+  contact_cargas AS (
+    SELECT ca.contact_id, SUM(cp.total_cargas)::numeric AS total_cargas
+    FROM contact_accounts ca
+    JOIN casino_players cp ON cp.id = ca.player_id
+    GROUP BY 1
+  ),
+  -- Meses con actividad real contando todas las cuentas del contacto: si cargó
+  -- en dos cuentas el mismo mes, ese mes cuenta una sola vez.
+  contact_meses AS (
+    SELECT ca.contact_id,
+           COUNT(DISTINCT DATE_TRUNC('month', ct.fecha))::int AS meses_activos
+    FROM contact_accounts ca
+    JOIN casino_transactions ct
+      ON LOWER(ct.username) = ca.username_lower AND ct.tipo = 'carga'
+    GROUP BY 1
+  ),
+  contact_segmento AS (
+    SELECT
+      cc.contact_id,
+      ROUND(cc.total_cargas / GREATEST(COALESCE(cm.meses_activos, 1), 1)) AS avg_mensual,
+      CASE
+        WHEN ROUND(cc.total_cargas / GREATEST(COALESCE(cm.meses_activos, 1), 1)) >= ${THRESHOLD_SUPER_VIP} THEN 'super_vip'
+        WHEN ROUND(cc.total_cargas / GREATEST(COALESCE(cm.meses_activos, 1), 1)) >= ${THRESHOLD_VIP_ALTO}  THEN 'vip_alto'
+        WHEN ROUND(cc.total_cargas / GREATEST(COALESCE(cm.meses_activos, 1), 1)) >= ${THRESHOLD_VIP_MEDIO} THEN 'vip_medio'
+        WHEN ROUND(cc.total_cargas / GREATEST(COALESCE(cm.meses_activos, 1), 1)) >= ${THRESHOLD_VIP}       THEN 'vip'
+        WHEN ROUND(cc.total_cargas / GREATEST(COALESCE(cm.meses_activos, 1), 1)) >= ${THRESHOLD_MEDIO}     THEN 'medio'
+        ELSE 'bajo'
+      END AS seg_monto
+    FROM contact_cargas cc
+    LEFT JOIN contact_meses cm ON cm.contact_id = cc.contact_id
+  ),
+  -- Perfil de la persona consolidando todas sus cuentas: la actividad se toma de
+  -- la cuenta usada más recientemente (si juega en una sigue activo, aunque haya
+  -- abandonado la otra) y la antigüedad, de la primera cuenta que abrió.
+  contact_perfil AS (
+    SELECT
+      ca.contact_id,
+      MIN(cp.fecha_primera)     AS fecha_primera,
+      MAX(cp.fecha_ultima)      AS fecha_ultima,
+      SUM(cp.cant_cargas)::int  AS cant_cargas,
+      SUM(cp.cant_retiros)::int AS cant_retiros,
+      (ARRAY_AGG(cp.seg_actividad ORDER BY cp.fecha_ultima DESC NULLS LAST))[1] AS seg_actividad
+    FROM contact_accounts ca
+    JOIN casino_players cp ON cp.id = ca.player_id
+    GROUP BY 1
+  )
+`
+
+// Fragmento del SET del paso 1. Se omite con --skip-actividad.
+const SET_SEG_ACTIVIDAD = SKIP_ACTIVIDAD ? '' : `
+      -- seg_actividad usa fecha_real_ultima para no clasificar como activo
+      -- a jugadores cuya casino_players.fecha_ultima esté desactualizada
+      seg_actividad = CASE
+        WHEN cm.fecha_real_ultima IS NULL
+          OR (CURRENT_DATE - cm.fecha_real_ultima) > 180          THEN 'perdido'
+        WHEN (CURRENT_DATE - cm.fecha_real_ultima) >  60          THEN 'inactivo'
+        WHEN (CURRENT_DATE - cm.fecha_real_ultima) >  30          THEN 'en_riesgo'
+        WHEN cp.fecha_primera IS NOT NULL
+          AND (CURRENT_DATE - cp.fecha_primera) <= 30             THEN 'nuevo'
+        WHEN cp.fecha_primera IS NOT NULL
+          AND (cp.cant_cargas::numeric
+               / GREATEST((CURRENT_DATE - cp.fecha_primera)::numeric / 7.0, 1)) >= 3
+                                                                  THEN 'frecuente'
+        WHEN cp.fecha_primera IS NOT NULL
+          AND (cp.cant_cargas::numeric
+               / GREATEST((CURRENT_DATE - cp.fecha_primera)::numeric / 7.0, 1)) >= 1
+                                                                  THEN 'regular'
+        ELSE                                                           'ocasional'
+      END,
 `
 
 async function main() {
@@ -193,25 +324,7 @@ async function main() {
         ELSE                          'bajo'
       END,
 
-      -- seg_actividad usa fecha_real_ultima para no clasificar como activo
-      -- a jugadores cuya casino_players.fecha_ultima esté desactualizada
-      seg_actividad = CASE
-        WHEN cm.fecha_real_ultima IS NULL
-          OR (CURRENT_DATE - cm.fecha_real_ultima) > 180          THEN 'perdido'
-        WHEN (CURRENT_DATE - cm.fecha_real_ultima) >  60          THEN 'inactivo'
-        WHEN (CURRENT_DATE - cm.fecha_real_ultima) >  30          THEN 'en_riesgo'
-        WHEN cp.fecha_primera IS NOT NULL
-          AND (CURRENT_DATE - cp.fecha_primera) <= 30             THEN 'nuevo'
-        WHEN cp.fecha_primera IS NOT NULL
-          AND (cp.cant_cargas::numeric
-               / GREATEST((CURRENT_DATE - cp.fecha_primera)::numeric / 7.0, 1)) >= 3
-                                                                  THEN 'frecuente'
-        WHEN cp.fecha_primera IS NOT NULL
-          AND (cp.cant_cargas::numeric
-               / GREATEST((CURRENT_DATE - cp.fecha_primera)::numeric / 7.0, 1)) >= 1
-                                                                  THEN 'regular'
-        ELSE                                                           'ocasional'
-      END,
+      ${SET_SEG_ACTIVIDAD}
 
       updated_at = NOW()
     FROM carga_mensual cm
@@ -221,13 +334,28 @@ async function main() {
   const updatedPlayers = updateRes.rowCount ?? 0
 
   // ── Paso 2: Sincronizar contacts.segment desde casino_players ────────────────
+  //
+  // Dos bugs históricos corregidos acá:
+  //
+  //  1. `c.segment::text != cp.seg_monto` evaluaba a NULL cuando el contacto no
+  //     tenía segmento todavía, así que la fila no entraba en el UPDATE y el
+  //     contacto quedaba sin segmentar para siempre. Justamente los contactos
+  //     nuevos —los que más falta hacía segmentar— eran los que se salteaban.
+  //     Con IS DISTINCT FROM, NULL cuenta como "distinto" y se completa.
+  //
+  //  2. El join exacto contra first_name perdía la mayoría de los contactos:
+  //     el campo viene sucio del import ("Z/ Adrian249z", "Zz adriana404zs") y
+  //     a veces trae varias cuentas juntas ("analia525zzz//analia525b").
+  //     Ahora se resuelve por contact_accounts (ver CTE_CONTACT_ACCOUNTS).
   const syncRes = await pool.query(`
+    WITH ${CTE_CONTACT_ACCOUNTS}
     UPDATE contacts c
-    SET segment = cp.seg_monto::contact_segment
-    FROM casino_players cp
-    WHERE LOWER(TRIM(c.first_name)) = cp.username_lower
-      AND cp.seg_monto IS NOT NULL
-      AND c.segment::text != cp.seg_monto
+    SET segment    = ca.seg_monto::contact_segment,
+        updated_at = NOW()
+    FROM contact_segmento ca
+    WHERE ca.contact_id = c.id
+      AND ca.seg_monto IS NOT NULL
+      AND c.segment::text IS DISTINCT FROM ca.seg_monto
   `)
   const syncedContacts = syncRes.rowCount ?? 0
 
@@ -235,79 +363,116 @@ async function main() {
   // Borra tags obsoletos y re-inserta los actuales para casino:actividad,
   // casino:antiguedad y casino:valor_riesgo. Esto corrige el drift que ocurre
   // cuando el segmento cambia pero los tags importados originalmente no se actualizan.
+  // El borrado apunta a los contactos que vamos a re-taggear en el INSERT de
+  // abajo. Antes se recortaba por AGENTES y por el join exacto de first_name, así
+  // que a un contacto que dejaba de matchear le quedaban los tags viejos para
+  // siempre; ahora ambos lados usan el mismo criterio (contact_accounts).
+  let syncedTags = 0
+  if (SKIP_ACTIVIDAD) {
+    console.log('  → Tags de actividad/antigüedad/riesgo: SALTEADOS (--skip-actividad)')
+  } else {
   await pool.query(`
+    WITH ${CTE_CONTACT_ACCOUNTS}
     DELETE FROM contact_tags ct
     WHERE (ct.tag LIKE 'casino:actividad:%'
         OR ct.tag LIKE 'casino:antiguedad:%'
         OR ct.tag LIKE 'casino:valor_riesgo:%')
-      AND ct.contact_id IN (
-        SELECT c.id
-        FROM contacts c
-        JOIN casino_players cp ON LOWER(TRIM(c.first_name)) = cp.username_lower
-        WHERE cp.agente = ANY($1::text[])
-          AND cp.seg_monto IS NOT NULL
-          AND cp.seg_actividad IS NOT NULL
-      )
-  `, [AGENTES])
+      AND ct.contact_id IN (SELECT contact_id FROM contact_perfil)
+  `)
 
   const tagsRes = await pool.query(`
+    WITH ${CTE_CONTACT_ACCOUNTS}
     INSERT INTO contact_tags (id, contact_id, tag, added_by, added_at)
     SELECT
       gen_random_uuid(),
-      c.id,
+      p.contact_id,
       unnest(array_remove(ARRAY[
-        'casino:actividad:' || cp.seg_actividad,
+        'casino:actividad:' || p.seg_actividad,
         CASE
-          WHEN cp.fecha_primera IS NULL                             THEN NULL
-          WHEN (CURRENT_DATE - cp.fecha_primera) <  30             THEN 'casino:antiguedad:nuevo'
-          WHEN (CURRENT_DATE - cp.fecha_primera) <  90             THEN 'casino:antiguedad:reciente'
-          WHEN (CURRENT_DATE - cp.fecha_primera) < 150             THEN 'casino:antiguedad:establecido'
-          WHEN (CURRENT_DATE - cp.fecha_primera) < 270             THEN 'casino:antiguedad:veterano'
-          ELSE                                                           'casino:antiguedad:leal'
+          WHEN p.fecha_primera IS NULL                              THEN NULL
+          WHEN (CURRENT_DATE - p.fecha_primera) <  30              THEN 'casino:antiguedad:nuevo'
+          WHEN (CURRENT_DATE - p.fecha_primera) <  90              THEN 'casino:antiguedad:reciente'
+          WHEN (CURRENT_DATE - p.fecha_primera) < 150              THEN 'casino:antiguedad:establecido'
+          WHEN (CURRENT_DATE - p.fecha_primera) < 270              THEN 'casino:antiguedad:veterano'
+          ELSE                                                          'casino:antiguedad:leal'
         END,
         CASE
-          WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
-            AND cp.seg_monto IN ('super_vip','vip_alto','vip_medio','vip') THEN 'casino:valor_riesgo:critico'
-          WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
-            AND cp.seg_monto = 'medio'                                     THEN 'casino:valor_riesgo:medio'
-          WHEN cp.seg_actividad IN ('perdido','inactivo','en_riesgo')
-            AND cp.seg_monto = 'bajo'                                      THEN 'casino:valor_riesgo:bajo'
+          WHEN p.seg_actividad IN ('perdido','inactivo','en_riesgo')
+            AND s.seg_monto IN ('super_vip','vip_alto','vip_medio','vip') THEN 'casino:valor_riesgo:critico'
+          WHEN p.seg_actividad IN ('perdido','inactivo','en_riesgo')
+            AND s.seg_monto = 'medio'                                     THEN 'casino:valor_riesgo:medio'
+          WHEN p.seg_actividad IN ('perdido','inactivo','en_riesgo')
+            AND s.seg_monto = 'bajo'                                      THEN 'casino:valor_riesgo:bajo'
           ELSE NULL
         END
       ], NULL)),
-      NULL,
+      'segmentar-script',
       NOW()
-    FROM contacts c
-    JOIN casino_players cp ON LOWER(TRIM(c.first_name)) = cp.username_lower
-    WHERE cp.agente = ANY($1::text[])
-      AND cp.seg_monto IS NOT NULL
-      AND cp.seg_actividad IS NOT NULL
+    FROM contact_perfil p
+    JOIN contact_segmento s ON s.contact_id = p.contact_id
+    WHERE p.seg_actividad IS NOT NULL
+      AND s.seg_monto     IS NOT NULL
     ON CONFLICT (contact_id, tag) DO NOTHING
-  `, [AGENTES])
-  const syncedTags = tagsRes.rowCount ?? 0
+  `)
+  syncedTags = tagsRes.rowCount ?? 0
+  }
 
   // ── Paso 4: Sincronizar contadores de depósitos en contacts ──────────────────
   // contacts.total_deposits y last_deposit_at se inicializan en 0/NULL y nunca
   // se actualizan automáticamente. Sin esta sincronización, el badge
   // "1er dep. · 10d+" puede aparecer en contactos que ya tienen muchos depósitos.
+  // Los contadores se suman sobre todas las cuentas del contacto: si tiene dos,
+  // sus depósitos totales son los de ambas, no los de una sola.
   const depositSyncRes = await pool.query(`
+    WITH ${CTE_CONTACT_ACCOUNTS}
     UPDATE contacts c
     SET
-      total_deposits    = cp.cant_cargas,
-      total_withdrawals = cp.cant_retiros,
-      last_deposit_at   = cp.fecha_ultima::timestamptz,
+      total_deposits    = p.cant_cargas,
+      total_withdrawals = p.cant_retiros,
+      last_deposit_at   = p.fecha_ultima::timestamptz,
       updated_at        = NOW()
-    FROM casino_players cp
-    WHERE LOWER(TRIM(c.first_name)) = cp.username_lower
-      AND cp.agente = ANY($1::text[])
-      AND cp.fecha_ultima IS NOT NULL
+    FROM contact_perfil p
+    WHERE p.contact_id = c.id
+      AND p.fecha_ultima IS NOT NULL
       AND (
-        c.total_deposits    IS DISTINCT FROM cp.cant_cargas
-        OR c.total_withdrawals IS DISTINCT FROM cp.cant_retiros
-        OR c.last_deposit_at::date IS DISTINCT FROM cp.fecha_ultima
+        c.total_deposits    IS DISTINCT FROM p.cant_cargas
+        OR c.total_withdrawals IS DISTINCT FROM p.cant_retiros
+        OR c.last_deposit_at::date IS DISTINCT FROM p.fecha_ultima
       )
-  `, [AGENTES])
+  `)
   const syncedDeposits = depositSyncRes.rowCount ?? 0
+
+  // ── Paso 5: Limpiar segmento de las líneas internas del negocio ──────────────
+  //
+  // Los números propios ("Betcoin 2", "OFI 1 Bigwin", "Soporte Farabet") habían
+  // quedado marcados super_vip: matchearon las cuentas administrativas del agente
+  // adminbet, que mueven decenas de millones. Con eso entraban en las campañas
+  // dirigidas a VIP. Ya no reciben segmento nuevo —el matching excluye esos
+  // agentes— pero hay que borrar el que arrastran.
+  //
+  // El criterio es conservador: solo alcanza a contactos que no matchean ningún
+  // jugador real, cuyo nombre menciona una plataforma u oficina, y que NO tienen
+  // ningún token con forma de username (letras+dígitos). Así "Betcoin 2" se
+  // limpia pero "lautaro609zz Mismo Usuario Zeus Y Farabet" queda intacto.
+  const nombreCompleto = `(COALESCE(c.first_name,'') || ' ' || COALESCE(c.last_name,''))`
+  const limpiezaRes = await pool.query(`
+    WITH ${CTE_CONTACT_ACCOUNTS}
+    UPDATE contacts c
+    SET segment = NULL, updated_at = NOW()
+    WHERE c.deleted_at IS NULL
+      AND c.segment IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM contact_accounts ca WHERE ca.contact_id = c.id)
+      AND (
+        (
+          ${nombreCompleto} ~* '(betcoin|bigwin|royal|farabet|ofizeus|zeus|soporte|reclamos|difusi|\\mofi\\M|principal|linea)'
+          AND ${nombreCompleto} !~* '[a-z]+[0-9]+[a-z0-9]*'
+        )
+        -- "Royal I13", "Royal 8": plataforma al inicio y seguida de un
+        -- identificador corto de oficina, nunca de un username.
+        OR ${nombreCompleto} ~* '^(betcoin|bigwin|royal|farabet|ofizeus)\\s+[a-z]?[0-9]{1,3}\\s*$'
+      )
+  `)
+  const limpiados = limpiezaRes.rowCount ?? 0
 
   // ── Resultado ─────────────────────────────────────────────────────────────────
   const resultRes = await pool.query(`
@@ -338,11 +503,31 @@ async function main() {
     console.log(`    ${k.padEnd(12)} ${Number(v).toLocaleString('es-AR')} jugadores`)
   }
 
+  // Los jugadores de agentes fuera de AGENTES nunca reciben seg_monto y por lo
+  // tanto sus contactos quedan sin segmento. Es una decisión deliberada, pero
+  // tiene que verse: en silencio parece que se segmentó todo cuando no fue así.
+  const excluidosRes = await pool.query(`
+    SELECT COALESCE(TRIM(agente), '(sin agente)') AS agente, COUNT(*)::int AS n
+    FROM casino_players
+    WHERE agente IS NULL OR LOWER(TRIM(agente)) <> ALL($1::text[])
+    GROUP BY 1 ORDER BY 2 DESC
+  `, [AGENTES])
+
+  if (excluidosRes.rows.length) {
+    const totalExcluidos = excluidosRes.rows.reduce((s, r) => s + r.n, 0)
+    console.log('')
+    console.log(`  ⚠  ${Number(totalExcluidos).toLocaleString('es-AR')} jugadores NO segmentados — su agente no está en AGENTES:`)
+    for (const r of excluidosRes.rows) {
+      console.log(`       ${r.agente.padEnd(16)} ${Number(r.n).toLocaleString('es-AR').padStart(6)}`)
+    }
+  }
+
   console.log('')
   console.log('═══════════════════════════════════════════════════════════════')
   console.log(`  casino_players actualizados: ${Number(updatedPlayers).toLocaleString('es-AR')}`)
   console.log(`  contacts sincronizados:      ${Number(syncedContacts).toLocaleString('es-AR')}`)
   console.log(`  contact_tags resincronizados: ${Number(syncedTags).toLocaleString('es-AR')}`)
+  console.log(`  líneas internas despegadas:  ${Number(limpiados).toLocaleString('es-AR')}`)
   console.log(`  contadores depósito sync'd:  ${Number(syncedDeposits).toLocaleString('es-AR')}`)
   console.log('  ✓  Segmentación completada.')
   console.log('')
