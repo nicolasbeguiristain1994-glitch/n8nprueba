@@ -105,17 +105,19 @@ export async function GET(req: NextRequest) {
         SELECT id FROM contacts
         WHERE deleted_at IS NULL
           AND ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
-          AND ($2 = '' OR segment::text = $2)
+          AND ($2 = '' OR segment::text = ANY(string_to_array($2, ',')))
           AND ($3 = '' OR gaming::text = $3)
           AND ($4 = '' OR panel = $4)
           AND ($5 = '' OR linea::text = $5)
           AND ($6 = '' OR EXISTS (
             SELECT 1 FROM contact_tags ct
-            WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:actividad:' || $6
+            WHERE ct.contact_id = contacts.id
+              AND ct.tag = ANY(SELECT 'casino:actividad:' || unnest(string_to_array($6, ',')))
           ))
           AND ($7 = '' OR EXISTS (
             SELECT 1 FROM contact_tags ct
-            WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $7
+            WHERE ct.contact_id = contacts.id
+              AND ct.tag = ANY(SELECT 'casino:antiguedad:' || unnest(string_to_array($7, ',')))
           ))
           AND ($8 = '' OR linea_sub = $8)
           ${vis2.sql}${agentFilter2}${plataformaFilter}${sinMovimientoFilter}${inactividadFilter}
@@ -182,17 +184,19 @@ export async function GET(req: NextRequest) {
       FROM contacts
       WHERE deleted_at IS NULL
         AND ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
-        AND ($4 = '' OR segment::text = $4)
+        AND ($4 = '' OR segment::text = ANY(string_to_array($4, ',')))
         AND ($5 = '' OR gaming::text = $5)
         AND ($6 = '' OR panel = $6)
         AND ($7 = '' OR linea::text = $7)
         AND ($8 = '' OR EXISTS (
           SELECT 1 FROM contact_tags ct
-          WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:actividad:' || $8
+          WHERE ct.contact_id = contacts.id
+            AND ct.tag = ANY(SELECT 'casino:actividad:' || unnest(string_to_array($8, ',')))
         ))
         AND ($9 = '' OR EXISTS (
           SELECT 1 FROM contact_tags ct
-          WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $9
+          WHERE ct.contact_id = contacts.id
+            AND ct.tag = ANY(SELECT 'casino:antiguedad:' || unnest(string_to_array($9, ',')))
         ))
         AND ($10 = '' OR id IN (
           SELECT contact_id FROM contact_list_members WHERE list_id = $10::uuid
@@ -208,17 +212,19 @@ export async function GET(req: NextRequest) {
       `SELECT COUNT(*) FROM contacts
        WHERE deleted_at IS NULL
          AND ($1 = '' OR phone_number ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
-         AND ($2 = '' OR segment::text = $2)
+         AND ($2 = '' OR segment::text = ANY(string_to_array($2, ',')))
          AND ($3 = '' OR gaming::text = $3)
          AND ($4 = '' OR panel = $4)
          AND ($5 = '' OR linea::text = $5)
          AND ($6 = '' OR EXISTS (
            SELECT 1 FROM contact_tags ct
-           WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:actividad:' || $6
+           WHERE ct.contact_id = contacts.id
+             AND ct.tag = ANY(SELECT 'casino:actividad:' || unnest(string_to_array($6, ',')))
          ))
          AND ($7 = '' OR EXISTS (
            SELECT 1 FROM contact_tags ct
-           WHERE ct.contact_id = contacts.id AND ct.tag = 'casino:antiguedad:' || $7
+           WHERE ct.contact_id = contacts.id
+             AND ct.tag = ANY(SELECT 'casino:antiguedad:' || unnest(string_to_array($7, ',')))
          ))
          AND ($8 = '' OR id IN (
            SELECT contact_id FROM contact_list_members WHERE list_id = $8::uuid
