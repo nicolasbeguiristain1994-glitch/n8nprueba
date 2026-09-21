@@ -167,18 +167,77 @@ describe('BaseCasinoConnector', () => {
       expect(res.status).toBe(200)
     })
 
-    it('does NOT retry on 4xx — fails immediately', async () => {
-      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 401 })
+    it('does NOT retry on a generic 4xx (e.g. 400) — fails immediately', async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 400 })
       await expect(connector._fetchWithRetry('http://test', {}, 'ctx'))
-        .rejects.toThrow('HTTP 401')
+        .rejects.toThrow('HTTP 400')
       expect(global.fetch).toHaveBeenCalledTimes(1)
     })
 
-    it('does NOT retry on 403', async () => {
-      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 403 })
+    it('does NOT retry on 404', async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404 })
       await expect(connector._fetchWithRetry('http://test', {}, 'ctx'))
-        .rejects.toThrow('HTTP 403')
+        .rejects.toThrow('HTTP 404')
       expect(global.fetch).toHaveBeenCalledTimes(1)
+    })
+
+    // ── H11: 401/403 re-auth-and-retry-once ──────────────────────────────────
+
+    it('on 401, calls authenticate() once and retries the request once', async () => {
+      const authenticate = jest.spyOn(connector, 'authenticate').mockResolvedValue()
+      global.fetch = jest.fn()
+        .mockResolvedValueOnce({ ok: false, status: 401 })
+        .mockResolvedValueOnce({ ok: true,  status: 200 })
+      const res = await connector._fetchWithRetry('http://test', {}, 'ctx')
+      expect(res.status).toBe(200)
+      expect(authenticate).toHaveBeenCalledTimes(1)
+      expect(global.fetch).toHaveBeenCalledTimes(2)
+    })
+
+    it('on 403, calls authenticate() once and retries the request once', async () => {
+      const authenticate = jest.spyOn(connector, 'authenticate').mockResolvedValue()
+      global.fetch = jest.fn()
+        .mockResolvedValueOnce({ ok: false, status: 403 })
+        .mockResolvedValueOnce({ ok: true,  status: 200 })
+      const res = await connector._fetchWithRetry('http://test', {}, 'ctx')
+      expect(res.status).toBe(200)
+      expect(authenticate).toHaveBeenCalledTimes(1)
+      expect(global.fetch).toHaveBeenCalledTimes(2)
+    })
+
+    it('re-auth retry does NOT consume one of the normal 4 attempt slots', async () => {
+      // 401 on the very first call still gets its post-reauth retry even though
+      // every one of the 4 "normal" attempts below is a 503 that exhausts the
+      // whole retry budget — proves the reauth path is not counted against it.
+      jest.spyOn(connector, 'authenticate').mockResolvedValue()
+      global.fetch = jest.fn()
+        .mockResolvedValueOnce({ ok: false, status: 401 })
+        .mockResolvedValue({ ok: false, status: 503 })
+      await expect(connector._fetchWithRetry('http://test', {}, 'ctx'))
+        .rejects.toThrow('All 4 attempts failed')
+      // 1 (401) + 4 (503 exhausting MAX_ATTEMPTS) = 5
+      expect(global.fetch).toHaveBeenCalledTimes(5)
+    })
+
+    it('fails as non-retriable if the retry after re-auth still gets a 401 (no infinite loop)', async () => {
+      const authenticate = jest.spyOn(connector, 'authenticate').mockResolvedValue()
+      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 401 })
+      await expect(connector._fetchWithRetry('http://test', {}, 'ctx'))
+        .rejects.toThrow('HTTP 401')
+      expect(authenticate).toHaveBeenCalledTimes(1)
+      expect(global.fetch).toHaveBeenCalledTimes(2)
+    })
+
+    it('rebuilds options from a factory on every attempt, including the post-reauth retry', async () => {
+      let token = 'stale-token'
+      jest.spyOn(connector, 'authenticate').mockImplementation(async () => { token = 'fresh-token' })
+      global.fetch = jest.fn()
+        .mockResolvedValueOnce({ ok: false, status: 401 })
+        .mockResolvedValueOnce({ ok: true,  status: 200 })
+      const buildOptions = () => ({ headers: { 'X-Player-Token': token } })
+      await connector._fetchWithRetry('http://test', buildOptions, 'ctx')
+      expect(global.fetch.mock.calls[0][1].headers['X-Player-Token']).toBe('stale-token')
+      expect(global.fetch.mock.calls[1][1].headers['X-Player-Token']).toBe('fresh-token')
     })
 
     it('throws after exhausting all 4 attempts', async () => {
@@ -267,121 +326,93 @@ describe('BaseCasinoConnector', () => {
       expect(failingClient.release).toHaveBeenCalledTimes(1)
     })
 
-    it('routes records WITH id_rec to the id_rec-keyed conflict clause', async () => {
+    it('routes records WITH id_rec to the (platform, id_rec) conflict clause', async () => {
       const { connector, client } = makeConnector()
       await connector.insertTransactions('ag', [txWith({ id_rec: 'abc' })])
       const insertCall = client.query.mock.calls.find(c => c[0].includes('INSERT'))
-      expect(insertCall[0]).toContain('ON CONFLICT (id_rec)')
+      expect(insertCall[0]).toContain('ON CONFLICT (platform, id_rec)')
     })
 
-    it('routes records WITHOUT id_rec to the composite-key conflict clause', async () => {
+    it('routes records WITHOUT id_rec to the platform-aware composite-key conflict clause', async () => {
       const { connector, client } = makeConnector()
       await connector.insertTransactions('ag', [txWith({ id_rec: null })])
       const insertCall = client.query.mock.calls.find(c => c[0].includes('INSERT'))
-      expect(insertCall[0]).toContain('ON CONFLICT (fecha, username')
+      expect(insertCall[0]).toContain('ON CONFLICT (platform, fecha, lower(username)')
+    })
+
+    it('always stamps the connector platform (config.name) on every inserted row', async () => {
+      const { connector, client } = makeConnector()
+      await connector.insertTransactions('ag', [txWith({ id_rec: 'abc' })])
+      const insertCall = client.query.mock.calls.find(c => c[0].includes('INSERT'))
+      // BASE_CONFIG.name === 'test' — last positional param for the id_rec path
+      expect(insertCall[1]).toContain('test')
     })
   })
 
-  // ── aggregate ───────────────────────────────────────────────────────────────
+  // ── recomputePlayers ───────────────────────────────────────────────────────
+  //
+  // D1/D2 (H1/H2/H3): casino_players is fully recomputed from casino_transactions
+  // in a single SQL statement — no JS-side money arithmetic, no accumulation.
+  // These tests assert the STRUCTURE of that statement against the spec
+  // (assignment not increment, platform+username scope not agente scope,
+  // deposit-only activity dates, deterministic agente tie-break). End-to-end
+  // idempotency / cross-agent / cross-platform semantics are covered
+  // separately in recompute.test.js against a fake in-memory Postgres, since a
+  // structural check alone can't prove the aggregate math is right.
 
-  describe('aggregate()', () => {
-    let connector
+  describe('recomputePlayers()', () => {
 
-    beforeEach(() => ({ connector } = makeConnector()))
-
-    it('sums cargas and retiros separately per player', () => {
-      const normalized = [
-        { username: 'p1', agente: 'ag', monto: 500, tipo: 'carga',  fecha: '2025-01-01' },
-        { username: 'p1', agente: 'ag', monto: 200, tipo: 'retiro', fecha: '2025-01-02' },
-        { username: 'p1', agente: 'ag', monto: 300, tipo: 'carga',  fecha: '2025-01-03' },
-      ]
-      const [p1] = connector.aggregate(normalized)
-      expect(p1.total_cargas).toBe(800)
-      expect(p1.total_retiros).toBe(200)
-      expect(p1.cant_cargas).toBe(2)
-      expect(p1.cant_retiros).toBe(1)
-    })
-
-    it('tracks fecha_primera (min) and fecha_ultima (max) correctly', () => {
-      const normalized = [
-        { username: 'p1', agente: 'ag', monto: 100, tipo: 'carga', fecha: '2025-03-15' },
-        { username: 'p1', agente: 'ag', monto: 100, tipo: 'carga', fecha: '2025-01-01' },
-        { username: 'p1', agente: 'ag', monto: 100, tipo: 'carga', fecha: '2025-06-30' },
-      ]
-      const [p1] = connector.aggregate(normalized)
-      expect(p1.fecha_primera).toBe('2025-01-01')
-      expect(p1.fecha_ultima).toBe('2025-06-30')
-    })
-
-    it('handles multiple players independently', () => {
-      const normalized = [
-        { username: 'p1', agente: 'ag', monto: 100, tipo: 'carga',  fecha: '2025-01-01' },
-        { username: 'p2', agente: 'ag', monto: 200, tipo: 'retiro', fecha: '2025-01-01' },
-      ]
-      const players = connector.aggregate(normalized)
-      expect(players).toHaveLength(2)
-      expect(players.find(p => p.username === 'p1').total_cargas).toBe(100)
-      expect(players.find(p => p.username === 'p2').total_retiros).toBe(200)
-    })
-
-    it('skips entries with empty username', () => {
-      const normalized = [
-        { username: '',   agente: 'ag', monto: 100, tipo: 'carga', fecha: '2025-01-01' },
-        { username: 'p1', agente: 'ag', monto: 100, tipo: 'carga', fecha: '2025-01-01' },
-      ]
-      expect(connector.aggregate(normalized)).toHaveLength(1)
-    })
-
-    it('skips entries with empty agente', () => {
-      const normalized = [
-        { username: 'p1', agente: '', monto: 100, tipo: 'carga', fecha: '2025-01-01' },
-        { username: 'p2', agente: 'ag', monto: 100, tipo: 'carga', fecha: '2025-01-01' },
-      ]
-      expect(connector.aggregate(normalized)).toHaveLength(1)
-    })
-
-    it('returns an empty array for empty input', () => {
-      expect(connector.aggregate([])).toEqual([])
-    })
-  })
-
-  // ── upsertPlayers ───────────────────────────────────────────────────────────
-
-  describe('upsertPlayers()', () => {
-
-    it('returns 0 and skips DB when player list is empty', async () => {
+    it('returns 0 and skips the query when there are no normalized transactions', async () => {
       const { connector, pool } = makeConnector()
-      const result = await connector.upsertPlayers([])
+      const result = await connector.recomputePlayers([])
       expect(result).toBe(0)
-      expect(pool.connect).not.toHaveBeenCalled()
+      expect(pool.query).not.toHaveBeenCalled()
     })
 
-    it('issues one INSERT per player', async () => {
-      const { connector, client } = makeConnector()
-      await connector.upsertPlayers([
-        { username: 'p1', agente: 'ag', total_cargas: 100, total_retiros: 0, cant_cargas: 1, cant_retiros: 0, fecha_primera: '2025-01-01', fecha_ultima: '2025-01-01' },
-        { username: 'p2', agente: 'ag', total_cargas: 200, total_retiros: 0, cant_cargas: 2, cant_retiros: 0, fecha_primera: '2025-01-01', fecha_ultima: '2025-01-01' },
+    it('issues a single INSERT ... SELECT scoped by platform and the touched usernames (not agente)', async () => {
+      const { connector, pool } = makeConnector()
+      await connector.recomputePlayers([
+        { username: 'p1' }, { username: 'P1' }, { username: 'p2' },
       ])
-      const insertCalls = client.query.mock.calls.filter(c => c[0].includes('INSERT'))
-      expect(insertCalls).toHaveLength(2)
+      expect(pool.query).toHaveBeenCalledTimes(1)
+      const [sql, params] = pool.query.mock.calls[0]
+      expect(sql).toContain('INSERT INTO casino_players')
+      expect(sql).toContain('FROM casino_transactions')
+      expect(sql).not.toMatch(/WHERE[^;]*\bagente\s*=\s*\$2/)
+      expect(params[0]).toBe('test') // platform = config.name
+      expect(params[1].sort()).toEqual(['p1', 'p2']) // deduped, lowercased
     })
 
-    it('uses ON CONFLICT (username_lower) for upsert', async () => {
-      const { connector, client } = makeConnector()
-      await connector.upsertPlayers([
-        { username: 'p1', agente: 'ag', total_cargas: 100, total_retiros: 0, cant_cargas: 1, cant_retiros: 0, fecha_primera: null, fecha_ultima: null },
-      ])
-      const [sql] = client.query.mock.calls[0]
-      expect(sql).toContain('ON CONFLICT (username_lower)')
+    it('uses assignment (EXCLUDED.x), never accumulation, on conflict', async () => {
+      const { connector, pool } = makeConnector()
+      await connector.recomputePlayers([{ username: 'p1' }])
+      const [sql] = pool.query.mock.calls[0]
+      expect(sql).toContain('ON CONFLICT (platform, username_lower)')
+      expect(sql).toContain('total_cargas  = EXCLUDED.total_cargas')
+      expect(sql).not.toMatch(/total_cargas\s*=\s*casino_players\.total_cargas\s*\+/)
     })
 
-    it('returns the number of players processed', async () => {
-      const { connector } = makeConnector()
-      const players = Array.from({ length: 5 }, (_, i) => ({
-        username: `p${i}`, agente: 'ag', total_cargas: 0, total_retiros: 0,
-        cant_cargas: 0, cant_retiros: 0, fecha_primera: null, fecha_ultima: null,
-      }))
-      expect(await connector.upsertPlayers(players)).toBe(5)
+    it('computes totals with SQL SUM(...)::numeric-safe aggregates, not JS arithmetic', async () => {
+      const { connector, pool } = makeConnector()
+      await connector.recomputePlayers([{ username: 'p1' }])
+      const [sql] = pool.query.mock.calls[0]
+      expect(sql).toMatch(/SUM\(monto\)\s*FILTER\s*\(WHERE tipo = 'carga'\)/)
+      expect(sql).toMatch(/SUM\(monto\)\s*FILTER\s*\(WHERE tipo = 'retiro'\)/)
+    })
+
+    it('restricts fecha_primera/fecha_ultima to deposits only (a withdrawal must not reactivate a player)', async () => {
+      const { connector, pool } = makeConnector()
+      await connector.recomputePlayers([{ username: 'p1' }])
+      const [sql] = pool.query.mock.calls[0]
+      expect(sql).toMatch(/MIN\(fecha\)\s*FILTER\s*\(WHERE tipo = 'carga'\)/)
+      expect(sql).toMatch(/MAX\(fecha\)\s*FILTER\s*\(WHERE tipo = 'carga'\)/)
+    })
+
+    it('picks agente deterministically from the most recent transaction, not from the fetched batch', async () => {
+      const { connector, pool } = makeConnector()
+      await connector.recomputePlayers([{ username: 'p1' }])
+      const [sql] = pool.query.mock.calls[0]
+      expect(sql).toMatch(/array_agg\(agente\s+ORDER BY COALESCE\(fecha_hora_utc, fecha::timestamptz\) DESC, id DESC\)/)
     })
   })
 })

@@ -31,86 +31,86 @@ class BaseCasinoConnector {
     throw new Error(`${this.constructor.name} must implement normalizeTransactions()`)
   }
 
-  aggregate(normalizedTxs) {
-    const map = new Map()
+  /**
+   * D1 fix (H1): casino_players is a RECOMPUTED projection of casino_transactions,
+   * never an accumulator. Re-running this — for the same range, the same agent,
+   * or after the player moved to a different agent — always writes the same
+   * totals (SET x = EXCLUDED.x, never `+=`). This replaces the old
+   * aggregate()+upsertPlayers() pair, which summed EXCLUDED into the existing
+   * row and corrupted totals on re-sync (plan H1).
+   *
+   * D2 fix (H2/H3): keyed by (platform, username_lower) — the same username on
+   * two platforms is two independent rows, not one merged total.
+   *
+   * Correctness notes (fixed after coordinator review of the first version):
+   *  - Scoped by (platform, username), NOT by agente. A player who changes
+   *    agente within the same platform must have ALL of their history
+   *    re-aggregated, not just the slice under whichever agente is being
+   *    synced right now — filtering by agente alone silently dropped the other
+   *    agente's totals on the next sync. `agente` on the row is instead derived
+   *    deterministically from the player's most recent transaction.
+   *  - The SUM/COUNT/MIN/MAX/tie-break all run inside a single Postgres
+   *    INSERT ... SELECT — monto (NUMERIC(20,2)) is never parsed into a JS
+   *    Number for persistence, so there is no float rounding on totals.
+   *  - fecha_primera/fecha_ultima only consider tipo='carga' (deposits), same
+   *    convention as migration 126's casino_segmentation_players view: a
+   *    withdrawal must not make an inactive player look freshly active.
+   *
+   * @param {{username: string}[]} normalizedTxs  the batch just normalized for
+   *   this sync call — only these players need recomputing (their totals are
+   *   the only ones that could have changed).
+   */
+  async recomputePlayers(normalizedTxs) {
+    const platform = this.config.name
+    const usernamesLower = [...new Set(
+      (normalizedTxs ?? [])
+        .map(tx => tx.username)
+        .filter(Boolean)
+        .map(u => String(u).toLowerCase()),
+    )]
+    if (!usernamesLower.length) return 0
 
-    for (const tx of normalizedTxs) {
-      const { username, agente, monto = 0, tipo, fecha } = tx
-      if (!username || !agente) continue
-
-      if (!map.has(username)) {
-        map.set(username, {
-          username,
-          agente,
-          total_cargas:  0,
-          total_retiros: 0,
-          cant_cargas:   0,
-          cant_retiros:  0,
-          fecha_primera: null,
-          fecha_ultima:  null,
-        })
-      }
-
-      const player = map.get(username)
-
-      if (tipo === 'carga') {
-        player.total_cargas += monto
-        player.cant_cargas++
-      } else if (tipo === 'retiro') {
-        player.total_retiros += monto
-        player.cant_retiros++
-      }
-
-      if (fecha) {
-        if (!player.fecha_primera || fecha < player.fecha_primera) player.fecha_primera = fecha
-        if (!player.fecha_ultima  || fecha > player.fecha_ultima)  player.fecha_ultima  = fecha
-      }
-    }
-
-    return [...map.values()]
-  }
-
-  async upsertPlayers(players) {
-    if (!players.length) return 0
-
-    const client = await this.pool.connect()
-    try {
-      for (const p of players) {
-        await client.query(
-          `INSERT INTO casino_players
-             (username, agente, platform, total_cargas, total_retiros, cant_cargas, cant_retiros, fecha_primera, fecha_ultima)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-           ON CONFLICT (username_lower) DO UPDATE SET
-             agente        = EXCLUDED.agente,
-             platform      = COALESCE(EXCLUDED.platform, casino_players.platform),
-             total_cargas  = casino_players.total_cargas  + EXCLUDED.total_cargas,
-             total_retiros = casino_players.total_retiros + EXCLUDED.total_retiros,
-             cant_cargas   = casino_players.cant_cargas   + EXCLUDED.cant_cargas,
-             cant_retiros  = casino_players.cant_retiros  + EXCLUDED.cant_retiros,
-             fecha_primera = LEAST(casino_players.fecha_primera, EXCLUDED.fecha_primera),
-             fecha_ultima  = GREATEST(casino_players.fecha_ultima, EXCLUDED.fecha_ultima)`,
-          [
-            p.username,      p.agente,        p.platform ?? null,
-            p.total_cargas,  p.total_retiros,
-            p.cant_cargas,   p.cant_retiros,
-            p.fecha_primera, p.fecha_ultima,
-          ],
-        )
-      }
-      return players.length
-    } finally {
-      client.release()
-    }
+    const result = await this.pool.query(
+      `INSERT INTO casino_players
+         (username, agente, platform, total_cargas, total_retiros, cant_cargas, cant_retiros, fecha_primera, fecha_ultima)
+       SELECT
+         (array_agg(username ORDER BY COALESCE(fecha_hora_utc, fecha::timestamptz) DESC, id DESC))[1] AS username,
+         (array_agg(agente   ORDER BY COALESCE(fecha_hora_utc, fecha::timestamptz) DESC, id DESC))[1] AS agente,
+         $1::text AS platform,
+         COALESCE(SUM(monto) FILTER (WHERE tipo = 'carga'),  0)::numeric(20,2) AS total_cargas,
+         COALESCE(SUM(monto) FILTER (WHERE tipo = 'retiro'), 0)::numeric(20,2) AS total_retiros,
+         COUNT(*) FILTER (WHERE tipo = 'carga')::int  AS cant_cargas,
+         COUNT(*) FILTER (WHERE tipo = 'retiro')::int AS cant_retiros,
+         MIN(fecha) FILTER (WHERE tipo = 'carga') AS fecha_primera,
+         MAX(fecha) FILTER (WHERE tipo = 'carga') AS fecha_ultima
+       FROM casino_transactions
+       WHERE platform = $1
+         AND username <> agente
+         AND LOWER(username) = ANY($2::text[])
+       GROUP BY LOWER(username)
+       ON CONFLICT (platform, username_lower) DO UPDATE SET
+         agente        = EXCLUDED.agente,
+         total_cargas  = EXCLUDED.total_cargas,
+         total_retiros = EXCLUDED.total_retiros,
+         cant_cargas   = EXCLUDED.cant_cargas,
+         cant_retiros  = EXCLUDED.cant_retiros,
+         fecha_primera = EXCLUDED.fecha_primera,
+         fecha_ultima  = EXCLUDED.fecha_ultima,
+         updated_at    = NOW()`,
+      [platform, usernamesLower],
+    )
+    return result.rowCount ?? 0
   }
 
   async insertTransactions(agente, normalizedTxs) {
     if (!normalizedTxs.length) return 0
 
+    const platform  = this.config.name
     const withId    = []
     const withoutId = []
 
     for (const tx of normalizedTxs) {
-      const row = [tx.fecha, tx.fecha_hora_utc, agente, tx.username, tx.tipo, tx.monto, tx.raw_detalles]
+      const row = [tx.fecha, tx.fecha_hora_utc, agente, tx.username, tx.tipo, tx.monto, tx.raw_detalles, platform]
       if (tx.id_rec) {
         withId.push([tx.id_rec, ...row])
       } else {
@@ -142,11 +142,13 @@ class BaseCasinoConnector {
     const startMs = Date.now()
     this.log.info({ agent: agente, from: desde, to: hasta }, 'Sync started')
 
+    // D1: the incremental sync only ever WRITES casino_transactions (idempotent
+    // via the unique indexes below). casino_players is then fully recomputed
+    // from that table for this agent — never incremented from the fetched batch.
     const rawTxs          = await this.fetchTransactions(agente, desde, hasta)
     const normalizedTxs   = await this.normalizeTransactions(rawTxs)
-    const players         = this.aggregate(normalizedTxs)
-    const playerCount     = await this.upsertPlayers(players)
     const insertedTxCount = await this.insertTransactions(agente, normalizedTxs)
+    const playerCount     = await this.recomputePlayers(normalizedTxs)
 
     this.log.info({
       agent:          agente,
@@ -165,14 +167,14 @@ class BaseCasinoConnector {
     for (let i = 0; i < rows.length; i += BATCH_SIZE) {
       const chunk  = rows.slice(i, i + BATCH_SIZE)
       const values = chunk.map((_, j) => {
-        const b = j * 8
-        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8})`
+        const b = j * 9
+        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8},$${b+9})`
       }).join(',')
       const result = await client.query(
         `INSERT INTO casino_transactions
-           (id_rec, fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles)
+           (id_rec, fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles, platform)
          VALUES ${values}
-         ON CONFLICT (id_rec) WHERE id_rec IS NOT NULL AND platform IS NULL DO UPDATE
+         ON CONFLICT (platform, id_rec) WHERE id_rec IS NOT NULL AND platform IS NOT NULL DO UPDATE
            SET fecha_hora_utc = EXCLUDED.fecha_hora_utc
            WHERE casino_transactions.fecha_hora_utc IS NULL`,
         chunk.flat(),
@@ -187,14 +189,14 @@ class BaseCasinoConnector {
     for (let i = 0; i < rows.length; i += BATCH_SIZE) {
       const chunk  = rows.slice(i, i + BATCH_SIZE)
       const values = chunk.map((_, j) => {
-        const b = j * 7
-        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7})`
+        const b = j * 8
+        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8})`
       }).join(',')
       const result = await client.query(
         `INSERT INTO casino_transactions
-           (fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles)
+           (fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles, platform)
          VALUES ${values}
-         ON CONFLICT (fecha, username, tipo, monto, agente) WHERE id_rec IS NULL AND platform IS NULL DO UPDATE
+         ON CONFLICT (platform, fecha, lower(username), tipo, monto, agente) WHERE id_rec IS NULL AND platform IS NOT NULL DO UPDATE
            SET fecha_hora_utc = EXCLUDED.fecha_hora_utc
            WHERE casino_transactions.fecha_hora_utc IS NULL`,
         chunk.flat(),
@@ -213,14 +215,45 @@ class BaseCasinoConnector {
     }
   }
 
+  /**
+   * `options` may be a plain fetch-options object OR a zero-arg factory that
+   * builds one fresh per attempt. Connectors should pass a factory whenever the
+   * headers embed credentials that authenticate() can refresh (H11) — a static
+   * object would keep resending the stale token even after re-auth succeeds.
+   */
   async _fetchWithRetry(url, options, context = '') {
     const MAX_ATTEMPTS = 4
 
     let lastError
+    let reauthUsed = false
+    let attempt    = 1
 
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    while (attempt <= MAX_ATTEMPTS) {
+      const opts = typeof options === 'function' ? options() : options
+
       try {
-        const res = await fetch(url, options)
+        const res = await fetch(url, opts)
+
+        if (res.status === 401 || res.status === 403) {
+          // H11: a 401/403 mid-run is very often just an expired token
+          // (confirmed for Argenbet's short-TTL JWT, and Zeus/Bet30's 24-48h
+          // tokens) — not a genuine permission failure. Re-authenticate() and
+          // retry EXACTLY once with rebuilt headers; this retry does not
+          // consume one of the MAX_ATTEMPTS slots, so it always gets its
+          // chance even if the 401 happens on the last normal attempt. If it
+          // fails again, treat it as fatal like any other 4xx — no infinite
+          // loop, no silent data loss.
+          if (!reauthUsed) {
+            reauthUsed = true
+            this.log.warn({ status: res.status, context }, 'Auth error — re-authenticating and retrying once')
+            await this.authenticate()
+            continue
+          }
+          throw Object.assign(
+            new Error(`HTTP ${res.status} (non-retriable client error)`),
+            { nonRetriable: true },
+          )
+        }
 
         if (res.status >= 400 && res.status < 500) {
           throw Object.assign(
@@ -253,6 +286,8 @@ class BaseCasinoConnector {
           )
           await new Promise(r => setTimeout(r, delayMs))
         }
+
+        attempt++
       }
     }
 

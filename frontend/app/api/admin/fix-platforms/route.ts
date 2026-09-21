@@ -2,8 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getLongRunningClient } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
 
-// Strip all (xxx) groups, then tokenize by / space tab, match against casino_players
-const TOKEN_JOIN = (agentes: string[]) => `
+// Strip all (xxx) groups, then tokenize by / space tab, match against casino_players.
+// H3 fix (revisión coordinador, mensaje 8): EXISTS sin fan-out no basta — 'bigwin' es
+// agente de zeus Y bet30, así que `agente = ANY(agentes)` por sí solo podía etiquetar un
+// jugador de bet30 como zeus (o viceversa) si su agente aparece en ambas listas. Se agrega
+// `cp.platform = $platform` explícito, igual que el resto del dashboard (sin fallback a
+// filas ambiguas con platform NULL — esas no se etiquetan hasta que un backfill real les
+// asigne plataforma).
+const TOKEN_JOIN = (agentes: string[], platform: 'zeus' | 'bet30') => `
   EXISTS (
     SELECT 1 FROM casino_players cp
     JOIN LATERAL regexp_split_to_table(
@@ -13,6 +19,7 @@ const TOKEN_JOIN = (agentes: string[]) => `
     WHERE LENGTH(TRIM(tok)) > 1
       AND cp.username_lower = LOWER(TRIM(tok))
       AND cp.agente = ANY(ARRAY[${agentes.map(a => `'${a}'`).join(',')}])
+      AND cp.platform = '${platform}'
   )
 `
 
@@ -57,6 +64,7 @@ async function runFixPlatforms() {
               WHERE LENGTH(TRIM(tok)) > 1
                 AND cp.username_lower = LOWER(TRIM(tok))
                 AND cp.agente = ANY(ARRAY['bigwin','ofizeus','betcoin','royal','farabet'])
+                AND cp.platform = 'zeus'
             )
           THEN 'zeus' END,
           CASE WHEN
@@ -71,6 +79,7 @@ async function runFixPlatforms() {
               WHERE LENGTH(TRIM(tok)) > 1
                 AND cp.username_lower = LOWER(TRIM(tok))
                 AND cp.agente = ANY(ARRAY['btcuno','btcdos','zeus','zeusroyal','bigwin'])
+                AND cp.platform = 'bet30'
             )
           THEN 'bet30' END
         ], NULL);
@@ -99,7 +108,7 @@ async function runFixPlatforms() {
       UPDATE contacts c
       SET platforms  = array_append(platforms, 'zeus'),
           updated_at = NOW()
-      WHERE ${TOKEN_JOIN(ZEUS_AGENTS)}
+      WHERE ${TOKEN_JOIN(ZEUS_AGENTS, 'zeus')}
         AND NOT ('zeus' = ANY(COALESCE(platforms, ARRAY[]::text[])))
     `)
 
@@ -123,7 +132,7 @@ async function runFixPlatforms() {
       UPDATE contacts c
       SET platforms  = array_append(platforms, 'bet30'),
           updated_at = NOW()
-      WHERE ${TOKEN_JOIN(BET30_AGENTS)}
+      WHERE ${TOKEN_JOIN(BET30_AGENTS, 'bet30')}
         AND NOT ('bet30' = ANY(COALESCE(platforms, ARRAY[]::text[])))
     `)
 

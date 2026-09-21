@@ -201,7 +201,9 @@ export async function POST(req: NextRequest) {
                  FROM jsonb_to_recordset($1::jsonb) AS x(phone text, casino_username text)
                  WHERE casino_username IS NOT NULL
                ) inp ON c.phone_number = inp.phone
-               JOIN casino_players cp ON cp.username_lower = LOWER(inp.casino_username)
+               JOIN (
+                 SELECT *, COUNT(*) OVER (PARTITION BY username_lower) AS name_count FROM casino_players
+               ) cp ON cp.username_lower = LOWER(inp.casino_username) AND cp.name_count = 1
                WHERE cp.seg_monto IS NOT NULL AND cp.seg_actividad IS NOT NULL AND cp.agente IS NOT NULL
              )`,
           [casinoInputJson]
@@ -226,7 +228,9 @@ export async function POST(req: NextRequest) {
                AS x(phone text, casino_username text)
                WHERE casino_username IS NOT NULL
              ) inp ON c.phone_number = inp.phone
-             JOIN casino_players cp ON cp.username_lower = LOWER(inp.casino_username)
+             JOIN (
+               SELECT *, COUNT(*) OVER (PARTITION BY username_lower) AS name_count FROM casino_players
+             ) cp ON cp.username_lower = LOWER(inp.casino_username) AND cp.name_count = 1
              WHERE cp.seg_monto IS NOT NULL AND cp.seg_actividad IS NOT NULL AND cp.agente IS NOT NULL
            ),
            valor AS (
@@ -236,7 +240,9 @@ export async function POST(req: NextRequest) {
                       / GREATEST(COUNT(DISTINCT DATE_TRUNC('month', ct.fecha)), 1)
                     ) AS avg_mensual
              FROM matched m
-             JOIN casino_players cp ON cp.username_lower = m.username_lower
+             JOIN (
+               SELECT *, COUNT(*) OVER (PARTITION BY username_lower) AS name_count FROM casino_players
+             ) cp ON cp.username_lower = m.username_lower AND cp.name_count = 1
              LEFT JOIN casino_transactions ct
                ON LOWER(ct.username) = m.username_lower AND ct.tipo = 'carga'
              GROUP BY m.username_lower, cp.total_cargas

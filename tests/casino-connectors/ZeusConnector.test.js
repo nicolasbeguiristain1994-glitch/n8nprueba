@@ -191,11 +191,28 @@ describe('ZeusConnector', () => {
       expect(result.monto).toBe(200)
     })
 
-    it('stores monto as absolute rounded value regardless of valor sign', async () => {
+    it('stores monto as an absolute value regardless of valor sign', async () => {
       const [pos] = await connector.normalizeTransactions([rawTx({ valor:  300 })])
       const [neg] = await connector.normalizeTransactions([rawTx({ valor: -300 })])
       expect(pos.monto).toBe(300)
       expect(neg.monto).toBe(300)
+    })
+
+    // D3 (coordinator review): monto must NOT be rounded — casino_transactions.monto
+    // is NUMERIC(20,2) (migración 126) precisely to keep cents. Zeus/Bet30 aren't
+    // guaranteed to always report whole pesos.
+    it('preserves cents — a carga of $123.45 is not rounded to $123', async () => {
+      const [result] = await connector.normalizeTransactions([
+        rawTx({ detalles: 'Carga directa', valor: 123.45 }),
+      ])
+      expect(result.monto).toBe(123.45)
+    })
+
+    it('preserves cents on a retiro (negative valor) — $14.67, not $15 or $14', async () => {
+      const [result] = await connector.normalizeTransactions([
+        rawTx({ detalles: 'Retiro directo', valor: -14.67 }),
+      ])
+      expect(result.monto).toBe(14.67)
     })
 
     it('filters out transactions containing "indirecto" in detalles', async () => {
@@ -291,6 +308,73 @@ describe('ZeusConnector', () => {
     it('returns false when fetch throws (network unreachable)', async () => {
       global.fetch = jest.fn().mockRejectedValue(new Error('ECONNREFUSED'))
       expect(await connector.healthCheck()).toBe(false)
+    })
+  })
+
+  // ── authenticate() — auto-login + secret redaction ─────────────────────────
+
+  describe('authenticate()', () => {
+    const AUTOLOGIN_CONFIG = {
+      ...CONFIG,
+      adminUserEnvVar:     'ZEUS_ADMIN_USER',
+      adminPasswordEnvVar: 'ZEUS_ADMIN_PASSWORD',
+      loginUrl:            'https://admin.zeuscasino.fun/oauth/v2/token',
+      loginClientId:       'client-id',
+      loginClientSecret:   'super-secret-client-secret',
+      loginPanelOrigin:    'https://panel-skin5.zeuscasino.fun',
+    }
+
+    beforeEach(() => {
+      process.env.ZEUS_ADMIN_USER     = 'admin-user'
+      process.env.ZEUS_ADMIN_PASSWORD = 'super-secret-password'
+    })
+    afterEach(() => {
+      delete process.env.ZEUS_ADMIN_USER
+      delete process.env.ZEUS_ADMIN_PASSWORD
+    })
+
+    it('is a no-op (falls back to static token) when auto-login is not configured', async () => {
+      const connector = makeConnector() // CONFIG has no adminUserEnvVar/loginUrl
+      await expect(connector.authenticate()).resolves.toBeUndefined()
+      expect(connector.playerToken).toBe('test-player-token')
+    })
+
+    it('sets playerToken from access_token on success', async () => {
+      const { pool } = makePool()
+      const connector = new ZeusConnector(AUTOLOGIN_CONFIG, pool)
+      global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ access_token: 'fresh-jwt' }) })
+      await connector.authenticate()
+      expect(connector.playerToken).toBe('fresh-jwt')
+    })
+
+    it('never leaks the password or client_secret in a network-error message', async () => {
+      const { pool } = makePool()
+      const connector = new ZeusConnector(AUTOLOGIN_CONFIG, pool)
+      global.fetch = jest.fn().mockRejectedValue(
+        new Error('connect failed for https://admin.zeuscasino.fun/oauth/v2/token?password=super-secret-password&client_secret=super-secret-client-secret'),
+      )
+      await expect(connector.authenticate()).rejects.toThrow()
+      try { await connector.authenticate() } catch (err) {
+        expect(err.message).not.toContain('super-secret-password')
+        expect(err.message).not.toContain('super-secret-client-secret')
+      }
+    })
+
+    it('never leaks the password or client_secret in an HTTP-failure body echo', async () => {
+      const { pool } = makePool()
+      const connector = new ZeusConnector(AUTOLOGIN_CONFIG, pool)
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false, status: 400,
+        text: async () => 'invalid_grant: password=super-secret-password client_secret=super-secret-client-secret',
+      })
+      try {
+        await connector.authenticate()
+        throw new Error('expected authenticate() to throw')
+      } catch (err) {
+        expect(err.message).not.toContain('super-secret-password')
+        expect(err.message).not.toContain('super-secret-client-secret')
+        expect(err.message).toContain('[REDACTED]')
+      }
     })
   })
 })

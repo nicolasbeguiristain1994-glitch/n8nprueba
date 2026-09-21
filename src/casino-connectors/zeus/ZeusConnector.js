@@ -1,6 +1,7 @@
 'use strict'
 
 const { BaseCasinoConnector } = require('../base/BaseCasinoConnector')
+const { fmtDate, addOneDay, utcToLocalDate, extractUtcTimestamp } = require('../shared/dateHelpers')
 
 /**
  * Connector for the Zeus Casino platform.
@@ -67,6 +68,13 @@ class ZeusConnector extends BaseCasinoConnector {
 
     const url = `${this.config.loginUrl}?${params}`
 
+    // Neither the request URL (query-string auth, includes the password) nor a
+    // raw response body should ever reach a log line or a rethrown Error — both
+    // propagate up through sync-casino-players-live.js's top-level error logger.
+    // `redact()` strips any literal occurrence of the known secrets first.
+    const secrets = [adminPassword, this.config.loginClientSecret].filter(Boolean)
+    const redact  = (text) => secrets.reduce((t, s) => t.split(s).join('[REDACTED]'), String(text ?? ''))
+
     let res
     try {
       res = await fetch(url, {
@@ -78,13 +86,13 @@ class ZeusConnector extends BaseCasinoConnector {
         signal: AbortSignal.timeout(30_000),
       })
     } catch (err) {
-      throw new Error(`${this.config.name} auto-login network error: ${err.message}`)
+      throw new Error(`${this.config.name} auto-login network error: ${redact(err.message)}`)
     }
 
     if (!res.ok) {
       let errBody = ''
       try { errBody = await res.text() } catch (_) {}
-      throw new Error(`${this.config.name} auto-login failed: HTTP ${res.status} — ${errBody}`)
+      throw new Error(`${this.config.name} auto-login failed: HTTP ${res.status} — ${redact(errBody).slice(0, 300)}`)
     }
 
     const body  = await res.json()
@@ -102,9 +110,9 @@ class ZeusConnector extends BaseCasinoConnector {
   async fetchTransactions(agentUsername, startDate, endDate) {
     const params = new URLSearchParams({
       username:  agentUsername,
-      startDate: this._fmtDate(startDate),
+      startDate: fmtDate(startDate),
       // Zeus uses exclusive end dates — pass the day after `endDate` (same as the UI panel)
-      endDate:   this._fmtDate(this._addOneDay(endDate)),
+      endDate:   fmtDate(addOneDay(endDate)),
       timezone:  this.config.timezone,
     })
 
@@ -112,21 +120,22 @@ class ZeusConnector extends BaseCasinoConnector {
 
     this.log.debug({ agent: agentUsername, endpoint: this.config.endpoint, from: startDate, to: endDate }, 'Fetching transactions')
 
-    const res = await this._fetchWithRetry(
-      url,
-      {
-        headers: {
-          'X-Api-Key':      this.apiKey,
-          'X-Player-Token': this.playerToken,
-          'Accept':         'application/json, text/plain, */*',
-          // Origin/Referer required by the Zeus API gateway
-          'Origin':         'https://panel-skin5.zeuscasino.fun',
-          'Referer':        'https://panel-skin5.zeuscasino.fun/',
-        },
-        signal: AbortSignal.timeout(60_000),
+    // Built as a factory (not a static object) so that a mid-run re-authenticate()
+    // (see BaseCasinoConnector._fetchWithRetry, H11) picks up the refreshed
+    // this.playerToken on retry instead of resending the stale one.
+    const buildOptions = () => ({
+      headers: {
+        'X-Api-Key':      this.apiKey,
+        'X-Player-Token': this.playerToken,
+        'Accept':         'application/json, text/plain, */*',
+        // Origin/Referer required by the Zeus API gateway
+        'Origin':         'https://panel-skin5.zeuscasino.fun',
+        'Referer':        'https://panel-skin5.zeuscasino.fun/',
       },
-      `agent "${agentUsername}"`,
-    )
+      signal: AbortSignal.timeout(60_000),
+    })
+
+    const res = await this._fetchWithRetry(url, buildOptions, `agent "${agentUsername}"`)
 
     const body  = await res.json()
     // Zeus response can be: array | { data } | { records } | { result }
@@ -161,8 +170,8 @@ class ZeusConnector extends BaseCasinoConnector {
                  : null
       if (!tipo) continue
 
-      const fechaDate    = this._utcToArgDate(fecha)
-      const fechaHoraUtc = this._extractUtcTimestamp(fecha)
+      const fechaDate    = utcToLocalDate(fecha)
+      const fechaHoraUtc = extractUtcTimestamp(fecha)
       if (!fechaDate) continue
 
       normalized.push({
@@ -170,7 +179,11 @@ class ZeusConnector extends BaseCasinoConnector {
         username,
         agente,
         tipo,
-        monto:          Math.round(Math.abs(valor)),
+        // D3: no redondear — Zeus/Bet30 no están garantizados a devolver siempre
+        // enteros, y casino_transactions.monto es NUMERIC(20,2) (migración 126)
+        // precisamente para no perder centavos. Math.abs sigue siendo necesario:
+        // Zeus reporta retiros como valores negativos.
+        monto:          Math.abs(Number(valor)),
         fecha:          fechaDate,
         fecha_hora_utc: fechaHoraUtc,
         raw_detalles:   detalles,
@@ -185,8 +198,8 @@ class ZeusConnector extends BaseCasinoConnector {
       const today  = new Date().toISOString().substring(0, 10)
       const params = new URLSearchParams({
         username:  'health-check',
-        startDate: this._fmtDate(today),
-        endDate:   this._fmtDate(this._addOneDay(today)),
+        startDate: fmtDate(today),
+        endDate:   fmtDate(addOneDay(today)),
         timezone:  this.config.timezone,
       })
       const res = await fetch(
@@ -213,39 +226,6 @@ class ZeusConnector extends BaseCasinoConnector {
     }
   }
 
-  // ── Date helpers ──────────────────────────────────────────────────────────
-
-  // Zeus API expects "YYYY-MM-DD HH:MM:SS" — URLSearchParams encodes space as +
-  _fmtDate(d) {
-    return `${d} 00:00:00`
-  }
-
-  // Adds one day to a YYYY-MM-DD string (noon UTC avoids DST edge cases)
-  _addOneDay(dateStr) {
-    const d = new Date(`${dateStr}T12:00:00Z`)
-    d.setUTCDate(d.getUTCDate() + 1)
-    return d.toISOString().substring(0, 10)
-  }
-
-  // Zeus returns UTC timestamps. Convert to Argentina local date (UTC−3, no DST).
-  // A 22:00 ART transaction is 01:00 UTC next day — substring(0,10) on raw UTC is wrong.
-  _utcToArgDate(fechaStr) {
-    if (!fechaStr) return null
-    const d = new Date(fechaStr)
-    if (isNaN(d.getTime())) {
-      return typeof fechaStr === 'string' ? fechaStr.substring(0, 10) : null
-    }
-    return new Date(d.getTime() - 3 * 3_600_000).toISOString().substring(0, 10)
-  }
-
-  // Returns a clean ISO UTC string only when the raw value has a time component.
-  _extractUtcTimestamp(fechaStr) {
-    if (!fechaStr) return null
-    if (!fechaStr.includes('T') && !fechaStr.includes(' ')) return null
-    const d = new Date(fechaStr)
-    if (isNaN(d.getTime())) return null
-    return d.toISOString()
-  }
 }
 
 module.exports = { ZeusConnector }

@@ -26,6 +26,35 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Migración 127 (fase 1, identidad multi-plataforma): reemplaza el índice
+  // único global de casino_players.username_lower por uno compuesto
+  // (platform, username_lower). Los pasos 110a-115a de abajo son un catch-up
+  // legacy que asume esa identidad global (JOIN/match solo por username_lower,
+  // sin platform) — si 127 ya está aplicada, corren igual pero mezclan filas
+  // de plataformas distintas que comparten username (p.ej. 'bigwin' zeus y
+  // bet30). Revisión coordinador, mensaje 8: en vez de ejecutarlos a ciegas o
+  // reescribir 12 queries legacy sin cobertura de tests, se detectan y se
+  // saltan con un mensaje claro — el reemplazo moderno es
+  // scripts/rebuild-casino-players-from-db.js o scripts/segmentar-casino-players.js.
+  const [{ exists: migration127Applied }] = await query<{ exists: boolean }>(
+    `SELECT EXISTS (
+       SELECT 1 FROM pg_indexes WHERE indexname = 'idx_casino_players_platform_username'
+     ) AS exists`,
+  )
+  const LEGACY_PLATFORM_STEP_SKIP =
+    'Migración 127 ya aplicada: este paso asume identidad global por username_lower ' +
+    '(sin platform) y puede mezclar plataformas que comparten un mismo username ' +
+    "(p.ej. 'bigwin' en zeus y bet30). Usar scripts/rebuild-casino-players-from-db.js " +
+    'o scripts/segmentar-casino-players.js en su lugar.'
+
+  async function runLegacyPlatformStep(step: string, sql: string) {
+    if (migration127Applied) {
+      results.push({ step, ok: false, error: LEGACY_PLATFORM_STEP_SKIP })
+      return
+    }
+    await run(step, sql)
+  }
+
   // ── 054: campaigns.pause_reason ───────────────────────────────────────────
   await run('054a: add pause_reason column', `
     ALTER TABLE campaigns
@@ -191,7 +220,7 @@ export async function POST(req: NextRequest) {
   // ── 110: Re-segmentar desde casino_transactions ────────────────────────────
   // Recalcula seg_monto y seg_actividad usando MAX(fecha) real de transacciones.
   // Esto corrige contactos que figuran como "frecuente" sin depósitos recientes.
-  await run('110a: recalculate casino_players seg_actividad from transactions', `
+  await runLegacyPlatformStep('110a: recalculate casino_players seg_actividad from transactions', `
     WITH has_tx AS (
       SELECT EXISTS(SELECT 1 FROM casino_transactions WHERE tipo = 'carga') AS any_tx
     ),
@@ -252,7 +281,7 @@ export async function POST(req: NextRequest) {
   `)
 
   // 110b-110e: join solo por first_name para evitar timeout (EXISTS+jsonb es O(n*m))
-  await run('110b: sync contacts.segment from casino_players', `
+  await runLegacyPlatformStep('110b: sync contacts.segment from casino_players', `
     UPDATE contacts c
     SET segment = cp.seg_monto::contact_segment, updated_at = NOW()
     FROM casino_players cp
@@ -261,7 +290,7 @@ export async function POST(req: NextRequest) {
       AND c.segment::text IS DISTINCT FROM cp.seg_monto
   `)
 
-  await run('110c: delete stale casino activity/antiquity/risk tags', `
+  await runLegacyPlatformStep('110c: delete stale casino activity/antiquity/risk tags', `
     DELETE FROM contact_tags ct
     WHERE (ct.tag LIKE 'casino:actividad:%'
         OR ct.tag LIKE 'casino:antiguedad:%'
@@ -273,7 +302,7 @@ export async function POST(req: NextRequest) {
       )
   `)
 
-  await run('110d: re-insert updated casino tags', `
+  await runLegacyPlatformStep('110d: re-insert updated casino tags', `
     INSERT INTO contact_tags (id, contact_id, tag, added_by, added_at)
     SELECT gen_random_uuid(), c.id,
       unnest(array_remove(ARRAY[
@@ -307,7 +336,7 @@ export async function POST(req: NextRequest) {
   // casino_players.fecha_ultima puede estar desactualizado; MAX(casino_transactions.fecha)
   // es la fecha real del último depósito. Si no hay transacciones para un usuario,
   // last_deposit_at queda en NULL → el módulo de prioridades lo omite correctamente.
-  await run('110e: sync last_deposit_at from casino_transactions', `
+  await runLegacyPlatformStep('110e: sync last_deposit_at from casino_transactions', `
     UPDATE contacts c
     SET
       total_deposits    = COALESCE(am.cant_cargas, 0),
@@ -332,7 +361,7 @@ export async function POST(req: NextRequest) {
   `)
 
   // ── 111: Soft-delete contactos con nombres de agentes ───────────────────────
-  await run('111: soft-delete contacts with agent names', `
+  await runLegacyPlatformStep('111: soft-delete contacts with agent names', `
     UPDATE contacts
     SET deleted_at = NOW(), updated_at = NOW()
     WHERE LOWER(TRIM(first_name)) IN ('betcoin','farabet','bigwin','royal','ofizeus','zeus','zeusroyal')
@@ -344,7 +373,7 @@ export async function POST(req: NextRequest) {
   // cualquier valor stale de casino_players.fecha_ultima que haya quedado del paso 110e.
   // Contactos sin transacciones en casino_transactions quedan con last_deposit_at = NULL
   // y serán omitidos por el módulo de prioridades (skip: no_deposit_history).
-  await run('112: force-resync last_deposit_at from casino_transactions', `
+  await runLegacyPlatformStep('112: force-resync last_deposit_at from casino_transactions', `
     UPDATE contacts c
     SET
       total_deposits  = COALESCE(am.cant_cargas, 0),
@@ -370,7 +399,7 @@ export async function POST(req: NextRequest) {
   //   Zeus  regex: z(e|s|eus)?$  →  z(e|s|eus)?\d*$  (allows trailing digits)
   //   Bet30 regex: b(t)?$        →  b(t|e)?\d*$       (allows 'be' suffix and digits)
   //   Both: also tested per-token (split by / space etc.) not just on full field.
-  await run('113a: update compute_contact_platforms trigger', `
+  await runLegacyPlatformStep('113a: update compute_contact_platforms trigger', `
     CREATE OR REPLACE FUNCTION compute_contact_platforms()
     RETURNS trigger AS $$
     DECLARE
@@ -419,7 +448,7 @@ export async function POST(req: NextRequest) {
     $$ LANGUAGE plpgsql
   `)
 
-  await run('113b: backfill platforms with new logic', `
+  await runLegacyPlatformStep('113b: backfill platforms with new logic', `
     WITH tokens AS (
       SELECT id,
              COALESCE(first_name, '') || ' ' || COALESCE(last_name, '') AS full_name
@@ -460,7 +489,7 @@ export async function POST(req: NextRequest) {
   // Reemplaza la lógica compleja de 113 con dos UPDATE simples (sin CTEs ni
   // EXISTS complejos): agrega 'zeus' donde falta y 'bet30' donde falta,
   // detectando el patrón en cualquier parte del campo (no solo al final).
-  await run('114a: update platforms trigger — simple regex', `
+  await runLegacyPlatformStep('114a: update platforms trigger — simple regex', `
     CREATE OR REPLACE FUNCTION compute_contact_platforms()
     RETURNS trigger AS $$
     DECLARE
@@ -498,7 +527,7 @@ export async function POST(req: NextRequest) {
   `)
 
   // Agrega 'bet30' a contactos que tienen el patrón pero les falta la plataforma
-  await run('114c: backfill bet30 — regex b/bt/be en campo o antes de /', `
+  await runLegacyPlatformStep('114c: backfill bet30 — regex b/bt/be en campo o antes de /', `
     UPDATE contacts
     SET platforms = array_append(platforms, 'bet30'),
         updated_at = NOW()
@@ -512,7 +541,7 @@ export async function POST(req: NextRequest) {
   // [digit]b(t|e)?[digits] (bet30). The required digit before the letter suffix
   // prevents false positives on real surnames like "Diaz" or "Gonzalez".
   // This catches old players not present in casino_players.
-  await run('115a: update trigger — tokenized regex + DB-lookup hybrid', `
+  await runLegacyPlatformStep('115a: update trigger — tokenized regex + DB-lookup hybrid', `
     CREATE OR REPLACE FUNCTION compute_contact_platforms()
     RETURNS trigger AS $$
     DECLARE

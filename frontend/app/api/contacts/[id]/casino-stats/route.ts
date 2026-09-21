@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
-import { getAgentsForPlatform } from '@/lib/casino-agents'
+import { getAgentsForPlatform, getPlatformFilterSql } from '@/lib/casino-agents'
 
 // Strips platform prefixes like "Z/ ", "ZS/ ", "Zeus/ " from stored first_name
 // so the raw casino username can be matched against casino_players.username_lower
@@ -30,14 +30,23 @@ interface PlatformStats {
 async function queryPlatformStats(
   usernames: string[],
   agents:    string[],
+  platform:  'zeus' | 'bet30',
 ): Promise<PlatformStats | null> {
   if (!usernames.length) return null
 
+  // H3 (revisión coordinador): `agente = ANY(agents)` no basta para distinguir
+  // plataforma — 'bigwin' es agente tanto de zeus como de bet30. Filtrar por
+  // la columna `platform` (estricta, sin fallback a NULL/ambiguo, igual que
+  // getPlatformFilterSql en el resto del dashboard) evita mezclar el jugador
+  // equivocado. Jugadores históricos ambiguos (platform NULL, p.ej. bigwin sin
+  // backfillear) no aparecen acá hasta que un sync/recompute les asigne
+  // plataforma real — no se adivina.
   const cpRows = await query<{ username: string; total_cargas: number; fecha_ultima: string | null }>(
     `SELECT username, total_cargas, fecha_ultima
      FROM casino_players
      WHERE username_lower = ANY($1::text[])
        AND agente         = ANY($2::text[])
+       AND ${getPlatformFilterSql(platform)}
      LIMIT 1`,
     [usernames, agents],
   )
@@ -118,8 +127,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     // Query both platforms in parallel
     const [zeusStats, bet30Stats] = await Promise.all([
-      queryPlatformStats(zeusUsernames,  ZEUS_AGENTS),
-      queryPlatformStats(bet30Usernames, BET30_AGENTS),
+      queryPlatformStats(zeusUsernames,  ZEUS_AGENTS,  'zeus'),
+      queryPlatformStats(bet30Usernames, BET30_AGENTS, 'bet30'),
     ])
 
     // Primary stats = zeus if found, otherwise bet30

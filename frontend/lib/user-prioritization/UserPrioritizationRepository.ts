@@ -361,9 +361,42 @@ export class UserPrioritizationRepository {
   /**
    * Retorna un mapa contactId → { ltvScore, ltvTier } para un batch de contactos.
    *
-   * Une contacts → casino_players (por first_name o casino_accounts[].username)
-   * → player_ltv. Si un contacto tiene múltiples cuentas de casino, toma la de
+   * Une contacts → casino_contact_account_links (contact↔player ya
+   * desambiguado por plataforma, migración 126/127) → casino_players →
+   * player_ltv. Si un contacto tiene múltiples cuentas de casino, toma la de
    * mayor ltv_score (DISTINCT ON con ORDER BY ltv_score DESC).
+   *
+   * CORRECCIÓN (revisión coordinador, mensaje 8 — 2026-09-21): esta función
+   * afirmaba unir `player_ltv.casino_player_id = casino_contact_account_links.
+   * player_id` directamente, dando por hecho que `player_id` YA era el UUID
+   * real de casino_players. Es falso para cualquier jugador con transacciones:
+   * `casino_segmentation_players` (de la que sale `player_id`, vía la CTE
+   * `players` de la migración 127) genera un id SINTÉTICO
+   * `md5('excel:'||platform||':'||lower(username))::uuid` para toda cuenta con
+   * transacciones — no el `casino_players.id` real. Ese id sintético nunca
+   * coincide con `player_ltv.casino_player_id` (que sí es el UUID real,
+   * escrito por `refresh_player_ltv()`), así que el LTV desaparecía para
+   * prácticamente todos los contactos. Fix: unir primero a `casino_players`
+   * por `(username_lower, platform)` — la misma identidad compuesta que usa
+   * `casino_contact_account_links` para resolver el link — y de ahí a
+   * `player_ltv` por `casino_players.id`.
+   *
+   * Antes de esta fase el JOIN era directo contra casino_players por
+   * first_name/casino_accounts SIN platform: con la clave de identidad ahora
+   * compuesta (platform, username_lower — D2), el mismo username puede
+   * corresponder a jugadores de dos plataformas distintas, y ese JOIN podía
+   * atarse al equivocado (bigwin/adminbtc). casino_contact_account_links ya
+   * resuelve esa ambigüedad (vínculos explícitos primero, luego panel único,
+   * luego nombre globalmente único) — se reutiliza en vez de reimplementar la
+   * lógica acá.
+   *
+   * CAVEAT DE PERFORMANCE (no verificado — sin acceso a una base real en esta
+   * fase): casino_contact_account_links materializa CTEs sobre TODOS los
+   * contactos en cada evaluación; este método puede correr sobre miles de
+   * contactos en el job de recompute de prioridades. Si `EXPLAIN ANALYZE`
+   * muestra que es lento en producción, la vía de escape es materializar esa
+   * vista (o cachear su resultado) en vez de revertir esta corrección de
+   * identidad.
    *
    * Contactos sin datos LTV no aparecen en el mapa (caller recibe null al lookup).
    */
@@ -373,22 +406,17 @@ export class UserPrioritizationRepository {
     if (contactIds.length === 0) return new Map()
 
     const sql = `
-      SELECT DISTINCT ON (c.id)
-        c.id        AS contact_id,
+      SELECT DISTINCT ON (l.contact_id)
+        l.contact_id AS contact_id,
         pl.ltv_score,
-        pl.tier_ltv AS ltv_tier
-      FROM contacts c
-      JOIN casino_players cp ON (
-        LOWER(TRIM(c.first_name)) = cp.username_lower
-        OR EXISTS (
-          SELECT 1
-          FROM jsonb_array_elements(c.casino_accounts) acc
-          WHERE LOWER(acc->>'username') = cp.username_lower
-        )
-      )
+        pl.tier_ltv  AS ltv_tier
+      FROM casino_contact_account_links l
+      JOIN casino_players cp
+        ON cp.username_lower = l.username_lower
+       AND cp.platform IS NOT DISTINCT FROM l.platform
       JOIN player_ltv pl ON pl.casino_player_id = cp.id
-      WHERE c.id = ANY($1::uuid[])
-      ORDER BY c.id, pl.ltv_score DESC NULLS LAST
+      WHERE l.contact_id = ANY($1::uuid[])
+      ORDER BY l.contact_id, pl.ltv_score DESC NULLS LAST
     `
     try {
       const rows = await query<LtvDbRow>(sql, [contactIds])

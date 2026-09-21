@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
-import { getAgentsSqlArray, isValidPlatform } from '@/lib/casino-agents'
+import { getPlatformFilterSql, isValidPlatform } from '@/lib/casino-agents'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface CasinoJugador {
   username:      string
+  platform:      string | null   // identidad compuesta (platform, username) — D2
   agente:        string
   seg_monto:     string
   seg_actividad: string
@@ -258,7 +259,9 @@ export async function GET(req: Request) {
       { status: 400 },
     )
   }
-  const agentsSql = getAgentsSqlArray(platformParam)
+  // H3 fix: platform column primero, lista de agentes solo como fallback legacy
+  const platformFilterCt = getPlatformFilterSql(platformParam, 'ct')
+  const platformFilter   = getPlatformFilterSql(platformParam)
 
   // ── Existing filters ────────────────────────────────────────────────────────
   const agenteParam     = url.searchParams.get('agente')?.trim()      || null
@@ -418,14 +421,15 @@ export async function GET(req: Request) {
       const ctePeriodo = `
         WITH periodo AS (
           SELECT
+            ct.platform,
             ct.username,
             ct.agente,
-            SUM(ct.monto) FILTER (WHERE ct.tipo = 'carga')::bigint   AS total_cargas,
+            SUM(ct.monto) FILTER (WHERE ct.tipo = 'carga')::float8   AS total_cargas,
             COUNT(*)      FILTER (WHERE ct.tipo = 'carga')::int       AS cant_cargas,
-            SUM(ct.monto) FILTER (WHERE ct.tipo = 'retiro')::bigint  AS total_retiros,
+            SUM(ct.monto) FILTER (WHERE ct.tipo = 'retiro')::float8  AS total_retiros,
             COUNT(*)      FILTER (WHERE ct.tipo = 'retiro')::int      AS cant_retiros
           FROM casino_transactions ct
-          WHERE ct.agente = ANY(${agentsSql})
+          WHERE ${platformFilterCt}
             AND ct.username != ct.agente          -- excluye Carga/Retiro indirecto
             AND ($1::text IS NULL OR ct.agente   = $1)
             AND ($4::text IS NULL OR ct.username ILIKE '%' || $4 || '%')
@@ -441,17 +445,22 @@ export async function GET(req: Request) {
               OR (ct.fecha_hora_utc IS NOT NULL AND ct.fecha_hora_utc <  $10::timestamptz)
               OR (ct.fecha_hora_utc IS NULL     AND ct.fecha            < $3::date)
             )
-          GROUP BY ct.username, ct.agente
+          GROUP BY ct.platform, ct.username, ct.agente
           HAVING
             SUM(ct.monto) FILTER (WHERE ct.tipo = 'carga')  > 0
             OR SUM(ct.monto) FILTER (WHERE ct.tipo = 'retiro') > 0
         )
       `
 
+      // cp join includes platform: without it, a username shared across
+      // platforms (bigwin, adminbtc) would attach the WRONG platform's
+      // segmentación/labels/fecha_ultima to this period's rows even though the
+      // period money itself (from `periodo`, already platform-filtered) was
+      // correct — a quieter variant of the same H3 cross-platform bug.
       const joinAndWhere = `
         FROM periodo p
         LEFT JOIN casino_players cp
-          ON LOWER(cp.username) = LOWER(p.username)
+          ON LOWER(cp.username) = LOWER(p.username) AND cp.platform = p.platform
         WHERE ($5::text IS NULL OR cp.seg_monto     = $5)
           AND ($6::text IS NULL OR cp.seg_actividad = $6)
           AND ($7::int  IS NULL OR (cp.fecha_ultima IS NOT NULL
@@ -465,6 +474,7 @@ export async function GET(req: Request) {
           `${ctePeriodo}
            SELECT
              p.username,
+             p.platform,
              p.agente,
              COALESCE(cp.seg_monto,     '') AS seg_monto,
              COALESCE(cp.seg_actividad, '') AS seg_actividad,
@@ -472,7 +482,7 @@ export async function GET(req: Request) {
              COALESCE(p.cant_cargas,   0)   AS cant_cargas,
              COALESCE(p.total_retiros, 0)   AS total_retiros,
              COALESCE(p.cant_retiros,  0)   AS cant_retiros,
-             (COALESCE(p.total_cargas, 0) - COALESCE(p.total_retiros, 0))::bigint AS neto,
+             (COALESCE(p.total_cargas, 0) - COALESCE(p.total_retiros, 0))::float8 AS neto,
              CASE WHEN cp.fecha_ultima IS NOT NULL
                THEN (CURRENT_DATE - cp.fecha_ultima)::int
              END                            AS dias_ultimo,
@@ -504,8 +514,8 @@ export async function GET(req: Request) {
           `${ctePeriodo}
            SELECT
              COUNT(*)::int                                        AS total,
-             COALESCE(SUM(p.total_cargas),  0)::bigint           AS total_cargas_sum,
-             COALESCE(SUM(p.total_retiros), 0)::bigint           AS total_retiros_sum,
+             COALESCE(SUM(p.total_cargas),  0)::float8           AS total_cargas_sum,
+             COALESCE(SUM(p.total_retiros), 0)::float8           AS total_retiros_sum,
              COALESCE(SUM(p.cant_cargas),   0)::int              AS total_cant_cargas,
              COALESCE(SUM(p.cant_retiros),  0)::int              AS total_cant_retiros
            ${joinAndWhere}`,
@@ -537,7 +547,7 @@ export async function GET(req: Request) {
       ]
 
       const histWhere = `
-        WHERE agente = ANY(${agentsSql})
+        WHERE ${platformFilter}
           AND ($1::text IS NULL OR agente        = $1)
           AND ($2::text IS NULL OR username      ILIKE '%' || $2 || '%')
           AND ($3::text IS NULL OR seg_monto     = $3)
@@ -552,14 +562,15 @@ export async function GET(req: Request) {
         query<CasinoJugador>(
           `SELECT
              username,
+             platform,
              agente,
              COALESCE(seg_monto,     '') AS seg_monto,
              COALESCE(seg_actividad, '') AS seg_actividad,
-             total_cargas::bigint        AS total_cargas,
+             total_cargas::float8        AS total_cargas,
              cant_cargas,
-             total_retiros::bigint       AS total_retiros,
+             total_retiros::float8       AS total_retiros,
              cant_retiros,
-             (total_cargas - total_retiros)::bigint AS neto,
+             (total_cargas - total_retiros)::float8 AS neto,
              CASE WHEN fecha_ultima IS NOT NULL
                THEN (CURRENT_DATE - fecha_ultima)::int
              END                         AS dias_ultimo,
@@ -591,8 +602,8 @@ export async function GET(req: Request) {
         query<{ total: number; total_cargas_sum: string; total_retiros_sum: string; total_cant_cargas: number; total_cant_retiros: number }>(
           `SELECT
              COUNT(*)::int                                        AS total,
-             COALESCE(SUM(total_cargas),  0)::bigint             AS total_cargas_sum,
-             COALESCE(SUM(total_retiros), 0)::bigint             AS total_retiros_sum,
+             COALESCE(SUM(total_cargas),  0)::float8             AS total_cargas_sum,
+             COALESCE(SUM(total_retiros), 0)::float8             AS total_retiros_sum,
              COALESCE(SUM(cant_cargas),   0)::int                AS total_cant_cargas,
              COALESCE(SUM(cant_retiros),  0)::int                AS total_cant_retiros
            FROM casino_players

@@ -145,7 +145,7 @@ Contrato que todo `normalizeTransactions()` debe cumplir:
 | `username`      | `string`          | Username del jugador                               |
 | `agente`        | `string`          | Username del agente responsable (del response API) |
 | `tipo`          | `'carga'|'retiro'`| Tipo de transacción                                |
-| `monto`         | `number`          | `Math.round(Math.abs(rawValue))`                   |
+| `monto`         | `number`          | `Math.abs(rawValue)` — sin redondear (D3: cargar/persistir cargas y retiros preserva centavos) |
 | `fecha`         | `string`          | `YYYY-MM-DD` en timezone local de la plataforma    |
 | `fecha_hora_utc`| `string \| null`  | Timestamp ISO UTC completo si disponible           |
 | `raw_detalles`  | `string`          | Descripción original de la transacción             |
@@ -158,9 +158,8 @@ Los subclases heredan y no necesitan reimplementar:
 
 | Método                                  | Descripción                                                             |
 |-----------------------------------------|-------------------------------------------------------------------------|
-| `aggregate(normalizedTxs)`              | Agrega por jugador → `PlayerSummary[]`                                  |
-| `upsertPlayers(players)`                | Upsert en `casino_players`                                              |
-| `insertTransactions(agente, txs)`       | Batch insert atómico en `casino_transactions` (BEGIN/COMMIT/ROLLBACK)   |
+| `recomputePlayers(normalizedTxs)`       | Recompute (no acumula) `casino_players` desde `casino_transactions`, para los usernames tocados en esta corrida — un solo `INSERT...SELECT` con `SUM`/`COUNT`/`MIN`/`MAX` en SQL |
+| `insertTransactions(agente, txs)`       | Batch insert atómico en `casino_transactions` (BEGIN/COMMIT/ROLLBACK), estampa `platform` |
 | `syncAgent(agente, desde, hasta)`       | Pipeline completo para un agente                                        |
 | `_validateEnvVars(varNames)`            | Valida env vars en constructor — falla rápido antes de cualquier fetch  |
 | `_fetchWithRetry(url, opts, context)`   | fetch con reintentos y backoff exponencial (ver política abajo)         |
@@ -216,7 +215,7 @@ Configurar con `LOG_LEVEL=debug|info|warn|error` en el entorno. En `NODE_ENV=tes
 
 ```bash
 # Desde la raíz del repo
-npm test                  # suite completa (76 tests)
+npm test                  # suite completa
 npm run test:coverage     # con reporte de cobertura
 ```
 
@@ -224,8 +223,9 @@ Archivos de tests en `tests/casino-connectors/`:
 
 | Archivo                          | Tests | Cubre                                          |
 |----------------------------------|-------|------------------------------------------------|
-| `BaseCasinoConnector.test.js`    | 38    | atomicidad, reintentos, aggregate, upsert      |
-| `ZeusConnector.test.js`          | 27    | fetch, normalización, fechas UTC→ART, healthCheck |
+| `BaseCasinoConnector.test.js`    | 37    | atomicidad, reintentos + re-auth en 401/403, recomputePlayers (estructura SQL) |
+| `ZeusConnector.test.js`          | 36    | fetch, normalización, fechas UTC→ART, healthCheck, auto-login + redacción de secretos |
 | `factory.test.js`                | 11    | resolución de clases, credenciales, plataforma desconocida |
+| `recompute.test.js`              | 6     | idempotencia end-to-end (D1/D2/D3) contra un fake Postgres in-memory |
 
 Todas las llamadas HTTP y los timers de espera de reintentos están mockeados → la suite corre en < 1 segundo.

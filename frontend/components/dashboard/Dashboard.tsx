@@ -7,6 +7,7 @@ import { DashboardHeader } from './DashboardHeader'
 import { WidgetGrid } from './WidgetGrid'
 import { AddWidgetModal } from './widgets/AddWidgetModal'
 import { Toast } from './Toast'
+import { SYNC_PLATFORMS } from '@/lib/casino-agents'
 
 export function Dashboard() {
   const {
@@ -38,7 +39,10 @@ export function Dashboard() {
   const handleSyncCasino = useCallback(async () => {
     setSyncStatus('loading')
     try {
-      const platforms = platform === 'consolidado' ? ['zeus', 'bet30'] : [platform]
+      // H5 fix: consolidado ahora dispara sync de las 4 plataformas (antes solo
+      // zeus/bet30, dos listas hardcodeadas distintas que podían divergir —
+      // ver casino-agents.ts SYNC_PLATFORMS, única fuente de verdad).
+      const platforms = platform === 'consolidado' ? [...SYNC_PLATFORMS] : [platform]
       const results = await Promise.all(
         platforms.map(p => fetch(`/api/dashboard/casino/sync?platform=${p}`, { method: 'POST' })),
       )

@@ -11,10 +11,23 @@
  *   - Bootstrap en un entorno nuevo sin credenciales de Zeus
  *   - Re-sincronización forzada después de un reset de casino_players
  *
- * Semántica idéntica a sync-casino-players-live.js:
+ * CAMBIO (fase 1, migración 127 — D2): este script fusionaba zeus+bet30 en una
+ * sola fila por username (comentario original: "un jugador con el mismo
+ * username en Zeus y en Bet30 es la misma persona"). Eso dejó de ser viable:
+ * la identidad de casino_players pasó a ser (platform, username_lower), y el
+ * índice único global que este script usaba (`ON CONFLICT (username_lower)`)
+ * ya no existe — la migración 127 lo reemplaza por uno compuesto. Se reescribe
+ * para producir UNA fila por plataforma, igual que
+ * BaseCasinoConnector.recomputePlayers(): agrega y sube zeus por separado de
+ * bet30, sin fusionarlos. Si de verdad hace falta una vista "misma persona en
+ * las dos plataformas", esa es una decisión de producto para una fase
+ * posterior (persona vs. jugador, ver plan §8.2), no algo que casino_players
+ * deba resolver silenciosamente en un script de bootstrap.
+ *
+ * Semántica compartida con sync-casino-players-live.js / recomputePlayers():
  *   - Excluye filas donde username = agente (Carga/Retiro indirecto)
- *   - Usa LEAST(fecha_primera) y GREATEST(fecha_ultima) en conflictos
- *   - ON CONFLICT (username_lower) DO UPDATE (upsert seguro)
+ *   - fecha_primera/fecha_ultima consideran solo depósitos (tipo='carga')
+ *   - ON CONFLICT (platform, username_lower) DO UPDATE, asignación no suma
  *
  * Uso:
  *   node scripts/rebuild-casino-players-from-db.js
@@ -49,32 +62,13 @@ const path     = require('path')
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-// El mismo operador opera en las dos plataformas bajo nombres distintos:
-//   Zeus     betcoin   farabet   ofizeus   bigwin   royal
-//   Bet30    btcuno    btcdos    zeus      bigwin   zeusroyal
-// Ambos juegos de nombres son válidos como `agente` en casino_transactions.
-const AGENTES_PERMITIDOS = [
-  'bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet',   // Zeus
-  'btcuno', 'btcdos', 'zeus', 'zeusroyal',              // Bet30 (bigwin se repite)
-]
-
-// Un mismo operador se llama distinto en cada plataforma. casino_transactions
-// guarda el nombre real con que vino de cada casino —eso preserva la trazabilidad—
-// y acá se unifica al nombre de Zeus, que es el que usa el resto de la app:
-// contacts.panel, los filtros de la UI y la visibilidad por agente.
-const ALIAS_AGENTE = {
-  btcuno:    'betcoin',
-  btcdos:    'farabet',
-  zeus:      'ofizeus',
-  zeusroyal: 'royal',
+// Listas propias por plataforma (mismos nombres que
+// frontend/lib/casino-agents.ts PLATFORM_AGENTS) — ya NO se fusionan.
+const AGENTES_POR_PLATAFORMA = {
+  zeus:  ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet', 'lasvegas'],
+  bet30: ['bigwin', 'zeus', 'zeusroyal', 'btcuno', 'btcdos'],
 }
-
-const ALIAS_SQL = Object.entries(ALIAS_AGENTE)
-  .map(([de, a]) => `WHEN '${de}' THEN '${a}'`)
-  .join(' ')
-
-/** Expresión SQL que traduce un nombre de agente de Bet30 al de Zeus. */
-const AGENTE_NORMALIZADO = `CASE LOWER(TRIM(ct.agente)) ${ALIAS_SQL} ELSE LOWER(TRIM(ct.agente)) END`
+const AGENTES_PERMITIDOS = [...new Set(Object.values(AGENTES_POR_PLATAFORMA).flat())]
 
 // ── CLI args ──────────────────────────────────────────────────────────────────
 
@@ -84,10 +78,16 @@ const args = Object.fromEntries(
     .map(a => { const [k, v] = a.slice(2).split('='); return [k, v ?? 'true'] })
 )
 
-const DRY_RUN    = args['dry-run'] === 'true'
-const AGENTES    = args.agentes
+const DRY_RUN      = args['dry-run'] === 'true'
+const AGENTES_FILTRO = args.agentes
   ? args.agentes.split(',').map(a => a.trim()).filter(a => AGENTES_PERMITIDOS.includes(a))
-  : AGENTES_PERMITIDOS
+  : null // null = todos
+
+/** Agentes de esta plataforma, recortados por --agentes si se pasó. */
+function agentesDePlataforma(platform) {
+  const propios = AGENTES_POR_PLATAFORMA[platform]
+  return AGENTES_FILTRO ? propios.filter(a => AGENTES_FILTRO.includes(a)) : propios
+}
 
 // ── Pool ──────────────────────────────────────────────────────────────────────
 
@@ -103,171 +103,146 @@ const pool = new Pool({
   idleTimeoutMillis:       60_000,
 })
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+// ── Rebuild de una plataforma ─────────────────────────────────────────────────
+//
+// Semántica idéntica a BaseCasinoConnector.recomputePlayers():
+//   - Excluye username = agente (carga/retiro indirecto)
+//   - fecha_primera/fecha_ultima consideran solo depósitos (tipo='carga')
+//   - ON CONFLICT (platform, username_lower) DO UPDATE, asignación no suma
+//
+// seg_monto / seg_actividad intencionalmente NO se tocan acá — eso lo hace
+// segmentar-casino-players.js.
+async function rebuildPlatform(platform, agentes) {
+  if (!agentes.length) return { affectedRows: 0, players: [] }
 
-async function main() {
-  console.log('')
-  console.log('═══════════════════════════════════════════════════════════════')
-  console.log('  casino_players — rebuild desde casino_transactions')
-  if (DRY_RUN) console.log('  *** DRY RUN — no se modificará nada ***')
-  console.log('═══════════════════════════════════════════════════════════════')
-  console.log(`  Agentes: ${AGENTES.join(', ')}`)
-  console.log('')
-
-  // ── Verificar fuente ─────────────────────────────────────────────────────────
   const srcRes = await pool.query(
     `SELECT agente, COUNT(*) AS tx_count
      FROM casino_transactions
-     WHERE agente = ANY($1::text[])
-       AND username != agente
+     WHERE platform = $1 AND agente = ANY($2::text[]) AND username != agente
      GROUP BY agente ORDER BY agente`,
-    [AGENTES]
+    [platform, agentes]
   )
 
   if (srcRes.rows.length === 0) {
-    console.log('  ⚠  Sin transacciones en casino_transactions para estos agentes.')
-    console.log('     Verificá que el seed se ejecutó primero:')
-    console.log('       node scripts/seed-casino-transactions.js')
-    await pool.end()
-    return
+    console.log(`  [${platform}] ⚠  Sin transacciones con platform='${platform}' para estos agentes.`)
+    console.log(`  [${platform}]    Si son datos previos a la migración 127, corré esa migración`)
+    console.log(`  [${platform}]    primero — ella backfillea platform en casino_transactions.`)
+    return { affectedRows: 0, players: [] }
   }
 
-  console.log('  Transacciones fuente en casino_transactions:')
+  console.log(`  [${platform}] Transacciones fuente:`)
   for (const r of srcRes.rows) {
     console.log(`    ${r.agente.padEnd(10)}  ${Number(r.tx_count).toLocaleString('es-AR')} tx`)
   }
-  console.log('')
 
-  // ── DRY RUN — preview ────────────────────────────────────────────────────────
   if (DRY_RUN) {
     const previewRes = await pool.query(
-      `SELECT COUNT(DISTINCT LOWER(ct.username)) AS player_count
-       FROM casino_transactions ct
-       WHERE ct.agente = ANY($1::text[])
-         AND ct.username != ct.agente`,
-      [AGENTES]
+      `SELECT COUNT(DISTINCT LOWER(username)) AS player_count
+       FROM casino_transactions
+       WHERE platform = $1 AND agente = ANY($2::text[]) AND username != agente`,
+      [platform, agentes]
     )
-    console.log(`  Se procesarían ~${previewRes.rows[0].player_count} jugadores únicos.`)
-    console.log('  Volvé a correr sin --dry-run para ejecutar.')
-    await pool.end()
-    return
+    console.log(`  [${platform}] Se procesarían ~${previewRes.rows[0].player_count} jugadores únicos.`)
+    return { affectedRows: 0, players: [] }
   }
 
-  // ── Upsert casino_players desde casino_transactions ───────────────────────────
-  //
-  // Semántica idéntica a sync-casino-players-live.js upsert():
-  //   - Agrega cargas/retiros por (username, agente)
-  //   - LEAST(fecha_primera) preserva la fecha de actividad más antigua
-  //   - GREATEST(fecha_ultima) preserva la última actividad
-  //   - ON CONFLICT (username_lower) DO UPDATE para seguridad de upsert
-  //
-  // seg_monto / seg_actividad intencionalmente NO se tocan:
-  //   - Si hay valores previos (de un sync anterior), se preservan
-  //   - Si son NULL (primera carga), quedan NULL hasta que se corra segmentación
-  //   - El dashboard los muestra como '' vía COALESCE y sigue funcionando
-
   const upsertRes = await pool.query(
-    // Se agrupa por username, NO por (username, agente).
-    //
-    // Un jugador con el mismo username en Zeus y en Bet30 es la misma persona, y
-    // su valor real es la suma de lo que cargó en las dos. Agrupando por
-    // (username, agente) salían dos filas que chocaban en el índice único de
-    // username_lower y se pisaban entre sí vía ON CONFLICT: el jugador terminaba
-    // con los datos de una sola plataforma, la que se procesara último, y el
-    // resultado dependía del orden del GROUP BY.
-    //
-    // `agente` se resuelve aparte: el de su transacción más reciente, porque ese
-    // campo se usa para saber por dónde contactarlo.
-    `WITH agente_reciente AS (
-       SELECT DISTINCT ON (LOWER(ct.username))
-              LOWER(ct.username)    AS uname,
-              ${AGENTE_NORMALIZADO} AS agente,
-              ct.username           AS username_original
-       FROM casino_transactions ct
-       WHERE ct.agente = ANY($1::text[])
-         AND ct.username != ct.agente
-       ORDER BY LOWER(ct.username), ct.fecha DESC, ct.id DESC
-     ),
-     agregado AS (
+    `WITH agregado AS (
        SELECT
-         LOWER(ct.username) AS uname,
-         COALESCE(SUM(ct.monto) FILTER (WHERE ct.tipo = 'carga'),  0)::bigint AS total_cargas,
-         COALESCE(SUM(ct.monto) FILTER (WHERE ct.tipo = 'retiro'), 0)::bigint AS total_retiros,
-         COALESCE(COUNT(*)      FILTER (WHERE ct.tipo = 'carga'),  0)::int    AS cant_cargas,
-         COALESCE(COUNT(*)      FILTER (WHERE ct.tipo = 'retiro'), 0)::int    AS cant_retiros,
-         MIN(ct.fecha) AS fecha_primera,
-         MAX(ct.fecha) AS fecha_ultima
-       FROM casino_transactions ct
-       WHERE ct.agente = ANY($1::text[])
-         AND ct.username != ct.agente
-       GROUP BY LOWER(ct.username)
-       HAVING
-         SUM(ct.monto) FILTER (WHERE ct.tipo = 'carga')  > 0
-         OR SUM(ct.monto) FILTER (WHERE ct.tipo = 'retiro') > 0
+         (array_agg(username ORDER BY COALESCE(fecha_hora_utc, fecha::timestamptz) DESC, id DESC))[1] AS username,
+         (array_agg(agente   ORDER BY COALESCE(fecha_hora_utc, fecha::timestamptz) DESC, id DESC))[1] AS agente,
+         COALESCE(SUM(monto) FILTER (WHERE tipo = 'carga'),  0)::numeric(20,2) AS total_cargas,
+         COALESCE(SUM(monto) FILTER (WHERE tipo = 'retiro'), 0)::numeric(20,2) AS total_retiros,
+         COUNT(*) FILTER (WHERE tipo = 'carga')::int  AS cant_cargas,
+         COUNT(*) FILTER (WHERE tipo = 'retiro')::int AS cant_retiros,
+         MIN(fecha) FILTER (WHERE tipo = 'carga') AS fecha_primera,
+         MAX(fecha) FILTER (WHERE tipo = 'carga') AS fecha_ultima
+       FROM casino_transactions
+       WHERE platform = $1 AND agente = ANY($2::text[]) AND username != agente
+       GROUP BY LOWER(username)
      )
      INSERT INTO casino_players
-       (username, agente,
+       (username, agente, platform,
         total_cargas, total_retiros, cant_cargas, cant_retiros,
         fecha_primera, fecha_ultima)
      SELECT
-       ar.username_original,
-       ar.agente,
+       a.username, a.agente, $1,
        a.total_cargas, a.total_retiros, a.cant_cargas, a.cant_retiros,
        a.fecha_primera, a.fecha_ultima
      FROM agregado a
-     JOIN agente_reciente ar ON ar.uname = a.uname
-     ON CONFLICT (username_lower) DO UPDATE SET
+     ON CONFLICT (platform, username_lower) DO UPDATE SET
        agente        = EXCLUDED.agente,
        total_cargas  = EXCLUDED.total_cargas,
        total_retiros = EXCLUDED.total_retiros,
        cant_cargas   = EXCLUDED.cant_cargas,
        cant_retiros  = EXCLUDED.cant_retiros,
-       fecha_primera = LEAST(casino_players.fecha_primera,   EXCLUDED.fecha_primera),
-       fecha_ultima  = GREATEST(casino_players.fecha_ultima, EXCLUDED.fecha_ultima),
+       fecha_primera = EXCLUDED.fecha_primera,
+       fecha_ultima  = EXCLUDED.fecha_ultima,
        updated_at    = NOW()`,
-    [AGENTES]
+    [platform, agentes]
   )
 
-  const affectedRows = upsertRes.rowCount ?? 0
-
-  // ── Resultado por agente ──────────────────────────────────────────────────────
   const resultRes = await pool.query(
     `SELECT agente, COUNT(*) AS players
      FROM casino_players
-     WHERE agente = ANY($1::text[])
+     WHERE platform = $1 AND agente = ANY($2::text[])
      GROUP BY agente ORDER BY agente`,
-    [AGENTES]
+    [platform, agentes]
   )
 
-  console.log('  Jugadores en casino_players tras el rebuild:')
-  let totalPlayers = 0
+  console.log(`  [${platform}] Jugadores en casino_players tras el rebuild:`)
   for (const r of resultRes.rows) {
     console.log(`    ${r.agente.padEnd(10)}  ${Number(r.players).toLocaleString('es-AR')} jugadores`)
-    totalPlayers += Number(r.players)
+  }
+  const sinResultado = agentes.filter(a => !resultRes.rows.find(r => r.agente === a))
+  if (sinResultado.length) {
+    console.log(`  [${platform}] ⚠  Sin jugadores resultantes para: ${sinResultado.join(', ')}`)
   }
 
-  // Comparar contra los nombres ya unificados: pedir 'btcuno' produce filas bajo
-  // 'betcoin', y sin traducir el aviso diría que no tuvo resultado.
-  const esperados = [...new Set(AGENTES.map(a => ALIAS_AGENTE[a] ?? a))]
-  const agentesSinResultado = esperados.filter(a => !resultRes.rows.find(r => r.agente === a))
-  if (agentesSinResultado.length) {
-    console.log(`  ⚠  Sin jugadores resultantes para: ${agentesSinResultado.join(', ')}`)
+  return { affectedRows: upsertRes.rowCount ?? 0, players: resultRes.rows }
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+async function main() {
+  console.log('')
+  console.log('═══════════════════════════════════════════════════════════════')
+  console.log('  casino_players — rebuild desde casino_transactions (por plataforma)')
+  if (DRY_RUN) console.log('  *** DRY RUN — no se modificará nada ***')
+  console.log('═══════════════════════════════════════════════════════════════')
+
+  let totalAffected = 0
+  let totalPlayers  = 0
+
+  for (const platform of Object.keys(AGENTES_POR_PLATAFORMA)) {
+    const agentes = agentesDePlataforma(platform)
+    console.log('')
+    console.log(`  Plataforma: ${platform} — agentes: ${agentes.join(', ') || '(ninguno tras --agentes)'}`)
+    if (!agentes.length) continue
+
+    const { affectedRows, players } = await rebuildPlatform(platform, agentes)
+    totalAffected += affectedRows
+    totalPlayers  += players.reduce((s, r) => s + Number(r.players), 0)
   }
 
   console.log('')
   console.log('═══════════════════════════════════════════════════════════════')
   console.log('  RESUMEN')
   console.log('═══════════════════════════════════════════════════════════════')
-  console.log(`  Filas insertadas/actualizadas: ${affectedRows.toLocaleString('es-AR')}`)
-  console.log(`  Total jugadores en casino_players: ${totalPlayers.toLocaleString('es-AR')}`)
-  console.log('')
-  console.log('  ✓  Rebuild completado.')
-  console.log('')
-  console.log('  Próximos pasos:')
-  console.log('  • Para segmentación (seg_monto/seg_actividad):')
-  console.log('      node scripts/crear-listas-casino.js')
-  console.log('  • Para sync incremental futuro desde Zeus:')
-  console.log('      node scripts/sync-casino-players-live.js --auto')
+  if (DRY_RUN) {
+    console.log('  Volvé a correr sin --dry-run para ejecutar.')
+  } else {
+    console.log(`  Filas insertadas/actualizadas: ${totalAffected.toLocaleString('es-AR')}`)
+    console.log(`  Total jugadores en casino_players: ${totalPlayers.toLocaleString('es-AR')}`)
+    console.log('')
+    console.log('  ✓  Rebuild completado.')
+    console.log('')
+    console.log('  Próximos pasos:')
+    console.log('  • Para segmentación (seg_monto/seg_actividad):')
+    console.log('      node scripts/segmentar-casino-players.js')
+    console.log('  • Para sync incremental futuro:')
+    console.log('      node scripts/sync-casino-players-live.js --auto')
+  }
   console.log('')
 
   await pool.end()

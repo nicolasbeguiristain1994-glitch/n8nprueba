@@ -76,7 +76,10 @@ const pool = new Pool({
   idleTimeoutMillis:       60_000,
 })
 
-const AGENTES = ['bigwin','ofizeus','betcoin','royal','farabet','zeus','zeusroyal','btcuno','btcdos','imperio','adminroyal','adminfara','adminbtc','adminzeus','admbigwin','adminbigwin','adminimperio']
+// 'lasvegas' (agente zeus) y 'amdfarabet' (nombre confirmado de Ganamos, con
+// "amd" — plan §Universo de agentes) agregados: faltaban en esta lista y
+// quedaban fuera de la segmentación pese a ser agentes operativos confirmados.
+const AGENTES = ['bigwin','ofizeus','betcoin','royal','farabet','lasvegas','zeus','zeusroyal','btcuno','btcdos','imperio','adminroyal','adminfara','adminbtc','adminzeus','admbigwin','adminbigwin','adminimperio','amdfarabet']
 
 // Umbrales de PROMEDIO MENSUAL sobre meses con actividad real (en pesos)
 const THRESHOLD_MEDIO     =   100_000  // bajo      → < $100k/mes activo

@@ -11,6 +11,9 @@ import { checkPermission } from '@/lib/permissions'
 //   1. Regex: first_name or last_name ends in z / ze / zs / zeus
 //   2. OR: any token in the name field exists in casino_players with a Zeus agent
 //      (catches f/ff suffix users and multi-username fields like "User99z Surname")
+//      — requires cp.platform = 'zeus' explicitly (H3 fix, revisión coordinador
+//      mensaje 8): 'bigwin' is an agent of both zeus and bet30, so agente-list
+//      matching alone could tag a bet30 player as zeus.
 // Bet30 detection:
 //   Regex only: first_name or last_name ends in b / bt
 //   (casino_players has no bet30 agent data)
@@ -43,6 +46,7 @@ export async function POST(req: NextRequest) {
                 WHERE LENGTH(tok) > 2
                   AND cp.username_lower = LOWER(tok)
                   AND cp.agente = ANY($1::text[])
+                  AND cp.platform = 'zeus'
               )
             THEN 'zeus' END,
             CASE WHEN c.first_name ~* 'b(t)?$' OR c.last_name ~* 'b(t)?$'

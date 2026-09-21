@@ -1,22 +1,19 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
+import { SYNC_PLATFORMS } from '@/lib/casino-agents'
 
-// ── Agent lists per "caja platform" ──────────────────────────────────────────
-// "Zeus"  = zeus platform agents
-// "Royal" = bet30 platform agents (called Royal internally)
-// "all"   = union of both (deduplicated)
+// ── Platform filter ──────────────────────────────────────────────────────────
+// "zeus"  = zeus platform
+// "royal" = bet30 platform (called Royal internally, historical UI naming)
+// "all"   = every platform (H3 fix: was ANY(agent-list) — mixed platforms
+//   whenever an agent name is shared, e.g. 'bigwin' in zeus and bet30. Now
+//   filters strictly by the `platform` column, same as /api/dashboard/casino.)
 
-const ZEUS_AGENTS  = ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet']
-const ROYAL_AGENTS = ['bigwin', 'zeus', 'zeusroyal', 'btcuno', 'btcdos']
-const ALL_AGENTS   = [...new Set([...ZEUS_AGENTS, ...ROYAL_AGENTS])]
-
-function agentsSqlArray(platform: string): string {
-  const agents =
-    platform === 'zeus'  ? ZEUS_AGENTS  :
-    platform === 'royal' ? ROYAL_AGENTS :
-    ALL_AGENTS
-  return `'{${agents.join(',')}}'::text[]`
+function platformFilterSql(platform: string): string {
+  if (platform === 'zeus')  return `platform = 'zeus'`
+  if (platform === 'royal') return `platform = 'bet30'`
+  return `platform = ANY('{${SYNC_PLATFORMS.join(',')}}'::text[])`
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -26,6 +23,7 @@ export interface CajaRow {
   id_rec:         number | null
   fecha:          string         // DATE as text (YYYY-MM-DD)
   fecha_hora_utc: string | null  // full ISO timestamp when available
+  platform:       string | null  // identidad compuesta (platform, username) — D2
   agente:         string
   username:       string
   tipo:           'carga' | 'retiro'
@@ -64,7 +62,7 @@ export async function GET(req: Request) {
   const perPage  = Math.min(100, Math.max(1, parseInt(url.searchParams.get('per_page') || '20', 10)))
   const offset   = (page - 1) * perPage
 
-  const agentsSql = agentsSqlArray(platform)
+  const platformFilter = platformFilterSql(platform)
 
   // Build optional search clause
   const baseParams: (string | number)[] = [from, to]
@@ -87,7 +85,7 @@ export async function GET(req: Request) {
         SELECT COUNT(*)::int AS total
         FROM casino_transactions
         WHERE fecha BETWEEN $1::date AND $2::date
-          AND agente = ANY(${agentsSql})
+          AND ${platformFilter}
           ${searchClause}
       `, baseParams),
 
@@ -98,6 +96,7 @@ export async function GET(req: Request) {
           id_rec,
           fecha::text                     AS fecha,
           fecha_hora_utc,
+          platform,
           agente,
           username,
           tipo,
@@ -105,7 +104,7 @@ export async function GET(req: Request) {
           raw_detalles
         FROM casino_transactions
         WHERE fecha BETWEEN $1::date AND $2::date
-          AND agente = ANY(${agentsSql})
+          AND ${platformFilter}
           ${searchClause}
         ORDER BY fecha_hora_utc DESC NULLS LAST, id DESC
         LIMIT $${pIdx + 1} OFFSET $${pIdx + 2}
@@ -114,11 +113,11 @@ export async function GET(req: Request) {
       // ── Aggregate totals for the whole filtered set ─────────────────────────
       query<{ depositos: number; retiros: number }>(`
         SELECT
-          COALESCE(SUM(CASE WHEN tipo = 'carga'  THEN monto ELSE 0 END), 0)::bigint AS depositos,
-          COALESCE(SUM(CASE WHEN tipo = 'retiro' THEN monto ELSE 0 END), 0)::bigint AS retiros
+          COALESCE(SUM(CASE WHEN tipo = 'carga'  THEN monto ELSE 0 END), 0)::float8 AS depositos,
+          COALESCE(SUM(CASE WHEN tipo = 'retiro' THEN monto ELSE 0 END), 0)::float8 AS retiros
         FROM casino_transactions
         WHERE fecha BETWEEN $1::date AND $2::date
-          AND agente = ANY(${agentsSql})
+          AND ${platformFilter}
           ${searchClause}
       `, baseParams),
     ])

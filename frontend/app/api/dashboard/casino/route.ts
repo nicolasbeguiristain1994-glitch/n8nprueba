@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
-import { getAgentsSqlArray, getCanonicalAgenteExpr, isValidPlatform } from '@/lib/casino-agents'
+import { getPlatformFilterSql, getCanonicalAgenteExpr, isValidPlatform } from '@/lib/casino-agents'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -31,6 +31,7 @@ export interface CasinoAgente {
 
 export interface CasinoVip {
   username:      string
+  platform:      string | null   // identidad compuesta (platform, username) — D2
   agente:        string
   seg_monto:     string  // 'super_vip' | 'vip'
   seg_actividad: string
@@ -72,7 +73,11 @@ export async function GET(req: Request) {
   // Optional single-agent filter (for widget-level filtering; empty = all agents)
   const agentParam = url.searchParams.get('agent')?.trim() || null
 
-  const agentsSql     = getAgentsSqlArray(platformParam)
+  // H3 fix: filtra por la columna `platform` (poblada por el conector desde la
+  // migración 127), con fallback a la lista de agentes SOLO para filas legacy
+  // sin platform todavía — ya no se usa la lista de agentes como proxy único.
+  const platformFilter    = getPlatformFilterSql(platformParam)
+  const platformFilterCp  = getPlatformFilterSql(platformParam, 'cp')
   const isConsolidado = platformParam === 'consolidado'
   const agenteExpr    = isConsolidado ? getCanonicalAgenteExpr('cp.agente') : 'cp.agente'
   // Extra WHERE clause and query params when a specific agent is requested
@@ -106,7 +111,7 @@ export async function GET(req: Request) {
           )::int                                                        AS prioridad_reactivacion,
           COUNT(*)::int                                                 AS total_jugadores
         FROM casino_players
-        WHERE agente = ANY(${agentsSql})
+        WHERE ${platformFilter}
       `),
 
       // ── Por agente ──────────────────────────────────────────────────────────
@@ -126,9 +131,9 @@ export async function GET(req: Request) {
           COUNT(*) FILTER (
             WHERE cp.fecha_ultima < $1::date OR cp.fecha_ultima IS NULL
           )::int                                                                       AS en_riesgo,
-          COALESCE(SUM(ct.carga_total),  0)::bigint                                   AS sum_cargas,
-          COALESCE(SUM(ct.retiro_total), 0)::bigint                                   AS sum_retiros,
-          ROUND(COALESCE(SUM(ct.carga_total), 0)::numeric / NULLIF(COUNT(*), 0))::bigint AS avg_cargas,
+          COALESCE(SUM(ct.carga_total),  0)::float8                                   AS sum_cargas,
+          COALESCE(SUM(ct.retiro_total), 0)::float8                                   AS sum_retiros,
+          ROUND(COALESCE(SUM(ct.carga_total), 0)::numeric / NULLIF(COUNT(*), 0))::float8 AS avg_cargas,
           ROUND(
             100.0 * COUNT(*) FILTER (WHERE cp.fecha_ultima BETWEEN $1::date AND $2::date)
             / NULLIF(COUNT(*), 0), 1
@@ -139,6 +144,7 @@ export async function GET(req: Request) {
         FROM casino_players cp
         LEFT JOIN (
           SELECT
+            platform,
             agente,
             LOWER(username)                                              AS uname,
             SUM(CASE WHEN tipo = 'carga'  THEN monto ELSE 0 END)        AS carga_total,
@@ -146,9 +152,10 @@ export async function GET(req: Request) {
             MAX(CASE WHEN tipo = 'carga'  THEN 1     ELSE 0 END)        AS has_carga
           FROM casino_transactions
           WHERE fecha BETWEEN $1::date AND $2::date
-          GROUP BY agente, LOWER(username)
-        ) ct ON ct.uname = cp.username_lower AND ct.agente = cp.agente
-        WHERE cp.agente = ANY(${agentsSql})
+            AND ${platformFilter}
+          GROUP BY platform, agente, LOWER(username)
+        ) ct ON ct.uname = cp.username_lower AND ct.platform = cp.platform AND ct.agente = cp.agente
+        WHERE ${platformFilterCp}
           ${agentClause}
         GROUP BY 1
         ORDER BY total DESC
@@ -160,19 +167,20 @@ export async function GET(req: Request) {
       query<CasinoVip>(`
         SELECT
           username,
+          platform,
           agente,
           seg_monto,
           seg_actividad,
           (CURRENT_DATE - fecha_ultima)::int  AS dias_ultimo,
-          total_cargas,
+          total_cargas::float8                AS total_cargas,
           cant_cargas,
-          total_retiros,
+          total_retiros::float8               AS total_retiros,
           cant_retiros,
           fecha_ultima::text                  AS fecha_ultima
         FROM casino_players
         WHERE seg_monto IN ('super_vip','vip')
           AND fecha_ultima IS NOT NULL
-          AND agente = ANY(${agentsSql})
+          AND ${platformFilter}
         ORDER BY
           CASE seg_actividad
             WHEN 'perdido'    THEN 1
@@ -189,14 +197,14 @@ export async function GET(req: Request) {
       query<{ seg: string; cnt: number }>(`
         SELECT seg_actividad AS seg, COUNT(*)::int AS cnt
         FROM casino_players
-        WHERE agente = ANY(${agentsSql})
+        WHERE ${platformFilter}
         GROUP BY seg_actividad
       `),
 
       query<{ seg: string; cnt: number }>(`
         SELECT seg_monto AS seg, COUNT(*)::int AS cnt
         FROM casino_players
-        WHERE agente = ANY(${agentsSql})
+        WHERE ${platformFilter}
         GROUP BY seg_monto
       `),
     ])

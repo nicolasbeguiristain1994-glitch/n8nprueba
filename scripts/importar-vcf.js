@@ -119,6 +119,12 @@ async function main() {
   // valor_riesgo and antiguedad are current-state classifications — at most one value per
   // family per contact. The DELETE runs first so the subsequent INSERT sees a clean slate.
   // casino:monto, casino:actividad, casino:agente are left untouched.
+  // Migración 127: username_lower ya no es único global — el mismo username
+  // puede existir en más de una plataforma (filas distintas). Este script no
+  // recibe `platform` en el VCF de entrada, así que solo puede resolver el
+  // match cuando el username es inequívoco (una sola fila en casino_players).
+  // Usernames ambiguos se excluyen del auto-tagging en vez de tomar una fila
+  // al azar (antes, con el índice único global, esta ambigüedad no existía).
   await pool.query(
     `DELETE FROM contact_tags
      WHERE (tag LIKE 'casino:valor_riesgo:%' OR tag LIKE 'casino:antiguedad:%')
@@ -128,7 +134,9 @@ async function main() {
          JOIN (
            SELECT phone, casino_username FROM jsonb_to_recordset($1::jsonb) AS x(phone text, casino_username text)
          ) inp ON c.phone_number = inp.phone
-         JOIN casino_players cp ON cp.username_lower = LOWER(inp.casino_username)
+         JOIN (
+           SELECT *, COUNT(*) OVER (PARTITION BY username_lower) AS name_count FROM casino_players
+         ) cp ON cp.username_lower = LOWER(inp.casino_username) AND cp.name_count = 1
          WHERE cp.seg_monto IS NOT NULL AND cp.seg_actividad IS NOT NULL AND cp.agente IS NOT NULL
        )`,
     [casinoInputJson]
@@ -142,7 +150,9 @@ async function main() {
       JOIN (
         SELECT phone, casino_username FROM jsonb_to_recordset($1::jsonb) AS x(phone text, casino_username text)
       ) inp ON c.phone_number = inp.phone
-      JOIN casino_players cp ON cp.username_lower = LOWER(inp.casino_username)
+      JOIN (
+        SELECT *, COUNT(*) OVER (PARTITION BY username_lower) AS name_count FROM casino_players
+      ) cp ON cp.username_lower = LOWER(inp.casino_username) AND cp.name_count = 1
       WHERE cp.seg_monto IS NOT NULL AND cp.seg_actividad IS NOT NULL AND cp.agente IS NOT NULL
     ),
     tags_insert AS (
