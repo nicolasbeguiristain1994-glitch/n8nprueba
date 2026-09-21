@@ -116,6 +116,8 @@ export default function SegmentacionPage() {
               <SelectItem value="">Todas las plataformas</SelectItem>
               <SelectItem value="zeus">Zeus</SelectItem>
               <SelectItem value="bet30">Bet30</SelectItem>
+              <SelectItem value="ganamos">Ganamos</SelectItem>
+              <SelectItem value="argenbet">Argenbet</SelectItem>
               <SelectItem value="otros">Otros</SelectItem>
             </SelectContent>
           </Select>

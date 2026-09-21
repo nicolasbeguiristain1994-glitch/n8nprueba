@@ -24,6 +24,7 @@ export type Resource =
   | 'estadisticas'
   | 'automations'
   | 'templates'
+  | 'encuestas'
 
 export type Action = 'read' | 'create' | 'update' | 'delete' | 'manage' | 'send' | 'assign' | 'transfer'
 
@@ -92,6 +93,7 @@ export function effectivePermissions(
   const resources: Resource[] = [
     'dashboard', 'contacts', 'campaigns', 'conversations',
     'lines', 'warmup', 'users', 'lists', 'send', 'audit', 'settings', 'blacklist', 'tasks',
+    'encuestas',
   ]
   const actions: Action[] = ['read', 'create', 'update', 'delete', 'manage', 'send']
 

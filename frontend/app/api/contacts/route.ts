@@ -8,7 +8,7 @@ import { getAppSetting } from '@/lib/app-settings'
 
 const ACTIVIDAD_ALLOWED  = new Set(['nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido'])
 const ANTIGUEDAD_ALLOWED = new Set(['nuevo', 'reciente', 'establecido', 'veterano', 'leal'])
-const PLATAFORMA_ALLOWED = new Set(['zeus', 'bet30', 'otros'])
+const PLATAFORMA_ALLOWED = new Set(['zeus', 'bet30', 'ganamos', 'argenbet', 'otros'])
 
 // Mapeo de nombres de agente en la UI → nombre real en la columna `panel` de la DB.
 // Si los contactos se importan con un nombre interno distinto al nombre de la UI, agregar aquí.
@@ -18,7 +18,7 @@ const PANEL_ALIAS_MAP: Record<string, string> = {}
 // trg_contact_platforms trigger in migration 075). GIN-indexed for fast lookups.
 const ZEUS_FILTER  = `'zeus'  = ANY(platforms)`
 const BET30_FILTER = `'bet30' = ANY(platforms)`
-const OTROS_FILTER = `NOT 'zeus' = ANY(platforms) AND NOT 'bet30' = ANY(platforms)`
+const OTROS_FILTER = `NOT (platforms && ARRAY['zeus','bet30','ganamos','argenbet'])`
 
 export async function GET(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'contacts', 'read')
@@ -74,6 +74,8 @@ export async function GET(req: NextRequest) {
   // Simple array checks against the stored `platforms` column (GIN index)
   const plataformaFilter = plataforma === 'zeus'  ? ` AND ${ZEUS_FILTER}`
                          : plataforma === 'bet30' ? ` AND ${BET30_FILTER}`
+                         : plataforma === 'ganamos' ? ` AND 'ganamos' = ANY(platforms)`
+                         : plataforma === 'argenbet' ? ` AND 'argenbet' = ANY(platforms)`
                          : plataforma === 'otros' ? ` AND (${OTROS_FILTER})`
                          : ''
 

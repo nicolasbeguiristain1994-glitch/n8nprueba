@@ -54,6 +54,7 @@ const path     = require('path')
 })()
 
 const DRY_RUN = process.argv.includes('--dry-run')
+const IMPORTED_ONLY = process.argv.includes('--imported-only')
 
 // seg_monto (el valor del jugador) sale de total_cargas / meses con actividad:
 // no depende de qué día es hoy, así que es seguro recalcularlo aunque la sync
@@ -69,12 +70,13 @@ if (!process.env.DATABASE_URL) {
 }
 
 const pool = new Pool({
+  max: 1,
   connectionString:        process.env.DATABASE_URL,
   connectionTimeoutMillis: 30_000,
   idleTimeoutMillis:       60_000,
 })
 
-const AGENTES = ['bigwin','ofizeus','betcoin','royal','farabet','zeus','zeusroyal','btcuno','btcdos']
+const AGENTES = ['bigwin','ofizeus','betcoin','royal','farabet','zeus','zeusroyal','btcuno','btcdos','imperio','adminroyal','adminfara','adminbtc','adminzeus','admbigwin','adminbigwin','adminimperio']
 
 // Umbrales de PROMEDIO MENSUAL sobre meses con actividad real (en pesos)
 const THRESHOLD_MEDIO     =   100_000  // bajo      → < $100k/mes activo
@@ -94,11 +96,12 @@ const CTE_MESES_ACTIVOS = `
   active_months AS (
     SELECT
       LOWER(ct.username)                                AS username_lower,
+      ct.platform,
       COUNT(DISTINCT DATE_TRUNC('month', ct.fecha))::int AS meses_con_cargas,
       MAX(ct.fecha)::date                               AS last_tx_date
     FROM casino_transactions ct
     WHERE ct.tipo = 'carga'
-    GROUP BY LOWER(ct.username)
+    GROUP BY LOWER(ct.username),ct.platform
   ),
   carga_mensual AS (
     SELECT
@@ -140,6 +143,7 @@ const CTE_MESES_ACTIVOS = `
     FROM casino_players cp
     CROSS JOIN has_tx ht
     LEFT JOIN active_months am ON am.username_lower = cp.username_lower
+      AND am.platform IS NOT DISTINCT FROM cp.platform
     -- El valor de agente viene del casino sin normalizar: hay filas con espacio
     -- al final ('zeusroyal ', 'btcdos ') y con mayúsculas ('Admincab'), que con
     -- una comparación literal quedaban fuera y sin segmentar.
@@ -147,27 +151,8 @@ const CTE_MESES_ACTIVOS = `
   )
 `
 
-// Largo mínimo de token para considerarlo un posible username. Por debajo de 4
-// los fragmentos genéricos que deja el import ("z", "zz", "bt") empiezan a
-// colisionar con usernames reales de otros jugadores.
-const MIN_TOKEN_LEN = 4
-
-// Lista de agentes en formato SQL, ya normalizada, para filtrar dentro de los CTE.
+// Agentes operativos incluidos en la segmentación consolidada.
 const AGENTES_SQL = AGENTES.map(a => `'${a.replace(/'/g, "''")}'`).join(', ')
-
-// Tokens que jamás deben tomarse como username, aunque exista un jugador con ese
-// nombre. Los operadores anotan la plataforma dentro del nombre del contacto
-// ("Mabel18z(Farabet)", "Betcoin Reclamos", "Maria16 (Zeus y Farabet)") y del otro
-// lado existen cuentas administrativas homónimas —'betcoin' y 'bigwin' del agente
-// adminbet, con $21M y $10M en cargas—. Sin esta lista, las líneas internas del
-// negocio terminan clasificadas como super_vip y entran en campañas de VIP.
-const TOKENS_PROHIBIDOS = [
-  'farabet', 'betcoin', 'bigwin', 'royal', 'ofizeus', 'zeus', 'zeusroyal',
-  'btcuno', 'btcdos',   // los mismos agentes, como se llaman en Bet30
-  'adminbet', 'surmar', 'lemon', 'apolo', 'horus', 'peaky', 'soporte',
-  'reclamos', 'linea', 'admin', 'mismo', 'usuario', 'titular', 'carga', 'mucho',
-]
-const TOKENS_PROHIBIDOS_SQL = TOKENS_PROHIBIDOS.map(t => `'${t}'`).join(', ')
 
 // Vínculo contacto ↔ cuenta(s) de casino, y segmento agregado por contacto.
 //
@@ -176,25 +161,16 @@ const TOKENS_PROHIBIDOS_SQL = TOKENS_PROHIBIDOS.map(t => `'${t}'`).join(', ')
 //   "Z/ Adrian249z"      → prefijo de línea pegado al username
 //   "Zz adriana404zs"    → prefijo separado por espacio
 //   "analia525zzz//analia525b" → dos cuentas de la misma persona en un campo
-// Por eso se tokeniza por separadores no alfanuméricos y se matchea cada token.
+// La vista de vínculos resuelve primero casino_accounts y sólo usa tokens
+// sin ambigüedad entre plataformas para los contactos sin vínculo explícito.
 //
 // Un contacto con varias cuentas es UNA persona: su valor es la SUMA de lo que
 // cargó en todas, no el de la cuenta que el join tomara primero.
 const CTE_CONTACT_ACCOUNTS = `
   contact_accounts AS (
-    SELECT DISTINCT c.id AS contact_id, cp.id AS player_id, cp.username_lower
-    FROM contacts c
-    CROSS JOIN LATERAL regexp_split_to_table(
-      COALESCE(c.first_name, '') || ' ' || COALESCE(c.last_name, ''),
-      '[^a-zA-Z0-9]+'
-    ) AS tok
-    JOIN casino_players cp ON cp.username_lower = LOWER(tok)
-    WHERE c.deleted_at IS NULL
-      AND LENGTH(tok) >= ${MIN_TOKEN_LEN}
-      AND LOWER(tok) NOT IN (${TOKENS_PROHIBIDOS_SQL})
-      -- Solo agentes reales: 'adminbet' y 'surmar' son cuentas internas del
-      -- negocio, no jugadores, y su volumen distorsiona cualquier segmento.
-      AND LOWER(TRIM(cp.agente)) IN (${AGENTES_SQL})
+    SELECT l.* FROM seg_account_links l
+    JOIN seg_players cp ON cp.id=l.player_id
+    WHERE LOWER(TRIM(cp.agente)) IN (${AGENTES_SQL})
   ),
   contact_cargas AS (
     SELECT ca.contact_id,
@@ -204,18 +180,13 @@ const CTE_CONTACT_ACCOUNTS = `
            MIN(cp.fecha_primera) AS fecha_primera,
            MAX(cp.fecha_ultima)  AS fecha_ultima
     FROM contact_accounts ca
-    JOIN casino_players cp ON cp.id = ca.player_id
+    JOIN seg_players cp ON cp.id = ca.player_id
     GROUP BY 1
   ),
   -- Meses con actividad real contando todas las cuentas del contacto: si cargó
   -- en dos cuentas el mismo mes, ese mes cuenta una sola vez.
   contact_meses AS (
-    SELECT ca.contact_id,
-           COUNT(DISTINCT DATE_TRUNC('month', ct.fecha))::int AS meses_activos
-    FROM contact_accounts ca
-    JOIN casino_transactions ct
-      ON LOWER(ct.username) = ca.username_lower AND ct.tipo = 'carga'
-    GROUP BY 1
+    SELECT contact_id,meses_activos FROM seg_contact_months
   ),
   -- Promedio mensual por contacto. El divisor son los meses en que realmente
   -- cargó; si no tiene transacciones registradas se estima con su span de
@@ -263,7 +234,7 @@ const CTE_CONTACT_ACCOUNTS = `
       SUM(cp.cant_retiros)::int AS cant_retiros,
       (ARRAY_AGG(cp.seg_actividad ORDER BY cp.fecha_ultima DESC NULLS LAST))[1] AS seg_actividad
     FROM contact_accounts ca
-    JOIN casino_players cp ON cp.id = ca.player_id
+    JOIN seg_players cp ON cp.id = ca.player_id
     GROUP BY 1
   )
 `
@@ -337,7 +308,13 @@ async function main() {
     return
   }
 
+  await pool.query('BEGIN')
+  await pool.query("SELECT pg_advisory_xact_lock(hashtext('casino-segmentation'))")
+  await pool.query("SET LOCAL statement_timeout='300s'")
+
   // ── Paso 1: Actualizar casino_players ────────────────────────────────────────
+  let updatedPlayers = 0
+  if (!IMPORTED_ONLY) {
   const updateRes = await pool.query(`
     WITH ${CTE_MESES_ACTIVOS}
     UPDATE casino_players cp
@@ -374,7 +351,42 @@ async function main() {
     WHERE cm.id = cp.id
   `, [THRESHOLD_SUPER_VIP, THRESHOLD_VIP_ALTO, THRESHOLD_VIP_MEDIO, THRESHOLD_VIP, THRESHOLD_MEDIO, AGENTES])
 
-  const updatedPlayers = updateRes.rowCount ?? 0
+  updatedPlayers = updateRes.rowCount ?? 0
+  }
+  console.log(`  Jugadores históricos recalculados: ${updatedPlayers}`)
+
+  // Materialize once: platform identities and explicit/unique contact matches.
+  await pool.query('CREATE TEMP TABLE seg_players AS SELECT * FROM casino_segmentation_players')
+  await pool.query('CREATE INDEX ON seg_players(id)')
+  await pool.query('CREATE TEMP TABLE seg_account_links AS SELECT * FROM casino_contact_account_links')
+  await pool.query('CREATE INDEX ON seg_account_links(contact_id)')
+  if (IMPORTED_ONLY) {
+    await pool.query(`CREATE TEMP TABLE seg_affected_contacts AS SELECT DISTINCT l.contact_id
+      FROM seg_account_links l JOIN seg_players p ON p.id=l.player_id
+      WHERE p.id=md5('excel:' || p.platform || ':' || p.username_lower)::uuid`)
+    await pool.query('CREATE UNIQUE INDEX ON seg_affected_contacts(contact_id)')
+    await pool.query('DELETE FROM seg_account_links l WHERE NOT EXISTS (SELECT 1 FROM seg_affected_contacts a WHERE a.contact_id=l.contact_id)')
+  }
+  await pool.query('ANALYZE seg_account_links')
+  await pool.query('ANALYZE seg_players')
+  await pool.query(`CREATE TEMP TABLE seg_contact_months AS
+    SELECT ca.contact_id,COUNT(DISTINCT date_trunc('month',ct.fecha))::int AS meses_activos
+    FROM seg_account_links ca JOIN seg_players cp ON cp.id=ca.player_id
+    JOIN casino_transactions ct
+      ON lower(ct.username)=ca.username_lower AND ct.platform IS NOT DISTINCT FROM ca.platform
+    WHERE ct.tipo='carga' AND lower(trim(cp.agente)) IN (${AGENTES_SQL}) GROUP BY ca.contact_id`)
+  await pool.query('CREATE INDEX ON seg_contact_months(contact_id)')
+  console.log('  Cuentas vinculadas y meses de actividad preparados.')
+  await pool.query(`UPDATE contacts c SET casino_accounts=(
+      SELECT jsonb_agg(DISTINCT account) FROM jsonb_array_elements(c.casino_accounts || p.accounts) account)
+    FROM (SELECT l.contact_id,jsonb_agg(jsonb_build_object('username',l.username_lower,'platform',l.platform,'panel',cp.agente)) accounts
+      FROM seg_account_links l JOIN seg_players cp ON cp.id=l.player_id
+      WHERE l.platform IS NOT NULL GROUP BY l.contact_id) p
+    WHERE c.id=p.contact_id AND NOT c.casino_accounts @> p.accounts`)
+  await pool.query(`UPDATE contacts c SET platforms = p.platforms, updated_at=now()
+    FROM (SELECT l.contact_id, ARRAY(SELECT DISTINCT unnest(coalesce(c2.platforms,'{}') || array_agg(l.platform) FILTER (WHERE l.platform IS NOT NULL))) AS platforms
+      FROM seg_account_links l JOIN contacts c2 ON c2.id=l.contact_id GROUP BY l.contact_id,c2.platforms) p
+    WHERE c.id=p.contact_id AND c.platforms IS DISTINCT FROM p.platforms`)
 
   // ── Paso 2: Sincronizar contacts.segment desde casino_players ────────────────
   //
@@ -509,6 +521,7 @@ async function main() {
     UPDATE contacts c
     SET segment = NULL, updated_at = NOW()
     WHERE c.segment::text IN ('bajo','medio','vip','vip_medio','vip_alto','super_vip')
+      ${IMPORTED_ONLY ? 'AND c.id IN (SELECT contact_id FROM seg_affected_contacts)' : ''}
       AND NOT EXISTS (SELECT 1 FROM contact_accounts ca WHERE ca.contact_id = c.id)
   `)
   const limpiados = limpiezaRes.rowCount ?? 0
@@ -571,10 +584,12 @@ async function main() {
   console.log('  ✓  Segmentación completada.')
   console.log('')
 
+  await pool.query('COMMIT')
   await pool.end()
 }
 
-main().catch(err => {
+main().catch(async err => {
+  await pool.query('ROLLBACK').catch(() => {})
   console.error('\n[seg] Fatal:', err.message)
   pool.end()
   process.exit(1)

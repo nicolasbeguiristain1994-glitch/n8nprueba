@@ -71,6 +71,7 @@ export const SECTORS = [
   'dashboard', 'contacts', 'campaigns', 'conversations', 'lines',
   'warmup', 'tasks', 'estadisticas', 'automations', 'blacklist',
   'templates', 'tickets', 'users', 'settings', 'lists', 'send',
+  'encuestas',
 ] as const
 
 const RoleEnum    = z.enum(ROLES)

@@ -33,6 +33,7 @@ COPY --from=builder /app/.next/static      ./.next/static
 # process.cwd() = /app  →  resuelve a /scripts
 COPY scripts /scripts
 COPY src     /src
+COPY db/migrations /db/migrations
 
 # Módulos raíz en /node_modules → Node los encuentra al subir el árbol desde /scripts/
 COPY --from=root-deps /root-app/node_modules /node_modules

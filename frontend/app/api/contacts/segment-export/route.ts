@@ -4,11 +4,11 @@ import { checkPermissionWithUser } from '@/lib/permissions'
 import { visibilityClause } from '@/lib/contact-visibility'
 import { getAppSetting } from '@/lib/app-settings'
 
-const PLATAFORMA_ALLOWED = new Set(['zeus', 'bet30', 'otros'])
+const PLATAFORMA_ALLOWED = new Set(['zeus', 'bet30', 'ganamos', 'argenbet', 'otros'])
 
 const ZEUS_FILTER  = `'zeus'  = ANY(platforms)`
 const BET30_FILTER = `'bet30' = ANY(platforms)`
-const OTROS_FILTER = `NOT 'zeus' = ANY(platforms) AND NOT 'bet30' = ANY(platforms)`
+const OTROS_FILTER = `NOT (platforms && ARRAY['zeus','bet30','ganamos','argenbet'])`
 
 function escapeCsv(val: string | number | null | undefined): string {
   if (val == null) return ''
@@ -49,7 +49,9 @@ export async function GET(req: NextRequest) {
 
   const plataformaFilter = plataforma === 'zeus'  ? ` AND ${ZEUS_FILTER}`
                           : plataforma === 'bet30' ? ` AND ${BET30_FILTER}`
-                          : plataforma === 'otros' ? ` AND (${OTROS_FILTER})`
+                          : plataforma === 'ganamos' ? ` AND 'ganamos' = ANY(platforms)`
+                         : plataforma === 'argenbet' ? ` AND 'argenbet' = ANY(platforms)`
+                         : plataforma === 'otros' ? ` AND (${OTROS_FILTER})`
                           : ''
 
   const inactividadFilter = inactividadDias > 0

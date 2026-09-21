@@ -52,7 +52,7 @@ interface RecomputeResult {
 }
 
 type Tab      = 'pending' | 'broadcasted'
-type Platform = 'todas' | 'zeus' | 'bet30'
+type Platform = 'todas' | 'zeus' | 'bet30' | 'ganamos' | 'argenbet'
 
 // ── Constantes de UI ──────────────────────────────────────────────────────────
 
@@ -96,6 +96,8 @@ const PLATFORMS: { key: Platform; label: string }[] = [
   { key: 'todas', label: 'Todas' },
   { key: 'zeus',  label: 'Zeus' },
   { key: 'bet30', label: 'Bet30' },
+  { key: 'ganamos', label: 'Ganamos' },
+  { key: 'argenbet', label: 'Argenbet' },
 ]
 
 const PAGE_SIZE = 50

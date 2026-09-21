@@ -892,6 +892,8 @@ export default function Contacts() {
               />
               {platforms.includes('zeus')  && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">Zeus</span>}
               {platforms.includes('bet30') && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700">Bet30</span>}
+              {platforms.includes('ganamos') && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-green-100 text-green-700">Ganamos</span>}
+              {platforms.includes('argenbet') && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-purple-100 text-purple-700">Argenbet</span>}
               {platforms.length === 0 && hasName && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-gray-100 text-gray-500">otros</span>}
             </div>
             {customTags.length > 0 && (
@@ -1534,7 +1536,7 @@ export default function Contacts() {
 
         {/* ── Filtro plataforma ── */}
         <div className="flex items-center gap-1 border rounded-lg p-0.5 bg-muted/40">
-          {(['', 'zeus', 'bet30', 'otros'] as const).map(v => (
+          {(['', 'zeus', 'bet30', 'ganamos', 'argenbet', 'otros'] as const).map(v => (
             <button
               key={v || 'all'}
               onClick={() => { setFilterPlataforma(v); resetPage() }}
@@ -1542,12 +1544,14 @@ export default function Contacts() {
                 filterPlataforma === v
                   ? v === 'zeus'  ? 'bg-blue-600 text-white shadow-sm'
                   : v === 'bet30' ? 'bg-orange-500 text-white shadow-sm'
+                  : v === 'ganamos' ? 'bg-green-600 text-white shadow-sm'
+                  : v === 'argenbet' ? 'bg-purple-600 text-white shadow-sm'
                   : v === 'otros' ? 'bg-gray-600 text-white shadow-sm'
                   : 'bg-background text-foreground shadow-sm'
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              {v === '' ? 'Todos' : v === 'zeus' ? 'Zeus' : v === 'bet30' ? 'Bet30' : 'Otros'}
+              {v === '' ? 'Todos' : v === 'zeus' ? 'Zeus' : v === 'bet30' ? 'Bet30' : v === 'ganamos' ? 'Ganamos' : v === 'argenbet' ? 'Argenbet' : 'Otros'}
             </button>
           ))}
         </div>

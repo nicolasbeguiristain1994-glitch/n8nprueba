@@ -100,3 +100,27 @@ exports/
 *-production.*
 .claude/
 .env.prod.local
+.analisis-inactivos.js
+.analisis-contactables.js
+.lista-vip-inactivos.js
+.lista-nivel.js
+.lista-sin-telefono.js
+.analisis-royal.js
+.doc-royal.js
+.fetch-2549.js
+.fetch-2549-previo.js
+.doc-2549.js
+.mov-2549.json
+.previo-2549.json
+.previo-2549.chunks
+.analisis-zeus.js
+.doc-zeus.js
+.fetch-2549-bordes.js
+.bordes-2549.json
+.bordes-2549.chunks
+.mov-2549-full.json
+.doc-2549-full.js
+.doc-2549-solo.js
+
+# Resultados de análisis locales (datos de jugadores, ~900MB)
+outputs/

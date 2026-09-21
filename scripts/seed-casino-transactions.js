@@ -166,7 +166,7 @@ async function insertTransactions(agente, txs, stats) {
       `INSERT INTO casino_transactions
          (id_rec, fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles)
        VALUES ${values}
-       ON CONFLICT (id_rec) WHERE id_rec IS NOT NULL DO UPDATE
+       ON CONFLICT (id_rec) WHERE id_rec IS NOT NULL AND platform IS NULL DO UPDATE
          SET fecha_hora_utc = EXCLUDED.fecha_hora_utc
          WHERE casino_transactions.fecha_hora_utc IS NULL`,
       chunk.flat(),
@@ -185,7 +185,7 @@ async function insertTransactions(agente, txs, stats) {
       `INSERT INTO casino_transactions
          (fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles)
        VALUES ${values}
-       ON CONFLICT (fecha, username, tipo, monto, agente) WHERE id_rec IS NULL DO UPDATE
+       ON CONFLICT (fecha, username, tipo, monto, agente) WHERE id_rec IS NULL AND platform IS NULL DO UPDATE
          SET fecha_hora_utc = EXCLUDED.fecha_hora_utc
          WHERE casino_transactions.fecha_hora_utc IS NULL`,
       chunk.flat(),
