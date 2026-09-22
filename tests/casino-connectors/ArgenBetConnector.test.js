@@ -12,6 +12,8 @@ const CONFIG = {
   baseUrl:            'https://admin.argenbet.net',
   baseUrlEnvVar:      'ARGENBET_API_BASE',
   playerTokenEnvVar:  'ARGENBET_PLAYER_TOKEN',
+  adminUserEnvVar:    'ARGENBET_ADMIN_USER',
+  adminPasswordEnvVar: 'ARGENBET_ADMIN_PASSWORD',
   endpoint:           '/api/backoffice/v1/account-transfers/player',
   timezone:           '-03',
   maxPages:           500,
@@ -64,6 +66,8 @@ describe('ArgenBetConnector', () => {
   })
   afterEach(() => {
     delete process.env.ARGENBET_PLAYER_TOKEN
+    delete process.env.ARGENBET_ADMIN_USER
+    delete process.env.ARGENBET_ADMIN_PASSWORD
     jest.restoreAllMocks()
   })
 
@@ -129,18 +133,42 @@ describe('ArgenBetConnector', () => {
       expect(connector.playerToken).toBe('test-static-token') // untouched
     })
 
-    it('refreshes the token via an injected login adapter', async () => {
+    it('refreshes the token via an injected login adapter, passing loginUrl + credentials from env', async () => {
+      process.env.ARGENBET_ADMIN_USER     = 'admin-user'
+      process.env.ARGENBET_ADMIN_PASSWORD = 'admin-pass'
       const loginAdapter = { login: jest.fn().mockResolvedValue({ token: 'fresh-token' }) }
       const connector = makeConnector(CONFIG, loginAdapter)
       await connector.authenticate()
       expect(connector.playerToken).toBe('fresh-token')
       expect(loginAdapter.login).toHaveBeenCalledTimes(1)
+      expect(loginAdapter.login).toHaveBeenCalledWith({
+        loginUrl:    null,
+        credentials: { user: 'admin-user', password: 'admin-pass' },
+      })
     })
 
     it('throws if the injected login adapter resolves without a token', async () => {
+      process.env.ARGENBET_ADMIN_USER     = 'admin-user'
+      process.env.ARGENBET_ADMIN_PASSWORD = 'admin-pass'
       const loginAdapter = { login: jest.fn().mockResolvedValue({}) }
       const connector = makeConnector(CONFIG, loginAdapter)
       await expect(connector.authenticate()).rejects.toThrow(/without a token/)
+    })
+
+    it('throws a sanitized error (never the adapter\'s raw message) when the login adapter rejects', async () => {
+      process.env.ARGENBET_ADMIN_USER     = 'admin-user'
+      process.env.ARGENBET_ADMIN_PASSWORD = 'super-secret-pass'
+      const loginAdapter = { login: jest.fn().mockRejectedValue(new Error('bad credentials: super-secret-pass')) }
+      const connector = makeConnector(CONFIG, loginAdapter)
+      await expect(connector.authenticate()).rejects.toThrow(/login adapter failed/)
+      await expect(connector.authenticate()).rejects.not.toThrow(/super-secret-pass/)
+    })
+
+    it('throws when a login adapter is configured but ARGENBET_ADMIN_USER/PASSWORD are missing', async () => {
+      const loginAdapter = { login: jest.fn() }
+      const connector = makeConnector(CONFIG, loginAdapter)
+      await expect(connector.authenticate()).rejects.toThrow(/ARGENBET_ADMIN_USER/)
+      expect(loginAdapter.login).not.toHaveBeenCalled()
     })
   })
 
@@ -164,6 +192,8 @@ describe('ArgenBetConnector', () => {
 
   describe('401 handling end-to-end (via fetchTransactions -> _fetchWithRetry)', () => {
     it('retries once after a successful reauth via the injected adapter, then succeeds', async () => {
+      process.env.ARGENBET_ADMIN_USER     = 'admin-user'
+      process.env.ARGENBET_ADMIN_PASSWORD = 'admin-pass'
       const loginAdapter = { login: jest.fn().mockResolvedValue({ token: 'fresh-token' }) }
       const connector = makeConnector(CONFIG, loginAdapter)
 
@@ -180,6 +210,8 @@ describe('ArgenBetConnector', () => {
     })
 
     it('fails visibly (throws) if 401 persists even after reauth — never an infinite loop, never a silent empty success', async () => {
+      process.env.ARGENBET_ADMIN_USER     = 'admin-user'
+      process.env.ARGENBET_ADMIN_PASSWORD = 'admin-pass'
       const loginAdapter = { login: jest.fn().mockResolvedValue({ token: 'still-bad-token' }) }
       const connector = makeConnector(CONFIG, loginAdapter)
 
@@ -370,6 +402,46 @@ describe('ArgenBetConnector', () => {
       const rawEmpty = { ...rawItem({ amount: '' }),   __agentUsername: 'adminroyal' }
       await expect(connector.normalizeTransactions([rawNull])).rejects.toThrow(/has no amount/)
       await expect(connector.normalizeTransactions([rawEmpty])).rejects.toThrow(/has no amount/)
+    })
+
+    it('throws instead of coercing a boolean amount to a number (true -> 1)', async () => {
+      const connector = makeConnector()
+      const raw = { ...rawItem({ amount: true }), __agentUsername: 'adminroyal' }
+      await expect(connector.normalizeTransactions([raw])).rejects.toThrow(/non-numeric amount/)
+    })
+
+    it('throws instead of treating a whitespace-only amount as zero', async () => {
+      const connector = makeConnector()
+      const raw = { ...rawItem({ amount: '   ' }), __agentUsername: 'adminroyal' }
+      await expect(connector.normalizeTransactions([raw])).rejects.toThrow(/non-numeric amount/)
+    })
+
+    it('throws on a malformed decimal string amount (exponent notation)', async () => {
+      const connector = makeConnector()
+      const raw = { ...rawItem({ amount: '1e3' }), __agentUsername: 'adminroyal' }
+      await expect(connector.normalizeTransactions([raw])).rejects.toThrow(/non-numeric amount/)
+    })
+  })
+
+  // ── id strictness ─────────────────────────────────────────────────────────
+
+  describe('normalizeTransactions() — id strictness', () => {
+    it('throws when id is a number above Number.MAX_SAFE_INTEGER (already lost precision)', async () => {
+      const connector = makeConnector()
+      const raw = { ...rawItem({ id: Number.MAX_SAFE_INTEGER + 10 }), __agentUsername: 'adminroyal' }
+      await expect(connector.normalizeTransactions([raw])).rejects.toThrow(/safe integer range/)
+    })
+
+    it('throws when id is an object (would otherwise stringify into a bogus identity)', async () => {
+      const connector = makeConnector()
+      const raw = { ...rawItem({ id: { nested: true } }), __agentUsername: 'adminroyal' }
+      await expect(connector.normalizeTransactions([raw])).rejects.toThrow(/non-string\/number id/)
+    })
+
+    it('throws when id is a boolean', async () => {
+      const connector = makeConnector()
+      const raw = { ...rawItem({ id: true }), __agentUsername: 'adminroyal' }
+      await expect(connector.normalizeTransactions([raw])).rejects.toThrow(/non-string\/number id/)
     })
   })
 

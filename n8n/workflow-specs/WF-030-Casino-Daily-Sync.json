@@ -7,7 +7,7 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 4 * * *"
+              "expression": "*/15 * * * *"
             }
           ]
         }
@@ -16,16 +16,23 @@
       "typeVersion": 1.2,
       "position": [0, 0],
       "id": "a1b2c3d4-0001-4000-8000-000000000001",
-      "name": "Diario 04:00 UTC"
+      "name": "Cada 15 min"
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.PLATFORM_BASE_URL }}/api/dashboard/casino/sync",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "httpHeaderAuth",
+        "url": "={{ $env.PLATFORM_BASE_URL }}/api/cron/casino-sync",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-cron-secret",
+              "value": "={{ $env.CASINO_CRON_SECRET }}"
+            }
+          ]
+        },
         "options": {
-          "timeout": 15000,
+          "timeout": 600000,
           "response": {
             "response": {
               "fullResponse": true,
@@ -38,13 +45,7 @@
       "typeVersion": 4.2,
       "position": [250, 0],
       "id": "a1b2c3d4-0002-4000-8000-000000000002",
-      "name": "Trigger Sync + Segmentación",
-      "credentials": {
-        "httpHeaderAuth": {
-          "id": "PLATFORM_AUTH_CRED",
-          "name": "Platform Auth Token"
-        }
-      }
+      "name": "Trigger Sync 4 Plataformas + Segmentación"
     },
     {
       "parameters": {
@@ -81,7 +82,7 @@
       "typeVersion": 1,
       "position": [750, -100],
       "id": "a1b2c3d4-0004-4000-8000-000000000004",
-      "name": "Sync iniciado OK"
+      "name": "Sync completado OK"
     },
     {
       "parameters": {
@@ -89,11 +90,11 @@
           "string": [
             {
               "name": "error",
-              "value": "={{ $('Trigger Sync + Segmentación').item.json.body.error ?? $('Trigger Sync + Segmentación').item.json.body.message ?? 'respuesta inesperada del servidor' }}"
+              "value": "={{ $('Trigger Sync 4 Plataformas + Segmentación').item.json.body.error ?? JSON.stringify($('Trigger Sync 4 Plataformas + Segmentación').item.json.body.platformSummaries ?? {}) }}"
             },
             {
               "name": "status",
-              "value": "={{ $('Trigger Sync + Segmentación').item.json.statusCode }}"
+              "value": "={{ $('Trigger Sync 4 Plataformas + Segmentación').item.json.statusCode }}"
             },
             {
               "name": "timestamp",
@@ -121,18 +122,18 @@
     }
   ],
   "connections": {
-    "Diario 04:00 UTC": {
+    "Cada 15 min": {
       "main": [
         [
           {
-            "node": "Trigger Sync + Segmentación",
+            "node": "Trigger Sync 4 Plataformas + Segmentación",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Trigger Sync + Segmentación": {
+    "Trigger Sync 4 Plataformas + Segmentación": {
       "main": [
         [
           {
@@ -147,7 +148,7 @@
       "main": [
         [
           {
-            "node": "Sync iniciado OK",
+            "node": "Sync completado OK",
             "type": "main",
             "index": 0
           }
@@ -184,32 +185,40 @@
     "instanceId": "casino-daily-sync"
   },
   "pinData": {},
-  "versionId": "2",
+  "versionId": "3",
   "triggerCount": 0,
   "tags": ["casino", "sync", "scheduled"],
   "_readme": {
+    "IMPORTANTE_fase4": [
+      "Este workflow es el ÚNICO disparador programado de la sincronización de casino (D4 del plan).",
+      "Antes disparaba POST /api/dashboard/casino/sync a las 04:00 UTC una vez al día; ahora dispara",
+      "POST /api/cron/casino-sync cada 15 minutos, que sincroniza las 4 plataformas (zeus/bet30/ganamos/argenbet)",
+      "+ segmentación + recompute de prioridades vía scripts/pipeline-diario.js.",
+      "POST /api/dashboard/casino/sync sigue existiendo pero queda RESERVADO para el botón manual del",
+      "dashboard (una sola plataforma, bajo demanda) — no debe programarse ningún otro cron/trigger",
+      "contra ese endpoint ni contra sync-casino-players-live.js/pipeline-diario.js directamente. Ambas",
+      "vías comparten el mismo advisory lock por plataforma (scripts/lib/casino-sync-orchestrator.js),",
+      "así que no pueden pisarse, pero mantener un solo disparador programado evita ambigüedad operativa.",
+      "Si existía otro cron (Railway scheduled job, GitHub Actions, etc.) apuntando a",
+      "sync-casino-players-live.js o pipeline-diario.js directamente, DESACTIVARLO al aplicar este workflow."
+    ],
     "flujo": [
-      "1. Cron dispara a las 04:00 UTC (= 01:00 ARG)",
-      "2. POST /api/dashboard/casino/sync lanza en background:",
-      "     node sync-casino-players-live.js --auto",
-      "     && node segmentar-casino-players.js",
-      "3. Si ok=true → NoOp (éxito, ejecución verde)",
-      "4. Si ok=false o HTTP error → Set captura detalles → StopAndError (ejecución roja, alerta en n8n)"
+      "1. Cron dispara cada 15 minutos",
+      "2. POST /api/cron/casino-sync (header x-cron-secret) corre scripts/pipeline-diario.js EN FOREGROUND",
+      "   (la request espera la corrida completa: 4 plataformas + segmentación + prioridades) y devuelve",
+      "   el resumen real por plataforma — nunca un 202 'accepted' seguido de un fallo invisible.",
+      "3. Si ok=true (HTTP 200) → NoOp (éxito, ejecución verde)",
+      "4. Si ok=false (HTTP 207/401/500/503) → Set captura detalles → StopAndError (ejecución roja, alerta en n8n)"
     ],
     "env_vars_n8n": [
-      "PLATFORM_BASE_URL = URL base del frontend (ej: https://tu-app.railway.app)"
-    ],
-    "credenciales_n8n": [
-      "Tipo: HTTP Header Auth",
-      "Nombre exacto: Platform Auth Token",
-      "Header Name: Authorization",
-      "Header Value: Bearer <JWT de sesión admin o token estático>"
+      "PLATFORM_BASE_URL   = URL base del frontend (ej: https://tu-app.railway.app)",
+      "CASINO_CRON_SECRET  = mismo valor que CASINO_CRON_SECRET/CRON_SECRET en el servidor (ver env_vars_railway)"
     ],
     "env_vars_railway": [
-      "ZEUS_API_KEY      = tu API key de Zeus",
-      "ZEUS_PLAYER_TOKEN = tu player token de Zeus",
-      "DATABASE_URL      = ya configurado"
+      "CRON_SECRET = secreto compartido — protege /api/cron/casino-sync Y /api/contacts/recompute-priorities",
+      "Credenciales por plataforma — ver .env.example y src/casino-connectors/README.md",
+      "DATABASE_URL = ya configurado"
     ],
-    "nota_timing": "El endpoint responde en <1 seg (proceso detached). El sync real tarda ~2-5 min en background. La segmentación corre automáticamente al terminar el sync."
+    "nota_timing": "El endpoint responde solo cuando el pipeline completo termina — puede tardar varios minutos en una carga grande; el timeout del nodo HTTP está en 10 minutos. La ventana incremental normal (D4, ~30 min por agente) es rápida."
   }
 }

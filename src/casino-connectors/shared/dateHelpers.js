@@ -42,10 +42,50 @@ function extractUtcTimestamp(fechaStr) {
   return d.toISOString()
 }
 
+const PLAIN_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+// Formats a UTC instant (Date, epoch millis, or ISO string) as the
+// "YYYY-MM-DD HH:MM:SS" the Zeus-style API expects, in a fixed-offset local
+// timezone (default Argentina, UTC-3). Used for exact-timestamp incremental
+// windows (fase 4, D4) where a plain calendar date is not precise enough —
+// building this with `date.toISOString() + ' 00:00:00'` (string concatenation
+// of a UTC ISO stamp) would silently ignore both the UTC->local offset and the
+// actual time-of-day, always landing on local midnight regardless of the real
+// instant. This does neither: it shifts by the offset first, then formats.
+function toLocalDateTimeString(value, offsetHours = DEFAULT_OFFSET_HOURS) {
+  const d = value instanceof Date ? value : new Date(value)
+  if (isNaN(d.getTime())) {
+    throw new Error(`dateHelpers.toLocalDateTimeString: unparsable value: ${JSON.stringify(value)}`)
+  }
+  const local = new Date(d.getTime() - offsetHours * 3_600_000)
+  const iso   = local.toISOString() // "YYYY-MM-DDTHH:MM:SS.sssZ"
+  return `${iso.slice(0, 10)} ${iso.slice(11, 19)}`
+}
+
+/**
+ * Builds the `{ startDate, endDate }` pair a Zeus-style API expects, from
+ * either plain `YYYY-MM-DD` dates (day-level, inclusive/exclusive as before —
+ * `hasta` bumped one day) or exact ISO timestamps (fase 4 incremental sync,
+ * e.g. `MAX(fecha_hora_utc) - 30min`), which are used exactly as given — no
+ * day-boundary padding, since the caller already picked the precise boundary.
+ * Mixed inputs (one plain, one exact) are supported independently.
+ */
+function buildApiDateRange(desde, hasta, offsetHours = DEFAULT_OFFSET_HOURS) {
+  const desdeIsPlainDate = PLAIN_DATE_RE.test(String(desde))
+  const hastaIsPlainDate = PLAIN_DATE_RE.test(String(hasta))
+
+  const startDate = desdeIsPlainDate ? fmtDate(desde) : toLocalDateTimeString(desde, offsetHours)
+  const endDate   = hastaIsPlainDate ? fmtDate(addOneDay(hasta)) : toLocalDateTimeString(hasta, offsetHours)
+
+  return { startDate, endDate }
+}
+
 module.exports = {
   DEFAULT_OFFSET_HOURS,
   fmtDate,
   addOneDay,
   utcToLocalDate,
   extractUtcTimestamp,
+  toLocalDateTimeString,
+  buildApiDateRange,
 }

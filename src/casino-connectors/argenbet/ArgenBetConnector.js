@@ -155,8 +155,36 @@ class ArgenBetConnector extends BaseCasinoConnector {
       return
     }
 
-    const result = await this.loginAdapter.login()
-    const token  = result && result.token
+    // Same shape as GanamosConnector's loginAdapter contract: the adapter
+    // needs the actual credentials to log in with, not just "please log in
+    // somehow" — config.loginUrl (still null until the real endpoint is
+    // captured, see the TODO above) and ARGENBET_ADMIN_USER/_PASSWORD, read
+    // fresh from env on every call so a rotated credential takes effect on
+    // the next authenticate() without restarting the process.
+    const adminUser     = process.env[this.config.adminUserEnvVar]?.trim()
+    const adminPassword = process.env[this.config.adminPasswordEnvVar]?.trim()
+    if (!adminUser || !adminPassword) {
+      throw new Error(
+        `ArgenBet: a loginAdapter is configured but ${this.config.adminUserEnvVar}/${this.config.adminPasswordEnvVar} ` +
+        'are not set — nothing to log in with.'
+      )
+    }
+
+    let result
+    try {
+      result = await this.loginAdapter.login({
+        loginUrl:    this.config.loginUrl ?? null,
+        credentials: { user: adminUser, password: adminPassword },
+      })
+    } catch (err) {
+      // Same reasoning as GanamosConnector._loginAgent: the adapter is
+      // external, injected code — its rejection could easily echo back the
+      // very credentials it just tried to send. Never propagate err.message
+      // verbatim, not even sanitized — the adapter's own logs are where
+      // that detail belongs.
+      throw new Error('ArgenBet: login adapter failed (see the adapter\'s own logs for details)')
+    }
+    const token = result && result.token
     if (!token) {
       throw new Error('ArgenBet: loginAdapter.login() resolved without a token')
     }
@@ -285,6 +313,20 @@ class ArgenBetConnector extends BaseCasinoConnector {
       }
 
       const rawId = item.id ?? item.transferId ?? item.transactionId ?? item.uuid ?? null
+      // Same strictness as GanamosConnector.normalizeTransactions: only a
+      // string or a SAFE-integer number is an acceptable id shape. A JS
+      // number above Number.MAX_SAFE_INTEGER has already lost precision by
+      // the time JSON parsing handed it to us, and an object/boolean id
+      // would otherwise silently stringify into a bogus identity
+      // ("[object Object]"/"true"). Whitespace-only is rejected too, not
+      // just null/'' — `String("   ").trim()` would otherwise look like a
+      // valid empty-after-trim id.
+      if (rawId != null && typeof rawId !== 'string' && typeof rawId !== 'number') {
+        throw new Error(`ArgenBet: transaction for player "${username}" has a non-string/number id: ${JSON.stringify(rawId)}`)
+      }
+      if (typeof rawId === 'number' && !Number.isSafeInteger(rawId)) {
+        throw new Error(`ArgenBet: transaction for player "${username}" has an id outside safe integer range (already lost precision): ${rawId}`)
+      }
       const source_id = rawId == null ? '' : String(rawId).trim()
       if (!source_id) {
         throw new Error(`ArgenBet: transaction for player "${username}" has no stable id (id/transferId/transactionId/uuid all missing) — H8 confirmed every real row has one`)
@@ -315,10 +357,17 @@ class ArgenBetConnector extends BaseCasinoConnector {
       if (item.amount == null || item.amount === '') {
         throw new Error(`ArgenBet: transaction id=${source_id} for player "${username}" has no amount`)
       }
-      const absAmount = Math.abs(Number(item.amount))
-      if (!Number.isFinite(absAmount)) {
+      // Strict on purpose (same rule as GanamosConnector.parseStrictAmount):
+      // plain `Number(item.amount)` alone would accept `true` (-> 1), a
+      // whitespace-only string (-> 0, fabricating a fake zero-value
+      // transaction instead of erroring), exponent notation, or more than 2
+      // decimal places — quietly corrupting a monto before validateAmount
+      // ever sees it.
+      const parsedAmount = parseStrictAmount(item.amount)
+      if (parsedAmount === null) {
         throw new Error(`ArgenBet: transaction id=${source_id} for player "${username}" has a non-numeric amount: ${JSON.stringify(item.amount)}`)
       }
+      const absAmount = Math.abs(parsedAmount)
       let monto
       try {
         monto = validateAmount(absAmount)
@@ -373,6 +422,24 @@ class ArgenBetConnector extends BaseCasinoConnector {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+
+/**
+ * Strict amount parser — same rule as GanamosConnector's own
+ * `parseStrictAmount` (kept as a small local copy rather than a shared
+ * export: both connectors' `normalizeTransactions` call it inline and a
+ * shared module would be one more indirection for a 6-line regex). Accepts a
+ * finite JS number as-is, or a string that is exactly an optionally-signed
+ * decimal with at most 2 fractional digits — never routed through `Number()`
+ * before the regex validates its shape. Returns `null` for anything else,
+ * including booleans, objects, whitespace-only strings, NaN/Infinity.
+ */
+function parseStrictAmount(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!/^[+-]?\d+(\.\d{1,2})?$/.test(trimmed)) return null
+  return Number(trimmed)
+}
 
 function buildUrl(baseUrl, endpoint, agentUserId, dateFrom, dateTo, offset) {
   const params = new URLSearchParams()

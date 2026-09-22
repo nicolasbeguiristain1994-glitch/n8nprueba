@@ -1,7 +1,7 @@
 'use strict'
 
 const { BaseCasinoConnector } = require('../base/BaseCasinoConnector')
-const { fmtDate, addOneDay, utcToLocalDate, extractUtcTimestamp } = require('../shared/dateHelpers')
+const { fmtDate, addOneDay, utcToLocalDate, extractUtcTimestamp, buildApiDateRange } = require('../shared/dateHelpers')
 
 /**
  * Connector for the Zeus Casino platform.
@@ -57,24 +57,25 @@ class ZeusConnector extends BaseCasinoConnector {
 
     if (!adminUser || !adminPassword || !this.config.loginUrl) return
 
+    const clientId = process.env[this.config.loginClientIdEnvVar]?.trim()
+    const clientSecret = process.env[this.config.loginClientSecretEnvVar]?.trim()
+    if (!clientId || !clientSecret) {
+      throw new Error(`${this.config.name} auto-login requires ${this.config.loginClientIdEnvVar} and ${this.config.loginClientSecretEnvVar}`)
+    }
+
     const params = new URLSearchParams({
       username:      adminUser,
       password:      adminPassword,
-      client_id:     this.config.loginClientId,
-      client_secret: this.config.loginClientSecret,
+      client_id:     clientId,
+      client_secret: clientSecret,
       grant_type:    'password',
       source:        'pn',
     })
 
     const url = `${this.config.loginUrl}?${params}`
 
-    // Neither the request URL (query-string auth, includes the password) nor a
-    // raw response body should ever reach a log line or a rethrown Error — both
-    // propagate up through sync-casino-players-live.js's top-level error logger.
-    // `redact()` strips any literal occurrence of the known secrets first.
-    const secrets = [adminPassword, this.config.loginClientSecret].filter(Boolean)
-    const redact  = (text) => secrets.reduce((t, s) => t.split(s).join('[REDACTED]'), String(text ?? ''))
-
+    // Login errors never echo the URL or response body: either can include
+    // encoded credentials that literal-value redaction would fail to remove.
     let res
     try {
       res = await fetch(url, {
@@ -85,14 +86,12 @@ class ZeusConnector extends BaseCasinoConnector {
         },
         signal: AbortSignal.timeout(30_000),
       })
-    } catch (err) {
-      throw new Error(`${this.config.name} auto-login network error: ${redact(err.message)}`)
+    } catch {
+      throw new Error(`${this.config.name} auto-login network error`)
     }
 
     if (!res.ok) {
-      let errBody = ''
-      try { errBody = await res.text() } catch (_) {}
-      throw new Error(`${this.config.name} auto-login failed: HTTP ${res.status} — ${redact(errBody).slice(0, 300)}`)
+      throw new Error(`${this.config.name} auto-login failed: HTTP ${res.status}`)
     }
 
     const body  = await res.json()
@@ -108,11 +107,18 @@ class ZeusConnector extends BaseCasinoConnector {
   // ── API ───────────────────────────────────────────────────────────────────
 
   async fetchTransactions(agentUsername, startDate, endDate) {
+    // fase 4 (D4): startDate/endDate can be plain `YYYY-MM-DD` (historical/manual
+    // range, day-granular, `endDate` exclusive-bumped) OR an exact ISO timestamp
+    // (incremental sync, e.g. `MAX(fecha_hora_utc) - 30min` .. `now`) — buildApiDateRange
+    // formats each independently instead of always concatenating a UTC ISO string
+    // onto " 00:00:00", which would silently discard the actual time-of-day.
+    const { startDate: apiStartDate, endDate: apiEndDate } =
+      buildApiDateRange(startDate, endDate, Math.abs(Number(this.config.timezone)) || undefined)
+
     const params = new URLSearchParams({
       username:  agentUsername,
-      startDate: fmtDate(startDate),
-      // Zeus uses exclusive end dates — pass the day after `endDate` (same as the UI panel)
-      endDate:   fmtDate(addOneDay(endDate)),
+      startDate: apiStartDate,
+      endDate:   apiEndDate,
       timezone:  this.config.timezone,
     })
 

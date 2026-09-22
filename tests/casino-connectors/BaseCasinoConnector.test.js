@@ -668,4 +668,37 @@ describe('BaseCasinoConnector', () => {
       expect(sql).toMatch(/array_agg\(agente\s+ORDER BY COALESCE\(fecha_hora_utc, fecha::timestamptz\) DESC, id DESC\)/)
     })
   })
+
+  describe('syncAgent()', () => {
+    // Fase 4 critical-bug fix: insertTransactions() and recomputePlayers() are
+    // two SEPARATE DB calls (the first commits its own transaction before the
+    // second even starts) — if recompute fails, the caller (the orchestrator)
+    // needs to know transactions genuinely landed so it can persist that on
+    // the failed casino_sync_runs row, and so incrementalWindow's recovery
+    // checkpoint can widen desde back to this exact range on the next run
+    // instead of skipping past it via a MAX(fecha_hora_utc) watermark that
+    // already moved forward.
+    it('attaches insertedTxCount to the thrown error when recomputePlayers() fails after insertTransactions() already committed', async () => {
+      const { connector } = makeConnector()
+      jest.spyOn(connector, 'fetchTransactions').mockResolvedValue([{ username: 'p1' }])
+      jest.spyOn(connector, 'insertTransactions').mockResolvedValue(5)
+      jest.spyOn(connector, 'recomputePlayers').mockRejectedValue(new Error('recompute exploded'))
+
+      await expect(connector.syncAgent('agente1', '2025-01-01', '2025-01-02')).rejects.toMatchObject({
+        message:               'recompute exploded',
+        insertedTxCount:       5,
+        recomputePlayersFailed: true,
+      })
+    })
+
+    it('returns the real insertedTxCount and playerCount when everything succeeds', async () => {
+      const { connector } = makeConnector()
+      jest.spyOn(connector, 'fetchTransactions').mockResolvedValue([{ username: 'p1' }, { username: 'p2' }])
+      jest.spyOn(connector, 'insertTransactions').mockResolvedValue(2)
+      jest.spyOn(connector, 'recomputePlayers').mockResolvedValue(2)
+
+      const result = await connector.syncAgent('agente1', '2025-01-01', '2025-01-02')
+      expect(result).toEqual({ txCount: 2, playerCount: 2, insertedTxCount: 2 })
+    })
+  })
 })

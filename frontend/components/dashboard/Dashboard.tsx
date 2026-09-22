@@ -7,6 +7,7 @@ import { DashboardHeader } from './DashboardHeader'
 import { WidgetGrid } from './WidgetGrid'
 import { AddWidgetModal } from './widgets/AddWidgetModal'
 import { Toast } from './Toast'
+import { CasinoSyncStatusBar } from './CasinoSyncStatusBar'
 import { SYNC_PLATFORMS } from '@/lib/casino-agents'
 
 export function Dashboard() {
@@ -89,6 +90,8 @@ export function Dashboard() {
         onAgentChange={setAgent}
         onSyncCasino={handleSyncCasino}
       />
+
+      <CasinoSyncStatusBar />
 
       {error && (
         <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm flex items-center gap-2">

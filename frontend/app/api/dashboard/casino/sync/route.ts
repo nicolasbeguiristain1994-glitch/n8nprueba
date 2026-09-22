@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkPermission } from '@/lib/permissions'
 import { isValidSyncPlatform, getAgentsForPlatform } from '@/lib/casino-agents'
+import { query } from '@/lib/db'
 import { spawn, type ChildProcess } from 'child_process'
 import path from 'path'
 
@@ -17,6 +18,14 @@ import path from 'path'
  *   (sin desde/hasta)                     →  modo --auto (incremental)
  *
  * Requiere rol admin.
+ *
+ * Fase 4: este endpoint queda EXCLUSIVAMENTE para el botón manual del
+ * dashboard (una plataforma, bajo demanda). El disparador programado es
+ * `POST /api/cron/casino-sync` (n8n WF-030, cada 15 min, las 4 plataformas) —
+ * no agregar ningún otro cron/scheduled trigger contra esta ruta. Ambas
+ * comparten el mismo advisory lock por plataforma
+ * (`src/casino-connectors/shared/platformLock.js`), así que no pueden
+ * pisarse aunque disparen al mismo tiempo.
  *
  * Variables de entorno requeridas en el servidor (según plataforma — H4 fix:
  * antes solo zeus/bet30 estaban modeladas y elegir ganamos/argenbet tiraba un
@@ -52,7 +61,7 @@ function checkZeusLikeCredentials(prefix: 'ZEUS' | 'BET30') {
   const adminPass = process.env[`${prefix}_ADMIN_PASSWORD`]
   return {
     ok:   !!(apiKey && token) || !!(apiKey && adminUser && adminPass),
-    hint: `Configurar ${prefix}_API_KEY + ${prefix}_PLAYER_TOKEN (o ${prefix}_ADMIN_USER + ${prefix}_ADMIN_PASSWORD) en el servidor`,
+    hint: `Configurar ${prefix}_API_KEY + ${prefix}_PLAYER_TOKEN; para auto-login, ${prefix}_ADMIN_USER + ${prefix}_ADMIN_PASSWORD + ${prefix}_LOGIN_CLIENT_ID + ${prefix}_LOGIN_CLIENT_SECRET`,
   }
 }
 
@@ -63,7 +72,7 @@ function checkArgenbetCredentials() {
   const adminPass = process.env.ARGENBET_ADMIN_PASSWORD
   return {
     ok:   !!token || !!(adminUser && adminPass),
-    hint: 'Configurar ARGENBET_PLAYER_TOKEN (token estático temporal) o ARGENBET_ADMIN_USER + ARGENBET_ADMIN_PASSWORD en el servidor (login automático aún no implementado — ver docs/PLAN-METRICAS-4-PLATAFORMAS.md H10)',
+    hint: 'Configurar ARGENBET_PLAYER_TOKEN (temporal). ARGENBET_ADMIN_USER + ARGENBET_ADMIN_PASSWORD requieren un adaptador de login: el contrato real todavía está pendiente.',
   }
 }
 
@@ -81,7 +90,7 @@ function checkGanamosCredentials() {
   })
   return {
     ok:   configurados.length > 0,
-    hint: 'Configurar al menos GANAMOS_<AGENTE>_SESSION_COOKIE (desarrollo) o GANAMOS_<AGENTE>_USER + GANAMOS_<AGENTE>_PASSWORD en el servidor (Ganamos no tiene un token único — credenciales por agente, ver docs/PLAN-METRICAS-4-PLATAFORMAS.md Fase 3)',
+    hint: 'Configurar GANAMOS_<AGENTE>_SESSION_COOKIE para al menos un agente (temporal). GANAMOS_<AGENTE>_USER + GANAMOS_<AGENTE>_PASSWORD requieren un adaptador de login: el contrato real todavía está pendiente.',
   }
 }
 
@@ -91,6 +100,39 @@ function checkCredentials(platform: SyncPlatform): { ok: boolean; hint: string }
     case 'bet30':    return checkZeusLikeCredentials('BET30')
     case 'argenbet': return checkArgenbetCredentials()
     case 'ganamos':  return checkGanamosCredentials()
+  }
+}
+
+/**
+ * Registra un run 'failed' a nivel de plataforma (agente NULL) en
+ * casino_sync_runs para los casos en que el proceso hijo NUNCA llega a
+ * arrancar (credenciales faltantes o error de spawn) — sin esto, D4 sólo
+ * cubre fallos que el propio conector/orquestador ya alcanzó a loguear, y el
+ * botón manual quedaba silencioso ante un 503/500 (dashboard sin señal).
+ * `error` viene siempre de los hints de checkCredentials()/mensajes de spawn
+ * — nombres de env var o errores de sistema operativo, nunca valores.
+ *
+ * Best-effort: si la propia base no está disponible para escribir esto, no
+ * inventamos un registro — sólo logueamos y dejamos que la respuesta HTTP
+ * original (503/500, ya clara) sea la única señal.
+ */
+async function recordFailedPlatformRun(
+  platform: SyncPlatform,
+  error: string,
+  range: { desde?: string | null; hasta?: string | null } = {},
+): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO casino_sync_runs
+         (platform, agente, started_at, finished_at, status, tx_inserted, range_desde, range_hasta, error)
+       VALUES ($1, NULL, now(), now(), 'failed', 0, $2, $3, $4)`,
+      [platform, range.desde ?? null, range.hasta ?? null, error],
+    )
+  } catch (e) {
+    console.error(
+      '[/api/dashboard/casino/sync] no se pudo registrar el run failed en casino_sync_runs',
+      e instanceof Error ? e.message : e,
+    )
   }
 }
 
@@ -115,14 +157,17 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const { ok: hasCredentials, hint } = checkCredentials(platformParam)
-  if (!hasCredentials) {
-    return NextResponse.json({ error: hint }, { status: 503 })
-  }
-
-  // ── Rango de fechas ───────────────────────────────────────────────────────────
+  // ── Rango de fechas y agentes (validación de input del usuario) ────────────────
+  // Todo esto debe resolverse ANTES del preflight de credenciales: un 400 por
+  // input inválido nunca debe registrarse como un sync real fallido en
+  // casino_sync_runs (eso mezclaría rechazos de request con fallos de
+  // configuración/infra genuinos y ensuciaría el dashboard).
   const desde = req.nextUrl.searchParams.get('desde')
   const hasta  = req.nextUrl.searchParams.get('hasta')
+
+  if (hasta && !desde) {
+    return NextResponse.json({ error: 'Para indicar hasta también hay que indicar desde' }, { status: 400 })
+  }
 
   if (desde && !isValidCalendarDate(desde)) {
     return NextResponse.json({ error: `desde inválido: "${desde}" (esperado YYYY-MM-DD)` }, { status: 400 })
@@ -137,11 +182,40 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `desde (${desde}) no puede ser posterior a hasta (${hasta})` }, { status: 400 })
   }
 
+  const agentesParam = req.nextUrl.searchParams.get('agentes')?.trim()
+
+  if (agentesParam) {
+    const requestedAgents = agentesParam.split(',').map((a) => a.trim()).filter(Boolean)
+    const validAgents     = getAgentsForPlatform(platformParam)
+    const invalidAgents   = requestedAgents.filter((a) => !validAgents.includes(a))
+    if (requestedAgents.length === 0 || invalidAgents.length > 0) {
+      return NextResponse.json(
+        {
+          error: `Agente(s) inválido(s) para ${platformParam}: ${invalidAgents.join(', ')}. ` +
+            `Válidos para ${platformParam}: ${validAgents.join(', ')}`,
+        },
+        { status: 400 },
+      )
+    }
+  }
+
+  // ── Preflight de credenciales — único punto de este endpoint que escribe en
+  // casino_sync_runs (D4/pendiente): si el proceso hijo nunca llega a arrancar
+  // porque falta configuración, el dashboard no debe quedar en silencio.
+  const { ok: hasCredentials, hint } = checkCredentials(platformParam)
+  if (!process.env.DATABASE_URL?.trim()) {
+    const error = 'DATABASE_URL no configurado en el servidor'
+    await recordFailedPlatformRun(platformParam, error, { desde, hasta })
+    return NextResponse.json({ error }, { status: 503 })
+  }
+  if (!hasCredentials) {
+    await recordFailedPlatformRun(platformParam, hint, { desde, hasta })
+    return NextResponse.json({ error: hint }, { status: 503 })
+  }
+
   // Los scripts viven en <repo-root>/scripts/ — Next.js corre desde frontend/
   const scriptsDir      = path.resolve(process.cwd(), '..', 'scripts')
   const supervisorScript = path.join(scriptsDir, 'casino-sync-then-segment.js')
-
-  const agentesParam = req.nextUrl.searchParams.get('agentes')?.trim()
 
   const syncArgs = desde
     ? [
@@ -191,15 +265,22 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       ok:       true,
+      accepted: true,
       platform: platformParam,
       message:  desde
-        ? `Sync ${platformLabel} iniciado para el rango ${desde} → ${hasta ?? 'hoy'}. Los datos (con segmentación) se actualizarán en ~5 minutos.`
-        : `Sync incremental ${platformLabel} + segmentación iniciados (--auto). Los datos se actualizarán en ~5 minutos.`,
+        ? `Solicitud de sincronización de ${platformLabel} aceptada para ${desde} → ${hasta ?? 'hoy'}. Consultá el resultado en el estado de sincronización.`
+        : `Solicitud de sincronización incremental de ${platformLabel} aceptada. Consultá el resultado en el estado de sincronización.`,
       pid:  child.pid,
       mode: desde ? 'range' : 'auto',
-    })
+    }, { status: 202 })
   } catch (e) {
-    console.error('[/api/dashboard/casino/sync POST]', e instanceof Error ? e.message : e)
+    // El proceso hijo nunca llegó a arrancar (p.ej. ENOENT) — nunca va a poder
+    // registrar su propio run en casino_sync_runs, así que lo hacemos acá.
+    // El mensaje de spawn() es un error de sistema operativo (ruta/binario),
+    // nunca contiene credenciales.
+    const message = e instanceof Error ? e.message : String(e)
+    console.error('[/api/dashboard/casino/sync POST]', message)
+    await recordFailedPlatformRun(platformParam, `No se pudo iniciar el proceso de sync: ${message}`, { desde, hasta })
     return NextResponse.json({ error: 'No se pudo iniciar el sync' }, { status: 500 })
   }
 }

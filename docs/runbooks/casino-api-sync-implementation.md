@@ -3,7 +3,13 @@
 Actualizado: 2026-09-21, sesión Claude Max (retomada desde el checkpoint de la
 sesión anterior, que había agotado su ventana de 5 horas).
 
-## Estado: FASE 1 completa, pendiente de aplicar en una base real
+## Estado: cuatro fases implementadas; instalación y login real pendientes
+
+La guía de entrega vigente está en [casino-api-sync-handoff.md](casino-api-sync-handoff.md).
+Las secciones siguientes conservan el detalle técnico por fase; las cifras
+de pruebas de cada revisión son históricas. La validación final fue de 312
+pruebas raíz y 856 de frontend aprobadas, con siete omisiones de integración
+y TypeScript sin errores. No se aplicaron migraciones ni se consultaron APIs reales.
 
 Todos los bloqueantes documentados por el coordinador (mailbox, mensajes 1-7)
 están resueltos en el árbol de trabajo. No se aplicó la migración 127 ni se
@@ -467,16 +473,312 @@ sesión. No se tocó el importador de Excel ni las migraciones existentes.
 
 ## Fase 4
 
-**No iniciada.** Siguen pendientes: sync incremental con `MAX(timestamp)` por
-plataforma (-30min de margen; Ganamos día completo), advisory lock retenido
-en la misma conexión durante toda la corrida, registro en `casino_sync_runs`
-por agente (tabla todavía no existe — `checkStaleSync()` de esta fase queda
-lista para conectarse a esa tabla, no a un mock), pipeline con exit code
-no-cero ante cualquier fallo parcial, un solo schedule n8n de 15min (no
-prometer 5min), y orquestación real de "un agente falla, los demás siguen"
-a nivel de plataforma completa (hoy eso lo garantiza `runAgent()` en
-`scripts/sync-casino-players-live.js`, agente por agente, pero no hay un
-registry/orquestador que recorra las 4 plataformas en una sola corrida).
+**Implementada.** Resumen de lo que cambió, qué del plan ya estaba resuelto,
+qué falta cerrar, y el orden de migraciones.
+
+### Qué ya estaba resuelto antes de esta fase
+
+- El punto pendiente que quedó anotado al cierre de fase 3 ("el adaptador de
+  login de Argenbet no recibe `{loginUrl, credentials}`") — cerrado en esta
+  fase: `ArgenBetConnector.authenticate()` ahora lee `ARGENBET_ADMIN_USER`/
+  `_PASSWORD` (vía `config.adminUserEnvVar`/`adminPasswordEnvVar`) y llama
+  `loginAdapter.login({ loginUrl, credentials: { user, password } })`, igual
+  que `GanamosConnector._loginAgent()`. Su rechazo se envuelve en un mensaje
+  genérico (nunca `err.message` crudo, que podía traer credenciales).
+- Validación estricta de `id`/`amount` en `ArgenBetConnector.normalizeTransactions`
+  — antes usaba `Math.abs(Number(item.amount))` (acepta `true`→1, `'   '`→0,
+  notación exponencial) y no acotaba el tipo de `id`. Ahora usa el mismo
+  criterio que `GanamosConnector` (parser estricto de amount, `id` sólo
+  string/number-safe-integer).
+
+### Qué se construyó
+
+1. **`src/casino-connectors/shared/incrementalWindow.js`** — checkpoint POR
+   AGENTE (`MAX(fecha_hora_utc) WHERE platform=$1 AND agente=$2`, nunca
+   `platform` a secas): el fallo de un agente nunca puede "taparse" porque
+   otro agente de la misma plataforma sí sincronizó — cada agente sólo avanza
+   su propio checkpoint, y sólo con datos que de verdad se COMMITearon
+   (`insertTransactions` es atómico por llamada).
+   **Corrección posterior (revisión de recuperación/idempotencia):** el
+   `MAX(fecha_hora_utc)` NO es, por sí solo, un checkpoint completo — es un
+   checkpoint de "qué transacciones se COMMITearon", no de "qué corrida quedó
+   totalmente resuelta". `BaseCasinoConnector.syncAgent()` hace
+   `insertTransactions()` y `recomputePlayers()` como dos llamadas a la DB
+   separadas; si `recomputePlayers()` falla DESPUÉS de que `insertTransactions()`
+   ya comiteó, el próximo `--auto` calculaba `desde` como
+   `MAX(fecha_hora_utc) - 30min` — un rango que queda enteramente DESPUÉS de lo
+   que falló, perdiendo la re-ejecución del recompute para ese rango. Lo mismo
+   le pasaba a un backfill histórico chunked: si el chunk N fallaba, nada
+   impedía que el chunk N+1 corriera igual, ni que un `--auto` posterior
+   ignorara el hueco. `resolveIncrementalRange()` ahora SÍ usa
+   `casino_sync_runs` (migración 128) como checkpoint de recuperación:
+   `_earliestUnresolvedFailureDesde()` busca la corrida `failed` más antigua
+   para ese `(platform, agente)` cuyo rango NO esté completamente contenido
+   dentro de una corrida `ok` POSTERIOR, y ensancha `desde` hacia atrás hasta
+   cubrirla — un éxito posterior más chico (p.ej. un re-run manual de un solo
+   día) nunca "cierra" un hueco más amplio, sólo un éxito que contenga el rango
+   completo lo hace. `scripts/lib/casino-sync-orchestrator.js` además deja de
+   correr chunks posteriores para un agente una vez que uno falla (antes
+   seguía intentando los siguientes chunks igual), y adjunta el conteo real de
+   transacciones insertadas (`err.insertedTxCount`, ver
+   `BaseCasinoConnector.syncAgent()`) a la fila `failed` de `casino_sync_runs`
+   en vez de dejarla en `null`. Ganamos tiene su propia variante: el ancla de
+   recuperación no es sólo `MAX(fecha)` sobre `casino_transactions` (que un día
+   sin transacciones deja intacto, aunque ese día se haya sincronizado bien)
+   sino el máximo entre esa fecha, el `range_hasta` de la última corrida `ok`
+   (aunque haya insertado cero transacciones), y el `range_desde` de cualquier
+   falla no resuelta — así un primer intento que falló ayer, o un día
+   exitoso-pero-sin-movimientos, se re-consultan correctamente en vez de saltar
+   directo a "solo hoy". Ver `tests/casino-connectors/incrementalWindow.test.js`
+   y `tests/casino-connectors/casino-sync-orchestrator.test.js` para los casos
+   cubiertos.
+   Ganamos usa siempre el día actual completo (nunca sub-día — la API no
+   acepta rangos >24h). Bootstrap (primer sync sin datos previos) documentado
+   por plataforma en `AUTO_BOOTSTRAP_DESDE` — explícito, nunca un
+   `2020-01-01` silencioso; Ganamos no tiene entrada ahí a propósito (no hay
+   "primera fecha con datos" significativa con retención de ~60 días — un
+   backfill histórico de Ganamos es responsabilidad del dueño, vía Excel o
+   `--desde/--hasta` manual).
+2. **`src/casino-connectors/shared/dateHelpers.js`** — `buildApiDateRange()`:
+   Zeus/Bet30 (H7, D4) ahora aceptan tanto `YYYY-MM-DD` (histórico/manual)
+   como un timestamp ISO exacto (incremental), formateado correctamente a
+   hora local ART — nunca `toISOString() + ' 00:00:00'` concatenado, que
+   ignoraba la hora real.
+3. **`src/casino-connectors/shared/platformLock.js`** — advisory lock de
+   SESIÓN (`pg_try_advisory_lock`/`pg_advisory_unlock`) en un único client
+   retenido desde antes de crear el conector hasta el final de la corrida.
+   `release()` destruye la conexión (no la devuelve limpia al pool) si el
+   unlock falla. Nunca se sostiene durante una llamada HTTP — sólo protege el
+   run completo desde el lado de Postgres.
+4. **`scripts/lib/casino-sync-orchestrator.js`** — núcleo testable
+   (pool/createConnector/clock inyectables, sin leer `.env` ni conectar al
+   importar). `runOrchestrator()`: toma el lock → si ya está tomado, sale
+   limpio (`skipped:true, ok:true`) y opcionalmente deja un registro
+   `status='skipped'` en `casino_sync_runs` que NUNCA tapa el último éxito/error
+   real (ver `sync-status` más abajo) → construye el conector y autentica
+   (fallo acá se registra como corrida `agente=NULL` fallida, nunca un crash
+   silencioso) → por cada agente, registra `running` en `casino_sync_runs`
+   ANTES de llamar `syncAgent()`, y `ok`/`failed` en el mismo lugar al
+   terminar (try/catch, nunca un `finally` que pueda dejar una fila en
+   `running` para siempre salvo crash real del proceso) → libera el lock
+   siempre (`finally`). Usado tanto por `scripts/sync-casino-players-live.js`
+   (CLI, ahora un wrapper delgado con guard `require.main === module`) como
+   por `scripts/pipeline-diario.js` (in-process, las 4 plataformas).
+5. **`db/migrations/128_casino_sync_runs.sql`** — tabla `casino_sync_runs`
+   (`platform`, `agente` nullable, `started_at`, `finished_at`, `status`
+   `running|ok|failed|skipped`, `tx_inserted`, `range_desde`/`range_hasta`,
+   `error` ya sanitizado). Si no existe, el orquestador falla fuerte con un
+   mensaje explícito (`MISSING_TABLE_HINT`) en vez de correr sin bitácora.
+6. **`scripts/pipeline-diario.js`** — reescrito: las 4 plataformas (antes sólo
+   Zeus/Bet30) leídas de `src/config/platforms.config.json` vía
+   `getConfigAgents()` (zeus/bet30 declaran `agents: [...]`; ganamos/argenbet
+   usan las claves de `agentIds`, los únicos agentes que sus conectores
+   aceptan) — nunca hardcodeadas en el script ni inferidas de la DB. Exit
+   code `!= 0` si CUALQUIER plataforma falla, y también si falla la
+   segmentación o el recompute de prioridades (antes `failOk: true` los
+   dejaba sin afectar el exit code — corregido, era exactamente el tipo de
+   "verde falso" que el plan pide evitar). `runPipeline()`/`runAllPlatformSyncs()`
+   exportados para pipeline-diario.test.js y para el endpoint de cron.
+7. **`frontend/app/api/cron/casino-sync/route.ts`** (nuevo) — único disparador
+   programado (D4: "elegir uno solo"). Protegido con `CRON_SECRET` +
+   `timingSafeEqual` (mismo secreto que `/api/contacts/recompute-priorities`).
+   Ejecuta `pipeline-diario.js --json` como proceso hijo (`process.execPath`,
+   argv array, nunca shell) y ESPERA el resultado real (parseado de la línea
+   `PIPELINE_RESULT_JSON:...` que el script imprime al terminar) antes de
+   responder — nunca "202 accepted" seguido de un fallo invisible. `POST
+   /api/dashboard/casino/sync` queda EXCLUSIVAMENTE para el botón manual
+   (una plataforma, bajo demanda); ambos pasan por el mismo lock, así que no
+   pueden pisarse, pero sólo uno está programado.
+8. **`n8n/workflow-specs/WF-030-Casino-Daily-Sync.json`** — cadencia
+   `*/15 * * * *` (antes diario 04:00 UTC), apunta a
+   `/api/cron/casino-sync` con header `x-cron-secret`, timeout de nodo
+   subido a 10 min (el pipeline corre en foreground). No se encontró ningún
+   otro cron/scheduled trigger apuntando a sync de casino en el repo
+   (`railway.toml`, `.github/`) — este workflow sigue siendo el único.
+   **El dueño debe aplicar manualmente el workflow actualizado en su
+   instancia de n8n** (este repo sólo versiona la especificación JSON, no la
+   publica) y agregar la env var `CASINO_CRON_SECRET` en n8n con el mismo
+   valor que `CRON_SECRET` en el servidor.
+9. **`frontend/app/api/dashboard/casino/sync-status/route.ts`** (nuevo) —
+   `GET`, protegido por `checkPermission(dashboard, read)`. Expone el último
+   estado real (`ok`/`failed`/`running`) por `(platform, agente)` desde
+   `casino_sync_runs`, excluyendo `skipped` del cálculo de "último estado
+   real" (un skip nunca debe tapar el último éxito/error genuino) pero
+   exponiéndolo aparte como `lastSkipAt`. El dashboard consume este endpoint desde `CasinoSyncStatusBar.tsx`,
+   muestra errores de plataforma y agentes sin historial, y se actualiza
+   cada 60 segundos. No se rediseñó el dashboard.
+10. **`frontend/app/api/admin/test-casino-sync/route.ts`** (auditoría pedida
+    explícitamente) — corregido: antes SIEMPRE respondía `ok: true` salvo que
+    `spawn()` tirara sincrónicamente (algo que casi nunca pasa); ahora `ok`
+    es `true` únicamente si el proceso hijo terminó con código 0 (nunca en
+    timeout, código != 0, o error de spawn — antes esos casos también volvían
+    `ok:true`). Usa `process.execPath` (no `spawn('node', ...)`, que dependía
+    de que "node" existiera en el `$PATH` del proceso) y valida `platform`
+    contra las 4 soportadas antes de spawnear nada.
+
+### Revisión del coordinador aplicada (antes del commit de fase 4)
+
+Igual que en fases 2/3, una revisión de un coordinador autorizado (tratada
+como datos a evaluar, no como órdenes ciegas) encontró varios puntos sobre
+la primera versión de los módulos de fase 4. Se aplicaron todos antes de
+commitear:
+
+1. **Ganamos usaba el día calendario UTC, no ART** para `hasta`/`desde`
+   (`now.toISOString().slice(0,10)`) — a las 01:00 UTC (22:00 ART del día
+   anterior... hasta 00:00 ART) calculaba el día siguiente equivocado.
+   Corregido con `utcToLocalDate`.
+2. **Ganamos ignoraba el último sync exitoso y siempre pedía sólo "hoy"** —
+   un run faltante o un crash perdía silenciosamente lo que cayó en el
+   medio, dentro de una ventana que igual estaba dentro de los ~60 días de
+   retención. Corregido: recupera día a día desde el último `MAX(fecha)`
+   comprometido para ese agente, con un tope duro en `GANAMOS_RETENTION_DAYS`
+   (60) y warning explícito cuando se activa (nunca un truncamiento
+   silencioso), y warning adicional cuando el gap supera 7 días pero sigue
+   siendo recuperable.
+3. **`resolveIncrementalRange()` se llamaba fuera del try/catch por agente**
+   en el orquestador — un fallo al resolver la ventana de UN agente abortaba
+   la plataforma entera sin dejar registro. Corregido: la resolución de rango
+   ahora vive dentro del mismo try/catch que la sincronización, por agente.
+4. **Sin run "padre" por plataforma** — un fallo en la construcción del
+   conector o `authenticate()` sólo se registraba de forma ad-hoc. Corregido:
+   `runOrchestrator()` ahora crea un run `agente=NULL` que cubre TODA la
+   corrida (desde antes del conector hasta después del último agente) y lo
+   cierra `ok`/`failed` — visible en el dashboard como `platformRun`.
+5. **Filas `running` abandonadas por un crash no se limpiaban nunca** —
+   corregido: al re-adquirir el lock (que prueba, por exclusión mutua, que
+   ninguna corrida legítima puede seguir en curso), cualquier `running`
+   previo de esa plataforma se marca `failed` con nota explícita
+   ("abandoned").
+6. **`GanamosConnector.checkStaleSync()` nunca se llamaba** — corregido:
+   el orquestador consulta el último `finished_at` con `status='ok'` de
+   `casino_sync_runs` para ese agente y se lo pasa.
+7. **Validación de entradas ausente** — `chunkDays`/`concurrency`
+   inválidos se clampeaban en silencio a 1; un rango `desde > hasta` en
+   `_buildDateChunks` devolvía `[]` (que el caller reportaba como `ok:true`
+   sin haber sincronizado nada); una lista de agentes vacía también
+   reportaba `ok:true`. Los tres ahora son fallos explícitos.
+8. **CLI (`sync-casino-players-live.js`) seguía infiriendo agentes con un
+   `SELECT DISTINCT agente FROM casino_players`** — contradecía el requisito
+   de que la config sea la única fuente. Corregido: usa `getConfigAgents()`
+   por defecto; `--agentes` valida contra esa lista y rechaza nombres no
+   configurados en vez de pasarlos sin chequear.
+9. **`pipeline-diario.js`'s `lastTimestamp` usaba el `hasta` SOLICITADO**, no
+   una consulta real — una ventana con cero transacciones nuevas (o un
+   agente fallido) igual reportaba "al día". Corregido: consulta real
+   `MAX(fecha_hora_utc)` por plataforma después de la corrida.
+10. **`runPipeline()` no permitía inyectar los pasos 5/6** para tests —
+    corregido: `deps.runSegmentacion`/`deps.runRecomputePrioridades` son
+    inyectables (default: las implementaciones reales).
+11. **Un fallo de `getConfigAgents()` sólo vivía en el summary en memoria** —
+    corregido: se persiste vía `recordPlatformFailure()` en
+    `casino_sync_runs` antes de seguir con las demás plataformas.
+12. **El endpoint de cron confiaba en el JSON del hijo sin cruzarlo con el
+    código de salida real** — un summary con `ok:true` pero código != 0 (o
+    `null` por señal) se habría reportado como éxito. Corregido: `ok` exige
+    `code === 0 && summary.ok === true`. También: buffer de stdout acotado
+    (256KB — un histórico grande no debe crecer sin límite en memoria) y
+    timeout de 9 minutos que mata el proceso y responde 504 en vez de dejar
+    la request colgada indefinidamente.
+13. **El endpoint de status perdía el último éxito de un agente actualmente
+    fallido**, no distinguía un empate de timestamp de forma determinística,
+    omitía agentes configurados sin historial, y detectaba "tabla faltante"
+    por texto del mensaje de error (falso positivo/negativo posible).
+    Corregidos los 4: `lastSuccessfulAt` por agente vía `MAX(finished_at)
+    FILTER (status='ok')`, desempate `id DESC`, `never_synced` explícito
+    para agentes configurados sin runs, chequeo por código Postgres `42P01`.
+14. **La UI del dashboard no mostraba nada** — pedido explícito del brief
+    ("exponé el último estado en el dashboard"), no cumplido con sólo el
+    endpoint. Se agregó `CasinoSyncStatusBar.tsx` (ver más abajo).
+
+Suite ampliada tras la revisión: 289 tests pasan en raíz (antes 270), 843 en
+frontend (antes 835). `npx tsc --noEmit --incremental false` sin errores.
+
+### Qué falta (no inventado, documentado para el dueño)
+
+- **Login real de Argenbet y Ganamos** — sigue siendo el mismo TODO explícito
+  de fases 2/3 (`ArgenBetConnector.authenticate()` /
+  `GanamosConnector._loginAgent()`). Fase 4 no lo resuelve ni lo bloquea: con
+  sólo `ARGENBET_PLAYER_TOKEN` (estático) o `GANAMOS_<AGENTE>_SESSION_COOKIE`
+  (dev), el sync incremental funciona igual que antes, rotando el token/cookie
+  a mano. Sigue faltando exactamente lo mismo que en fase 2/3: URL de login,
+  método HTTP, forma del body, y dónde viene el token/cookie de vuelta — para
+  ambas plataformas. No se inventó ninguno de los dos.
+- ~~Badge visual en el dashboard~~ — **hecho** tras la revisión del
+  coordinador: `frontend/components/dashboard/CasinoSyncStatusBar.tsx`
+  (nuevo), montado en `Dashboard.tsx` justo debajo del header. Consume
+  `GET /api/dashboard/casino/sync-status`, refresco propio cada 60s
+  (independiente del auto-refresh de datos de negocio), un badge por
+  plataforma (running/ok/failed/never_synced), agentes con error nombrados
+  (nunca ocultos), último éxito por agente, y un banner de error visible si
+  el endpoint mismo falla. No es un rediseño del dashboard.
+- **Aplicar el workflow n8n actualizado** — el dueño debe importarlo/aplicarlo
+  a mano en su instancia de n8n (este repo no lo publica) y desactivar
+  cualquier otro disparador manual que hubiera dejado corriendo contra
+  `/api/dashboard/casino/sync` en un cron externo (no se encontró ninguno en
+  este repo, pero Railway/n8n pueden tener triggers configurados fuera del
+  repo que no son visibles desde acá).
+- **Validación real contra el panel** — la cifra de referencia de fase 2
+  (adminroyal, agosto 2026: 1.715 tx, 184 jugadores, depósitos 22.898.554,00,
+  retiros 14.920.991,67) sigue pendiente de una corrida real contra
+  producción, que corre el dueño — no se ejecutó ninguna sincronización real
+  en esta sesión (sólo mocks/fixtures, según instrucción explícita).
+
+### Migraciones — orden para el dueño
+
+1. `126_casino_excel_import.sql`, si aún no está aplicada: es requisito
+   previo de la 127. No volver a aplicarla después de 127.
+2. `127_casino_players_platform_identity.sql` (fase 1), después de 126.
+3. **`128_casino_sync_runs.sql` (esta fase)** — requerida por
+   `scripts/lib/casino-sync-orchestrator.js` antes de correr cualquier sync
+   de fase 4 (CLI, pipeline o los endpoints nuevos). Sin ella, el
+   orquestador falla fuerte con un mensaje explícito en vez de correr sin
+   bitácora.
+
+### Variables de entorno nuevas
+
+- `CRON_SECRET` — ya existía (protege `/api/contacts/recompute-priorities`);
+  ahora también protege `POST /api/cron/casino-sync`. No hace falta un
+  secreto nuevo, es el mismo.
+- `CASINO_CRON_SECRET` (env var de **n8n**, no del servidor) — debe
+  configurarse en la instancia de n8n con el mismo valor que `CRON_SECRET`
+  en el servidor, para que el header `x-cron-secret` del workflow lo envíe.
+
+### Tests (todos con HTTP/PG mockeados, sin tocar una DB real)
+
+- `tests/casino-connectors/incrementalWindow.test.js` — watermark por agente,
+  aislamiento entre agentes de la misma plataforma, bootstrap documentado
+  (no `2020-01-01`), Ganamos día-actual-completo, checkpoint que no se pierde
+  en un día sin transacciones.
+- `tests/casino-connectors/platformLock.test.js` — acquire/skip limpio,
+  unlock, destroy-on-unlock-error, idempotencia de `release()`, aislamiento
+  entre plataformas.
+- `tests/casino-connectors/casino-sync-orchestrator.test.js` — éxito total,
+  fallo parcial (summary `ok:false` con detalle), fallo de
+  constructor/`authenticate()` registrado con `agente=NULL`, 10 corridas
+  idénticas seguidas con `txInserted=0` desde la segunda, segunda corrida
+  concurrente skip limpio sin tocar el conector, lock liberado incluso ante
+  error (permite una corrida siguiente), error explícito si
+  `casino_sync_runs` no existe, modo `--auto` resolviendo ventana por agente.
+- `tests/pipeline-diario.test.js` — las 4 plataformas en el resumen, una
+  plataforma cayéndose no frena a las demás, fallo por-agente reportado
+  (nunca "ok" con un agente roto adentro), skip reportado como `'skip'` (ni
+  ok ni error), fallo de segmentación propaga `ok:false` aunque las 4
+  plataformas hayan sincronizado bien.
+- `tests/casino-connectors/dateHelpers.test.js` — `buildApiDateRange` con
+  fechas planas (comportamiento idéntico a antes) y timestamps exactos
+  (incluyendo cruce de medianoche UTC↔ART).
+- `tests/casino-connectors/ArgenBetConnector.test.js` — ampliado: adapter
+  recibe `{loginUrl, credentials}` desde las env vars correctas, sanitización
+  del rechazo del adaptador, validación estricta de `id`/`amount`.
+- Frontend (vitest): `casino-sync-status-route.test.ts`,
+  `cron-casino-sync-route.test.ts`, `test-casino-sync-route.test.ts` (nuevos)
+  — status/permisos, unauth del cron, propagación de fallo parcial (207,
+  nunca 200), nunca `ok:true` en timeout/spawn-error/exit≠0.
+
+`npm test` (raíz): verde. Frontend: los 3 archivos de test nuevos de fase 4
+en verde vía `npx vitest run <archivo>` (no se corrió la suite completa de
+frontend en esta sesión — hay archivos preexistentes dirty de otra sesión
+que este trabajo no toca ni depende de que estén en verde).
 
 ## Retomar
 
@@ -502,3 +804,21 @@ Al retomar fase 3: confirmar estado de Git, leer este documento completo
 especificación de arriba — sin login capturado, el trabajo de fase 3 es
 necesariamente parcial (adaptador configurable con TODO explícito, no un
 flujo de auth "validado"), igual que se hizo para Argenbet en fase 2.
+
+### Cierre de integración
+
+- El botón manual registra fallos de configuración y de arranque en
+  `casino_sync_runs`. Los rechazos de permisos o entradas inválidas no
+  crean corridas. Una solicitud aceptada devuelve HTTP 202 y remite al
+  estado de sincronización; no promete un éxito anticipado.
+- Zeus/Bet30 ahora leen el cliente OAuth de `*_LOGIN_CLIENT_ID` y
+  `*_LOGIN_CLIENT_SECRET` en el entorno, además de `*_ADMIN_USER` y
+  `*_ADMIN_PASSWORD`. Se retiraron los valores embebidos de la configuración.
+  El auto-login exige configurar esas variables nuevas. Sus errores no
+  incluyen URLs ni cuerpos de respuesta con credenciales.
+- Verificación final: `npm test -- --runInBand` (312 aprobadas, 1 omitida),
+  `npx vitest run` en frontend (856 aprobadas, 6 omitidas),
+  `npx tsc --noEmit --incremental false` (correcto). Las pruebas omitidas
+  dependen de integración con una base; no se ejecutaron migraciones reales.
+- El importador Excel y la migración 126 no se modificaron. Los cambios
+  previos ajenos del usuario quedaron fuera de los cuatro commits.

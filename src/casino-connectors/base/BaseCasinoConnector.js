@@ -165,7 +165,22 @@ class BaseCasinoConnector {
     const rawTxs          = await this.fetchTransactions(agente, desde, hasta)
     const normalizedTxs   = await this.normalizeTransactions(rawTxs)
     const insertedTxCount = await this.insertTransactions(agente, normalizedTxs)
-    const playerCount     = await this.recomputePlayers(normalizedTxs)
+
+    let playerCount
+    try {
+      playerCount = await this.recomputePlayers(normalizedTxs)
+    } catch (err) {
+      // insertTransactions() already committed its own transaction — this
+      // failure does NOT roll that back. Attach the real count so the
+      // orchestrator can still persist what was actually written to
+      // casino_sync_runs.tx_inserted on the failed row (never silently
+      // reported as 0 just because the run as a whole errored), and so this
+      // is recognizable as "data landed but players are stale" rather than
+      // "nothing happened" — that distinction is what lets
+      // incrementalWindow's recovery checkpoint widen `desde` back to cover
+      // this exact range instead of skipping past it on the next run.
+      throw Object.assign(err, { insertedTxCount, recomputePlayersFailed: true })
+    }
 
     this.log.info({
       agent:          agente,

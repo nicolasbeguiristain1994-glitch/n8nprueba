@@ -319,16 +319,20 @@ describe('ZeusConnector', () => {
       adminUserEnvVar:     'ZEUS_ADMIN_USER',
       adminPasswordEnvVar: 'ZEUS_ADMIN_PASSWORD',
       loginUrl:            'https://admin.zeuscasino.fun/oauth/v2/token',
-      loginClientId:       'client-id',
-      loginClientSecret:   'super-secret-client-secret',
+      loginClientIdEnvVar: 'ZEUS_LOGIN_CLIENT_ID',
+      loginClientSecretEnvVar: 'ZEUS_LOGIN_CLIENT_SECRET',
       loginPanelOrigin:    'https://panel-skin5.zeuscasino.fun',
     }
 
     beforeEach(() => {
+      process.env.ZEUS_LOGIN_CLIENT_ID = 'client-id'
+      process.env.ZEUS_LOGIN_CLIENT_SECRET = 'super-secret-client-secret'
       process.env.ZEUS_ADMIN_USER     = 'admin-user'
       process.env.ZEUS_ADMIN_PASSWORD = 'super-secret-password'
     })
     afterEach(() => {
+      delete process.env.ZEUS_LOGIN_CLIENT_ID
+      delete process.env.ZEUS_LOGIN_CLIENT_SECRET
       delete process.env.ZEUS_ADMIN_USER
       delete process.env.ZEUS_ADMIN_PASSWORD
     })
@@ -345,6 +349,15 @@ describe('ZeusConnector', () => {
       global.fetch = jest.fn().mockResolvedValue({ ok: true, json: async () => ({ access_token: 'fresh-jwt' }) })
       await connector.authenticate()
       expect(connector.playerToken).toBe('fresh-jwt')
+    })
+
+    it('requires OAuth client credentials from environment before making a login request', async () => {
+      delete process.env.ZEUS_LOGIN_CLIENT_SECRET
+      const { pool } = makePool()
+      const connector = new ZeusConnector(AUTOLOGIN_CONFIG, pool)
+      global.fetch = jest.fn()
+      await expect(connector.authenticate()).rejects.toThrow('ZEUS_LOGIN_CLIENT_SECRET')
+      expect(global.fetch).not.toHaveBeenCalled()
     })
 
     it('never leaks the password or client_secret in a network-error message', async () => {
@@ -373,7 +386,7 @@ describe('ZeusConnector', () => {
       } catch (err) {
         expect(err.message).not.toContain('super-secret-password')
         expect(err.message).not.toContain('super-secret-client-secret')
-        expect(err.message).toContain('[REDACTED]')
+        expect(err.message).toContain('HTTP 400')
       }
     })
   })

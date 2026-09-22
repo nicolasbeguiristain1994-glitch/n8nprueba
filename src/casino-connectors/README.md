@@ -251,3 +251,13 @@ Archivos de tests en `tests/casino-connectors/`:
 | `recompute.test.js`              | 6     | idempotencia end-to-end (D1/D2/D3) contra un fake Postgres in-memory |
 
 Todas las llamadas HTTP y los timers de espera de reintentos están mockeados → la suite corre en < 1 segundo.
+
+### Variables OAuth de Zeus y Bet30
+
+Para auto-login configurar también `<PLATAFORMA>_LOGIN_CLIENT_ID` y
+`<PLATAFORMA>_LOGIN_CLIENT_SECRET` (`ZEUS` o `BET30`), además de API key y
+usuario/contraseña. La configuración contiene únicamente los nombres de
+esas variables; no se guardan los valores de las credenciales en ella.
+El modo de token estático sigue disponible si no se configura auto-login.
+Ver la guía de instalación y los pendientes de login de Argenbet/Ganamos
+en `docs/runbooks/casino-api-sync-handoff.md`.
