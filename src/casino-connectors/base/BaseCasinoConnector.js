@@ -109,8 +109,13 @@ class BaseCasinoConnector {
     const withId    = []
     const withoutId = []
 
+    // `source_id` (added by migration 126) is optional: Zeus/Bet30 never set it
+    // (they only have a numeric id_rec), while connectors built against the
+    // Excel-import identity scheme (Argenbet/Ganamos, fase 2/3) set it to the
+    // raw upstream id string so both ingestion paths agree on what a given
+    // record's "real" external id was, even when id_rec is a derived hash.
     for (const tx of normalizedTxs) {
-      const row = [tx.fecha, tx.fecha_hora_utc, agente, tx.username, tx.tipo, tx.monto, tx.raw_detalles, platform]
+      const row = [tx.fecha, tx.fecha_hora_utc, agente, tx.username, tx.tipo, tx.monto, tx.raw_detalles, platform, tx.source_id ?? null]
       if (tx.id_rec) {
         withId.push([tx.id_rec, ...row])
       } else {
@@ -121,6 +126,18 @@ class BaseCasinoConnector {
     const client = await this.pool.connect()
     try {
       await client.query('BEGIN')
+
+      // scripts/import-casino-excel.js takes this exact named advisory lock
+      // for its own write transaction. EVERY API ingestion batch — Zeus/Bet30
+      // (no source_id, withoutId path) included — can race against a
+      // concurrent Excel import of the SAME platform: the importer accepts
+      // Movimientos files for any platform, not just the ones that carry
+      // source_id. Scoping the lock to `hasSourceId` left Zeus/Bet30 batches
+      // free to interleave their pre-insert collision SELECT with an
+      // in-flight Excel import's INSERT (a real TOCTOU race), so it is taken
+      // unconditionally here. Held only for this DB transaction (xact-scoped:
+      // released automatically at COMMIT/ROLLBACK), never across an HTTP call.
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('casino-excel-import'))")
 
       let inserted = 0
       inserted += await this._batchInsertWithId(withId, client)
@@ -163,47 +180,308 @@ class BaseCasinoConnector {
   }
 
   async _batchInsertWithId(rows, client) {
-    let inserted = 0
+    const platform = this.config.name
+    let inserted   = 0
     for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-      const chunk  = rows.slice(i, i + BATCH_SIZE)
+      const rawChunk = rows.slice(i, i + BATCH_SIZE)
+
+      // Postgres rejects "ON CONFLICT DO UPDATE command cannot affect row a
+      // second time" if the SAME (platform, id_rec) appears twice in one
+      // INSERT's VALUES list — even when the two rows are identical (e.g. an
+      // overlapping sync window fetched the same transaction twice in the
+      // same page). Collapse exact duplicates before building the statement;
+      // a same-id_rec pair that DISAGREES on identity fields is a real
+      // collision and must fail loudly here too, not just against what's
+      // already in the DB.
+      const chunk = this._dedupeIntraBatch(platform, rawChunk)
+
+      // Identity-collision guard (fase 2): a connector that sets `source_id`
+      // (Argenbet/Ganamos) can, in principle, compute the same id_rec for two
+      // genuinely different upstream records (hash collision) — or the same
+      // upstream id could show up with different amount/user/type due to a
+      // caller bug. Either way this must be a loud failure, never a silent
+      // `ON CONFLICT` overwrite that mixes the two records' data together.
+      await this._assertNoIdentityCollisions(platform, chunk, client)
+
+      const values = chunk.map((_, j) => {
+        const b = j * 10
+        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8},$${b+9},$${b+10})`
+      }).join(',')
+      const result = await client.query(
+        `INSERT INTO casino_transactions
+           (id_rec, fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles, platform, source_id)
+         VALUES ${values}
+         ON CONFLICT (platform, id_rec) WHERE id_rec IS NOT NULL AND platform IS NOT NULL DO UPDATE
+           SET fecha_hora_utc = COALESCE(casino_transactions.fecha_hora_utc, EXCLUDED.fecha_hora_utc),
+               source_id      = COALESCE(casino_transactions.source_id, EXCLUDED.source_id)
+           WHERE (casino_transactions.fecha_hora_utc IS NULL AND EXCLUDED.fecha_hora_utc IS NOT NULL)
+              OR (casino_transactions.source_id IS NULL AND EXCLUDED.source_id IS NOT NULL)
+         RETURNING (xmax = 0) AS inserted`,
+        chunk.flat(),
+      )
+      // `rowCount` counts every row RETURNING produced, including a backfill
+      // UPDATE that only patched fecha_hora_utc/source_id on an otherwise
+      // unchanged replay (Zeus/Bet30 never carry source_id, so a re-synced
+      // window would re-count as "inserted" on every single run). `xmax = 0`
+      // is Postgres' own tell for "this tuple's transaction never expired an
+      // older version" — true only for a genuine INSERT, false for the
+      // ON CONFLICT DO UPDATE branch — so only those rows count here.
+      inserted += (result.rows ?? []).filter(r => r.inserted).length
+    }
+    return inserted
+  }
+
+  /**
+   * Compares two `monto` values for identity purposes (NOT for persistence).
+   * Postgres NUMERIC(20,2) round-trips as a string like `"100.00"`, while a
+   * JS-side value fetched fresh from an API might be the plain number `100`
+   * (Zeus) or a fixed-decimal string `"100.00"` (Argenbet). A naive
+   * `String(a) !== String(b)` treats `"100.00"` and `100` as different and
+   * would misfire as a collision on every single Zeus re-sync.
+   *
+   * Canonicalizes both sides to an exact decimal string — sign normalized,
+   * leading zeros of the integer part and trailing zeros of the fraction
+   * stripped — WITHOUT ever routing the value through `Number`/`toFixed`.
+   * `Number` only has ~15-17 significant decimal digits of precision, so for
+   * a big-enough amount (e.g. `9007199254740991.01` vs `.02`) `Number(a)`
+   * would silently round both to the same double and misfire as "equal" —
+   * a real dedup that could hide a genuinely different transaction. Money
+   * itself is never rounded here; an invalid/unparsable value never equals
+   * anything, including another invalid value.
+   */
+  _montoEquals(a, b) {
+    const ca = this._canonicalMonto(a)
+    const cb = this._canonicalMonto(b)
+    if (ca === null || cb === null) return false
+    return ca === cb
+  }
+
+  /**
+   * Returns an exact canonical decimal string for `value` (optional sign,
+   * digits, optional fractional digits — no exponent, no thousands
+   * separators), or `null` if it isn't one. String and number inputs both go
+   * through the same regex-based canonicalization; a JS number is only
+   * stringified first (`String(value)`), never divided/multiplied/`toFixed`,
+   * so no precision is lost beyond whatever the number already carried.
+   */
+  _canonicalMonto(value) {
+    if (value == null) return null
+    const raw = typeof value === 'number'
+      ? (Number.isFinite(value) ? String(value) : '')
+      : String(value).trim()
+
+    const match = /^([+-]?)(\d+)(?:\.(\d+))?$/.exec(raw)
+    if (!match) return null
+
+    const [, signRaw, intRaw, fracRaw = ''] = match
+    const intPart  = intRaw.replace(/^0+(?=\d)/, '')
+    const fracPart = fracRaw.replace(/0+$/, '')
+    const isZero   = intPart === '0' && fracPart === ''
+    const sign     = signRaw === '-' && !isZero ? '-' : ''
+
+    return `${sign}${intPart}${fracPart ? '.' + fracPart : ''}`
+  }
+
+  /**
+   * Collapses byte-for-byte-equivalent duplicate rows that share the same
+   * (platform, id_rec) within a single chunk (e.g. two overlapping fetch
+   * pages both returned the same transaction) — Postgres would otherwise
+   * reject the whole INSERT for touching the same conflict target twice, even
+   * when the two rows are identical. A same-id_rec pair that disagrees on
+   * source_id/monto/username/tipo/fecha is a genuine intra-batch collision
+   * and throws immediately, same criteria as `_assertNoIdentityCollisions`.
+   */
+  _dedupeIntraBatch(platform, chunk) {
+    const seen    = new Map()
+    const deduped = []
+
+    for (const row of chunk) {
+      // row layout: [id_rec, fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles, platform, source_id]
+      const [id_rec, fecha, , agente, username, tipo, monto, , , source_id] = row
+      const key   = String(id_rec)
+      const prior = seen.get(key)
+
+      if (!prior) {
+        seen.set(key, row)
+        deduped.push(row)
+        continue
+      }
+
+      const [, priorFecha, , priorAgente, priorUsername, priorTipo, priorMonto, , , priorSourceId] = prior
+      if (this._identityConflicts({ username, tipo, monto, source_id, fecha, agente },
+                                    { username: priorUsername, tipo: priorTipo, monto: priorMonto, source_id: priorSourceId, fecha: priorFecha, agente: priorAgente })) {
+        throw new Error(
+          `casino_transactions identity collision within the same batch on (platform="${platform}", id_rec=${id_rec}): ` +
+          'two incoming records share an id_rec but disagree on source_id, monto, username, tipo, fecha or agente. ' +
+          'Refusing to insert either — investigate the upstream page before retrying.'
+        )
+      }
+      // Otherwise it's an exact duplicate (e.g. overlapping pagination windows) — drop it silently.
+    }
+
+    return deduped
+  }
+
+  /**
+   * Shared discordance rule used by both the intra-batch and DB-lookup
+   * collision guards. Compares `fecha` and `agente` too, not just
+   * source_id/monto/username/tipo: two records CAN share the same id_rec,
+   * amount, user and tipo while disagreeing on fecha or agente (e.g. an
+   * Excel-corrected date for the same underlying player/monto/tipo) — that is
+   * still a genuine identity conflict, not a re-sync no-op, and silently
+   * treating it as a duplicate would let the wrong fecha/agente survive.
+   * `_assertNoIdentityCollisions()` selects `fecha::text` explicitly so this
+   * always compares plain `YYYY-MM-DD` strings, never a node-pg `Date` object
+   * (which would misfire against the string this code uses elsewhere).
+   * `agente` is compared trimmed/lowercased to match the Excel importer's own
+   * normalization.
+   */
+  _identityConflicts(incoming, existing) {
+    const sourceIdMismatch =
+      existing.source_id != null && incoming.source_id != null && String(existing.source_id) !== String(incoming.source_id)
+    const dataMismatch =
+      !this._montoEquals(existing.monto, incoming.monto) ||
+      String(existing.username).toLowerCase() !== String(incoming.username).toLowerCase() ||
+      existing.tipo !== incoming.tipo ||
+      this._normalizeFecha(existing.fecha) !== this._normalizeFecha(incoming.fecha) ||
+      this._normalizeAgente(existing.agente) !== this._normalizeAgente(incoming.agente)
+    return sourceIdMismatch || dataMismatch
+  }
+
+  _normalizeFecha(value) {
+    if (value == null) return ''
+    if (value instanceof Date) return value.toISOString().slice(0, 10)
+    return String(value).slice(0, 10)
+  }
+
+  _normalizeAgente(value) {
+    return String(value ?? '').trim().toLowerCase()
+  }
+
+  async _batchInsertWithoutId(rows, client) {
+    const platform = this.config.name
+    let inserted   = 0
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const rawChunk = rows.slice(i, i + BATCH_SIZE)
+
+      // Same TOCTOU shape as `_dedupeIntraBatch()` above, but keyed on the
+      // (platform, fecha, lower(username), tipo, monto, agente) conflict
+      // target these rows use instead of id_rec — an overlapping fetch
+      // window can hand back the exact same Zeus/Bet30 row twice, and
+      // Postgres rejects an INSERT that touches the same ON CONFLICT target
+      // twice even when the two rows are identical.
+      const chunk = this._dedupeIntraBatchWithoutId(platform, rawChunk)
+
       const values = chunk.map((_, j) => {
         const b = j * 9
         return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8},$${b+9})`
       }).join(',')
       const result = await client.query(
         `INSERT INTO casino_transactions
-           (id_rec, fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles, platform)
+           (fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles, platform, source_id)
          VALUES ${values}
-         ON CONFLICT (platform, id_rec) WHERE id_rec IS NOT NULL AND platform IS NOT NULL DO UPDATE
+         ON CONFLICT (platform, fecha, lower(username), tipo, monto, agente) WHERE id_rec IS NULL AND platform IS NOT NULL DO UPDATE
            SET fecha_hora_utc = EXCLUDED.fecha_hora_utc
-           WHERE casino_transactions.fecha_hora_utc IS NULL`,
+           WHERE casino_transactions.fecha_hora_utc IS NULL AND EXCLUDED.fecha_hora_utc IS NOT NULL
+         RETURNING (xmax = 0) AS inserted`,
         chunk.flat(),
       )
-      inserted += result.rowCount ?? 0
+      // Same xmax=0 reasoning as `_batchInsertWithId()`: a Zeus/Bet30 replay
+      // with no source_id would otherwise ON-CONFLICT-UPDATE (and count as
+      // "inserted") on every single re-sync of the same window.
+      inserted += (result.rows ?? []).filter(r => r.inserted).length
     }
     return inserted
   }
 
-  async _batchInsertWithoutId(rows, client) {
-    let inserted = 0
-    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-      const chunk  = rows.slice(i, i + BATCH_SIZE)
-      const values = chunk.map((_, j) => {
-        const b = j * 8
-        return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8})`
-      }).join(',')
-      const result = await client.query(
-        `INSERT INTO casino_transactions
-           (fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles, platform)
-         VALUES ${values}
-         ON CONFLICT (platform, fecha, lower(username), tipo, monto, agente) WHERE id_rec IS NULL AND platform IS NOT NULL DO UPDATE
-           SET fecha_hora_utc = EXCLUDED.fecha_hora_utc
-           WHERE casino_transactions.fecha_hora_utc IS NULL`,
-        chunk.flat(),
-      )
-      inserted += result.rowCount ?? 0
+  /**
+   * Collapses byte-for-byte-equivalent duplicate rows that share the same
+   * (platform, fecha, lower(username), tipo, monto, agente) conflict target
+   * within a single chunk — the same cardinality-violation Postgres error
+   * `_dedupeIntraBatch()` guards against, just keyed on the composite target
+   * the id_rec-less rows (Zeus/Bet30) use instead. `monto` is canonicalized
+   * before joining the key so `100` and `"100.00"` collapse into the same
+   * bucket, exactly like `_montoEquals()`. Two rows that land in the same
+   * bucket are, by construction, already identical on every field the target
+   * covers — the only field left that could genuinely disagree is
+   * `source_id`, so that's the only contradiction this checks for.
+   */
+  _dedupeIntraBatchWithoutId(platform, chunk) {
+    const seen    = new Map()
+    const deduped = []
+
+    for (const row of chunk) {
+      // row layout: [fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles, platform, source_id]
+      const [fecha, , agente, username, tipo, monto, , , source_id] = row
+      const key = [
+        this._normalizeFecha(fecha),
+        String(username).toLowerCase(),
+        tipo,
+        this._canonicalMonto(monto),
+        this._normalizeAgente(agente),
+      ].join('|')
+      const prior = seen.get(key)
+
+      if (!prior) {
+        seen.set(key, row)
+        deduped.push(row)
+        continue
+      }
+
+      const priorSourceId = prior[8]
+      if (source_id != null && priorSourceId != null && String(source_id) !== String(priorSourceId)) {
+        throw new Error(
+          `casino_transactions identity collision within the same batch on ` +
+          `(platform="${platform}", fecha=${fecha}, username="${username}", tipo="${tipo}", agente="${agente}"): ` +
+          'two incoming records without id_rec share the same identity but disagree on source_id. ' +
+          'Refusing to insert either — investigate the upstream page before retrying.'
+        )
+      }
+      // Otherwise it's an exact duplicate (e.g. overlapping pagination windows) — drop it silently.
     }
-    return inserted
+
+    return deduped
+  }
+
+  /**
+   * Looks up any row already persisted under the same (platform, id_rec) as
+   * this incoming chunk and refuses to proceed if it disagrees on the fields
+   * that establish identity: `source_id` (when both sides have one), the
+   * core financial shape of the transaction (`monto`/`username`/`tipo`), or
+   * `fecha`/`agente`. Throwing here aborts the whole `insertTransactions()` call — the caller's
+   * BEGIN/COMMIT/ROLLBACK wrapper turns this into a full rollback, so nothing
+   * from this batch is partially applied.
+   */
+  async _assertNoIdentityCollisions(platform, chunk, client) {
+    const idRecs = [...new Set(chunk.map(row => String(row[0])))]
+    if (!idRecs.length) return
+
+    const { rows: existing = [] } = await client.query(
+      `SELECT id_rec::text AS id_rec, fecha::text AS fecha, agente, source_id, monto, username, tipo
+       FROM casino_transactions
+       WHERE platform = $1 AND id_rec = ANY($2::bigint[])`,
+      [platform, idRecs],
+    )
+    if (!existing || !existing.length) return
+
+    const byIdRec = new Map(existing.map(row => [String(row.id_rec), row]))
+
+    for (const row of chunk) {
+      // row layout: [id_rec, fecha, fecha_hora_utc, agente, username, tipo, monto, raw_detalles, platform, source_id]
+      const [id_rec, fecha, , agente, username, tipo, monto, , , source_id] = row
+      const prev = byIdRec.get(String(id_rec))
+      if (!prev) continue
+
+      if (this._identityConflicts({ username, tipo, monto, source_id, fecha, agente }, prev)) {
+        throw new Error(
+          `casino_transactions identity collision on (platform="${platform}", id_rec=${id_rec}): ` +
+          'an existing row disagrees with the incoming record on source_id, monto, username, tipo, fecha or agente. ' +
+          'Refusing to overwrite — this usually means two different upstream records produced the same ' +
+          'id_rec (hash collision) or a caller bug. Investigate manually before retrying; no credentials ' +
+          'or tokens are part of this message.'
+        )
+      }
+    }
   }
 
   _validateEnvVars(varNames) {

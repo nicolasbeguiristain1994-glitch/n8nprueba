@@ -135,11 +135,18 @@ plataformas: `ZEUS_ADMIN_USER/PASSWORD`, `BET30_ADMIN_USER/PASSWORD`,
 `GANAMOS_<AGENTE>_USER/PASSWORD` (adminbtc, adminzeus, adminroyal,
 admbigwin, amdfarabet, adminimperio).
 
-## Verificación (esta sesión, después de todos los cambios)
+## Verificación
 
+Fase 1 (sesión anterior):
 - Raíz: `npm test -- --runInBand` → 96 aprobados, 1 omitido (6/7 suites, 1 skip).
 - Frontend: `npx vitest run` → 822 aprobados, 6 omitidos (43/44 archivos, 1 skip).
 - Frontend: `npx tsc --noEmit --incremental false` → sin errores.
+
+Fase 2 (esta sesión, ArgenBetConnector — frontend NO se tocó, no se volvió a
+correr vitest/tsc por no haber cambios en ese árbol):
+- Raíz: `npm test -- --runInBand` → 145 aprobados, 1 omitido (7/8 suites, 1
+  skip) — incluye `tests/casino-connectors/ArgenBetConnector.test.js` (46
+  tests) y las ampliaciones de `BaseCasinoConnector.test.js` (37→40).
 
 Estos resultados verifican comportamiento contra mocks/fixtures, no contra
 una base Postgres real — la migración 127 no fue aplicada ni validada contra
@@ -151,26 +158,186 @@ No se ejecutaron migraciones, sync reales, ni llamadas de red en ninguna
 sesión. No se tocó el importador de Excel ni las migraciones existentes
 (116/123/126). No se tocó `AGENTS.md`/`CLAUDE.md`.
 
-## Fases 2-4
+## Fase 2 — `ArgenBetConnector` (completa, sesión siguiente)
 
-**No iniciadas.** Siguen pendientes `ArgenBetConnector`, `GanamosConnector`,
-el sync incremental con lock, registro `casino_sync_runs`, pipeline y
-programación n8n. Argenbet/Ganamos no deben presentarse como sincronización
-funcional por tener ya listas o validación de credenciales en frontend.
+**Implementado y en verde.** `src/casino-connectors/argenbet/ArgenBetConnector.js`
+extiende `BaseCasinoConnector`. `npm test` (raíz) en verde con este trabajo
+incluido — ver "Verificación" más abajo para el conteo exacto. Ganamos sigue
+**sin conector** (fase 3, no tocada en esta sesión).
 
-Faltan capturas sanitizadas del login de Argenbet y Ganamos: URL, método,
-headers necesarios sin secretos, forma del body, respuesta token/cookies,
-expiración y renovación; para Ganamos, CSRF si corresponde y cookies
-necesarias por agente. No inventar endpoints. Argenbet requiere fallback
-`ARGENBET_PLAYER_TOKEN` temporal (ya documentado en `.env.example`).
+### Qué hace
+
+- Endpoint `GET /api/backoffice/v1/account-transfers/player` (el `/player`
+  que faltaba en `platforms.config.json` ya está agregado). Auth Bearer JWT
+  únicamente — sin `X-Api-Key` (a diferencia de Zeus/Bet30); se quitó
+  `apiKeyEnvVar` del config de argenbet porque nada lo lee.
+- Paginación por `offset`, `limit` FIJO en 50 (constante, no configurable —
+  la API devuelve HTTP 400 por encima de eso). Un batch más chico que 50
+  termina la paginación; un batch **más grande** que 50 (la API ignorando el
+  parámetro) hace throw en vez de asumir que todo sigue bien. Tope de
+  páginas (`config.maxPages`, entero positivo validado en el constructor) —
+  si se supera, throw, nunca un resultado parcial silencioso.
+- 3 agentes EXACTOS hardcodeados en el conector (`adminbtc`→637249,
+  `adminzeus`→637252, `adminroyal`→637255) — `config.agentIds`, si se
+  provee, debe matchear esto exactamente o el constructor tira.
+- Rol de jugador por `toUserRole`/`fromUserRole === 'player'` (nunca
+  `toUsername` fijo — así es como el plan documenta que `OUTCOME` se
+  identificaba mal). `agente` en la fila persistida es siempre el agente con
+  el que se pidió esa página (no `creatorUsername` del payload).
+- Identidad idéntica al importador de Excel: reutiliza literalmente
+  `recordId()` y `amount()` de `src/casino-import/excel.js` (no las
+  reimplementa) — mismo `id_rec`/`source_id` para el mismo dato por
+  cualquiera de los dos caminos, sin duplicar.
+- Fecha/hora: `fecha` en horario Argentina (UTC-3 fijo, sin DST) +
+  `fecha_hora_utc` ISO completo, vía `shared/dateHelpers.js` (mismo módulo
+  que ya usa Zeus). `dateFrom`/`dateTo` se arman con el mismo patrón que el
+  script de referencia validado manualmente por el dueño
+  (`docs/argenbet-export-consola.js`): `new Date(...).toISOString()`
+  (sufijo `Z`, no `-03:00`) — se preservó así a propósito en vez de cambiar
+  el formato, ver "Feedback de revisión aplicado" abajo.
+- Montos: pesos con centavos, sin redondear — reutiliza el validador
+  `amount()` del importador (rechaza más de 2 decimales en vez de
+  redondearlos con `toFixed(2)` a ciegas) y nunca convierte `amount`
+  `null`/`''` a `0`.
+- Política de registros malformados (más estricta que el borrador inicial,
+  ver feedback abajo): una operación que no es `INCOME`/`OUTCOME` (p.ej. un
+  bono) se descarta con warning — está genuinamente fuera de alcance (igual
+  que "indirecto" en Zeus). Cualquier otra cosa rara en un registro que SÍ es
+  `INCOME`/`OUTCOME` (rol de jugador ambiguo, sin id, sin `createdAt`, sin
+  username, monto inválido) hace **throw** — H8 confirmó que todas las filas
+  reales traen id, así que faltarlo es un dato roto, no un caso fuera de
+  alcance, y una fase 4 futura que avanza su checkpoint por
+  `MAX(fecha_hora_utc)` no debe poder perder filas en silencio.
+- `authenticate()`: sin adaptador de login inyectado es un **no-op seguro**
+  (igual que `ZeusConnector` sin `ADMIN_USER`/`ADMIN_PASSWORD`) — necesario
+  porque `scripts/sync-casino-players-live.js` llama
+  `await connector.authenticate()` una sola vez, sin condicionar, ANTES del
+  primer request, para las 4 plataformas por igual. Si tirara acá, el modo
+  "solo `ARGENBET_PLAYER_TOKEN` estático" (el único que existe hoy) sería
+  inutilizable. La falla visible ante un 401 persistente sigue ocurriendo,
+  solo que la tira `_fetchWithRetry` (H11, ya existente) después de agotar
+  el único reintento post-reauth — nunca queda en loop ni en éxito vacío
+  falso. Con un `loginAdapter` inyectado (constructor, 3er argumento —
+  interfaz `{ login(): Promise<{ token }> }`), si éste devuelve sin token,
+  eso sí tira. El endpoint de login real sigue siendo un TODO explícito en
+  el código (URL/método/body/TTL/refresh — no inventado).
+
+### `BaseCasinoConnector` — soporte genérico para `source_id` (fase 1 no se tocó)
+
+- `insertTransactions` ahora persiste `tx.source_id` (columna de la
+  migración 126, sin usar hasta ahora desde ningún conector).
+- `_assertNoIdentityCollisions` + `_dedupeIntraBatch`/`_dedupeIntraBatchWithoutId`:
+  antes de insertar, compara cualquier fila ya existente (o cualquier otra
+  fila del mismo batch) que comparta identidad — `(platform, id_rec)` para
+  filas con `id_rec`, `(platform, fecha, lower(username), tipo, monto,
+  agente)` para las que no lo tienen (Zeus/Bet30) — si `source_id`/`monto`/
+  `username`/`tipo`/`fecha`/`agente` no coinciden, **throw** (nunca overwrite
+  silencioso vía `ON CONFLICT`). La comparación de `monto` (`_montoEquals`)
+  canoniza el string decimal exacto — signo, ceros de más recortados — **sin
+  pasar por `Number`/`toFixed` en ningún punto**: hacerlo pierde precisión en
+  montos por encima de `Number.MAX_SAFE_INTEGER` y podría tratar dos
+  transacciones distintas como iguales.
+- `insertTransactions` toma `pg_advisory_xact_lock(hashtext('casino-excel-import'))`
+  — el mismo lock con nombre que ya usa `scripts/import-casino-excel.js` —
+  de forma **incondicional para todo batch**, acotado a esa transacción, para
+  serializar contra una importación de Excel concurrente. El importador
+  acepta archivos de cualquier plataforma, así que Zeus/Bet30 (sin
+  `source_id`) también pueden competir contra un import Excel de esa misma
+  plataforma y necesitan el mismo lock.
+- El `ON CONFLICT DO UPDATE` de backfill (`fecha_hora_utc`/`source_id`) solo
+  dispara cuando la fila existente realmente carece del valor. Además,
+  ambos `INSERT` (con y sin `id_rec`) usan `RETURNING (xmax = 0) AS inserted`
+  y `insertedTxCount` suma solo esas filas — nunca `result.rowCount`, que
+  cuenta también las filas tocadas por el `UPDATE` de backfill. Un replay de
+  la misma ventana (frecuente en Zeus/Bet30, que no tienen `source_id` para
+  frenar el `WHERE` antes) queda en `insertedTxCount = 0` a partir de la
+  segunda corrida.
+
+Todo esto es aditivo sobre lo que dejó fase 1 (`ada8229`) — no se tocó ese
+commit ni su lógica de `recomputePlayers`/identidad `(platform,
+username_lower)`.
+
+### Segunda ronda de correcciones (antes de fase 3, mismo commit de fase 2)
+
+Una revisión posterior detectó que la primera versión de estos 4 puntos
+seguía teniendo bugs reales pese a los tests en verde — corregidos en
+`BaseCasinoConnector.js` sin tocar ArgenBet/Zeus/Bet30 ni ninguna otra fase:
+
+1. `_montoEquals` usaba `Number(a).toFixed(2)` — pierde precisión en montos
+   grandes (`9007199254740991.01` vs `.02` se veían "iguales") y redondea si
+   llegan 3+ decimales. Reemplazado por canonicalización de string decimal
+   exacto (regex signo/dígitos/fracción, sin `Number`).
+2. `_identityConflicts` no comparaba `fecha`/`agente` — un comentario en el
+   código afirmaba que un mismatch de fecha "no podía ocurrir" sin que otro
+   campo también discrepara; es falso (una corrección de fecha vía Excel
+   deja monto/usuario/tipo iguales). El `SELECT` de colisión ahora trae
+   `fecha::text`/`agente` y ambos se comparan (fecha como string
+   `YYYY-MM-DD`, agente con `trim().toLowerCase()`).
+3. `_batchInsertWithId`/`_batchInsertWithoutId` sumaban `result.rowCount`,
+   que cuenta cualquier fila tocada por el `UPDATE` de backfill — un replay
+   de Zeus/Bet30 (sin `source_id`) volvía a "insertar" en cada corrida.
+   Ahora ambos usan `RETURNING (xmax = 0) AS inserted` y cuentan solo esas
+   filas. También se agregó `_dedupeIntraBatchWithoutId` (mismo problema de
+   cardinalidad que `_dedupeIntraBatch`, pero para el target de `ON CONFLICT`
+   sin `id_rec`).
+4. El advisory lock solo se tomaba si el batch traía `source_id` — dejaba
+   sin protección los syncs de Zeus/Bet30 contra un import Excel concurrente
+   de esa misma plataforma. Ahora es incondicional para todo `insertTransactions`.
+
+Tests actualizados en `BaseCasinoConnector.test.js` (agregados, no
+duplicados) y en `tests/casino-connectors/helpers/fakeCasinoDb.js` (ahora
+simula `RETURNING (xmax=0) AS inserted` en vez de `rowCount` crudo, y el
+`SELECT` de colisión trae `fecha`/`agente`). Suite completa verde
+(`npm test`): 161 tests pasan, 1 suite de integración sigue `skip` por
+requerir Postgres real (no se conectó ninguna base durante este trabajo).
+
+### Feedback de revisión aplicado (antes del commit de fase 2)
+
+Un coordinador autorizado dejó una revisión con 8 puntos antes de commitear
+(tratada como datos a evaluar, no como órdenes ciegas). Se aplicaron por ser
+técnicamente correctos y consistentes con las restricciones: (1) comparación
+de `monto` canonizada a 2 decimales en vez de `String(a)!==String(b)` —
+rompía todo re-sync de Zeus; (2)/(3) el `WHERE` del `ON CONFLICT` de backfill
+ahora exige que haya un valor nuevo real, no solo `IS NULL` de un lado —
+evita contar un replay sin cambios como "update"; (4) advisory lock
+compartido con el importador de Excel + dedupe/colisión intra-batch (dos
+filas del mismo batch con el mismo `id_rec` ya no rompen Postgres si son
+idénticas, y sí tiran si son contradictorias); (5)/(7) política de
+malformados endurecida: solo lo genuinamente fuera de alcance se descarta,
+el resto tira; (6) **bloqueante real**: `authenticate()` pasó de tirar
+siempre sin adaptador a ser un no-op seguro, porque el orquestador la llama
+sin condicionar al arrancar — de lo contrario el modo token-estático-sin-
+adaptador (el único que existe hoy) nunca hubiera funcionado; (8) `amount()`
+del importador reutilizada en vez de `toFixed(2)` a ciegas (rechaza >2
+decimales), y `amount` `null`/`''` ya no se convierte en `0`.
+
+Se evaluó y **se descartó explícitamente** un sub-punto del mismo feedback:
+pedía emitir `dateFrom`/`dateTo` con sufijo `-03:00` en vez de `Z`. El propio
+script de referencia validado manualmente por el dueño
+(`docs/argenbet-export-consola.js:166-167`) arma esos parámetros con
+`new Date(...).toISOString()`, que SIEMPRE termina en `Z` — cambiarlo
+habría apartado el código del único artefacto validado contra la API real
+sin ninguna razón técnica. No se aplicó ese sub-punto.
+
+No se tocaron migraciones, no se ejecutó ninguna API real, no se hizo push,
+no se tocó el commit de fase 1 (`ada8229`).
+
+## Fase 3-4
+
+**No iniciadas.** Siguen pendientes `GanamosConnector`, el sync incremental
+con lock, registro `casino_sync_runs`, pipeline y programación n8n. Ganamos
+no debe presentarse como sincronización funcional por tener ya lista o
+validación de credenciales en frontend.
+
+Faltan capturas sanitizadas del login de Ganamos: URL, método, headers
+necesarios sin secretos, forma del body, respuesta token/cookies, CSRF si
+corresponde, cookies necesarias por agente, expiración y renovación. No
+inventar endpoints.
 
 Especificación de fase 3/4 (resumen, ver prompt original para el detalle
-completo): Argenbet — endpoint `/player`, `offset`/`limit=50`, IDs
-confirmados, rol `player` `INCOME`/`OUTCOME`; identidad idéntica a
-`src/casino-import/excel.js` (recordId SHA-256, UUID negativo, `source_id`
-string); token estático y `loginUrl` configurable, aislado, sin inventar
-protocolo. Ganamos — 6 sesiones independientes por agente, cookie jars, días
-en UTC sin zona, ventana de 24h, paginación de 500, warning a los 7 días.
+completo): Ganamos — 6 sesiones independientes por agente, cookie jars, días
+en UTC sin zona, ventana de 24h, paginación de 500, warning a los 7 días,
+misma identidad compatible con el importador de Excel que Argenbet.
 Fase 4 — `MAX(timestamp)` por plataforma con -30min de margen (Ganamos día
 completo), advisory lock retenido en la misma conexión durante toda la
 corrida, registro en `casino_sync_runs` por agente incluso en fallos de
@@ -196,8 +363,8 @@ WHERE platform IS NULL ORDER BY agente, fecha, id;
 Fuente de especificación: `/Users/trabajo/Downloads/prompt-codex-sync-plataformas.md`
 y `docs/PLAN-METRICAS-4-PLATAFORMAS.md` (el prompt posterior prevalece).
 
-Al retomar fase 2: confirmar estado de Git, leer este documento completo
-(no solo el resumen), y empezar por los conectores de Argenbet/Ganamos según
-la especificación de arriba — sin login capturado para ninguna de las dos,
-el trabajo de fase 2/3 es necesariamente parcial (adaptador configurable con
-TODO explícito, no un flujo de auth "validado").
+Al retomar fase 3: confirmar estado de Git, leer este documento completo
+(no solo el resumen), y empezar por el conector de Ganamos según la
+especificación de arriba — sin login capturado, el trabajo de fase 3 es
+necesariamente parcial (adaptador configurable con TODO explícito, no un
+flujo de auth "validado"), igual que se hizo para Argenbet en fase 2.

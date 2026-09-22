@@ -74,18 +74,24 @@
       "type": "argenbet",
       "baseUrl": "https://admin.argenbet.net",
       "baseUrlEnvVar": "ARGENBET_API_BASE",
-      "apiKeyEnvVar": "ARGENBET_API_KEY",
       "playerTokenEnvVar": "ARGENBET_PLAYER_TOKEN",
       "adminUserEnvVar": "ARGENBET_ADMIN_USER",
       "adminPasswordEnvVar": "ARGENBET_ADMIN_PASSWORD",
-      "endpoint": "/api/backoffice/v1/account-transfers",
+      "loginUrl": null,
+      "endpoint": "/api/backoffice/v1/account-transfers/player",
       "timezone": "-03",
+      "maxPages": 500,
+      "agentIds": {
+        "adminbtc": "637249",
+        "adminzeus": "637252",
+        "adminroyal": "637255"
+      },
       "responseMapping": {
-        "idField": "id",
-        "usernameField": "toUsername",
-        "agentField": "fromUsername",
+        "idField": "id | transferId | transactionId | uuid (primer campo presente)",
+        "usernameField": "toUsername si toUserRole==='player', si no fromUsername (H10 — NUNCA toUsername fijo)",
+        "agentField": "derivado del agentUserId de la página solicitada (agentIds), no de creatorUsername",
         "valueField": "amount",
-        "detailsField": "note",
+        "detailsField": "operation",
         "dateField": "createdAt"
       }
     }

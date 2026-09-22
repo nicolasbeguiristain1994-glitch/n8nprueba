@@ -347,6 +347,259 @@ describe('BaseCasinoConnector', () => {
       // BASE_CONFIG.name === 'test' — last positional param for the id_rec path
       expect(insertCall[1]).toContain('test')
     })
+
+    // ── fase 2: identity collisions (source_id) ────────────────────────────
+
+    describe('_assertNoIdentityCollisions() — fase 2 (source_id)', () => {
+      it('does NOT flag a collision when a plain JS number (Zeus-style monto) matches a Postgres NUMERIC string read back as "100.00"', async () => {
+        // Regression guard: node-pg returns NUMERIC columns as strings
+        // ("100.00"), while a connector might normalize monto as a plain JS
+        // number (100, Zeus) or a fixed-decimal string ("100.00", Argenbet).
+        // A naive String(a) !== String(b) would treat "100.00" and 100 as
+        // different and misfire as a collision on every single Zeus re-sync.
+        // `agente` on the persisted row is always insertTransactions()'s own
+        // `agente` argument ('ag' below), never tx.agente — so the DB fixture
+        // must agree with 'ag' here to isolate the monto canonicalization
+        // being tested.
+        const existingRow = { id_rec: 'r1', fecha: '2025-01-01', agente: 'ag', source_id: null, monto: '100.00', username: 'player1', tipo: 'carga' }
+        const client = makeClient({
+          query: jest.fn()
+            .mockResolvedValueOnce({ rowCount: 0 })                 // BEGIN
+            .mockResolvedValueOnce({ rowCount: 0 })                 // advisory lock
+            .mockResolvedValueOnce({ rows: [existingRow] })         // collision-check SELECT
+            .mockResolvedValueOnce({ rows: [{ inserted: true }] })  // INSERT
+            .mockResolvedValueOnce({ rowCount: 0 }),                // COMMIT
+        })
+        const pool = { connect: jest.fn().mockResolvedValue(client) }
+        const connector = new TestConnector(BASE_CONFIG, pool)
+
+        await expect(
+          connector.insertTransactions('ag', [txWith({ id_rec: 'r1', monto: 100, username: 'player1', tipo: 'carga' })])
+        ).resolves.not.toThrow()
+      })
+
+      it('throws when an existing row disagrees on monto even after canonicalizing decimals', async () => {
+        const existingRow = { id_rec: 'r1', fecha: '2025-01-01', agente: 'ag', source_id: null, monto: '100.00', username: 'player1', tipo: 'carga' }
+        const client = makeClient({
+          query: jest.fn()
+            .mockResolvedValueOnce({ rowCount: 0 })  // BEGIN
+            .mockResolvedValueOnce({ rowCount: 0 })  // advisory lock
+            .mockResolvedValueOnce({ rows: [existingRow] })
+            .mockResolvedValue({ rowCount: 0 }),
+        })
+        const pool = { connect: jest.fn().mockResolvedValue(client) }
+        const connector = new TestConnector(BASE_CONFIG, pool)
+
+        await expect(
+          connector.insertTransactions('ag', [txWith({ id_rec: 'r1', monto: 999.99, username: 'player1', tipo: 'carga' })])
+        ).rejects.toThrow(/identity collision/)
+      })
+
+      it('the ON CONFLICT clause only backfills fecha_hora_utc/source_id when the existing row is actually missing them (never counts a no-op replay as an update)', async () => {
+        const { connector, client } = makeConnector()
+        await connector.insertTransactions('ag', [txWith({ id_rec: 'abc' })])
+        const insertCall = client.query.mock.calls.find(c => c[0].includes('INSERT'))
+        expect(insertCall[0]).toMatch(/WHERE \(casino_transactions\.fecha_hora_utc IS NULL AND EXCLUDED\.fecha_hora_utc IS NOT NULL\)/)
+        expect(insertCall[0]).toMatch(/OR \(casino_transactions\.source_id IS NULL AND EXCLUDED\.source_id IS NOT NULL\)/)
+      })
+    })
+
+    // ── fase 2 fix #1: exact decimal canonicalization (no Number/toFixed) ──
+
+    describe('_montoEquals() / _canonicalMonto() — exact decimal canonicalization', () => {
+      it('treats "100.00" and 100 as equal (Zeus number vs Postgres NUMERIC string)', () => {
+        const { connector } = makeConnector()
+        expect(connector._montoEquals('100.00', 100)).toBe(true)
+      })
+
+      it('treats "123.40" and 123.4 as equal after stripping trailing fraction zeros', () => {
+        const { connector } = makeConnector()
+        expect(connector._montoEquals('123.40', 123.4)).toBe(true)
+      })
+
+      it('treats two large decimals that differ only past Number precision as DIFFERENT (never rounds through Number/toFixed)', () => {
+        const { connector } = makeConnector()
+        expect(connector._montoEquals('9007199254740991.01', '9007199254740991.02')).toBe(false)
+      })
+
+      it('never treats null/invalid monto as equal, even to another invalid value', () => {
+        const { connector } = makeConnector()
+        expect(connector._montoEquals(null, null)).toBe(false)
+        expect(connector._montoEquals(undefined, 100)).toBe(false)
+        expect(connector._montoEquals('not-a-number', 'not-a-number')).toBe(false)
+      })
+    })
+
+    // ── fase 2 fix #2: fecha/agente are part of identity ────────────────────
+
+    describe('_identityConflicts() — fecha/agente are part of identity', () => {
+      it('throws when an existing row disagrees only on fecha (same monto/username/tipo/agente)', async () => {
+        const existingRow = { id_rec: 'r1', fecha: '2025-01-02', agente: 'ag', source_id: null, monto: '100.00', username: 'player1', tipo: 'carga' }
+        const client = makeClient({
+          query: jest.fn()
+            .mockResolvedValueOnce({ rowCount: 0 })  // BEGIN
+            .mockResolvedValueOnce({ rowCount: 0 })  // advisory lock
+            .mockResolvedValueOnce({ rows: [existingRow] })
+            .mockResolvedValue({ rowCount: 0 }),
+        })
+        const pool = { connect: jest.fn().mockResolvedValue(client) }
+        const connector = new TestConnector(BASE_CONFIG, pool)
+
+        await expect(
+          connector.insertTransactions('ag', [txWith({ id_rec: 'r1', fecha: '2025-01-01', monto: 100, username: 'player1', tipo: 'carga' })])
+        ).rejects.toThrow(/identity collision/)
+      })
+
+      it('throws when an existing row disagrees only on agente (same fecha/monto/username/tipo)', async () => {
+        // `agente` on the persisted row is insertTransactions()'s own `agente`
+        // argument ('ag' below), never tx.agente — 'other-agente' here
+        // simulates a row that was originally inserted under a different
+        // agente argument.
+        const existingRow = { id_rec: 'r1', fecha: '2025-01-01', agente: 'other-agente', source_id: null, monto: '100.00', username: 'player1', tipo: 'carga' }
+        const client = makeClient({
+          query: jest.fn()
+            .mockResolvedValueOnce({ rowCount: 0 })  // BEGIN
+            .mockResolvedValueOnce({ rowCount: 0 })  // advisory lock
+            .mockResolvedValueOnce({ rows: [existingRow] })
+            .mockResolvedValue({ rowCount: 0 }),
+        })
+        const pool = { connect: jest.fn().mockResolvedValue(client) }
+        const connector = new TestConnector(BASE_CONFIG, pool)
+
+        await expect(
+          connector.insertTransactions('ag', [txWith({ id_rec: 'r1', fecha: '2025-01-01', monto: 100, username: 'player1', tipo: 'carga' })])
+        ).rejects.toThrow(/identity collision/)
+      })
+
+      it('does NOT flag a collision when agente only differs by case/whitespace (normalized trim+lowercase)', async () => {
+        const existingRow = { id_rec: 'r1', fecha: '2025-01-01', agente: '  AG ', source_id: null, monto: '100.00', username: 'player1', tipo: 'carga' }
+        const client = makeClient({
+          query: jest.fn()
+            .mockResolvedValueOnce({ rowCount: 0 })  // BEGIN
+            .mockResolvedValueOnce({ rowCount: 0 })  // advisory lock
+            .mockResolvedValueOnce({ rows: [existingRow] })
+            .mockResolvedValueOnce({ rows: [{ inserted: true }] })
+            .mockResolvedValueOnce({ rowCount: 0 }),
+        })
+        const pool = { connect: jest.fn().mockResolvedValue(client) }
+        const connector = new TestConnector(BASE_CONFIG, pool)
+
+        await expect(
+          connector.insertTransactions('ag', [txWith({ id_rec: 'r1', fecha: '2025-01-01', monto: 100, username: 'player1', tipo: 'carga' })])
+        ).resolves.not.toThrow()
+      })
+
+      it('throws on two rows in the SAME batch sharing an id_rec but disagreeing on fecha (not just against the DB)', async () => {
+        const { connector } = makeConnector()
+        const txA = txWith({ id_rec: 'dup1', fecha: '2025-01-01' })
+        const txB = txWith({ id_rec: 'dup1', fecha: '2025-01-02' })
+        await expect(connector.insertTransactions('ag', [txA, txB]))
+          .rejects.toThrow(/identity collision within the same batch/)
+      })
+    })
+
+    // ── fase 2 fix #3: insertedTxCount counts only real INSERTs ─────────────
+
+    describe('insertedTxCount — counts only real INSERTs (RETURNING xmax=0), never a backfill-only UPDATE', () => {
+      it('counts 0 for a WITH-id_rec row whose ON CONFLICT branch only backfilled columns (Zeus-style replay)', async () => {
+        const client = makeClient({
+          query: jest.fn()
+            .mockResolvedValueOnce({ rowCount: 0 })                    // BEGIN
+            .mockResolvedValueOnce({ rowCount: 0 })                    // advisory lock
+            .mockResolvedValueOnce({ rows: [] })                       // collision-check SELECT
+            .mockResolvedValueOnce({ rows: [{ inserted: false }] })    // INSERT: backfill only
+            .mockResolvedValueOnce({ rowCount: 0 }),                   // COMMIT
+        })
+        const pool = { connect: jest.fn().mockResolvedValue(client) }
+        const connector = new TestConnector(BASE_CONFIG, pool)
+
+        const result = await connector.insertTransactions('ag', [txWith({ id_rec: 'abc' })])
+        expect(result).toBe(0)
+      })
+
+      it('counts 1 for a WITH-id_rec row that RETURNING reports as a genuine insert', async () => {
+        const client = makeClient({
+          query: jest.fn()
+            .mockResolvedValueOnce({ rowCount: 0 })
+            .mockResolvedValueOnce({ rowCount: 0 })
+            .mockResolvedValueOnce({ rows: [] })
+            .mockResolvedValueOnce({ rows: [{ inserted: true }] })
+            .mockResolvedValueOnce({ rowCount: 0 }),
+        })
+        const pool = { connect: jest.fn().mockResolvedValue(client) }
+        const connector = new TestConnector(BASE_CONFIG, pool)
+
+        const result = await connector.insertTransactions('ag', [txWith({ id_rec: 'abc' })])
+        expect(result).toBe(1)
+      })
+
+      it('counts 0 for a WITHOUT-id_rec row (Zeus/Bet30, no source_id) whose ON CONFLICT branch only backfilled fecha_hora_utc — a replay of the same window must never look like new data', async () => {
+        const client = makeClient({
+          query: jest.fn()
+            .mockResolvedValueOnce({ rowCount: 0 })                    // BEGIN
+            .mockResolvedValueOnce({ rowCount: 0 })                    // advisory lock
+            .mockResolvedValueOnce({ rows: [{ inserted: false }] })    // INSERT: backfill only
+            .mockResolvedValueOnce({ rowCount: 0 }),                   // COMMIT
+        })
+        const pool = { connect: jest.fn().mockResolvedValue(client) }
+        const connector = new TestConnector(BASE_CONFIG, pool)
+
+        const result = await connector.insertTransactions('ag', [txWith({ id_rec: null })])
+        expect(result).toBe(0)
+      })
+    })
+
+    // ── fase 2 fix #3b: intra-batch dedup for id_rec-less rows too ──────────
+
+    describe('_dedupeIntraBatchWithoutId() — collapses exact duplicates for id_rec-less rows', () => {
+      it('collapses two identical without-id_rec rows into a single INSERT VALUES entry', async () => {
+        const { connector, client } = makeConnector()
+        await connector.insertTransactions('ag', [txWith({ id_rec: null }), txWith({ id_rec: null })])
+        const insertCall = client.query.mock.calls.find(c => c[0].includes('ON CONFLICT (platform, fecha, lower(username)'))
+        expect(insertCall[1].length).toBe(9) // one row's worth of params, not two
+      })
+
+      it('collapses duplicates even when monto is given as a number vs the equivalent NUMERIC string', async () => {
+        const { connector, client } = makeConnector()
+        await connector.insertTransactions('ag', [
+          txWith({ id_rec: null, monto: 100 }),
+          txWith({ id_rec: null, monto: '100.00' }),
+        ])
+        const insertCall = client.query.mock.calls.find(c => c[0].includes('ON CONFLICT (platform, fecha, lower(username)'))
+        expect(insertCall[1].length).toBe(9)
+      })
+
+      it('throws when two without-id_rec rows share the same identity but disagree on source_id', async () => {
+        const { connector } = makeConnector()
+        const txA = txWith({ id_rec: null, source_id: 'a' })
+        const txB = txWith({ id_rec: null, source_id: 'b' })
+        await expect(connector.insertTransactions('ag', [txA, txB]))
+          .rejects.toThrow(/identity collision within the same batch/)
+      })
+    })
+
+    // ── fase 2 fix #4: advisory lock covers ALL API ingestion, not just source_id ──
+
+    describe('advisory lock — unconditional, covers Zeus/Bet30 (no source_id) too', () => {
+      it('acquires the same named advisory lock the Excel importer uses even for a batch with no source_id at all', async () => {
+        const { connector, client } = makeConnector()
+        await connector.insertTransactions('ag', [txWith({ id_rec: null })]) // txWith() carries no source_id
+        const ops = client.query.mock.calls.map(c => c[0].trim())
+        const beginIdx = ops.findIndex(q => q.startsWith('BEGIN'))
+        const lockIdx  = ops.findIndex(q => q.includes('pg_advisory_xact_lock'))
+        const insertIdx = ops.findIndex(q => q.includes('INSERT INTO casino_transactions'))
+        expect(lockIdx).toBeGreaterThan(beginIdx)
+        expect(lockIdx).toBeLessThan(insertIdx)
+        expect(ops[lockIdx]).toContain("hashtext('casino-excel-import')")
+      })
+
+      it('never issues the advisory-lock query outside the BEGIN/COMMIT transaction', async () => {
+        const { connector, client, pool } = makeConnector()
+        await connector.insertTransactions('ag', [txWith({ id_rec: null })])
+        expect(pool.query).not.toHaveBeenCalledWith(expect.stringContaining('pg_advisory_xact_lock'))
+        expect(client.query.mock.calls.some(c => c[0].includes('pg_advisory_xact_lock'))).toBe(true)
+      })
+    })
   })
 
   // ── recomputePlayers ───────────────────────────────────────────────────────
