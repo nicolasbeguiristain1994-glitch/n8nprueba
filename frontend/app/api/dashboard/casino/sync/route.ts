@@ -28,15 +28,19 @@ import path from 'path'
  *   ARGENBET_PLAYER_TOKEN                                     (token estático temporal —
  *     el endpoint de login todavía no está confirmado, ver plan H10/§Fase 2)
  *   ARGENBET_ADMIN_USER + ARGENBET_ADMIN_PASSWORD             (auto-login — TODO, no inventado)
+ *   GANAMOS_<AGENTE>_SESSION_COOKIE                            (por agente, atajo de desarrollo —
+ *     el login real todavía no está confirmado, ver GanamosConnector._loginAgent() y plan Fase 3)
  *   GANAMOS_<AGENTE>_USER + GANAMOS_<AGENTE>_PASSWORD         (por agente — Ganamos no tiene
  *     un token único: cada agente tiene su propia sesión, ver plan Fase 3. Alcanza con al
- *     menos un agente configurado para habilitar el botón manual.)
+ *     menos un agente configurado para habilitar el botón manual. Sin un loginAdapter real
+ *     inyectado, este par por sí solo todavía no alcanza para sincronizar ese agente.)
  *   DATABASE_URL ya debe estar configurado
  *
- * NOTA: ni el conector de Ganamos ni el de Argenbet existen todavía (fase 2/3 del plan) —
- * elegir esas plataformas aquí pasa la validación de credenciales pero el sync en sí falla
- * en sync-casino-players-live.js con "connector no implementado" (src/casino-connectors/index.js).
- * Es un fallo esperado, visible en el log del proceso hijo, no un 500 silencioso.
+ * NOTA: los 4 conectores (Zeus/Bet30/Argenbet/Ganamos) ya están implementados (fase 1-3 del
+ * plan). El login HTTP real de Argenbet y Ganamos sigue sin confirmar — con solo credenciales
+ * de usuario/contraseña y sin un loginAdapter inyectado, ese agente/plataforma falla de forma
+ * visible en el log del proceso hijo al primer intento de login, nunca como un 500 silencioso
+ * ni bloqueando a otras plataformas o agentes.
  */
 
 type SyncPlatform = 'zeus' | 'bet30' | 'ganamos' | 'argenbet'
@@ -63,15 +67,21 @@ function checkArgenbetCredentials() {
   }
 }
 
-// Una sesión (usuario/contraseña) por agente, no un token de plataforma — ver plan Fase 3.
+// Una sesión (cookie) por agente, no un token de plataforma — ver plan Fase 3
+// y GanamosConnector. GANAMOS_<AGENTE>_SESSION_COOKIE es el atajo temporal de
+// desarrollo (sin login real capturado todavía); USER+PASSWORD requiere un
+// loginAdapter inyectado que hoy no existe en producción, pero se acepta acá
+// igual porque GanamosConnector es quien decide en el momento del sync si
+// puede usarlo — este check solo habilita el botón manual.
 function checkGanamosCredentials() {
   const configurados = getAgentsForPlatform('ganamos').filter(agente => {
     const key = agente.toUpperCase()
-    return !!(process.env[`GANAMOS_${key}_USER`] && process.env[`GANAMOS_${key}_PASSWORD`])
+    return !!process.env[`GANAMOS_${key}_SESSION_COOKIE`] ||
+      !!(process.env[`GANAMOS_${key}_USER`] && process.env[`GANAMOS_${key}_PASSWORD`])
   })
   return {
     ok:   configurados.length > 0,
-    hint: 'Configurar al menos un par GANAMOS_<AGENTE>_USER + GANAMOS_<AGENTE>_PASSWORD en el servidor (Ganamos no tiene un token único — credenciales por agente, ver docs/PLAN-METRICAS-4-PLATAFORMAS.md Fase 3)',
+    hint: 'Configurar al menos GANAMOS_<AGENTE>_SESSION_COOKIE (desarrollo) o GANAMOS_<AGENTE>_USER + GANAMOS_<AGENTE>_PASSWORD en el servidor (Ganamos no tiene un token único — credenciales por agente, ver docs/PLAN-METRICAS-4-PLATAFORMAS.md Fase 3)',
   }
 }
 

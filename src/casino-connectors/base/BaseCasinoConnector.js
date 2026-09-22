@@ -498,8 +498,20 @@ class BaseCasinoConnector {
    * builds one fresh per attempt. Connectors should pass a factory whenever the
    * headers embed credentials that authenticate() can refresh (H11) — a static
    * object would keep resending the stale token even after re-auth succeeds.
+   *
+   * `reauthenticate` (fase 3, Ganamos): optional zero-arg override for what
+   * runs on a 401/403 instead of `this.authenticate()`. Ganamos authenticates
+   * per-AGENT (one cookie jar each, not one shared connector-wide session) —
+   * a global `this.authenticate()` has no way to know which agent's request
+   * just got rejected. Rather than track that as connector-instance state
+   * (e.g. `this.currentAgent`), which would race the moment two agents sync
+   * concurrently through the same connector instance (agent B's request could
+   * overwrite "current agent" mid-flight and agent A's retry would reauth the
+   * wrong session), the caller passes a closure already bound to the right
+   * agent. Connectors with a single shared session (Zeus/Bet30/Argenbet)
+   * don't pass this and keep the original `this.authenticate()` behavior.
    */
-  async _fetchWithRetry(url, options, context = '') {
+  async _fetchWithRetry(url, options, context = '', reauthenticate = null) {
     const MAX_ATTEMPTS = 4
 
     let lastError
@@ -524,7 +536,7 @@ class BaseCasinoConnector {
           if (!reauthUsed) {
             reauthUsed = true
             this.log.warn({ status: res.status, context }, 'Auth error — re-authenticating and retrying once')
-            await this.authenticate()
+            await (reauthenticate ? reauthenticate() : this.authenticate())
             continue
           }
           throw Object.assign(

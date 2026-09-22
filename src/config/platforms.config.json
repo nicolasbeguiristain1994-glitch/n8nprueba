@@ -54,19 +54,25 @@
       "type": "ganamos",
       "baseUrl": "https://agents.ganamosnet.org",
       "baseUrlEnvVar": "GANAMOS_API_BASE",
-      "apiKeyEnvVar": "GANAMOS_API_KEY",
-      "playerTokenEnvVar": "GANAMOS_PLAYER_TOKEN",
-      "adminUserEnvVar": "GANAMOS_ADMIN_USER",
-      "adminPasswordEnvVar": "GANAMOS_ADMIN_PASSWORD",
       "endpoint": "/api/agent_admin/user",
       "timezone": "-03",
+      "loginUrl": null,
+      "maxPages": 200,
+      "agentIds": {
+        "adminbtc": "23851783",
+        "adminzeus": "23851856",
+        "adminroyal": "24044323",
+        "admbigwin": "24045611",
+        "amdfarabet": "24050612",
+        "adminimperio": "34139043"
+      },
       "responseMapping": {
         "idField": "id",
-        "usernameField": "to_user",
-        "agentField": "from_user",
+        "usernameField": "el lado (from_user/to_user) que NO es el agente de la sesión — nunca fijo to_user",
+        "agentField": "agente cuya sesión propia se usó para pedir la página (una cookie jar por agente, no un token compartido)",
         "valueField": "amount",
         "detailsField": "note",
-        "dateField": "created_at"
+        "dateField": "created_at (naive, es UTC sin sufijo de zona)"
       }
     },
     {

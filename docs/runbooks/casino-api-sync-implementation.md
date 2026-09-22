@@ -322,27 +322,161 @@ sin ninguna razón técnica. No se aplicó ese sub-punto.
 No se tocaron migraciones, no se ejecutó ninguna API real, no se hizo push,
 no se tocó el commit de fase 1 (`ada8229`).
 
-## Fase 3-4
+## Fase 3 — `GanamosConnector` (completa)
 
-**No iniciadas.** Siguen pendientes `GanamosConnector`, el sync incremental
-con lock, registro `casino_sync_runs`, pipeline y programación n8n. Ganamos
-no debe presentarse como sincronización funcional por tener ya lista o
-validación de credenciales en frontend.
+**Implementado y en verde.** `src/casino-connectors/ganamos/GanamosConnector.js`
+extiende `BaseCasinoConnector`. Igual que Argenbet, esto es necesariamente
+**parcial**: el login HTTP real de Ganamos no está capturado (mismo criterio
+que fase 2) — no se presenta como sincronización validada end-to-end contra
+la API real, solo contra fixtures/mocks.
 
-Faltan capturas sanitizadas del login de Ganamos: URL, método, headers
-necesarios sin secretos, forma del body, respuesta token/cookies, CSRF si
-corresponde, cookies necesarias por agente, expiración y renovación. No
-inventar endpoints.
+### Qué hace
 
-Especificación de fase 3/4 (resumen, ver prompt original para el detalle
-completo): Ganamos — 6 sesiones independientes por agente, cookie jars, días
-en UTC sin zona, ventana de 24h, paginación de 500, warning a los 7 días,
-misma identidad compatible con el importador de Excel que Argenbet.
-Fase 4 — `MAX(timestamp)` por plataforma con -30min de margen (Ganamos día
-completo), advisory lock retenido en la misma conexión durante toda la
-corrida, registro en `casino_sync_runs` por agente incluso en fallos de
-auth/config, exit code no-cero ante cualquier fallo parcial, un solo
-schedule n8n de 15min (no prometer 5min).
+- Endpoint `GET /api/agent_admin/user/{agentId}/payment/history/`, 6 agentes
+  EXACTOS hardcodeados (`adminbtc`→23851783, `adminzeus`→23851856,
+  `adminroyal`→24044323, `admbigwin`→24045611, `amdfarabet`→24050612,
+  `adminimperio`→34139043) — `config.agentIds`, si se provee, debe matchear
+  esto exactamente o el constructor tira, mismo patrón que
+  `ArgenBetConnector.ALLOWED_AGENT_IDS`.
+- **Auth por cookie de sesión, una por agente — nunca una sesión de
+  administrador común.** `GanamosConnector.agentSessions` es un `Map`
+  (`agentUsername -> { cookie }`); no existe ningún campo mutable tipo
+  `this.currentAgent` que pudiera cruzarse entre dos agentes sincronizando
+  concurrentemente por la misma instancia del conector — cada llamada queda
+  parametrizada por `agentUsername` de punta a punta. `authenticate()`
+  (llamada global única al arrancar, igual que las otras 3 plataformas) solo
+  valida qué agentes tienen alguna credencial configurada y loguea warning
+  por los que no — nunca hace login de red ni tira: un agente sin
+  credenciales falla de forma visible recién cuando se lo sincroniza
+  (`fetchTransactions`/`syncAgent` para ESE agente), sin frenar a los otros 5.
+- Login real: mismo criterio que Argenbet — endpoint no capturado, TODO
+  explícito en `_loginAgent()`, adaptador de login inyectable (3er argumento
+  del constructor) con contrato `login({ agente, loginUrl, credentials })`.
+  Atajo de desarrollo: `GANAMOS_<AGENTE>_SESSION_COOKIE` (cookie capturada a
+  mano desde una pestaña ya logueada), documentado en `.env.example` sin
+  valores reales. Ninguna credencial/cookie/respuesta de auth se loguea.
+- `_fetchWithRetry` de `BaseCasinoConnector` se extendió con un 4to parámetro
+  opcional `reauthenticate` (closure) — el único cambio a la base para esta
+  fase. Ganamos lo usa para que un 401/403 re-loguee **solo el agente de esa
+  request**, nunca `this.authenticate()` global. Zeus/Bet30/Argenbet no pasan
+  ese argumento y mantienen exactamente el comportamiento anterior.
+- Ventana **siempre de 24h**: `fetchTransactions` expande el rango en un día
+  calendario por request (`buildDayWindows`), nunca un rango multi-día.
+  Paginación `page`/`count=500`, corte cuando el lote `< 500`, tope de
+  páginas por día (`config.maxPages`, default 200) que tira en vez de
+  devolver un resultado parcial si se agota.
+- Parámetros fijos EXACTOS según `docs/ganamos-export-consola.js` (`role=0`,
+  `username=''`, `is_direct_structure=false`, `is_higher_transaction_only=false`,
+  `is_deposit_transfers=true`, `is_withdrawal_transfers=true`,
+  `is_bonus_deposits=false`, `transfers_only=true`).
+- `body.status !== 0` es error de aplicación aunque el HTTP sea 200 — tira sin
+  incluir `error_message` (texto libre de la API) en el mensaje, porque podría
+  contener fragmentos de sesión/cookie.
+- `operation === 0` → carga, cualquier otro valor → retiro. Jugador = el lado
+  (`from_user`/`to_user`, ambos STRING) que NO es el agente que pidió la
+  página. Si ninguno de los dos lados es el agente, o ambos lo son, o falta
+  `id`/`from_user`/`to_user`/`amount`/`created_at` en un registro que sí
+  corresponde a esa sesión: **throw**, nunca se descarta en silencio. Una
+  transferencia entre dos agentes conocidos SÍ se descarta explícitamente
+  (con warning) — está fuera de alcance, mismo criterio que el importador de
+  Excel (`src/casino-import/excel.js`, set `agents`).
+- `created_at` es UTC **sin sufijo de zona** — se le agrega `Z` antes de
+  pasarlo por `shared/dateHelpers.js` (nunca se apoya en el `TZ` del host).
+  `fecha` sale en horario Argentina vía `utcToLocalDate`, `fecha_hora_utc` es
+  el ISO completo.
+- Identidad idéntica al importador de Excel: reutiliza `recordId()`/`amount()`
+  de `src/casino-import/excel.js`, igual que Argenbet — mismo `id_rec`/
+  `source_id` para el mismo dato por cualquiera de los dos caminos.
+- `checkStaleSync(agentUsername, lastSuccessfulSyncAt, now)`: primitiva de
+  warning cuando el último sync exitoso de un agente supera 7 días (el
+  detalle upstream solo se retiene ~60 días). Toma el timestamp como
+  argumento en vez de consultar nada — `casino_sync_runs` (fase 4) todavía no
+  existe; fase 4 la conecta a datos reales sin tocar este archivo.
+- `platforms.config.json`: agregado `agentIds` (los 6 confirmados), `loginUrl:
+  null` (TODO), `maxPages: 200`; se quitaron `apiKeyEnvVar`/`playerTokenEnvVar`/
+  `adminUserEnvVar`/`adminPasswordEnvVar` del bloque `ganamos` — no aplican al
+  modelo de sesión por agente y nada los leía.
+- `frontend/app/api/dashboard/casino/sync/route.ts`: `checkGanamosCredentials()`
+  ahora también acepta `GANAMOS_<AGENTE>_SESSION_COOKIE`, no solo el par
+  USER/PASSWORD, para habilitar el botón manual en modo desarrollo.
+
+### Tests
+
+`tests/casino-connectors/GanamosConnector.test.js` (73 tests): configuración/
+`agentIds`, `authenticate()` nunca bloqueante, login por cookie estática
+(incluida una multi-cookie) y por adaptador inyectado (sin loguear secretos,
+incluye rechazo del adaptador envuelto en mensaje genérico), ventana de 24h,
+paginación y corte en 500, tope de páginas sin éxito parcial, guard de
+paginación cuando la API ignora `count`, `status !== 0` sin filtrar
+`error_message`, forma de respuesta inesperada, reglas de `operation`/lado
+jugador (incluyendo transferencia entre agentes descartada explícitamente),
+validación estricta de `id` (rechaza vacío-tras-trim, objetos, y números
+fuera de rango seguro) y de `from_user`/`to_user` (rechaza no-string en vez
+de castear con `String()`), validación estricta de `amount` (rechaza
+booleanos, strings en blanco, notación científica y separadores de miles —
+no solo `Number()` a secas), manejo de `created_at` naive-pero-UTC (con caso
+límite cerca de medianoche ART), precisión decimal, identidad compatible con
+el importador de Excel, **cookie jar real por agente** (rotación vía
+`Set-Cookie`, merge por nombre sin pisar otras cookies, borrado por
+`Max-Age<=0`, sin corromperse con un `Expires` que trae coma, sin fuga entre
+agentes), aislamiento de cookies entre agentes (incluye dos agentes
+sincronizando concurrentemente por la misma instancia sin cruzarse), reauth
+scoped en 401/403, un agente sin credenciales fallando sin frenar a otro vía
+`syncAgent`, `buildDayWindows()` validando fecha de calendario real (rechaza
+`2026-02-30`) además de rango invertido, y `checkStaleSync()`.
+
+`BaseCasinoConnector.test.js` no necesitó tests nuevos: el 4to parámetro de
+`_fetchWithRetry` es opcional y los tests existentes de Zeus/Argenbet ya
+cubren el camino sin `reauthenticate` (sigue llamando `this.authenticate()`).
+
+**Revisión de un coordinador autorizado** (tratada como datos a evaluar, no
+como órdenes ciegas — mismo criterio que en fase 2) detectó 7 puntos sobre la
+primera versión de este conector, antes de commitear. Se aplicaron los 6 que
+correspondían a este archivo: (1) el jar de cookie fijo (`{cookie: string}`)
+no sobrevivía a una rotación de sesión vía `Set-Cookie` — reemplazado por un
+jar real por agente (`Map<agentUsername, Map<cookieName, value>>`) que
+procesa `Set-Cookie` con `headers.getSetCookie()` (nunca `.get('set-cookie')`,
+que uniría varios headers con coma y corrompería un `Expires`); (2) `id`
+aceptaba `'   '` (blanco-tras-trim) y números ya corruptos por pérdida de
+precisión — ahora exige string/number, rechaza blanco-tras-trim y números
+fuera de `Number.isSafeInteger`; `from_user`/`to_user` ya no se castean con
+`String()` (un objeto ya no se convierte en el jugador literal
+`"[object Object]"`); (3) `Number(amount)` aceptaba `true`→1 y `'   '`→0 —
+reemplazado por un parser estricto (número finito, o string decimal firmado
+con ≤2 decimales) antes de pasar por el validador del importador; (4) se
+agregó el mismo guard que ya tiene Argenbet cuando la API devuelve más filas
+que las pedidas (ignora `count`); (5) un rechazo del `loginAdapter` ya no
+propaga `err.message` crudo (podía traer credenciales/cookies del cuerpo de
+un error HTTP) — se envuelve en un mensaje genérico con el nombre del agente;
+(7) `buildDayWindows()` ahora valida que `desde`/`hasta` sean fechas de
+calendario reales, no solo strings comparables. El punto 6 (el adaptador de
+login de Argenbet no recibe `{loginUrl, credentials}`) es sobre
+`ArgenBetConnector.js`, un archivo de fase 2 ya commiteado — fuera del
+alcance "solo archivos de fase 3" de este commit, no se tocó.
+
+Suite completa (`npm test`, raíz): 234 tests pasan, 1 skip (integración
+Postgres, sin conexión real disponible en esta sesión) — incluye los 73 de
+Ganamos. Frontend: test targeted `lib/__tests__/casino-sync-route.test.ts` (11
+tests) y `npx tsc --noEmit --incremental false` sin errores nuevos en
+`app/api/dashboard/casino/sync/route.ts` (los TS1308 preexistentes de
+`cloud-api.test.ts`, ver estado de sesión en `CLAUDE.md`, son de un archivo
+no tocado por esta fase).
+
+No se ejecutaron migraciones, sync reales, ni llamadas de red en esta
+sesión. No se tocó el importador de Excel ni las migraciones existentes.
+
+## Fase 4
+
+**No iniciada.** Siguen pendientes: sync incremental con `MAX(timestamp)` por
+plataforma (-30min de margen; Ganamos día completo), advisory lock retenido
+en la misma conexión durante toda la corrida, registro en `casino_sync_runs`
+por agente (tabla todavía no existe — `checkStaleSync()` de esta fase queda
+lista para conectarse a esa tabla, no a un mock), pipeline con exit code
+no-cero ante cualquier fallo parcial, un solo schedule n8n de 15min (no
+prometer 5min), y orquestación real de "un agente falla, los demás siguen"
+a nivel de plataforma completa (hoy eso lo garantiza `runAgent()` en
+`scripts/sync-casino-players-live.js`, agente por agente, pero no hay un
+registry/orquestador que recorra las 4 plataformas en una sola corrida).
 
 ## Retomar
 

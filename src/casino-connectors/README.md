@@ -29,7 +29,7 @@ src/config/
 | `zeus`     | `zeus`     | `ZeusConnector`      | `https://local-admin2.zeuscasino.fun` | `ZEUS_API_KEY`, `ZEUS_PLAYER_TOKEN`         |
 | `bet30`    | `bet30`    | `Bet30Connector`     | `https://local-admin2.bet30.world`    | `BET30_API_KEY`, `BET30_PLAYER_TOKEN`       |
 | `argenbet` | `argenbet` | `ArgenBetConnector`  | `https://admin.argenbet.net`          | `ARGENBET_PLAYER_TOKEN` (Bearer, sin API key) |
-| `ganamos`  | `ganamos`  | *(no implementado — fase 3)* | `https://agents.ganamosnet.org` | — |
+| `ganamos`  | `ganamos`  | `GanamosConnector`   | `https://agents.ganamosnet.org`       | `GANAMOS_<AGENTE>_SESSION_COOKIE` (dev) o `GANAMOS_<AGENTE>_USER`+`_PASSWORD` — una sesión por agente, sin token de plataforma |
 
 Variables opcionales de override de base URL: `ZEUS_API_BASE`, `BET30_API_BASE`, `ARGENBET_API_BASE`.
 
@@ -246,6 +246,7 @@ Archivos de tests en `tests/casino-connectors/`:
 | `BaseCasinoConnector.test.js`    | 56    | atomicidad, reintentos + re-auth en 401/403, recomputePlayers (estructura SQL), colisiones de identidad `source_id`/`fecha`/`agente` (fase 2), canonicalización exacta de `monto` sin `Number`/`toFixed`, conteo de `insertedTxCount` vía `RETURNING xmax=0` (nunca cuenta backfills), advisory lock incondicional (con y sin `source_id`) |
 | `ZeusConnector.test.js`          | 36    | fetch, normalización, fechas UTC→ART, healthCheck, auto-login + redacción de secretos |
 | `ArgenBetConnector.test.js`      | 46    | paginación, rol INCOME/OUTCOME (H10), timezone AR, precisión decimal, re-auth en 401, identidad compatible con el importador de Excel, colisiones intra/entre-batch, advisory lock compartido |
+| `GanamosConnector.test.js`       | 73    | login por agente (cookie estática/adaptador), cookie jar real (rotación vía `Set-Cookie`, merge/borrado por nombre), ventana de 24h, paginación y corte en 500, `status!==0`, lado jugador/`operation`, validación estricta de `id`/`from_user`/`to_user`/`amount`, `created_at` naive-UTC, identidad compatible con el importador de Excel, aislamiento de cookies entre agentes concurrentes, re-auth scoped en 401, agente sin credenciales no frena a otros, `checkStaleSync` |
 | `factory.test.js`                | 11    | resolución de clases, credenciales, plataforma desconocida |
 | `recompute.test.js`              | 6     | idempotencia end-to-end (D1/D2/D3) contra un fake Postgres in-memory |
 
