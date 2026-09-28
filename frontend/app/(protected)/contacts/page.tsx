@@ -75,12 +75,12 @@ const ACTIVIDAD_STYLE: Record<string, string> = {
 }
 const ACTIVIDAD_DESC: Record<string, string> = {
   frecuente: '≥ 3 cargas por semana en promedio',
-  regular:   '1–2 cargas por semana en promedio',
-  ocasional: '1–3 cargas al mes',
-  nuevo:     'Primera semana de actividad',
-  en_riesgo: 'Sin actividad en las últimas 2–4 semanas',
-  inactivo:  'Sin actividad entre 1 y 3 meses',
-  perdido:   'Sin actividad por más de 3 meses',
+  regular:   'Desde 1 y menos de 3 cargas por semana en promedio',
+  ocasional: 'Menos de 1 carga por semana en promedio',
+  nuevo:     'Primera carga hace hasta 30 días',
+  en_riesgo: 'Última carga hace 31–60 días',
+  inactivo:  'Última carga hace 61–180 días',
+  perdido:   'Última carga hace más de 180 días',
 }
 const ANTIGUEDAD_DESC: Record<string, string> = {
   leal:        'Más de 9 meses como cliente',
@@ -91,8 +91,8 @@ const ANTIGUEDAD_DESC: Record<string, string> = {
 }
 const NIVEL_DESC: Record<string, string> = {
   super_vip: 'Super Vip — depósitos >= $3.200.000/mes activo',
-  vip_alto:  'Vip Alto — depósitos $1.500.001 – $3.199.999/mes activo',
-  vip_medio: 'Vip Medio — depósitos $1.000.000 – $1.500.000/mes activo',
+  vip_alto:  'Vip Alto — depósitos desde $1.500.000 y menos de $3.200.000/mes activo',
+  vip_medio: 'Vip Medio — depósitos desde $1.000.000 y menos de $1.500.000/mes activo',
   vip:       'Vip Bajo — depósitos $500.000 – $999.999/mes activo',
   medio:     'Medio — depósitos $100.000 – $499.999/mes activo',
   bajo:      'Bajo — depósitos < $100.000/mes activo',
@@ -196,15 +196,18 @@ export default function Contacts() {
 
   // ── Selección (TanStack format) ───────────────────────────────────────────
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
-  const selectedIds   = Object.keys(rowSelection)
+  const selectedIds   = Object.keys(rowSelection).filter(id => rowSelection[id])
+  const selectedPhones = useRef<Record<string, string>>({})
   const selectedCount = selectedIds.length
 
-  const hasActiveFilters = !!(search || segments.length > 0 || filterGaming || filterPanel || filterLinea || filterLineaSub ||
-    filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag)
+
 
   // ── Listas ────────────────────────────────────────────────────────────────
   const [lists, setLists]             = useState<ContactList[]>([])
   const [filterList, setFilterList]   = useState('')
+  const hasActiveFilters = !!(search || segments.length > 0 || filterGaming || filterPanel || filterLinea || filterLineaSub ||
+    filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag || filterList)
+
   const [showListsMenu, setShowListsMenu] = useState(false)
   const [deletingListId, setDeletingListId] = useState<string | null>(null)
   const listsMenuRef = useRef<HTMLDivElement>(null)
@@ -252,20 +255,22 @@ export default function Contacts() {
   // ── View contact modal ────────────────────────────────────────────────────
   const [viewContact, setViewContact]   = useState<Contact | null>(null)
   const [viewContactIdx, setViewContactIdx] = useState<number>(-1)
-  const [casinoStats, setCasinoStats]   = useState<{
-    monto_cargas_mes: number; monto_retiros_mes: number; last_deposit_at: string | null
-    mes_referencia: string | null; fuente: 'transactions' | 'historico' | null
-    bet30?: { monto_cargas_mes: number; monto_retiros_mes: number; last_deposit_at: string | null; mes_referencia: string | null; fuente: 'transactions' | 'historico' } | null
-  } | null>(null)
+  const [casinoStats, setCasinoStats] = useState<{ platforms: Array<{
+    platform: string | null; monto_cargas_mes: number; monto_retiros_mes: number
+    last_deposit_at: string | null; mes_referencia: string | null; fuente: 'transactions' | 'historico'
+  }> } | null>(null)
+  const [casinoStatsError, setCasinoStatsError] = useState<string | null>(null)
+  const casinoStatsRequest = useRef(0)
 
   const openViewContact = (c: Contact) => {
+    const request = ++casinoStatsRequest.current
     setViewContact(c)
     setCasinoStats(null)
+    setCasinoStatsError(null)
     setViewContactIdx(contacts.findIndex(x => x.id === c.id))
-    fetch(`/api/contacts/${c.id}/casino-stats`)
-      .then(r => r.json())
-      .then(d => setCasinoStats(d))
-      .catch(() => {})
+    fetchJson<NonNullable<typeof casinoStats>>(`/api/contacts/${c.id}/casino-stats`)
+      .then(d => { if (request === casinoStatsRequest.current) setCasinoStats(d) })
+      .catch(() => { if (request === casinoStatsRequest.current) setCasinoStatsError('No se pudo cargar el historial') })
   }
 
   const goNextContact = () => {
@@ -329,28 +334,43 @@ export default function Contacts() {
 
   // ── Carga de datos ────────────────────────────────────────────────────────
 
+  const buildContactParams = useCallback(() => new URLSearchParams({
+    q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
+    linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
+    linea_sub: filterLineaSub, list_id: filterList, plataforma: filterPlataforma,
+    sin_movimiento: String(filterSinMovimiento), tag: filterTag,
+  }), [search, segments, filterGaming, filterPanel, filterLinea, filterActividad,
+    filterAntiguedad, filterLineaSub, filterList, filterPlataforma, filterSinMovimiento, filterTag])
+
+  const audienceKey = buildContactParams().toString()
+  const activeAudience = useRef(audienceKey)
+  activeAudience.current = audienceKey
+  const contactLoadRequest = useRef(0)
+  useEffect(() => {
+    setRowSelection({})
+    selectedPhones.current = {}
+  }, [audienceKey])
+
   const load = useCallback(() => {
+    const request = ++contactLoadRequest.current
     setLoading(true)
-    const q = new URLSearchParams({
-      q: search, page: String(pagination.pageIndex + 1),
-      segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
-      linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
-      ...(filterLineaSub      ? { linea_sub: filterLineaSub }    : {}),
-      ...(filterList          ? { list_id: filterList }          : {}),
-      ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
-      ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
-      ...(filterTag           ? { tag: filterTag }               : {}),
-    })
+    const q = buildContactParams()
+    q.set('page', String(pagination.pageIndex + 1))
     setLoadError(null)
     fetchJson<{ contacts: Contact[]; total: number }>(`/api/contacts?${q}`)
-      .then(d => { setContacts(d.contacts || []); setTotal(d.total || 0) })
+      .then(d => {
+        if (request !== contactLoadRequest.current) return
+        for (const c of d.contacts || []) selectedPhones.current[c.id] = c.phone_number
+        setContacts(d.contacts || []); setTotal(d.total || 0)
+      })
       .catch((e: unknown) => {
+        if (request !== contactLoadRequest.current) return
         setContacts([])
         setTotal(0)
         setLoadError(e instanceof Error ? e.message : 'Error al cargar contactos')
       })
-      .finally(() => setLoading(false))
-  }, [search, pagination.pageIndex, segments, filterGaming, filterPanel, filterLinea, filterLineaSub, filterActividad, filterAntiguedad, filterList, filterPlataforma, filterSinMovimiento, filterTag])
+      .finally(() => { if (request === contactLoadRequest.current) setLoading(false) })
+  }, [buildContactParams, pagination.pageIndex])
 
   useEffect(() => { load() }, [load])
   const reloadLists = useCallback(() => {
@@ -448,23 +468,20 @@ export default function Contacts() {
   }
 
   const selectAllFiltered = async () => {
+    const requestedAudience = audienceKey
     setSelectingAll(true)
     try {
-      const q = new URLSearchParams({
-        q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
-        linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
-        ...(filterLineaSub ? { linea_sub: filterLineaSub } : {}),
-        select_all: 'true',
-        ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
-        ...(filterList          ? { list_id: filterList }          : {}),
-        ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
-      })
-      const d = await fetchJson<{ ids: string[] }>(`/api/contacts?${q}`)
+      const q = buildContactParams()
+      q.set('select_all', 'true')
+      const d = await fetchJson<{ ids: string[]; phones: string[] }>(`/api/contacts?${q}`)
+      if (activeAudience.current !== requestedAudience) return
+      d.ids.forEach((id, i) => { selectedPhones.current[id] = d.phones[i] })
       const next: RowSelectionState = {}
       for (const id of d.ids || []) next[id] = true
       setRowSelection(next)
-    } catch { /* ignore */ }
-    finally { setSelectingAll(false) }
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'No se pudo seleccionar la audiencia')
+    } finally { setSelectingAll(false) }
   }
 
   // ── Import ────────────────────────────────────────────────────────────────
@@ -593,17 +610,7 @@ export default function Contacts() {
       filterAntiguedad.length && `antiguedad-${filterAntiguedad.join('-')}`,
     ].filter(Boolean).join('_') || 'todos'
 
-  const buildDownloadParams = (): URLSearchParams => {
-    const p = new URLSearchParams({
-      q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
-      linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
-    })
-    if (filterLineaSub)      p.set('linea_sub', filterLineaSub)
-    if (filterList)          p.set('list_id', filterList)
-    if (filterPlataforma)    p.set('plataforma', filterPlataforma)
-    if (filterSinMovimiento) p.set('sin_movimiento', 'true')
-    return p
-  }
+  const buildDownloadParams = buildContactParams
 
   // ── Crear lista ───────────────────────────────────────────────────────────
 
@@ -618,21 +625,13 @@ export default function Contacts() {
       body = { name: newListName, contact_ids: selectedIds }
     } else if (listMode === 'filters') {
       try {
-        const q = new URLSearchParams({
-          q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
-          linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
-          ...(filterLineaSub ? { linea_sub: filterLineaSub } : {}),
-          select_all: 'true',
-          ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
-          ...(filterList          ? { list_id: filterList }          : {}),
-          ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
-          ...(filterTag           ? { tag: filterTag }               : {}),
-        })
+        const q = buildContactParams()
+        q.set('select_all', 'true')
         const d = await fetchJson<{ ids: string[] }>(`/api/contacts?${q}`)
         body = { name: newListName, contact_ids: d.ids || [] }
-      } catch {
+      } catch (e) {
         setSavingList(false)
-        setListError('Error al obtener los contactos filtrados')
+        setListError(e instanceof Error ? e.message : 'Error al obtener los contactos filtrados')
         return
       }
     } else {
@@ -823,21 +822,14 @@ export default function Contacts() {
         if (confirmBulk.action === 'delete') {
           await deleteBulk(selectedIds)
         } else {
-          const phones = contacts.filter(c => rowSelection[c.id]).map(c => c.phone_number)
+          const phones = selectedIds.map(id => selectedPhones.current[id]).filter(Boolean)
+          if (phones.length !== selectedIds.length) throw new Error('No se pudieron recuperar todos los teléfonos seleccionados. Volvé a seleccionar los contactos.')
           await sendToBlacklist(phones, () => setRowSelection({}))
         }
       } else {
         // filters mode: fetch all matching IDs + phones first
-        const q = new URLSearchParams({
-          q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
-          linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
-          ...(filterLineaSub ? { linea_sub: filterLineaSub } : {}),
-          select_all: 'true',
-          ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
-          ...(filterList          ? { list_id: filterList }          : {}),
-          ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
-          ...(filterTag           ? { tag: filterTag }               : {}),
-        })
+        const q = buildContactParams()
+        q.set('select_all', 'true')
         const d = await fetchJson<{ ids: string[]; phones: string[] }>(`/api/contacts?${q}`)
         if (confirmBulk.action === 'delete') {
           await deleteBulk(d.ids || [])
@@ -845,6 +837,8 @@ export default function Contacts() {
           await sendToBlacklist(d.phones || [], () => setRowSelection({}))
         }
       }
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'No se pudo procesar la selección')
     } finally {
       setConfirmExecuting(false)
       setConfirmBulk(null)
@@ -2021,81 +2015,26 @@ export default function Contacts() {
                   ))}
                 </div>
               )}
-              {/* Zeus stats (or primary platform when contact has only one) */}
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                    {casinoStats?.bet30 ? 'Zeus' : 'Historial del jugador'}
-                  </p>
-                  {casinoStats && (
-                    <span className="text-[10px] text-gray-400 bg-white border border-gray-200 rounded px-1.5 py-0.5">
-                      {casinoStats.mes_referencia ?? 'Histórico total'}
-                    </span>
-                  )}
-                </div>
-                <div className="grid grid-cols-3 gap-3 text-center">
-                  <div>
-                    <p className="text-xl font-bold text-gray-900">
-                      {casinoStats
-                        ? `$${casinoStats.monto_cargas_mes.toLocaleString('es-AR')}`
-                        : <span className="text-gray-300 text-sm">…</span>}
-                    </p>
-                    <p className="text-[10px] text-gray-500">{casinoStats?.fuente === 'historico' ? 'Cargas total' : 'Cargas'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xl font-bold text-gray-900">
-                      {casinoStats
-                        ? `$${casinoStats.monto_retiros_mes.toLocaleString('es-AR')}`
-                        : <span className="text-gray-300 text-sm">…</span>}
-                    </p>
-                    <p className="text-[10px] text-gray-500">Retiros</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-gray-700">
-                      {casinoStats
-                        ? (casinoStats.last_deposit_at
-                            ? new Date(casinoStats.last_deposit_at).toLocaleDateString('es-AR')
-                            : '—')
-                        : <span className="text-gray-300">…</span>}
-                    </p>
-                    <p className="text-[10px] text-gray-500">Última carga</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Bet30 stats — solo visible cuando el contacto tiene ambas plataformas */}
-              {casinoStats?.bet30 && (
-                <div className="rounded-lg border border-orange-200 bg-orange-50 p-3">
+              {casinoStatsError && <p role="alert" className="text-sm text-red-600">{casinoStatsError}</p>}
+              {!casinoStats && !casinoStatsError && <p className="text-sm text-muted-foreground">Cargando historial…</p>}
+              {casinoStats?.platforms.length === 0 && <p className="text-sm text-muted-foreground">Sin historial vinculado. No permite determinar la actividad.</p>}
+              {casinoStats?.platforms.map(stats => (
+                <div key={stats.platform ?? 'unknown'} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                   <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs font-semibold text-orange-600 uppercase tracking-wide">Bet30</p>
-                    <span className="text-[10px] text-gray-400 bg-white border border-gray-200 rounded px-1.5 py-0.5">
-                      {casinoStats.bet30.mes_referencia ?? 'Histórico total'}
-                    </span>
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{stats.platform ?? 'Historial sin plataforma'}</p>
+                    <span className="text-xs text-gray-500">{stats.mes_referencia ?? 'Histórico total'}</span>
                   </div>
                   <div className="grid grid-cols-3 gap-3 text-center">
-                    <div>
-                      <p className="text-xl font-bold text-gray-900">
-                        ${casinoStats.bet30.monto_cargas_mes.toLocaleString('es-AR')}
-                      </p>
-                      <p className="text-[10px] text-gray-500">{casinoStats.bet30.fuente === 'historico' ? 'Cargas total' : 'Cargas'}</p>
-                    </div>
-                    <div>
-                      <p className="text-xl font-bold text-gray-900">
-                        ${casinoStats.bet30.monto_retiros_mes.toLocaleString('es-AR')}
-                      </p>
-                      <p className="text-[10px] text-gray-500">Retiros</p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-gray-700">
-                        {casinoStats.bet30.last_deposit_at
-                          ? new Date(casinoStats.bet30.last_deposit_at).toLocaleDateString('es-AR')
-                          : '—'}
-                      </p>
-                      <p className="text-[10px] text-gray-500">Última carga</p>
-                    </div>
+                    <div><p className="text-xl font-bold">${stats.monto_cargas_mes.toLocaleString('es-AR')}</p>
+                      <p className="text-xs text-gray-500">{stats.fuente === 'historico' ? 'Cargas total' : 'Cargas del mes'}</p></div>
+                    <div><p className="text-xl font-bold">${stats.monto_retiros_mes.toLocaleString('es-AR')}</p>
+                      <p className="text-xs text-gray-500">{stats.fuente === 'historico' ? 'Retiros total' : 'Retiros del mes'}</p></div>
+                    <div><p className="text-sm font-semibold">{stats.last_deposit_at
+                      ? new Date(stats.last_deposit_at.length === 10 ? `${stats.last_deposit_at}T12:00:00` : stats.last_deposit_at).toLocaleDateString('es-AR') : '—'}</p>
+                      <p className="text-xs text-gray-500">Última carga</p></div>
                   </div>
                 </div>
-              )}
+              ))}
               {/* Tags del contacto */}
               {(viewContact.custom_tags?.length ?? 0) > 0 && (
                 <div className="flex flex-wrap gap-1">

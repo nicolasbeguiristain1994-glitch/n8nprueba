@@ -14,7 +14,7 @@ describe('Platform audience filters',()=>{
   it(`${name} accepts and filters ${platform}`,async()=>{
    const res=await handler(new NextRequest(`http://localhost${path}plataforma=${platform}`))
    expect(res.status).toBe(200)
-   expect(q.mock.calls.flat().join(' ')).toContain(`'${platform}' = ANY(platforms)`)
+   expect(q.mock.calls.flat().join(' ')).toContain(`'${platform}' = ANY(contacts.platforms)`)
   })
  }
  it('otros excludes all supported platforms',async()=>{

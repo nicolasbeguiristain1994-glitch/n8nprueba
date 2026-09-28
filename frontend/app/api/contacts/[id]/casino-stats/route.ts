@@ -1,138 +1,64 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
-import { checkPermission } from '@/lib/permissions'
-import { getAgentsForPlatform } from '@/lib/casino-agents'
-
-// Strips platform prefixes like "Z/ ", "ZS/ ", "Zeus/ " from stored first_name
-// so the raw casino username can be matched against casino_players.username_lower
-function extractUsername(s: string): string {
-  return s.replace(/^[a-zA-Z]+\/\s*/, '').trim().toLowerCase()
-}
-
-// Sourced from casino-agents.ts — single source of truth for agent lists
-const ZEUS_AGENTS  = getAgentsForPlatform('zeus')
-const BET30_AGENTS = getAgentsForPlatform('bet30')
-
-// Platform detection regexes (match on the end of the username string)
-// ZEUS_RE: matches z, z2, z3, zs, zs2, zeus — the digit suffix appears in some agent tables
-const ZEUS_RE  = /z(s|eus)?\d*$/i
-const BET30_RE = /b(t)?\d*$/i
-
-interface PlatformStats {
-  monto_cargas_mes:  number
-  monto_retiros_mes: number
-  last_deposit_at:   string | null
-  mes_referencia:    string | null
-  fuente:            'transactions' | 'historico'
-}
-
-async function queryPlatformStats(
-  usernames: string[],
-  agents:    string[],
-): Promise<PlatformStats | null> {
-  if (!usernames.length) return null
-
-  const cpRows = await query<{ username: string; total_cargas: number; fecha_ultima: string | null }>(
-    `SELECT username, total_cargas, fecha_ultima
-     FROM casino_players
-     WHERE username_lower = ANY($1::text[])
-       AND agente         = ANY($2::text[])
-     LIMIT 1`,
-    [usernames, agents],
-  )
-  if (!cpRows.length) return null
-
-  const uname = cpRows[0].username.toLowerCase()
-
-  const txRows = await query<{
-    monto_cargas_mes:  number
-    monto_retiros_mes: number
-    last_deposit_at:   string | null
-    mes_referencia:    string | null
-  }>(`
-    WITH ultimo_mes AS (
-      SELECT DATE_TRUNC('month', MAX(fecha)) AS mes
-      FROM casino_transactions
-      WHERE LOWER(username) = $1
-    )
-    SELECT
-      COALESCE(SUM(CASE WHEN ct.tipo = 'carga'  AND DATE_TRUNC('month', ct.fecha) = um.mes THEN ct.monto      ELSE 0 END), 0)::int AS monto_cargas_mes,
-      COALESCE(SUM(CASE WHEN ct.tipo = 'retiro' AND DATE_TRUNC('month', ct.fecha) = um.mes THEN ABS(ct.monto) ELSE 0 END), 0)::int AS monto_retiros_mes,
-      MAX(CASE WHEN ct.tipo = 'carga' THEN ct.fecha END) AS last_deposit_at,
-      TO_CHAR(um.mes, 'Mon YYYY') AS mes_referencia
-    FROM casino_transactions ct
-    CROSS JOIN ultimo_mes um
-    WHERE LOWER(ct.username) = $1
-      AND um.mes IS NOT NULL
-    GROUP BY um.mes
-  `, [uname])
-
-  if (txRows.length > 0 && (txRows[0].monto_cargas_mes > 0 || txRows[0].monto_retiros_mes > 0)) {
-    return { ...txRows[0], fuente: 'transactions' }
-  }
-
-  return {
-    monto_cargas_mes:  cpRows[0].total_cargas ?? 0,
-    monto_retiros_mes: 0,
-    last_deposit_at:   cpRows[0].fecha_ultima ?? null,
-    mes_referencia:    null,
-    fuente:            'historico',
-  }
-}
+import { checkPermissionWithUser } from '@/lib/permissions'
+import { contactFilters } from '@/lib/contact-filters'
+import { AGENTS } from '@/lib/casino-segmentation'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const err = await checkPermission(req, 'contacts', 'read')
-  if (err) return err
-
+  const auth = await checkPermissionWithUser(req, 'contacts', 'read')
+  if (!auth.ok) return auth.response
   const { id } = await params
   if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
-
-  const empty = { monto_cargas_mes: 0, monto_retiros_mes: 0, last_deposit_at: null, mes_referencia: null, fuente: null, bet30: null }
-
   try {
-    const [contact] = await query<{ first_name: string | null; last_name: string | null }>(
-      'SELECT first_name, last_name FROM contacts WHERE id = $1', [id]
-    )
-    if (!contact) return NextResponse.json({ error: 'Contact not found' }, { status: 404 })
-
-    // Build candidates: tokenize by common separators (spaces, //, |, etc.)
-    // so compound first_names like "dani457zzz (Chantaaa)" or "user//alias" work correctly.
-    const raw = [contact.first_name, contact.last_name]
-    const candidates = [...new Set(
-      raw
-        .filter(Boolean)
-        .flatMap(s => {
-          const clean = s!.trim().toLowerCase()
-          const tokens = clean.split(/[\s/|,;.()\[\]]+/).filter(t => t.length > 0)
-          return [clean, extractUsername(s!), ...tokens]
-        })
-        .filter(s => s.length > 0)
-    )]
-
-    if (candidates.length === 0) return NextResponse.json(empty)
-
-    // Split candidates by platform based on username suffix
-    const zeusUsernames  = candidates.filter(u => ZEUS_RE.test(u))
-    const bet30Usernames = candidates.filter(u => BET30_RE.test(u))
-
-    // Query both platforms in parallel
-    const [zeusStats, bet30Stats] = await Promise.all([
-      queryPlatformStats(zeusUsernames,  ZEUS_AGENTS),
-      queryPlatformStats(bet30Usernames, BET30_AGENTS),
-    ])
-
-    // Primary stats = zeus if found, otherwise bet30
-    const primary = zeusStats ?? bet30Stats
-    if (!primary) return NextResponse.json(empty)
-
-    // bet30 key is only populated when the contact has BOTH platforms
-    // (so the view modal knows to show a separate Bet30 section)
-    const bet30Field = zeusStats && bet30Stats ? bet30Stats : null
-
-    return NextResponse.json({ ...primary, bet30: bet30Field })
+    const scope = contactFilters(new URLSearchParams(), auth.user)
+    const visible = await query(`SELECT id FROM contacts WHERE ${scope.sql} AND id=$${scope.params.length + 1}::uuid`, [...scope.params, id])
+    if (!visible.length) return NextResponse.json({ error: 'Contact not found' }, { status: 404 })
+    // Same explicit/unique identities as the segmentation job. Never infer the
+    // platform from a name suffix or mix namesakes from different platforms.
+    const rows = await query<{
+      platform: string | null; monto_cargas_mes: string; monto_retiros_mes: string
+      last_deposit_at: string | null; mes_referencia: string | null; fuente: 'transactions' | 'historico'
+    }>(`
+      WITH accounts AS MATERIALIZED (
+        SELECT p.*, GREATEST(p.fecha_ultima, cp.fecha_ultima) AS known_last
+        FROM casino_contact_account_links l JOIN casino_segmentation_players p ON p.id=l.player_id
+        LEFT JOIN casino_players cp ON cp.username_lower=p.username_lower
+          AND cp.platform IS NOT DISTINCT FROM p.platform
+        WHERE l.contact_id=$1 AND lower(trim(p.agente))=ANY($2::text[])
+      ), tx AS MATERIALIZED (
+        SELECT a.platform,ct.fecha,ct.tipo,ct.monto FROM accounts a
+        JOIN casino_transactions ct ON lower(ct.username)=a.username_lower
+          AND ct.platform IS NOT DISTINCT FROM a.platform
+        WHERE ct.fecha<=CURRENT_DATE
+      ), months AS (
+        SELECT platform,date_trunc('month',MAX(fecha)) AS month FROM tx GROUP BY platform
+      ), history AS (
+        SELECT platform,SUM(total_cargas) AS amount,SUM(total_retiros) AS withdrawals,
+          MAX(known_last) AS last_date FROM accounts GROUP BY platform
+      )
+      SELECT h.platform,
+        CASE WHEN m.month IS NULL THEN h.amount ELSE
+          COALESCE(SUM(t.monto) FILTER (WHERE t.tipo='carga' AND date_trunc('month',t.fecha)=m.month),0) END AS monto_cargas_mes,
+        CASE WHEN m.month IS NULL THEN h.withdrawals ELSE
+          COALESCE(SUM(ABS(t.monto)) FILTER (WHERE t.tipo='retiro' AND date_trunc('month',t.fecha)=m.month),0) END AS monto_retiros_mes,
+        GREATEST(h.last_date,MAX(t.fecha) FILTER (WHERE t.tipo='carga')) AS last_deposit_at,
+        to_char(m.month,'MM/YYYY') AS mes_referencia,
+        CASE WHEN m.month IS NULL THEN 'historico' ELSE 'transactions' END AS fuente
+      FROM history h LEFT JOIN months m ON m.platform IS NOT DISTINCT FROM h.platform
+      LEFT JOIN tx t ON t.platform IS NOT DISTINCT FROM h.platform
+      GROUP BY h.platform,h.amount,h.withdrawals,h.last_date,m.month
+      ORDER BY h.platform NULLS LAST`, [id, AGENTS])
+    const platforms = rows.map(r => ({ ...r, monto_cargas_mes: Number(r.monto_cargas_mes ?? 0), monto_retiros_mes: Number(r.monto_retiros_mes ?? 0) }))
+    // Retain the old shape for consumers while the contact view renders every platform.
+    const primary = platforms.find(p => p.platform === 'zeus') ?? platforms[0]
+    return NextResponse.json({
+      ...(primary ?? { monto_cargas_mes: 0, monto_retiros_mes: 0, last_deposit_at: null, mes_referencia: null, fuente: null }),
+      bet30: primary?.platform === 'zeus' ? platforms.find(p => p.platform === 'bet30') ?? null : null,
+      platforms,
+    })
   } catch (e) {
     console.error('[/api/contacts/[id]/casino-stats]', e instanceof Error ? e.message : e)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return NextResponse.json({ error: 'No se pudo consultar el historial' }, { status: 500 })
   }
 }

@@ -57,9 +57,11 @@ function runScript(label, scriptName, args = [], { failOk = false } = {}) {
       env:   process.env,
     })
     log(`✓  ${label} completado`)
+    return true
   } catch (err) {
     if (failOk) {
       log(`⚠  ${label} falló (continuando): ${err.message}`)
+      return false
     } else {
       throw err
     }
@@ -106,11 +108,13 @@ async function main() {
   // Pasos 1 y 2: sync de transacciones del casino
   // failOk=true: si una plataforma falla (credenciales vencidas, API caída),
   // el pipeline sigue y al menos actualiza la otra
-  runScript('Paso 1: Sync Zeus',  'sync-casino-players-live.js', ['--platform=zeus',  '--auto', '--agentes=betcoin,bigwin,farabet,ofizeus,royal'], { failOk: true })
-  runScript('Paso 2: Sync Bet30', 'sync-casino-players-live.js', ['--platform=bet30', '--auto', '--agentes=btcuno,btcdos,zeus,zeusroyal,bigwin'],  { failOk: true })
+  const zeusOk = runScript('Paso 1: Sync Zeus',  'sync-casino-players-live.js', ['--platform=zeus',  '--auto', '--agentes=betcoin,bigwin,farabet,ofizeus,royal'], { failOk: true })
+  const bet30Ok = runScript('Paso 2: Sync Bet30', 'sync-casino-players-live.js', ['--platform=bet30', '--auto', '--agentes=btcuno,btcdos,zeus,zeusroyal,bigwin'],  { failOk: true })
+
+  if (!zeusOk || !bet30Ok) throw new Error('Sincronización incompleta: se omiten segmentación y prioridades para no degradar contactos con datos atrasados.')
 
   // Paso 3: calcular segmentos y sincronizar contacts.last_deposit_at
-  runScript('Paso 3: Segmentar jugadores', 'segmentar-casino-players.js', [], { failOk: true })
+  runScript('Paso 3: Segmentar jugadores', 'segmentar-casino-players.js')
 
   // Paso 4: recalcular scores de prioridad
   try {

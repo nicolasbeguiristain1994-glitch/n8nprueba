@@ -33,6 +33,7 @@ COPY --from=builder /app/.next/static      ./.next/static
 # process.cwd() = /app  →  resuelve a /scripts
 COPY scripts /scripts
 COPY src     /src
+COPY frontend/lib/casino-segmentation.js /frontend/lib/casino-segmentation.js
 COPY db/migrations /db/migrations
 
 # Módulos raíz en /node_modules → Node los encuentra al subir el árbol desde /scripts/

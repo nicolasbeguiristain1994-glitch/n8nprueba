@@ -1,14 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
-import { visibilityClause } from '@/lib/contact-visibility'
+import { contactFilters, ContactFilterError } from '@/lib/contact-filters'
 import { getAppSetting } from '@/lib/app-settings'
-
-const PLATAFORMA_ALLOWED = new Set(['zeus', 'bet30', 'ganamos', 'argenbet', 'otros'])
-
-const ZEUS_FILTER  = `'zeus'  = ANY(platforms)`
-const BET30_FILTER = `'bet30' = ANY(platforms)`
-const OTROS_FILTER = `NOT (platforms && ARRAY['zeus','bet30','ganamos','argenbet'])`
 
 function escapeCsv(val: string | number | null | undefined): string {
   if (val == null) return ''
@@ -35,77 +29,29 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Sin permiso para descargar contactos' }, { status: 403 })
   }
 
-  const sp = req.nextUrl.searchParams
-  const panel      = (sp.get('panel') || '').trim()
-  const linea      = (sp.get('linea') || '').trim()
-  const plataforma = (sp.get('plataforma') || '').trim()
-  const segment    = (sp.get('segment') || '').trim()
-  const inactDiasRaw = sp.get('inactividad_dias') || ''
-  const inactividadDias = inactDiasRaw && /^\d+$/.test(inactDiasRaw) ? Number(inactDiasRaw) : 0
-
-  if (plataforma && !PLATAFORMA_ALLOWED.has(plataforma)) {
-    return NextResponse.json({ error: `Plataforma inválida "${plataforma}"` }, { status: 400 })
-  }
-
-  const plataformaFilter = plataforma === 'zeus'  ? ` AND ${ZEUS_FILTER}`
-                          : plataforma === 'bet30' ? ` AND ${BET30_FILTER}`
-                          : plataforma === 'ganamos' ? ` AND 'ganamos' = ANY(platforms)`
-                         : plataforma === 'argenbet' ? ` AND 'argenbet' = ANY(platforms)`
-                         : plataforma === 'otros' ? ` AND (${OTROS_FILTER})`
-                          : ''
-
-  const inactividadFilter = inactividadDias > 0
-    ? ` AND (last_activity_at IS NULL OR last_activity_at < NOW() - INTERVAL '${inactividadDias} days')`
-    : ''
-
-  const agentAllowed = (
-    user.role !== 'admin' &&
-    Array.isArray(user.allowed_agents) &&
-    user.allowed_agents.length > 0
-  ) ? user.allowed_agents : null
-
-  const params: unknown[] = ['']
-  let p = 1
-  let panelFilter = ''
-  if (panel) { panelFilter = ` AND panel = $${++p}`; params.push(panel) }
-  let lineaFilter = ''
-  if (linea) { lineaFilter = ` AND linea::text = $${++p}`; params.push(linea) }
-  let segmentFilter = ''
-  if (segment) {
-    segmentFilter = ` AND segment::text = $${++p}`
-    params.push(segment)
-  }
-
-  const vis = visibilityClause(user.role, user.user_id, params.length)
-  let agentFilter = ''
-  if (agentAllowed) {
-    agentFilter = ` AND panel = ANY($${params.length + vis.params.length + 1}::text[])`
-  }
-  const allParams = [...params, ...vis.params, ...(agentAllowed ? [agentAllowed] : [])]
-
   try {
+    const { sql, params } = contactFilters(req.nextUrl.searchParams, user)
     const rows = await query<{
       phone_number: string; first_name: string; last_name: string
       panel: string; linea: number | null; segment: string
-      total_deposits: number | null; last_activity_at: string | null
+      total_deposits: number | null; last_deposit_at: string | null
     }>(
       `SELECT phone_number, first_name, last_name, panel, linea, segment::text AS segment,
-              total_deposits, last_activity_at
+              total_deposits, last_deposit_at
        FROM contacts
-       WHERE ($1 = '' OR phone_number ILIKE $1)
-         ${panelFilter}${lineaFilter}${segmentFilter}
-         ${vis.sql}${agentFilter}${plataformaFilter}${inactividadFilter}
-       ORDER BY last_activity_at ASC NULLS FIRST
-       LIMIT 100000`,
-      allParams,
+       WHERE ${sql}
+       ORDER BY last_deposit_at ASC NULLS FIRST, id
+       LIMIT 100001`,
+      params,
     )
+    if (rows.length > 100000) return NextResponse.json({ error: 'La exportación supera 100.000 contactos. Acotá los filtros.' }, { status: 422 })
 
     const headers = ['Teléfono', 'Nombre', 'Oficina', 'Línea', 'Segmento', 'Cargas', 'Días inactivo']
     const lines = [
       '\uFEFF' + headers.join(','),
       ...rows.map(r => {
-        const dias = r.last_activity_at
-          ? Math.floor((Date.now() - new Date(r.last_activity_at).getTime()) / 86400000)
+        const dias = r.last_deposit_at
+          ? Math.floor((Date.now() - new Date(r.last_deposit_at).getTime()) / 86400000)
           : ''
         return [
           escapeCsv(r.phone_number),
@@ -126,6 +72,7 @@ export async function GET(req: NextRequest) {
       },
     })
   } catch (e) {
+    if (e instanceof ContactFilterError) return NextResponse.json({ error: e.message }, { status: 400 })
     console.error('[/api/contacts/segment-export GET]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 })
   }

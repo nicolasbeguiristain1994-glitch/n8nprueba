@@ -168,6 +168,8 @@ function buildDateChunks(desde, hasta, chunkDays) {
  * @param {object} logCtx     Extra fields merged into every log call (e.g. chunk index)
  * @returns {Promise<{ players: number, tx: number }>}
  */
+let failedAgents = 0
+
 async function runAgent(connector, agente, desde, hasta, logCtx = {}) {
   try {
     const { txCount, playerCount, insertedTxCount } =
@@ -176,6 +178,7 @@ async function runAgent(connector, agente, desde, hasta, logCtx = {}) {
     log.info({ agent: agente, txCount, playerCount, insertedTxCount, ...logCtx }, 'Agent synced')
     return { players: playerCount, tx: insertedTxCount }
   } catch (err) {
+    failedAgents++
     log.error({ agent: agente, err: err.message, ...logCtx }, 'Agent sync failed')
     return { players: 0, tx: 0 }
   } finally {
@@ -304,6 +307,10 @@ async function main() {
         `Chunk ${ci + 1}/${totalChunks} completado`,
       )
     }
+  }
+
+  if (failedAgents) {
+    throw new Error(`${failedAgents} sincronizaciones de agente fallaron; no se debe resegmentar con esta corrida incompleta`)
   }
 
   log.info(
