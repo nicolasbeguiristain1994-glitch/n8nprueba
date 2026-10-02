@@ -170,7 +170,7 @@ export function DownloadContactsModal({
               <span className={`relative inline-flex w-9 h-5 rounded-full transition-colors flex-shrink-0 ${
                 rangeEnabled ? 'bg-orange-500' : 'bg-muted-foreground/30'
               }`}>
-                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-card shadow-sm transition-transform ${
                   rangeEnabled ? 'translate-x-4' : 'translate-x-0.5'
                 }`} />
               </span>
@@ -222,7 +222,7 @@ export function DownloadContactsModal({
               onClick={() => setSplitting(v => !v)}
               className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition-colors text-sm ${
                 splitting
-                  ? 'bg-indigo-50 border-indigo-300 text-indigo-800'
+                  ? 'bg-accent border-indigo-300 text-accent-foreground'
                   : 'bg-background border-border text-foreground hover:bg-muted'
               }`}
             >
@@ -230,7 +230,7 @@ export function DownloadContactsModal({
               <span className={`relative inline-flex w-9 h-5 rounded-full transition-colors flex-shrink-0 ${
                 splitting ? 'bg-indigo-500' : 'bg-muted-foreground/30'
               }`}>
-                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
+                <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-card shadow-sm transition-transform ${
                   splitting ? 'translate-x-4' : 'translate-x-0.5'
                 }`} />
               </span>
@@ -255,7 +255,7 @@ export function DownloadContactsModal({
             {splitting && effectiveCount > 0 && (
               <p className="text-xs text-muted-foreground pl-1">
                 ~{effectiveCount.toLocaleString('es-AR')} contactos →{' '}
-                <span className="font-semibold text-indigo-700">
+                <span className="font-semibold text-primary">
                   {effectiveParts} archivo{effectiveParts !== 1 ? 's' : ''} VCF
                 </span>{' '}
                 dentro de un ZIP

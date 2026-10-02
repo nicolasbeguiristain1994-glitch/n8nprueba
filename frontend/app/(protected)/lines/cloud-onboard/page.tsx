@@ -1,242 +1,53 @@
 'use client'
+import { useEffect, useState, type FormEvent } from 'react'
+import Link from 'next/link'
 
-import { useState, useEffect, useCallback } from 'react'
-
-// ─── Tipos del resultado del Embedded Signup ──────────────────────────────────
-interface SignupResult {
-  authResponse?: {
-    code:            string
-    waba_id:         string
-    phone_number_id: string
-  } | null
-  status: string
-}
-
-interface OnboardResult {
-  cloudNumberId: string
-  phoneNumberId: string
-  displayPhone:  string
-  status:        string
-  message:       string
-}
-
-// ─── Declaración global del SDK de Facebook ───────────────────────────────────
-declare global {
-  interface Window {
-    FB: {
-      init: (config: Record<string, unknown>) => void
-      login: (callback: (res: SignupResult) => void, options: Record<string, unknown>) => void
-    }
-    fbAsyncInit?: () => void
-  }
-}
-
+type Configuration = { appId: string; checks: Record<string, boolean>; webhookPath: string }
+const labels: Record<string, string> = { appId: 'App ID', appSecret: 'App Secret', verifyToken: 'Token de verificación del webhook', encryptionKey: 'Clave de cifrado', database: 'Base de datos preparada', redis: 'Redis para límites de envío' }
 export default function CloudOnboardPage() {
-  const [sdkReady,  setSdkReady]  = useState(false)
-  const [loading,   setLoading]   = useState(false)
-  const [result,    setResult]    = useState<OnboardResult | null>(null)
-  const [error,     setError]     = useState<string | null>(null)
-  const [lineId,    setLineId]    = useState('')
-
-  // ── Cargar el SDK de Facebook ─────────────────────────────────────────────
+  const [config, setConfig] = useState<Configuration | null>(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<{ displayPhone: string; message: string } | null>(null)
+  const [values, setValues] = useState({ appId: '', wabaId: '', phoneNumberId: '', accessToken: '', pin: '', register: false })
+  const [origin, setOrigin] = useState('')
   useEffect(() => {
-    const appId = process.env.NEXT_PUBLIC_META_APP_ID
-    if (!appId) {
-      setError('NEXT_PUBLIC_META_APP_ID no está configurado en las variables de entorno')
-      return
-    }
-
-    if (document.getElementById('fb-sdk')) {
-      setSdkReady(true)
-      return
-    }
-
-    window.fbAsyncInit = function () {
-      window.FB.init({
-        appId,
-        autoLogAppEvents: true,
-        xfbml:            true,
-        version:          'v21.0',
-      })
-      setSdkReady(true)
-    }
-
-    const script    = document.createElement('script')
-    script.id       = 'fb-sdk'
-    script.src      = 'https://connect.facebook.net/es_LA/sdk.js'
-    script.async    = true
-    script.defer    = true
-    document.head.appendChild(script)
+    setOrigin(window.location.origin)
+    fetch('/api/cloud/config').then(async res => { const data = await res.json(); if (!res.ok) throw new Error(data.error || 'No se pudo revisar la configuración'); setConfig(data); setValues(v => ({ ...v, appId: data.appId })) }).catch(e => setError(e.message))
   }, [])
-
-  // ── Iniciar el flujo de Embedded Signup con Coexistence ───────────────────
-  const startEmbeddedSignup = useCallback(() => {
-    if (!sdkReady) return
-    setError(null)
-    setLoading(true)
-
-    window.FB.login(
-      async (response: SignupResult) => {
-        if (response.status !== 'connected' || !response.authResponse?.code) {
-          setError('El usuario canceló el proceso o hubo un error de autorización')
-          setLoading(false)
-          return
-        }
-
-        const { code, waba_id, phone_number_id } = response.authResponse
-
-        try {
-          const res = await fetch('/api/cloud/onboard', {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({
-              code,
-              wabaId:        waba_id,
-              phoneNumberId: phone_number_id,
-              whatsappLineId: lineId || undefined,
-            }),
-          })
-
-          const data: OnboardResult & { error?: string } = await res.json()
-
-          if (!res.ok || data.error) {
-            setError(data.error ?? 'Error al procesar el onboarding')
-          } else {
-            setResult(data)
-          }
-        } catch (err) {
-          setError(err instanceof Error ? err.message : 'Error de red')
-        } finally {
-          setLoading(false)
-        }
-      },
-      {
-        config_id:      process.env.NEXT_PUBLIC_META_CONFIG_ID,
-        response_type:  'code',
-        override_default_response_type: true,
-        // CRÍTICO: featureType = 'whatsapp_business_app_onboarding' activa Coexistence
-        extras: {
-          feature:     'whatsapp_embedded_signup',
-          featureType: 'whatsapp_business_app_onboarding',
-          setup:       {},
-          sessionInfoVersion: 3,
-        },
-      },
-    )
-  }, [sdkReady, lineId])
-
-  return (
-    <div className="max-w-2xl mx-auto py-10 px-4">
-      <h1 className="text-2xl font-bold mb-2">Conectar número oficial de WhatsApp</h1>
-      <p className="text-gray-500 mb-6 text-sm">
-        Registra un número de WhatsApp Business en la API oficial de Meta.
-        El número podrá seguir usando la{' '}
-        <strong>WhatsApp Business App</strong> simultáneamente (Coexistence).
-      </p>
-
-      {/* Selección de línea existente (opcional) */}
-      <div className="mb-6">
-        <label className="block text-sm font-medium text-gray-700 mb-1">
-          Línea existente a vincular (opcional)
-        </label>
-        <input
-          type="text"
-          placeholder="UUID de la línea en la plataforma"
-          value={lineId}
-          onChange={e => setLineId(e.target.value)}
-          className="w-full border rounded-lg px-3 py-2 text-sm"
-        />
-      </div>
-
-      {/* Botón principal */}
-      {!result && (
-        <button
-          onClick={startEmbeddedSignup}
-          disabled={!sdkReady || loading}
-          className="w-full bg-green-600 text-white font-semibold py-3 rounded-xl
-                     hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed
-                     flex items-center justify-center gap-2"
-        >
-          {loading ? (
-            <>
-              <span className="animate-spin">⏳</span>
-              Procesando...
-            </>
-          ) : !sdkReady ? (
-            'Cargando SDK de Meta...'
-          ) : (
-            'Conectar con Meta Business'
-          )}
-        </button>
-      )}
-
-      {/* Error */}
-      {error && (
-        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          <strong>Error:</strong> {error}
-        </div>
-      )}
-
-      {/* Éxito */}
-      {result && (
-        <div className="mt-6 space-y-4">
-          <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-            <h2 className="font-semibold text-green-800 mb-2">Número registrado exitosamente</h2>
-            <dl className="text-sm space-y-1">
-              <div className="flex gap-2">
-                <dt className="text-gray-500 w-32">Número:</dt>
-                <dd className="font-mono font-medium">{result.displayPhone}</dd>
-              </div>
-              <div className="flex gap-2">
-                <dt className="text-gray-500 w-32">Estado:</dt>
-                <dd>
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                    result.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                  }`}>
-                    {result.status}
-                  </span>
-                </dd>
-              </div>
-            </dl>
-            <p className="mt-3 text-sm text-gray-600">{result.message}</p>
-          </div>
-
-          {result.status === 'code_sent' && (
-            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-              <strong>Próximo paso:</strong> El cliente debe ingresar el código de verificación
-              en su <strong>WhatsApp Business App</strong>. Una vez verificado, la sincronización
-              de historial comenzará automáticamente (puede tardar hasta 15 minutos).
-            </div>
-          )}
-
-          {result.status === 'active' && (
-            <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg text-sm text-purple-800">
-              La sincronización de contactos e historial está en curso.
-              Recibirás una notificación cuando complete (puede tardar hasta 30 minutos
-              dependiendo del volumen de conversaciones).
-            </div>
-          )}
-
-          <button
-            onClick={() => { setResult(null); setError(null) }}
-            className="text-sm text-gray-500 hover:text-gray-700 underline"
-          >
-            Conectar otro número
-          </button>
-        </div>
-      )}
-
-      {/* Información sobre Coexistence */}
-      <div className="mt-10 p-4 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600">
-        <h3 className="font-semibold text-gray-800 mb-2">¿Qué es Coexistence?</h3>
-        <ul className="space-y-1 list-disc list-inside">
-          <li>El número puede usar la API oficial Y la app de WhatsApp Business <strong>al mismo tiempo</strong></li>
-          <li>Los mensajes enviados desde la app aparecen en nuestra plataforma (sincronizados)</li>
-          <li>Límite: 20 mensajes por segundo via API</li>
-          <li>Historial de hasta 180 días se sincroniza automáticamente</li>
-          <li>Cero riesgo de ban por método de envío</li>
-        </ul>
-      </div>
-    </div>
-  )
+  const ready = config && Object.values(config.checks).every(Boolean)
+  async function connect(event: FormEvent) {
+    event.preventDefault(); setBusy(true); setError(''); setResult(null)
+    try {
+      const response = await fetch('/api/cloud/connect', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...values, pin: values.register ? values.pin : undefined }) })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'No se pudo conectar')
+      setResult(data)
+    } catch (e) { setError(e instanceof Error ? e.message : 'Error de conexión') }
+    finally { setValues(v => ({ ...v, accessToken: '', pin: '' })); setBusy(false) }
+  }
+  return <main className="mx-auto max-w-2xl space-y-6 p-6">
+    <Link href="/lines" className="text-sm text-primary">← Líneas</Link>
+    <h1 className="text-2xl font-semibold">Conectar WhatsApp API</h1>
+    <p className="text-sm text-muted-foreground">Conectá un número de tu cuenta de WhatsApp Business usando un token de usuario de sistema de Meta. Repetí el proceso por cada Phone Number ID.</p>
+    <section className="rounded-xl border p-4 space-y-2" aria-label="Preparación del servidor">
+      <h2 className="font-semibold">Preparación del servidor</h2>
+      {!config ? <p>Consultando configuración…</p> : Object.entries(config.checks).map(([key, ok]) => <p key={key} className="text-sm">{ok ? '✓' : 'Pendiente:'} {labels[key] || key}</p>)}
+      <p className="text-sm break-all">URL del webhook: <code>{origin}/api/cloud/webhook</code></p>
+      <p className="text-xs text-muted-foreground">En Meta, verificá esta URL con el token configurado en el servidor y suscribí el campo messages. Para actualizar plantillas, suscribí también message_template_status_update. El token de verificación es distinto del token de acceso.</p>
+    </section>
+    <form onSubmit={connect} className="space-y-4">
+      {(['appId','wabaId','phoneNumberId','accessToken'] as const).map(key => <label key={key} className="block text-sm font-medium">{{ appId:'App ID',wabaId:'WABA ID',phoneNumberId:'Phone Number ID',accessToken:'Token de usuario de sistema' }[key]}
+        <input className="mt-1 w-full rounded-md border p-2" name={key} type={key === 'accessToken' ? 'password' : 'text'} autoComplete="off" required value={values[key]} onChange={e => setValues(v => ({ ...v, [key]: e.target.value.trim() }))} />
+      </label>)}
+      <p className="text-xs text-muted-foreground">El token se cifra en el servidor y no se guarda en este navegador. Necesita whatsapp_business_management y whatsapp_business_messaging sobre la WABA elegida.</p>
+      <label className="flex gap-2 text-sm"><input type="checkbox" checked={values.register} onChange={e => setValues(v => ({ ...v, register: e.target.checked }))} />Registrar en Cloud API un número ya verificado por SMS o llamada</label>
+      {values.register && <label className="block text-sm">PIN de verificación en dos pasos (no es el código SMS)<input className="mt-1 w-full rounded-md border p-2" type="password" autoComplete="off" inputMode="numeric" pattern="[0-9]{6}" required value={values.pin} onChange={e => setValues(v => ({ ...v, pin:e.target.value }))} /></label>}
+      <button className="rounded-lg bg-primary px-4 py-2 text-primary-foreground disabled:opacity-50" disabled={busy || !ready}>{busy ? 'Validando conexión…' : 'Validar y conectar número'}</button>
+    </form>
+    {error && <p role="alert" className="rounded-lg border border-red-300 p-3 text-red-700">{error}</p>}
+    {result && <div role="status" className="rounded-lg border border-green-300 p-4"><strong>{result.displayPhone}</strong><p>{result.message}</p></div>}
+    <Link href="/lines/cloud-inbox" className="block text-primary">Abrir bandeja de WhatsApp API →</Link>
+    <p className="text-xs text-muted-foreground">La conexión se valida individualmente. El primer envío, recepción y estado de entrega deben probarse con un destinatario autorizado antes de usar campañas. Los números que siguen usando WhatsApp Business App requieren el flujo de coexistencia de Meta.</p>
+  </main>
 }

@@ -17,6 +17,8 @@ const REACTIVATION_SEGMENTS = [
   'REACTIVACION_FRIA',
 ] as const
 
+const booleanParam = z.enum(['true', 'false']).transform(v => v === 'true')
+
 const FilterSchema = z.object({
   // Filtro principal del operador: seleccionar un segmento de difusión específico.
   // Sin filtro → devuelve TODOS los elegibles del último run completo, por priority_score DESC.
@@ -24,11 +26,11 @@ const FilterSchema = z.object({
   valueTier:            z.enum(['super_vip', 'vip_alto', 'vip_medio', 'vip', 'medio', 'bajo']).optional(),
   platform:             z.string().max(50).optional(),
   agent:                z.string().max(50).optional(),
-  broadcasted:          z.coerce.boolean().default(false),
+  broadcasted:          booleanParam.default(false),
   minDaysInactive:      z.coerce.number().int().min(0).optional(),
   maxDaysInactive:      z.coerce.number().int().min(0).optional(),
   // true → muestra todos los runs (útil para debugging de corridas fallidas)
-  includePreviousRuns:  z.coerce.boolean().default(false),
+  includePreviousRuns:  booleanParam.default(false),
   page:                 z.coerce.number().int().min(1).default(1),
   pageSize:             z.coerce.number().int().min(1).max(200).default(50),
 }).refine(
@@ -44,7 +46,12 @@ export async function GET(req: NextRequest) {
   const parsed = parseBody(FilterSchema, params)
   if (!parsed.ok) return handleValidationError(req, parsed.error, 'contacts/prioritized')
 
+  if (parsed.data.includePreviousRuns && auth.user.role !== 'admin') {
+    return NextResponse.json({ error: 'Sólo administradores pueden consultar corridas anteriores' }, { status: 403 })
+  }
+
   const result = await service.getPrioritizedContacts({
+    access: { role: auth.user.role, userId: auth.user.user_id, allowedAgents: auth.user.allowed_agents },
     reactivationSegment: parsed.data.reactivationSegment as ReactivationSegment | undefined,
     valueTier:           parsed.data.valueTier as ValueTier | undefined,
     platform:            parsed.data.platform,

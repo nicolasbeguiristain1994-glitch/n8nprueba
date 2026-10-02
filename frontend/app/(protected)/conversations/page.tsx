@@ -3,7 +3,9 @@ import { useRef, useState } from 'react'
 import { Card } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
-import { Send, Loader2, Smile } from 'lucide-react'
+import { PageHeader } from '@/components/layout/PageHeader'
+import { cn } from '@/lib/utils'
+import { Send, Loader2, Smile, ArrowLeft, PanelRight } from 'lucide-react'
 import { useConversations } from '@/hooks/useConversations'
 import { useKeyboardShortcuts } from '@/lib/keyboard-shortcuts'
 import { VirtualizedConvList }    from '@/components/conversations/VirtualizedConvList'
@@ -16,9 +18,11 @@ import { EmojiPicker }            from '@/components/conversations/EmojiPicker'
 
 export default function Conversations() {
   const {
+    loading, loadError, messagesLoading, messagesError, refreshConversations,
     convs, visible, selected, selectedConv, messages, messagesEndRef,
     reply, setReply, sending, sendError, setSendError,
     filter, setFilter, search, setSearch,
+    campaign, setCampaign, campaigns, level, setLevel,
     dateFrom, setDateFrom, dateTo, setDateTo,
     followUpOnly, setFollowUpOnly,
     realtimeStatus,
@@ -30,10 +34,11 @@ export default function Conversations() {
   const searchRef    = useRef<HTMLInputElement>(null)
   const textareaRef  = useRef<HTMLTextAreaElement>(null)
   const [showEmoji, setShowEmoji] = useState(false)
+  const [mobilePanel, setMobilePanel] = useState<'list' | 'chat' | 'details'>('list')
 
   useKeyboardShortcuts([
-    { key: 'k', ctrl: true, handler: () => searchRef.current?.focus() },
-    { key: 'Escape', handler: () => { setSearch(''); setDateFrom(''); setDateTo(''); setFollowUpOnly(false); setShowEmoji(false) } },
+    { key: 'F', ctrl: true, shift: true, handler: () => searchRef.current?.focus() },
+    { key: 'Escape', handler: () => { setSearch(''); setFilter('all'); setCampaign('all'); setLevel('all'); setDateFrom(''); setDateTo(''); setFollowUpOnly(false); setShowEmoji(false) } },
     { key: 'V', ctrl: true, shift: true,
       handler: async () => {
         if (!selectedConv?.contact_id) return
@@ -62,19 +67,16 @@ export default function Conversations() {
 
   return (
     <div className="space-y-3">
-      <div>
-        <h1 className="text-xl font-semibold">Conversaciones</h1>
-        <p className="text-sm text-gray-500">
-          {convs.length}{totalConvs > convs.length ? ` de ${totalConvs}` : ''} hilos · {convs.filter(c => c.last_direction === 'inbound').length} sin responder
-        </p>
-      </div>
+      <PageHeader title="Conversaciones" description={`${convs.length}${totalConvs > convs.length ? ` de ${totalConvs}` : ''} hilos · ${convs.filter(c => c.last_direction === 'inbound').length} sin responder`} />
 
-      <div className={`grid gap-4 h-[calc(100vh-152px)] ${selected ? 'grid-cols-1 lg:grid-cols-4' : 'grid-cols-1 lg:grid-cols-3'}`}>
+      <div className={cn('grid min-h-[420px] h-[calc(100dvh-16rem)] gap-3 md:h-[calc(100dvh-13rem)] lg:grid-cols-[280px_minmax(0,1fr)]', selected && 'xl:grid-cols-[280px_minmax(0,1fr)_260px]')}>
 
         {/* Lista */}
-        <Card className="overflow-hidden flex flex-col">
+        <Card className={cn("min-h-0 overflow-hidden flex-col gap-0 py-0", mobilePanel === 'list' ? 'flex' : 'hidden lg:flex')}>
           <ConversationFilters
             convs={convs} search={search} filter={filter}
+            campaign={campaign} campaigns={campaigns} onCampaign={setCampaign}
+            level={level} onLevel={setLevel}
             dateFrom={dateFrom} dateTo={dateTo} followUpOnly={followUpOnly}
             realtimeStatus={realtimeStatus} notifPermission={notifPermission}
             searchRef={searchRef}
@@ -82,16 +84,18 @@ export default function Conversations() {
             onDateFrom={setDateFrom} onDateTo={setDateTo} onFollowUp={setFollowUpOnly}
             onRequestNotif={requestNotif}
           />
-          <VirtualizedConvList
+          {loadError && <div role="alert" className="border-b border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive">{loadError}<button onClick={refreshConversations} className="ml-2 underline">Reintentar</button></div>}
+          {loading ? <div role="status" className="space-y-3 p-3"><span className="sr-only">Cargando conversaciones…</span>{[0, 1, 2, 3].map(i => <div key={i} className="h-16 animate-pulse rounded-lg bg-muted" />)}</div> : (!loadError || visible.length > 0) && <VirtualizedConvList
             items={visible}
+            selectedCampaign={campaign}
             selected={selected}
-            onSelect={openConv}
-          />
+            onSelect={phone => { openConv(phone); setMobilePanel('chat') }}
+          />}
           {hasMore && (
             <div className="border-t px-3 py-2 shrink-0">
               <Button
                 variant="ghost" size="sm"
-                className="w-full text-xs text-gray-500 hover:text-gray-700"
+                className="w-full text-xs text-muted-foreground hover:text-foreground"
                 onClick={loadMoreConvs}
                 disabled={loadingMore}
               >
@@ -105,24 +109,29 @@ export default function Conversations() {
         </Card>
 
         {/* Chat */}
-        <Card className="lg:col-span-2 flex flex-col overflow-hidden">
+        <Card className={cn("min-h-0 flex-col gap-0 overflow-hidden py-0", mobilePanel === 'chat' ? 'flex' : mobilePanel === 'details' ? 'hidden xl:flex' : 'hidden lg:flex')}>
+          {selected && <div className="flex items-center justify-between border-b px-3 py-2 xl:hidden">
+            <Button size="sm" variant="ghost" onClick={() => setMobilePanel('list')} className="lg:hidden"><ArrowLeft size={14} /> Conversaciones</Button>
+            <Button size="sm" variant="ghost" onClick={() => setMobilePanel('details')} className="ml-auto"><PanelRight size={14} /> Detalles</Button>
+          </div>}
           {!selected
             ? (
-              <div className="flex-1 flex flex-col items-center justify-center gap-2 text-gray-400">
-                <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center">
-                  <Send size={20} className="text-gray-300" />
+              <div className="flex-1 flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
+                  <Send size={20} className="text-muted-foreground/60" />
                 </div>
                 <p className="text-sm">Seleccioná una conversación</p>
-                <p className="text-[11px] text-gray-300">Ctrl+K para buscar</p>
+                <p className="text-[11px] text-muted-foreground/60">Ctrl/⌘ + Shift + F para buscar</p>
               </div>
             ) : (
               <>
-                <ConversationHeader phone={selected} conv={selectedConv} />
+                <ConversationHeader phone={selected} conv={selectedConv} selectedCampaign={campaign} />
 
                 {/* Área de mensajes */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-gray-50">
-                  {messages.length === 0
-                    ? <p className="text-center text-gray-400 text-sm pt-10">Sin mensajes aún</p>
+                <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-background">
+                  {messagesError && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{messagesError}<button className="ml-2 underline" onClick={() => openConv(selected)}>Reintentar</button></p>}
+                  {messagesLoading ? <p role="status" className="pt-10 text-center text-sm text-muted-foreground">Cargando mensajes…</p> : messagesError && messages.length === 0 ? null : messages.length === 0
+                    ? <p className="text-center text-muted-foreground text-sm pt-10">Sin mensajes aún</p>
                     : messages.map(m => <MessageBubble key={m.id} m={m} />)
                   }
                   <div ref={messagesEndRef} />
@@ -130,15 +139,15 @@ export default function Conversations() {
 
                 {sendError && (
                   <div className="px-3 pt-2 pb-0 shrink-0">
-                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-1.5 flex items-center justify-between">
+                    <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded px-3 py-1.5 flex items-center justify-between">
                       <span>{sendError}</span>
-                      <button onClick={() => setSendError(null)} className="ml-3 text-red-400 hover:text-red-600">✕</button>
+                      <button onClick={() => setSendError(null)} className="ml-3 text-red-400 hover:text-destructive">✕</button>
                     </p>
                   </div>
                 )}
 
                 {/* Input area */}
-                <div className="border-t border-gray-100 p-3 bg-white shrink-0">
+                <div className="border-t border-border p-3 bg-card shrink-0">
                   <div className="flex gap-2 items-start">
                     <QuickTemplates
                       contactName={selectedConv?.first_name}
@@ -150,9 +159,10 @@ export default function Conversations() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-9 w-9 text-gray-400 hover:text-yellow-500 shrink-0"
+                        className="h-9 w-9 text-muted-foreground hover:text-yellow-500 shrink-0"
                         onClick={() => setShowEmoji(v => !v)}
                         type="button"
+                        aria-label="Insertar emoji" aria-expanded={showEmoji}
                       >
                         <Smile size={18} />
                       </Button>
@@ -165,19 +175,21 @@ export default function Conversations() {
 
                     <Textarea
                       ref={textareaRef}
+                      aria-label="Respuesta al contacto"
                       placeholder="Escribí una respuesta… (Enter para enviar, Shift+Enter para nueva línea)"
                       value={reply}
                       onChange={e => setReply(e.target.value)}
                       onKeyDown={handleKeyDown}
                       rows={1}
-                      className="flex-1 resize-none min-h-[36px] max-h-32 overflow-y-auto text-sm leading-relaxed"
+                      className="min-w-0 flex-1 resize-none min-h-[36px] max-h-32 overflow-y-auto text-sm leading-relaxed"
                     />
 
                     <Button
                       onClick={sendReply}
+                      aria-label="Enviar respuesta"
                       disabled={sending || !reply.trim()}
                       size="icon"
-                      className="bg-green-600 hover:bg-green-700 shrink-0 h-9 w-9"
+                      className="bg-primary hover:bg-primary/90 shrink-0 h-9 w-9"
                     >
                       {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                     </Button>
@@ -190,11 +202,12 @@ export default function Conversations() {
 
         {/* Sidebar */}
         {selected && (
-          <Card className="overflow-hidden flex flex-col">
+          <Card className={cn("min-h-0 overflow-y-auto flex-col gap-0 py-0", mobilePanel === 'details' ? 'flex' : 'hidden xl:flex')}>
+            <div className="border-b p-2 xl:hidden"><Button size="sm" variant="ghost" onClick={() => setMobilePanel('chat')}><ArrowLeft size={14} /> Volver al chat</Button></div>
             <ConversationSidebar
               phone={selected}
               conv={selectedConv}
-              onRefresh={() => openConv(selected)}
+              onRefresh={() => { refreshConversations(); openConv(selected) }}
             />
           </Card>
         )}

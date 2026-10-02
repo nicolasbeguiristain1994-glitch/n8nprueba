@@ -40,8 +40,8 @@ export function DataTableBulkActions({
         // Posición: flotante en el bottom de la pantalla
         'fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-40',
         // Panel visual
-        'flex items-center gap-2 px-4 py-2.5',
-        'bg-popover border border-border rounded-xl shadow-xl',
+        'flex w-max max-w-[calc(100vw-2rem)] flex-wrap items-center justify-center gap-2 px-4 py-2.5',
+        'bg-popover border border-border rounded-xl shadow-lg',
         // Animación slide-up
         'animate-in slide-in-from-bottom-4 fade-in duration-200',
         className,

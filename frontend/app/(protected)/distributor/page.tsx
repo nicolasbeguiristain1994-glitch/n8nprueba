@@ -115,8 +115,8 @@ export default function DistributorPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Distribuidor de Líneas</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
+          <h1 className="page-title">Distribuidor de Líneas</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
             Asignación operacional de líneas y proxies para campañas
           </p>
         </div>
@@ -133,7 +133,7 @@ export default function DistributorPage() {
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="flex items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           <AlertTriangle size={14} />
           {error}
         </div>
@@ -143,7 +143,7 @@ export default function DistributorPage() {
       {stats && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard title="Líneas totales"    value={stats.lines.total}      icon={<Server size={16} />} />
-          <StatCard title="Líneas elegibles"  value={stats.lines.eligible}   icon={<Activity size={16} className="text-green-600" />} />
+          <StatCard title="Líneas elegibles"  value={stats.lines.eligible}   icon={<Activity size={16} className="text-success" />} />
           <StatCard title="Líneas con proxy"  value={stats.lines.with_proxy} icon={<Globe size={16} />} />
           <StatCard title="Proxies activos"   value={stats.proxies.total}    icon={<Server size={16} />}>
             <div className="flex gap-1 mt-1 flex-wrap">
@@ -164,15 +164,15 @@ export default function DistributorPage() {
           </CardHeader>
           <CardContent>
             {preview.length === 0 ? (
-              <p className="text-sm text-gray-500">No hay líneas elegibles en este momento.</p>
+              <p className="text-sm text-muted-foreground">No hay líneas elegibles en este momento.</p>
             ) : (
               <div className="space-y-3">
                 {preview.map((r, i) => (
-                  <div key={r.line.id} className="flex items-center gap-4 rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
-                    <span className="text-xs font-mono text-gray-400 w-4">#{i + 1}</span>
+                  <div key={r.line.id} className="flex items-center gap-4 rounded-lg border border-border bg-background px-4 py-3">
+                    <span className="text-xs font-mono text-muted-foreground w-4">#{i + 1}</span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium truncate">{r.line.display_name}</p>
-                      <p className="text-xs text-gray-500">{r.line.line_key}</p>
+                      <p className="text-xs text-muted-foreground">{r.line.line_key}</p>
                     </div>
                     <ScoreBar score={r.score} />
                     {r.proxy ? (
@@ -180,10 +180,10 @@ export default function DistributorPage() {
                         <Badge variant={healthVariant(r.proxy.health_status)} className="text-xs">
                           {r.proxy.health_status}
                         </Badge>
-                        <p className="text-gray-500 mt-0.5">{r.proxy.label}</p>
+                        <p className="text-muted-foreground mt-0.5">{r.proxy.label}</p>
                       </div>
                     ) : (
-                      <span className="text-xs text-gray-400">sin proxy</span>
+                      <span className="text-xs text-muted-foreground">sin proxy</span>
                     )}
                   </div>
                 ))}
@@ -204,14 +204,14 @@ export default function DistributorPage() {
         </CardHeader>
         <CardContent>
           {proxies.length === 0 ? (
-            <p className="text-sm text-gray-500 py-4 text-center">
+            <p className="text-sm text-muted-foreground py-4 text-center">
               No hay proxies registrados. Crear desde la API o la migración 024.
             </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-gray-100 text-xs text-gray-500">
+                  <tr className="border-b border-border text-xs text-muted-foreground">
                     <th className="text-left pb-2 pr-4 font-medium">Label</th>
                     <th className="text-left pb-2 pr-4 font-medium">Host:Puerto</th>
                     <th className="text-left pb-2 pr-4 font-medium">País / Tipo</th>
@@ -223,14 +223,14 @@ export default function DistributorPage() {
                 </thead>
                 <tbody className="divide-y divide-gray-50">
                   {proxies.map(p => (
-                    <tr key={p.id} className="hover:bg-gray-50">
+                    <tr key={p.id} className="hover:bg-background">
                       <td className="py-2 pr-4 font-medium">{p.label}</td>
-                      <td className="py-2 pr-4 text-gray-600 font-mono text-xs">
+                      <td className="py-2 pr-4 text-muted-foreground font-mono text-xs">
                         {p.host}:{p.port}
-                        <span className="ml-1 text-gray-400">({p.protocol})</span>
+                        <span className="ml-1 text-muted-foreground">({p.protocol})</span>
                       </td>
                       <td className="py-2 pr-4">
-                        <span className="text-gray-600">{p.country ?? '—'}</span>
+                        <span className="text-muted-foreground">{p.country ?? '—'}</span>
                         <Badge variant="outline" className="ml-1.5 text-xs">{proxyTypeBadge(p.proxy_type)}</Badge>
                         {p.rotating_endpoint && <Badge variant="outline" className="ml-1 text-xs">rot</Badge>}
                       </td>
@@ -239,14 +239,14 @@ export default function DistributorPage() {
                           {p.health_status}
                         </Badge>
                       </td>
-                      <td className="py-2 pr-4 text-right text-gray-600">
+                      <td className="py-2 pr-4 text-right text-muted-foreground">
                         {p.latency_ms != null ? `${p.latency_ms}ms` : '—'}
                       </td>
                       <td className="py-2 pr-4 text-right">
                         {p.assigned_lines > 0 ? (
                           <Badge variant="secondary" className="text-xs">{p.assigned_lines}</Badge>
                         ) : (
-                          <span className="text-gray-400 text-xs">—</span>
+                          <span className="text-muted-foreground text-xs">—</span>
                         )}
                       </td>
                       <td className="py-2">
@@ -288,8 +288,8 @@ function StatCard({
     <Card>
       <CardContent className="pt-4">
         <div className="flex items-center justify-between">
-          <p className="text-xs text-gray-500">{title}</p>
-          <span className="text-gray-400">{icon}</span>
+          <p className="text-xs text-muted-foreground">{title}</p>
+          <span className="text-muted-foreground">{icon}</span>
         </div>
         <p className="text-2xl font-semibold mt-1">{value}</p>
         {children}
@@ -303,10 +303,10 @@ function ScoreBar({ score }: { score: AssignResult['score'] }) {
   const color = pct >= 70 ? 'bg-green-500' : pct >= 40 ? 'bg-yellow-500' : 'bg-red-500'
   return (
     <div className="flex flex-col items-center gap-0.5 w-20">
-      <div className="w-full h-1.5 rounded-full bg-gray-200">
+      <div className="w-full h-1.5 rounded-full bg-border">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${pct}%` }} />
       </div>
-      <span className="text-xs text-gray-500">{score.total}/100</span>
+      <span className="text-xs text-muted-foreground">{score.total}/100</span>
     </div>
   )
 }

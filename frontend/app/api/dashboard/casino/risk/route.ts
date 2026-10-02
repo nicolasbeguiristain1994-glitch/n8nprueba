@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
-import { getPlatformFilterSql, isValidPlatform } from '@/lib/casino-agents'
+import { getAgentsSqlArray, isValidPlatform } from '@/lib/casino-agents'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -67,8 +67,7 @@ export async function GET(req: Request) {
       { status: 400 },
     )
   }
-  // H3 fix: platform column primero, lista de agentes solo como fallback legacy (ver casino-agents.ts)
-  const platformFilter = getPlatformFilterSql(platformParam)
+  const agentsSql = getAgentsSqlArray(platformParam)
 
   try {
     const [summaryRows, extractores, deficit, recuperables] = await Promise.all([
@@ -93,7 +92,7 @@ export async function GET(req: Request) {
           COALESCE(SUM(
             CASE WHEN total_retiros > total_cargas AND ($1::text IS NULL OR agente = $1)
               THEN total_retiros - total_cargas ELSE 0 END
-          ), 0)::float8 AS perdida_bruta,
+          ), 0)::bigint AS perdida_bruta,
 
           COUNT(*) FILTER (
             WHERE seg_monto    IN ('super_vip','vip_alto','vip_medio','vip')
@@ -102,7 +101,7 @@ export async function GET(req: Request) {
           )::int AS vip_recuperables
 
         FROM casino_players
-        WHERE ${platformFilter}
+        WHERE agente = ANY(${agentsSql})
       `, [agenteParam]),
 
       // ── Nuevos extractores ────────────────────────────────────────────────
@@ -113,8 +112,8 @@ export async function GET(req: Request) {
           username,
           agente,
           COALESCE(seg_monto, '') AS seg_monto,
-          total_cargas::float8,
-          total_retiros::float8,
+          total_cargas::bigint,
+          total_retiros::bigint,
           ROUND(total_retiros::numeric / NULLIF(total_cargas,0) * 100, 1) AS ratio_retiro_pct,
           (CURRENT_DATE - fecha_primera)::int AS dias_desde_ingreso,
           cant_cargas,
@@ -124,7 +123,7 @@ export async function GET(req: Request) {
           AND total_cargas  > 0
           AND cant_retiros  > 0
           AND total_retiros::numeric / total_cargas > 0.6
-          AND ${platformFilter}
+          AND agente = ANY(${agentsSql})
           AND ($1::text IS NULL OR agente = $1)
         ORDER BY (total_retiros::numeric / total_cargas) DESC, total_retiros DESC
         LIMIT 100
@@ -138,14 +137,14 @@ export async function GET(req: Request) {
           agente,
           COALESCE(seg_monto,     '') AS seg_monto,
           COALESCE(seg_actividad, '') AS seg_actividad,
-          total_cargas::float8,
-          total_retiros::float8,
-          (total_retiros - total_cargas)::float8 AS deficit,
+          total_cargas::bigint,
+          total_retiros::bigint,
+          (total_retiros - total_cargas)::bigint AS deficit,
           fecha_ultima::text
         FROM casino_players
         WHERE total_cargas  > 0
           AND total_retiros > total_cargas
-          AND ${platformFilter}
+          AND agente = ANY(${agentsSql})
           AND ($1::text IS NULL OR agente = $1)
         ORDER BY (total_retiros - total_cargas) DESC
         LIMIT 100
@@ -159,15 +158,15 @@ export async function GET(req: Request) {
           username,
           agente,
           COALESCE(seg_monto, '') AS seg_monto,
-          total_cargas::float8,
-          total_retiros::float8,
+          total_cargas::bigint,
+          total_retiros::bigint,
           (CURRENT_DATE - fecha_ultima)::int AS dias_ultimo,
           fecha_ultima::text
         FROM casino_players
         WHERE seg_monto    IN ('super_vip','vip_alto','vip_medio','vip')
           AND seg_actividad = 'en_riesgo'
           AND fecha_ultima IS NOT NULL
-          AND ${platformFilter}
+          AND agente = ANY(${agentsSql})
           AND ($1::text IS NULL OR agente = $1)
         ORDER BY (CURRENT_DATE - fecha_ultima) ASC, total_cargas DESC
         LIMIT 50

@@ -19,7 +19,7 @@ import {
 import { CSS } from '@dnd-kit/utilities'
 import { GripVertical } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { WIDGET_REGISTRY, type WidgetId } from './types'
+import { WIDGET_REGISTRY, type WidgetId, type DateRange } from './types'
 import type { DashboardData } from './useDashboard'
 import type { Platform } from '@/lib/casino-agents'
 
@@ -36,13 +36,12 @@ function SortableWidget({ id, span, children }: SortableWidgetProps) {
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
-    gridColumn: span === 2 ? 'span 2' : undefined,
     zIndex: isDragging ? 50 : undefined,
     opacity: isDragging ? 0.5 : 1,
   }
 
   return (
-    <div ref={setNodeRef} style={style} className="relative group/widget">
+    <div ref={setNodeRef} style={style} className={cn('relative group/widget min-w-0', span === 2 && 'md:col-span-2')}>
       {/* Drag handle */}
       <button
         {...attributes}
@@ -69,6 +68,8 @@ interface WidgetGridProps {
   loading: boolean
   platform: Platform
   agent: string
+  dateRange: DateRange
+  revision: number
   onReorder: (ids: WidgetId[]) => void
   onTaskCompleted?: (id: string) => void
 }
@@ -89,6 +90,8 @@ export const WidgetGrid = memo(function WidgetGrid({
   loading,
   platform,
   agent,
+  dateRange,
+  revision,
   onReorder,
   onTaskCompleted,
 }: WidgetGridProps) {
@@ -115,21 +118,27 @@ export const WidgetGrid = memo(function WidgetGrid({
 
   function renderWidget(id: WidgetId) {
     const casino = data?.casino ?? null
+    const casinoLoading = loading && !casino
+    const unavailable = <p className="rounded-xl border p-4 text-sm text-muted-foreground">Datos no disponibles. Reintentá con Refrescar vista.</p>
     switch (id) {
       case 'casino_kpi':
-        return <CasinoKPIWidget summary={casino?.summary ?? null} loading={loading} />
+        return <CasinoKPIWidget summary={casino?.summary ?? null} loading={casinoLoading} />
       case 'agentes':
-        return <AgentesTableWidget platform={platform} agentFilter={agent} />
+        return <AgentesTableWidget agentes={casino?.agentes ?? null} loading={casinoLoading} platform={platform} agentFilter={agent} dateRange={dateRange} revision={revision} />
       case 'caja':
-        return <CajaWidget />
+        return <CajaWidget enabled={!loading} dateRange={dateRange} platform={platform} agent={agent} revision={revision} />
       case 'vips_riesgo':
-        return <VipsEnRiesgoWidget vips={casino?.vips ?? []} loading={loading} />
+        if (!loading && !casino) return unavailable
+        return <VipsEnRiesgoWidget vips={casino?.vips ?? []} loading={casinoLoading} />
       case 'segmentos':
-        return <SegmentosWidget segActividad={casino?.seg_actividad ?? []} segMonto={casino?.seg_monto ?? []} loading={loading} />
+        if (!loading && !casino) return unavailable
+        return <SegmentosWidget segActividad={casino?.seg_actividad ?? []} segMonto={casino?.seg_monto ?? []} loading={casinoLoading} />
       case 'mensajeria':
-        return <MensajeriaWidget msgs={data?.msgs ?? null} loading={loading} />
+        if (!loading && !data?.msgs) return unavailable
+        return <MensajeriaWidget msgs={data?.msgs ?? null} loading={loading && !data?.msgs} />
       case 'tasks':
-        return <TasksWidget tasks={data?.tasks ?? []} loading={loading} onCompleted={onTaskCompleted} />
+        if (!loading && !data?.crmAvailable) return unavailable
+        return <TasksWidget tasks={data?.tasks ?? []} loading={loading && !data?.crmAvailable} onCompleted={onTaskCompleted} />
       case 'quick_actions':
         return <QuickActionsWidget />
       default:
@@ -141,8 +150,7 @@ export const WidgetGrid = memo(function WidgetGrid({
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
       <SortableContext items={visibleWidgets} strategy={rectSortingStrategy}>
         <div
-          className="grid gap-4"
-          style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}
+          className="grid grid-cols-1 gap-4 md:grid-cols-2"
         >
           {visibleWidgets.map(id => {
             const cfg = configMap[id]

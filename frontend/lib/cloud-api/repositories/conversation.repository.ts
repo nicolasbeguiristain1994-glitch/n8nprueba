@@ -1,6 +1,7 @@
 // Repository para cloud_conversations y cloud_messages.
 
-import { query } from '@/lib/db'
+import { query, withTransaction } from '@/lib/db'
+import { cloudMessageText, type CloudMessageContent } from '../message-content'
 
 export interface ConversationRow {
   id:                  string
@@ -21,6 +22,29 @@ export interface UpsertConversationParams {
 }
 
 export const conversationRepository = {
+
+  async receive(phoneNumberId: string, contactPhone: string, msg: CloudMessageContent & { id: string; timestamp: string; type: string }): Promise<void> {
+    const timestamp = Number(msg.timestamp)
+    if (!Number.isFinite(timestamp) || timestamp <= 0 || timestamp > Date.now() / 1000 + 300) throw new Error('Invalid message timestamp')
+    await withTransaction(async client => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [msg.id])
+      const duplicate = await client.query('SELECT 1 FROM cloud_messages WHERE wamid=$1', [msg.id])
+      if (duplicate.rows.length) return
+      const conversation = await client.query<{ id: string }>(`INSERT INTO cloud_conversations
+        (phone_number_id,contact_phone,window_opens_at,window_expires_at,window_type,last_message_at,last_message_preview,unread_count,status)
+        VALUES ($1,$2,to_timestamp($3),to_timestamp($3)+interval '24 hours','customer_initiated',to_timestamp($3),$4,1,'open')
+        ON CONFLICT(phone_number_id,contact_phone) DO UPDATE SET
+        window_opens_at=GREATEST(cloud_conversations.window_opens_at,EXCLUDED.window_opens_at),
+        window_expires_at=GREATEST(cloud_conversations.window_expires_at,EXCLUDED.window_expires_at),
+        last_message_preview=CASE WHEN cloud_conversations.last_message_at > EXCLUDED.last_message_at THEN cloud_conversations.last_message_preview ELSE EXCLUDED.last_message_preview END,
+        last_message_at=GREATEST(cloud_conversations.last_message_at,EXCLUDED.last_message_at),
+        unread_count=cloud_conversations.unread_count+1,status='open',updated_at=NOW() RETURNING id`,
+        [phoneNumberId,contactPhone,timestamp,cloudMessageText(msg,msg.type).slice(0,100)])
+      await client.query(`INSERT INTO cloud_messages (conversation_id,phone_number_id,wamid,direction,message_type,content,status,sent_at)
+        VALUES ($1,$2,$3,'inbound',$4,$5,'delivered',to_timestamp($6))`,
+        [conversation.rows[0].id,phoneNumberId,msg.id,msg.type,JSON.stringify(msg),timestamp])
+    })
+  },
 
   async findWindow(phoneNumberId: string, contactPhone: string): Promise<{
     windowExpiresAt: Date | null
@@ -210,7 +234,10 @@ export const messageRepository = {
   } = {}): Promise<void> {
     await query(
       `UPDATE cloud_messages
-       SET status            = $1,
+       SET status            = CASE
+             WHEN status = 'read' AND $1 IN ('sent','delivered','failed') THEN status
+             WHEN status = 'delivered' AND $1 IN ('sent','failed') THEN status
+             ELSE $1 END,
            delivered_at      = CASE WHEN $1 = 'delivered' THEN NOW() ELSE delivered_at END,
            read_at           = CASE WHEN $1 = 'read'      THEN NOW() ELSE read_at      END,
            failed_at         = CASE WHEN $1 = 'failed'    THEN NOW() ELSE failed_at    END,

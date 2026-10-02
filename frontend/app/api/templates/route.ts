@@ -3,6 +3,8 @@ import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { parseBody, handleValidationError, CreateTemplateSchema } from '@/lib/schema'
+import { getAccessibleLineIds } from '@/lib/line-visibility'
+import { buildLocalTemplateInsert, detectLegacyTemplateColumns } from '@/lib/template-storage'
 
 type TemplateRow = {
   id: string
@@ -29,16 +31,20 @@ export async function GET(req: NextRequest) {
   const q        = req.nextUrl.searchParams.get('q')        || ''
 
   try {
+    const lineIds = await getAccessibleLineIds(auth.user)
     const rows = await query<TemplateRow>(`
-      SELECT id, name, category, language, status, components,
+      SELECT id, name, category, language, status, components, waba_id,
              whatsapp_template_id, rejection_reason, usage_count, last_used_at,
              created_by, created_at, updated_at
       FROM whatsapp_templates
       WHERE ($1 = '' OR status = $1)
         AND ($2 = '' OR category = $2)
         AND ($3 = '' OR name ILIKE $3)
+        AND (waba_id IS NULL OR $4::uuid[] IS NULL OR EXISTS (
+          SELECT 1 FROM cloud_numbers cn WHERE cn.waba_id=whatsapp_templates.waba_id
+            AND cn.whatsapp_line_id=ANY($4::uuid[]) AND cn.status='active'))
       ORDER BY created_at DESC
-    `, [status, category, q ? `%${q}%` : ''])
+    `, [status, category, q ? `%${q}%` : '', lineIds])
     return NextResponse.json({ templates: rows })
   } catch (e) {
     console.error('[/api/templates GET]', e instanceof Error ? e.message : e)
@@ -54,19 +60,13 @@ export async function POST(req: NextRequest) {
   const parsed  = parseBody(CreateTemplateSchema, rawBody)
   if (!parsed.ok) return handleValidationError(req, parsed.error, 'templates')
 
+  // The schema already normalized the name and required exactly one nonblank BODY.
   const { name, category, language, components } = parsed.data
 
-  // Validar que exista un componente BODY (regla de negocio, no de schema)
-  const hasBody = components.some(c => (c as { type?: string }).type === 'BODY')
-  if (!hasBody) return NextResponse.json({ error: 'La plantilla debe tener al menos un componente BODY' }, { status: 400 })
-
   try {
-    const [row] = await query<{ id: string }>(
-      `INSERT INTO whatsapp_templates (name, category, language, components, created_by)
-       VALUES ($1, $2, $3, $4::jsonb, $5)
-       RETURNING id`,
-      [name.trim().toLowerCase().replace(/\s+/g, '_'), category, language, JSON.stringify(components), auth.user.user_id]
-    )
+    const cols   = await detectLegacyTemplateColumns(query)
+    const insert = buildLocalTemplateInsert(cols, { name, category, language, components, createdBy: auth.user.user_id })
+    const [row]  = await query<{ id: string }>(insert.sql, insert.values)
     void audit({ req, action: 'create', resource: 'templates', resource_id: row.id,
       metadata: { name, category } })
     return NextResponse.json({ id: row.id }, { status: 201 })

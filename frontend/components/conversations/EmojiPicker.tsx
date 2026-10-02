@@ -44,11 +44,11 @@ export function EmojiPicker({ onSelect, onClose }: Props) {
   return (
     <div
       ref={ref}
-      className="bg-white border border-gray-200 rounded-xl shadow-xl w-72 max-h-72 overflow-y-auto p-3 space-y-3"
+      className="bg-card border border-border rounded-xl shadow-xl w-72 max-h-72 overflow-y-auto p-3 space-y-3"
     >
       {EMOJI_GROUPS.map(group => (
         <div key={group.label}>
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
             {group.label}
           </p>
           <div className="flex flex-wrap gap-0.5">
@@ -56,7 +56,7 @@ export function EmojiPicker({ onSelect, onClose }: Props) {
               <button
                 key={emoji}
                 onClick={() => onSelect(emoji)}
-                className="text-xl hover:bg-gray-100 rounded p-0.5 transition-colors leading-none"
+                className="text-xl hover:bg-muted rounded p-0.5 transition-colors leading-none"
                 type="button"
               >
                 {emoji}

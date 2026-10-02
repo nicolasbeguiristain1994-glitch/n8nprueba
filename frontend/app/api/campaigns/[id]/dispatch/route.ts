@@ -1,3 +1,4 @@
+import { campaignAudienceError } from '@/lib/campaign-audience'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
@@ -81,7 +82,7 @@ export async function POST(
   let campaign: CampaignForDispatch | undefined
   try {
     const rows = await query<CampaignForDispatch>(
-      `SELECT c.*, wt.name AS template_name, wt.language AS template_language
+      `SELECT c.*, wt.name AS template_name, wt.language AS template_language, wt.waba_id AS template_waba_id, wt.status AS template_status
        FROM campaigns c
        LEFT JOIN whatsapp_templates wt ON wt.id = c.template_id
        WHERE c.id = $1`,
@@ -97,6 +98,17 @@ export async function POST(
 
   if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+  if (campaign.message_type === 'template' && (!campaign.template_name || !campaign.template_waba_id || campaign.template_status !== 'APROBADA')) {
+    return NextResponse.json({ error: 'La plantilla no está aprobada o no tiene una cuenta de WhatsApp validada' }, { status: 409 })
+  }
+
+
+  try {
+    const audienceError = await campaignAudienceError(auth.user, campaign)
+    if (audienceError) return NextResponse.json({ error: audienceError.error }, { status: audienceError.status })
+  } catch {
+    return NextResponse.json({ error: 'No se pudo verificar la audiencia' }, { status: 500 })
   }
 
   const RESUMABLE = ['draft', 'scheduled', 'paused', 'running']
@@ -125,21 +137,19 @@ export async function POST(
     }
   } catch (e) {
     console.error('[POST /api/campaigns/[id]/dispatch] seed error:', e instanceof Error ? e.message : e)
-    if (campaign.status !== 'running') {
-      return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-    }
-    unitCounts = { total: 0, queued: 0 }
+    return NextResponse.json({ error: 'No se pudieron preparar los destinatarios' }, { status: 500 })
   }
 
   if (unitCounts.total === 0 && campaign.status !== 'running') {
     if (hasContactList) {
-      const breakdown = await getContactEligibilityBreakdown(campaign.list_id).catch(() => null)
-      const errMsg = breakdown ? formatEligibilityError(breakdown) : 'No hay contactos elegibles en la lista.'
-      console.warn(
-        `[POST /api/campaigns/[id]/dispatch] 0 contactos elegibles campaign=${id}:`,
-        breakdown ?? 'breakdown unavailable',
-      )
-      return NextResponse.json({ error: errMsg, breakdown }, { status: 400 })
+      try {
+        const breakdown = await getContactEligibilityBreakdown(campaign.list_id)
+        const errMsg = formatEligibilityError(breakdown)
+        return NextResponse.json({ error: errMsg, breakdown }, { status: 400 })
+      } catch (e) {
+        console.error('[POST /dispatch] eligibility error:', e instanceof Error ? e.message : e)
+        return NextResponse.json({ error: 'No se pudo consultar la elegibilidad de la lista' }, { status: 500 })
+      }
     }
     return NextResponse.json(
       { error: 'No hay prospectos elegibles en la lista de difusión.' },
@@ -149,27 +159,36 @@ export async function POST(
 
   // All recipients already processed (none pending) — covers campaigns stuck in
   // 'paused' OR 'running' (processor finished but completion step was missed).
-  // This check runs BEFORE lock acquisition so it works even if the lock is
-  // still held by a crashed/killed processor.
+  // Completion may not clear another processor's lock or race pending work.
   if (unitCounts.queued === 0) {
-    const [processed] = await query<{ count: string }>(
-      `SELECT COUNT(*) FILTER (WHERE status IN ('sent','failed','skipped'))::text AS count
+    try {
+      const [processed] = await query<{ count: string }>(
+        `SELECT COUNT(*) FILTER (WHERE status IN ('sent','failed','skipped'))::text AS count
        FROM campaign_recipients WHERE campaign_id = $1`,
-      [id]
-    ).catch(() => [null])
-    if (Number(processed?.count || 0) > 0) {
-      await query(
-        `UPDATE campaigns
-         SET status = 'completed', completed_at = COALESCE(completed_at, NOW()),
-             pause_reason = NULL,
-             processor_locked_at = NULL, processor_lock_token = NULL
-         WHERE id = $1 AND status NOT IN ('completed', 'cancelled')`,
         [id]
-      ).catch(() => {})
-      return NextResponse.json(
-        { error: 'La campaña ya envió todos sus contactos. Se marcó como completada.' },
-        { status: 409 }
       )
+      if (Number(processed?.count || 0) > 0) {
+        const completed = await query<{ id: string }>(
+          `UPDATE campaigns
+         SET status = 'completed', completed_at = COALESCE(completed_at, NOW()),
+             pause_reason = NULL
+         WHERE id = $1 AND status = $2::campaign_status
+           AND owned_by IS NOT DISTINCT FROM $3::uuid
+           AND processor_locked_at IS NULL AND processor_lock_token IS NULL
+           AND NOT EXISTS (SELECT 1 FROM campaign_recipients
+                           WHERE campaign_id = $1 AND status IN ('pending','sending'))
+         RETURNING id`,
+          [id, campaign.status, campaign.owned_by]
+        )
+        if (!completed.length) return NextResponse.json({ error: 'El estado cambió o hay un procesador activo. Actualizá la campaña.' }, { status: 409 })
+        return NextResponse.json(
+          { error: 'La campaña ya envió todos sus contactos. Se marcó como completada.' },
+          { status: 409 }
+        )
+      }
+    } catch (e) {
+      console.error('[POST /dispatch] completion check error:', e instanceof Error ? e.message : e)
+      return NextResponse.json({ error: 'No se pudo comprobar o actualizar el estado de la campaña' }, { status: 500 })
     }
   }
 
@@ -213,15 +232,19 @@ export async function POST(
         error: e instanceof Error ? e.message : String(e),
         detail: 'processMultiLineInBackground lanzó error no capturado — pausando campaña',
       })
-      // Lock is released by processMultiLineInBackground's finally block.
-      // Mark as paused so the campaign doesn't stay stuck in 'running' with no processor.
-      await query(
-        `UPDATE campaigns
+      try {
+        const released = await query<{ id: string }>(
+          `UPDATE campaigns
          SET status = 'paused', pause_reason = 'systemic_error',
              processor_locked_at = NULL, processor_lock_token = NULL
-         WHERE id = $1 AND status = 'running'`,
-        [id],
-      ).catch(() => {})
+         WHERE id = $1 AND status = 'running' AND processor_lock_token = $2
+         RETURNING id`,
+          [id, capturedToken],
+        )
+        if (!released.length) clog.warn({ event: 'processor.crash.cleanup.skipped', campaignId: id, mode: 'multi-line', detail: 'El estado o el propietario del lock cambió; no se modificó la campaña' })
+      } catch (cleanupError) {
+        clog.critical({ event: 'processor.crash.cleanup.failed', campaignId: id, mode: 'multi-line', error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) })
+      }
     }
   })()
 

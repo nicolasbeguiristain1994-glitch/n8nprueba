@@ -46,23 +46,6 @@ function createConnector(platformName, pool) {
   return new ConnectorClass(config, pool)
 }
 
-/**
- * Fase 4 (pipeline-diario.js): returns the agent list for a platform straight
- * from src/config/platforms.config.json — zeus/bet30 declare it directly as
- * `agents`; ganamos/argenbet declare it as the keys of `agentIds` (the only
- * agents their connectors are hardcoded to accept, see
- * ArgenBetConnector.ALLOWED_AGENT_IDS / GanamosConnector.ALLOWED_AGENT_IDS).
- * This is the SOLE runtime source of "which agents does platform X have" for
- * the automated pipeline — no DB inference, no hardcoded list duplicated in
- * scripts/pipeline-diario.js.
- */
-function getConfigAgents(platformName) {
-  const config = _loadPlatformConfig(platformName)
-  if (Array.isArray(config.agents)) return [...config.agents]
-  if (config.agentIds && typeof config.agentIds === 'object') return Object.keys(config.agentIds)
-  throw new Error(`Platform "${platformName}" declares neither "agents" nor "agentIds" in platforms.config.json`)
-}
-
 function getDefaultPlatform() {
   const { defaultPlatform } = require('../config/platforms.config.json')
   if (!defaultPlatform) throw new Error('platforms.config.json is missing "defaultPlatform"')
@@ -83,4 +66,4 @@ function _loadPlatformConfig(platformName) {
   return config
 }
 
-module.exports = { createConnector, getDefaultPlatform, getConfigAgents }
+module.exports = { createConnector, getDefaultPlatform }

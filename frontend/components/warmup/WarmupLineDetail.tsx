@@ -91,14 +91,14 @@ function DayChart({ line, stats }: { line: LineDetail; stats: DayStat[] }) {
   return (
     <div>
       <div className="flex items-center justify-between mb-2 min-h-[22px]">
-        <p className="text-xs font-medium text-gray-600">Mensajes por día vs. límite</p>
+        <p className="text-xs font-medium text-muted-foreground">Mensajes por día vs. límite</p>
         {hoveredDay !== null && hovLim !== null ? (
           <span className="text-[10px] bg-gray-800 text-white rounded px-2 py-0.5 font-mono">
             Día {hoveredDay}: {hovStat?.sent ?? 0}/{hovLim}
             {(hovStat?.failed ?? 0) > 0 ? ` · ${hovStat!.failed} fall.` : ''}
           </span>
         ) : (
-          <span className="text-[10px] text-gray-400 italic">Pasa el cursor sobre una barra</span>
+          <span className="text-[10px] text-muted-foreground italic">Pasa el cursor sobre una barra</span>
         )}
       </div>
       <div className="flex items-end gap-px overflow-x-auto pb-3">
@@ -127,14 +127,14 @@ function DayChart({ line, stats }: { line: LineDetail; stats: DayStat[] }) {
                 {hasFail && <div className="absolute top-0 left-0 right-0 z-20 h-1.5 bg-red-400 rounded-t-sm" />}
               </div>
               {(day === 1 || day % 7 === 0 || day === line.current_day)
-                ? <span className="text-[9px] text-gray-400 leading-none">{day}</span>
+                ? <span className="text-[9px] text-muted-foreground leading-none">{day}</span>
                 : <span className="text-[9px] text-gray-200 leading-none">·</span>
               }
             </div>
           )
         })}
       </div>
-      <div className="flex items-center gap-4 text-[10px] text-gray-400 mt-1">
+      <div className="flex items-center gap-4 text-[10px] text-muted-foreground mt-1">
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-amber-400 inline-block" /> Enviados</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-red-400 inline-block" /> Fallidos</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm ring-1 ring-amber-400 inline-block" /> Día actual</span>
@@ -149,8 +149,8 @@ function HealthHistoryChart({ history, summary }: { history: HealthHistoryPoint[
   const CHART_H = 48
 
   const trendColor = summary.trend.direction === 'improving'
-    ? 'text-green-600' : summary.trend.direction === 'declining'
-    ? 'text-red-500'   : 'text-gray-500'
+    ? 'text-success' : summary.trend.direction === 'declining'
+    ? 'text-red-500'   : 'text-muted-foreground'
 
   const trendLabel = summary.trend.direction === 'improving' ? '↑ Mejorando'
     : summary.trend.direction === 'declining' ? '↓ Declinando' : '→ Estable'
@@ -160,9 +160,9 @@ function HealthHistoryChart({ history, summary }: { history: HealthHistoryPoint[
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <p className="text-xs font-medium text-gray-600">Historial de salud (14 días)</p>
+        <p className="text-xs font-medium text-muted-foreground">Historial de salud (14 días)</p>
         <div className="flex items-center gap-3 text-[10px]">
-          <span className="text-gray-400">Prom: <strong className="text-gray-600">{summary.averageScore}</strong></span>
+          <span className="text-muted-foreground">Prom: <strong className="text-muted-foreground">{summary.averageScore}</strong></span>
           <span className={`font-semibold ${trendColor}`}>{trendLabel}</span>
         </div>
       </div>
@@ -175,17 +175,17 @@ function HealthHistoryChart({ history, summary }: { history: HealthHistoryPoint[
             <div key={i} className="flex-1 flex flex-col items-center gap-0.5 cursor-default group relative"
               title={`${date}: ${h.score}/100 · cuota ${h.dailyQuota}`}
             >
-              <div className="w-full rounded-t-sm bg-gray-100"
+              <div className="w-full rounded-t-sm bg-muted"
                 style={{ height: CHART_H, position: 'relative' }}>
                 <div className="absolute bottom-0 left-0 right-0 rounded-t-sm transition-all"
                   style={{ height: `${pct}%`, background: color }} />
               </div>
-              <span className="text-[8px] text-gray-300 group-hover:text-gray-500">{date.slice(0, 5)}</span>
+              <span className="text-[8px] text-muted-foreground/60 group-hover:text-muted-foreground">{date.slice(0, 5)}</span>
             </div>
           )
         })}
       </div>
-      <div className="flex items-center gap-4 text-[10px] text-gray-400 mt-1.5">
+      <div className="flex items-center gap-4 text-[10px] text-muted-foreground mt-1.5">
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-green-400 inline-block" /> ≥70</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-amber-400 inline-block" /> 40–69</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-red-400 inline-block" /> &lt;40</span>
@@ -417,11 +417,11 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
   const alerts: { icon: React.ReactNode; msg: string; cls: string }[] = []
   if (line) {
     if (score < 40 && line.warmup_status !== 'banned')
-      alerts.push({ icon: <AlertTriangle size={13} />, msg: 'Salud crítica — considerá pausar la línea', cls: 'text-red-600 bg-red-50 border-red-200' })
+      alerts.push({ icon: <AlertTriangle size={13} />, msg: 'Salud crítica — considerá pausar la línea', cls: 'text-destructive bg-destructive/10 border-destructive/20' })
     if (line.warmup_status === 'active' && line.last_message_at) {
       const daysSince = (Date.now() - new Date(line.last_message_at).getTime()) / 86_400_000
       if (daysSince >= 3)
-        alerts.push({ icon: <Clock size={13} />, msg: `Sin actividad hace ${Math.floor(daysSince)} días — verificá la instancia en Evolution`, cls: 'text-amber-700 bg-amber-50 border-amber-200' })
+        alerts.push({ icon: <Clock size={13} />, msg: `Sin actividad hace ${Math.floor(daysSince)} días — verificá la instancia en Evolution`, cls: 'text-warning bg-warning/10 border-warning/20' })
     }
     if (data && data.total_sent > 0) {
       const failRate = data.daily_stats.reduce((s, d) => s + d.failed, 0) / (data.total_sent + data.daily_stats.reduce((s, d) => s + d.failed, 0))
@@ -430,7 +430,7 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
     }
     // Phase 4: high risk + no anti-ban enabled
     if (riskScore >= 70 && !line.anti_ban_enabled)
-      alerts.push({ icon: <ShieldAlert size={13} />, msg: 'Riesgo de ban alto — activá el Modo Anti-Ban en Configuración', cls: 'text-red-700 bg-red-50 border-red-200' })
+      alerts.push({ icon: <ShieldAlert size={13} />, msg: 'Riesgo de ban alto — activá el Modo Anti-Ban en Configuración', cls: 'text-destructive bg-destructive/10 border-destructive/20' })
   }
 
   const filteredLogs = allLogs.filter(l =>
@@ -451,7 +451,7 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
       <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
 
         {/* ── Header ── */}
-        <DialogHeader className="px-5 pt-5 pb-3 border-b border-gray-100 shrink-0">
+        <DialogHeader className="px-5 pt-5 pb-3 border-b border-border shrink-0">
           <div className="flex items-center justify-between gap-3">
             <DialogTitle className="flex items-center gap-2 text-base min-w-0">
               <Flame size={16} className="text-orange-500 shrink-0" />
@@ -471,10 +471,10 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
             </DialogTitle>
             <div className="flex items-center gap-3 shrink-0">
               {line && (
-                <span className="text-[11px] text-gray-400 font-mono">{fmtPhone(line.phone_number)}</span>
+                <span className="text-[11px] text-muted-foreground font-mono">{fmtPhone(line.phone_number)}</span>
               )}
               {lastFetchedAt && (
-                <span className="text-[10px] text-gray-300 flex items-center gap-1">
+                <span className="text-[10px] text-muted-foreground/60 flex items-center gap-1">
                   <RefreshCw size={9} />
                   {lastFetchedAt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
                 </span>
@@ -488,18 +488,18 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
               <button key={t.key} onClick={() => setTab(t.key)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                   tab === t.key
-                    ? 'bg-gray-100 text-gray-800'
-                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                    ? 'bg-muted text-foreground'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-background'
                 }`}
               >
                 {t.icon} {t.label}
                 {t.key === 'activity' && totalLogs > 0 && (
-                  <span className="ml-0.5 bg-gray-200 text-gray-600 rounded-full px-1.5 py-px text-[10px]">
+                  <span className="ml-0.5 bg-border text-muted-foreground rounded-full px-1.5 py-px text-[10px]">
                     {totalLogs}
                   </span>
                 )}
                 {t.key === 'alerts' && (t.badge ?? 0) > 0 && (
-                  <span className="ml-0.5 bg-red-100 text-red-600 rounded-full px-1.5 py-px text-[10px] font-semibold">
+                  <span className="ml-0.5 bg-destructive/15 text-destructive rounded-full px-1.5 py-px text-[10px] font-semibold">
                     {t.badge}
                   </span>
                 )}
@@ -513,13 +513,13 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
 
           {loading && (
             <div className="flex flex-col items-center gap-3 py-16">
-              <Loader2 size={28} className="animate-spin text-gray-300" />
-              <p className="text-sm text-gray-400">Cargando detalle…</p>
+              <Loader2 size={28} className="animate-spin text-muted-foreground/60" />
+              <p className="text-sm text-muted-foreground">Cargando detalle…</p>
             </div>
           )}
           {!loading && fetchErr && (
             <div className="p-6">
-              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">{fetchErr}</p>
+              <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded px-3 py-2">{fetchErr}</p>
             </div>
           )}
 
@@ -543,51 +543,51 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
               {/* Stats grid */}
               <div className="grid grid-cols-4 gap-3">
                 {/* Health */}
-                <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
-                  <p className="text-[10px] text-gray-400 mb-1">Salud</p>
+                <div className="rounded-xl border border-border bg-background p-3">
+                  <p className="text-[10px] text-muted-foreground mb-1">Salud</p>
                   <div className="flex items-end gap-1.5">
-                    <span className="text-2xl font-bold text-gray-800">{score}</span>
-                    <span className="text-xs text-gray-400 mb-0.5">/100</span>
+                    <span className="text-2xl font-bold text-foreground">{score}</span>
+                    <span className="text-xs text-muted-foreground mb-0.5">/100</span>
                   </div>
-                  <div className="mt-1.5 w-full bg-gray-200 rounded-full h-1">
+                  <div className="mt-1.5 w-full bg-border rounded-full h-1">
                     <div className={`h-1 rounded-full ${healthColor(score)}`} style={{ width: `${score}%` }} />
                   </div>
-                  <p className="text-[10px] text-gray-500 mt-1">{healthLabel(score)}</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">{healthLabel(score)}</p>
                 </div>
 
                 {/* Progress */}
-                <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
-                  <p className="text-[10px] text-gray-400 mb-1">Progreso</p>
+                <div className="rounded-xl border border-border bg-background p-3">
+                  <p className="text-[10px] text-muted-foreground mb-1">Progreso</p>
                   <div className="flex items-end gap-1.5">
-                    <span className="text-2xl font-bold text-gray-800">{Math.round(dayPct)}</span>
-                    <span className="text-xs text-gray-400 mb-0.5">%</span>
+                    <span className="text-2xl font-bold text-foreground">{Math.round(dayPct)}</span>
+                    <span className="text-xs text-muted-foreground mb-0.5">%</span>
                   </div>
-                  <div className="mt-1.5 w-full bg-gray-200 rounded-full h-1">
+                  <div className="mt-1.5 w-full bg-border rounded-full h-1">
                     <div className="h-1 rounded-full bg-amber-400" style={{ width: `${dayPct}%` }} />
                   </div>
-                  <p className="text-[10px] text-gray-500 mt-1">Día {l.current_day} de {l.target_days}</p>
+                  <p className="text-[10px] text-muted-foreground mt-1">Día {l.current_day} de {l.target_days}</p>
                 </div>
 
                 {/* Success rate */}
-                <div className="rounded-xl border border-gray-100 bg-gray-50 p-3">
-                  <p className="text-[10px] text-gray-400 mb-1">Tasa de éxito</p>
+                <div className="rounded-xl border border-border bg-background p-3">
+                  <p className="text-[10px] text-muted-foreground mb-1">Tasa de éxito</p>
                   <div className="flex items-end gap-1.5">
-                    <span className="text-2xl font-bold text-gray-800">
+                    <span className="text-2xl font-bold text-foreground">
                       {data.success_rate !== null ? data.success_rate : '—'}
                     </span>
-                    {data.success_rate !== null && <span className="text-xs text-gray-400 mb-0.5">%</span>}
+                    {data.success_rate !== null && <span className="text-xs text-muted-foreground mb-0.5">%</span>}
                   </div>
-                  <p className="text-[10px] text-gray-500 mt-2">{data.total_sent} enviados total</p>
+                  <p className="text-[10px] text-muted-foreground mt-2">{data.total_sent} enviados total</p>
                 </div>
 
                 {/* Phase 4: Ban risk card */}
                 <div className={`rounded-xl border p-3 ${riskCls.border} ${riskCls.bg}`}>
-                  <p className="text-[10px] text-gray-400 mb-1">Riesgo de ban</p>
+                  <p className="text-[10px] text-muted-foreground mb-1">Riesgo de ban</p>
                   <div className="flex items-end gap-1.5">
                     <span className={`text-2xl font-bold ${riskCls.text}`}>{riskScore}</span>
-                    <span className="text-xs text-gray-400 mb-0.5">/100</span>
+                    <span className="text-xs text-muted-foreground mb-0.5">/100</span>
                   </div>
-                  <div className="mt-1.5 w-full bg-white/60 rounded-full h-1">
+                  <div className="mt-1.5 w-full bg-card/60 rounded-full h-1">
                     <div className={`h-1 rounded-full ${riskCls.dot}`} style={{ width: `${riskScore}%` }} />
                   </div>
                   <p className={`text-[10px] mt-1 font-medium ${riskCls.text}`}>{banRiskLabel(riskScore)}</p>
@@ -599,13 +599,13 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                 <span className={`inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-1 rounded-full border ${
                   l.anti_ban_enabled
                     ? 'bg-blue-50 text-blue-700 border-blue-200'
-                    : 'bg-gray-50 text-gray-500 border-gray-200'
+                    : 'bg-background text-muted-foreground border-border'
                 }`}>
                   {l.anti_ban_enabled ? <Shield size={10} /> : <ShieldAlert size={10} />}
                   {l.anti_ban_enabled ? 'Anti-ban activo' : 'Anti-ban inactivo'}
                 </span>
                 {!l.anti_ban_enabled && (
-                  <span className="text-[10px] text-gray-400 italic">
+                  <span className="text-[10px] text-muted-foreground italic">
                     Activá la protección en Configuración para reducir el riesgo de ban
                   </span>
                 )}
@@ -660,14 +660,14 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                 const { health, schedule } = healthData
                 const c = health.components
                 return (
-                  <div className="rounded-xl border border-gray-100 bg-gray-50/60 p-3.5 space-y-3">
+                  <div className="rounded-xl border border-border bg-background/60 p-3.5 space-y-3">
                     <div className="flex items-center justify-between">
-                      <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">
+                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
                         Desglose de salud
                       </p>
                       <div className="flex items-center gap-1.5">
                         <span className={`w-2 h-2 rounded-full shrink-0 ${health.color}`} />
-                        <span className="text-[11px] font-semibold text-gray-700">{health.score}/100 — {health.label}</span>
+                        <span className="text-[11px] font-semibold text-foreground">{health.score}/100 — {health.label}</span>
                       </div>
                     </div>
 
@@ -683,12 +683,12 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                       ] as const).map(row => (
                         <div key={row.label} className="space-y-0.5">
                           <div className="flex items-center justify-between">
-                            <span className="text-[9px] text-gray-400">{row.label}</span>
-                            <span className={`text-[10px] font-semibold ${row.positive ? 'text-gray-600' : 'text-red-500'}`}>
+                            <span className="text-[9px] text-muted-foreground">{row.label}</span>
+                            <span className={`text-[10px] font-semibold ${row.positive ? 'text-muted-foreground' : 'text-red-500'}`}>
                               {row.positive ? '+' : '−'}{row.value}
                             </span>
                           </div>
-                          <div className="w-full bg-gray-200 rounded-full h-1">
+                          <div className="w-full bg-border rounded-full h-1">
                             <div
                               className={`h-1 rounded-full ${row.positive ? 'bg-amber-400' : 'bg-red-400'}`}
                               style={{ width: `${Math.min((row.value / row.max) * 100, 100)}%` }}
@@ -699,18 +699,18 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                     </div>
 
                     {/* Recomendación */}
-                    <p className="text-[11px] text-gray-500 italic border-t border-gray-100 pt-2">
+                    <p className="text-[11px] text-muted-foreground italic border-t border-border pt-2">
                       {health.recommendation}
                     </p>
 
                     {/* Cuota del día */}
-                    <div className="flex items-center gap-3 text-[11px] text-gray-500 border-t border-gray-100 pt-2">
+                    <div className="flex items-center gap-3 text-[11px] text-muted-foreground border-t border-border pt-2">
                       <span>Cuota hoy:</span>
-                      <span className="font-semibold text-gray-700">{schedule.assignedQuotaToday} msgs</span>
-                      <span className="text-gray-400">·</span>
+                      <span className="font-semibold text-foreground">{schedule.assignedQuotaToday} msgs</span>
+                      <span className="text-muted-foreground">·</span>
                       <span>{schedule.remainingToday} restantes</span>
-                      <span className="text-gray-400">·</span>
-                      <span className="text-gray-400">{schedule.phaseLabel}</span>
+                      <span className="text-muted-foreground">·</span>
+                      <span className="text-muted-foreground">{schedule.phaseLabel}</span>
                     </div>
                   </div>
                 )
@@ -718,21 +718,21 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
 
               {/* ── Historial de salud (Fase 2) ── */}
               {historyLoading ? (
-                <div className="flex items-center gap-2 text-xs text-gray-400 py-2">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
                   <Loader2 size={12} className="animate-spin" /> Cargando historial…
                 </div>
               ) : historyData && historyData.history.length > 0 ? (
-                <div className="rounded-xl border border-gray-100 bg-gray-50/60 p-3.5">
+                <div className="rounded-xl border border-border bg-background/60 p-3.5">
                   <HealthHistoryChart history={historyData.history} summary={historyData.summary} />
                 </div>
               ) : (
-                <p className="text-[11px] text-gray-300 italic">
+                <p className="text-[11px] text-muted-foreground/60 italic">
                   Sin historial de salud aún — se registra diariamente al ejecutar el orquestador.
                 </p>
               )}
 
               {/* Last activity */}
-              <div className="text-xs text-gray-500 flex items-center gap-1.5">
+              <div className="text-xs text-muted-foreground flex items-center gap-1.5">
                 <Clock size={11} className="shrink-0" />
                 {(() => {
                   const { relative, abs } = timeAgo(l.last_message_at)
@@ -748,14 +748,14 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
               ) : (
                 <div className="flex flex-col items-center gap-2 py-8 text-center">
                   <Activity size={24} className="text-gray-200" />
-                  <p className="text-sm text-gray-400">Sin datos de actividad aún</p>
-                  <p className="text-xs text-gray-300">Los gráficos aparecerán cuando la línea comience el calentamiento</p>
+                  <p className="text-sm text-muted-foreground">Sin datos de actividad aún</p>
+                  <p className="text-xs text-muted-foreground/60">Los gráficos aparecerán cuando la línea comience el calentamiento</p>
                 </div>
               )}
 
               {/* Last fetch timestamp */}
               {lastFetchedAt && (
-                <p className="text-[10px] text-gray-300 flex items-center gap-1 pt-1">
+                <p className="text-[10px] text-muted-foreground/60 flex items-center gap-1 pt-1">
                   <RefreshCw size={9} />
                   Última verificación: {lastFetchedAt.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                 </p>
@@ -767,19 +767,19 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
           {!loading && !fetchErr && data && tab === 'config' && (
             <div className="p-5 space-y-5">
 
-              <p className="text-xs text-gray-500 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2">
+              <p className="text-xs text-muted-foreground bg-background border border-border rounded-lg px-3 py-2">
                 Los cambios se aplican en el próximo ciclo de calentamiento.
               </p>
 
               {/* Name + Notes */}
               <div className="space-y-3">
                 <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Nombre de la línea</label>
+                  <label className="text-xs text-muted-foreground mb-1 block">Nombre de la línea</label>
                   <Input value={cfgName} onChange={e => setCfgName(e.target.value)}
                     placeholder={data.line.instance_name} className="text-sm" />
                 </div>
                 <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Notas internas</label>
+                  <label className="text-xs text-muted-foreground mb-1 block">Notas internas</label>
                   <textarea value={cfgNotes} onChange={e => setCfgNotes(e.target.value)}
                     placeholder="Observaciones, propósito, etc." rows={2}
                     className="w-full text-sm border border-input rounded-md px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-0 placeholder:text-muted-foreground" />
@@ -788,7 +788,7 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
 
               {/* Warmup speed strategy */}
               <div>
-                <label className="text-xs text-gray-500 mb-1.5 block flex items-center gap-1">
+                <label className="text-xs text-muted-foreground mb-1.5 block flex items-center gap-1">
                   <TrendingUp size={11} /> Velocidad de calentamiento
                 </label>
                 <div className="grid grid-cols-3 gap-2">
@@ -796,7 +796,7 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                     <button key={s.key} type="button"
                       onClick={() => { setCfgPreset(s.key); setCfgDays(String(s.targetDays)); setCfgLimit(String(s.dailyLimit)) }}
                       className={`rounded-lg border-2 px-3 py-2 text-left transition-all ${
-                        cfgPreset === s.key ? s.cls + ' border-current' : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
+                        cfgPreset === s.key ? s.cls + ' border-current' : 'border-border bg-card text-muted-foreground hover:border-input'
                       }`}
                     >
                       <div className="flex items-center gap-1 mb-0.5">
@@ -812,11 +812,11 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
               {/* Limits */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Días objetivo</label>
+                  <label className="text-xs text-muted-foreground mb-1 block">Días objetivo</label>
                   <Input type="number" min={1} max={60} value={cfgDays} onChange={e => setCfgDays(e.target.value)} />
                 </div>
                 <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Límite diario</label>
+                  <label className="text-xs text-muted-foreground mb-1 block">Límite diario</label>
                   <Input type="number" min={1} max={100} value={cfgLimit} onChange={e => setCfgLimit(e.target.value)} />
                 </div>
               </div>
@@ -840,13 +840,13 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
 
                 return (
                   <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
-                    <p className="text-[10px] font-semibold text-indigo-600 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                    <p className="text-[10px] font-semibold text-primary uppercase tracking-wide mb-3 flex items-center gap-1.5">
                       <Zap size={10} /> Simulación del próximo envío
                     </p>
                     <div className="space-y-2">
                       <div className="flex items-start gap-2.5">
                         <div className={`w-1.5 h-1.5 rounded-full mt-1 shrink-0 ${inDay ? 'bg-green-400' : 'bg-red-400'}`} />
-                        <span className="text-xs text-gray-700">
+                        <span className="text-xs text-foreground">
                           {inDay
                             ? 'Hoy es un día activo — envíos habilitados'
                             : 'Hoy no es un día activo — sin envíos hasta el próximo día configurado'}
@@ -854,7 +854,7 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                       </div>
                       <div className="flex items-start gap-2.5">
                         <div className={`w-1.5 h-1.5 rounded-full mt-1 shrink-0 ${inWin ? 'bg-green-400' : 'bg-amber-400'}`} />
-                        <span className="text-xs text-gray-700">
+                        <span className="text-xs text-foreground">
                           {inWin
                             ? `Dentro de ventana horaria (${abConfig.windowStart} – ${abConfig.windowEnd})`
                             : `Fuera de ventana — próximo envío posible a partir de las ${abConfig.windowStart}`}
@@ -862,7 +862,7 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                       </div>
                       <div className="flex items-start gap-2.5">
                         <div className={`w-1.5 h-1.5 rounded-full mt-1 shrink-0 ${cooldownMs === 0 ? 'bg-green-400' : 'bg-amber-400'}`} />
-                        <span className="text-xs text-gray-700">
+                        <span className="text-xs text-foreground">
                           {cooldownMs === 0
                             ? 'Cooldown completado — listo para enviar'
                             : `Cooldown: faltan ~${cooldownSecs}s (mínimo configurado: ${abConfig.delayMin}s)`}
@@ -871,13 +871,13 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                     </div>
                     <div className="mt-3 pt-2.5 border-t border-indigo-100 flex items-center justify-between">
                       <span className="text-[10px] text-indigo-500">Delay estimado para el próximo envío</span>
-                      <span className="text-[10px] font-mono font-semibold text-indigo-700">
+                      <span className="text-[10px] font-mono font-semibold text-primary">
                         {abConfig.delayMin}–{abConfig.delayMax}s{' '}
                         <span className="font-normal opacity-70">(≈ {avgDelay}s promedio)</span>
                       </span>
                     </div>
                     {allClear && (
-                      <p className="mt-2 text-[10px] text-green-600 font-medium flex items-center gap-1">
+                      <p className="mt-2 text-[10px] text-success font-medium flex items-center gap-1">
                         <CheckCircle2 size={9} /> El motor enviará en el próximo ciclo de 15 min
                       </p>
                     )}
@@ -885,7 +885,7 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                 )
               })()}
 
-              {saveErr && <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-1.5">{saveErr}</p>}
+              {saveErr && <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded px-3 py-1.5">{saveErr}</p>}
 
               <Button className="w-full bg-orange-500 hover:bg-orange-600" onClick={saveConfig} disabled={saving}>
                 {saving ? <Loader2 size={14} className="animate-spin mr-2" /> : <Save size={14} className="mr-2" />}
@@ -893,12 +893,12 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
               </Button>
 
               {/* Danger zone */}
-              <div className="border-t border-gray-100 pt-4 space-y-2">
-                <p className="text-[11px] text-gray-400 font-medium uppercase tracking-wide">Acciones</p>
+              <div className="border-t border-border pt-4 space-y-2">
+                <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">Acciones</p>
                 <div className="flex gap-2">
                   {canToggle && (
                     <Button variant="outline"
-                      className={`flex-1 ${isActive ? 'border-amber-300 text-amber-700 hover:bg-amber-50' : 'border-green-300 text-green-700 hover:bg-green-50'}`}
+                      className={`flex-1 ${isActive ? 'border-amber-300 text-warning hover:bg-warning/10' : 'border-green-300 text-success hover:bg-success/10'}`}
                       onClick={toggleStatus} disabled={toggling}
                     >
                       {toggling
@@ -910,14 +910,14 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                   )}
                   {!resetConfirm ? (
                     <Button variant="outline"
-                      className="flex-1 border-red-200 text-red-600 hover:bg-red-50"
+                      className="flex-1 border-destructive/20 text-destructive hover:bg-destructive/10"
                       onClick={() => setResetConfirm(true)}
                     >
                       <RotateCcw size={13} className="mr-1.5" /> Reiniciar calentamiento
                     </Button>
                   ) : (
                     <div className="flex-1 flex gap-2">
-                      <Button variant="outline" className="flex-1 border-gray-200 text-gray-500 text-xs"
+                      <Button variant="outline" className="flex-1 border-border text-muted-foreground text-xs"
                         onClick={() => setResetConfirm(false)}>Cancelar</Button>
                       <Button className="flex-1 bg-red-500 hover:bg-red-600 text-xs" onClick={resetLine} disabled={resetting}>
                         {resetting ? <Loader2 size={12} className="animate-spin mr-1" /> : null}
@@ -926,7 +926,7 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                     </div>
                   )}
                 </div>
-                <p className="text-[10px] text-gray-400">Reiniciar vuelve la línea al día 1 con estado activo. No borra el historial de actividad.</p>
+                <p className="text-[10px] text-muted-foreground">Reiniciar vuelve la línea al día 1 con estado activo. No borra el historial de actividad.</p>
               </div>
             </div>
           )}
@@ -934,10 +934,10 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
           {/* ── ALERTS ──────────────────────────────────────────────────── */}
           {!loading && !fetchErr && data && tab === 'alerts' && (() => {
             const SEVERITY_CFG: Record<string, { cls: string; dot: string; label: string }> = {
-              critical: { cls: 'bg-red-50 border-red-200 text-red-800',         dot: 'bg-red-500',    label: 'Crítica' },
+              critical: { cls: 'bg-destructive/10 border-destructive/20 text-destructive',         dot: 'bg-red-500',    label: 'Crítica' },
               high:     { cls: 'bg-orange-50 border-orange-200 text-orange-800', dot: 'bg-orange-500', label: 'Alta' },
-              medium:   { cls: 'bg-amber-50 border-amber-200 text-amber-800',    dot: 'bg-amber-400',  label: 'Media' },
-              low:      { cls: 'bg-gray-50 border-gray-200 text-gray-700',       dot: 'bg-gray-400',   label: 'Baja' },
+              medium:   { cls: 'bg-warning/10 border-warning/20 text-warning',    dot: 'bg-amber-400',  label: 'Media' },
+              low:      { cls: 'bg-background border-border text-foreground',       dot: 'bg-gray-400',   label: 'Baja' },
             }
             const TYPE_LABEL: Record<string, string> = {
               ban_risk:          'Riesgo de ban',
@@ -950,7 +950,7 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
               <div className="p-5 space-y-4">
                 {/* Toggle + refresh */}
                 <div className="flex items-center justify-between">
-                  <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer select-none">
+                  <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={showResolved}
@@ -963,7 +963,7 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                     Mostrar resueltas
                   </label>
                   <button
-                    className="text-[11px] text-gray-400 hover:text-gray-600 flex items-center gap-1"
+                    className="text-[11px] text-muted-foreground hover:text-muted-foreground flex items-center gap-1"
                     onClick={() => fetchAlerts(data.line.id, showResolved)}
                   >
                     <RefreshCw size={10} /> Actualizar
@@ -971,15 +971,15 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                 </div>
 
                 {alertsLoading ? (
-                  <div className="flex items-center gap-2 py-8 text-gray-400 text-sm justify-center">
+                  <div className="flex items-center gap-2 py-8 text-muted-foreground text-sm justify-center">
                     <Loader2 size={14} className="animate-spin" /> Cargando alertas…
                   </div>
                 ) : visibleAlerts.length === 0 ? (
                   <div className="flex flex-col items-center gap-3 py-14 text-center">
                     <CheckCircle2 size={32} className="text-green-300" />
                     <div>
-                      <p className="text-sm font-medium text-gray-500">Sin alertas activas</p>
-                      <p className="text-xs text-gray-400 mt-1">
+                      <p className="text-sm font-medium text-muted-foreground">Sin alertas activas</p>
+                      <p className="text-xs text-muted-foreground mt-1">
                         {showResolved ? 'No hay alertas registradas para esta línea.' : 'Esta línea no tiene alertas pendientes.'}
                       </p>
                     </div>
@@ -991,18 +991,18 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                       const isResolved = !!alert.resolved_at
                       return (
                         <div key={alert.id}
-                          className={`flex items-start gap-3 border rounded-lg px-3 py-2.5 ${isResolved ? 'opacity-50 bg-gray-50 border-gray-200' : cfg.cls}`}
+                          className={`flex items-start gap-3 border rounded-lg px-3 py-2.5 ${isResolved ? 'opacity-50 bg-background border-border' : cfg.cls}`}
                         >
                           <div className={`w-2 h-2 rounded-full shrink-0 mt-1 ${isResolved ? 'bg-gray-400' : cfg.dot}`} />
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 flex-wrap mb-0.5">
                               <span className="text-[11px] font-semibold">{TYPE_LABEL[alert.type] ?? alert.type}</span>
-                              <span className={`text-[10px] px-1.5 py-px rounded-full border font-medium ${isResolved ? 'bg-gray-100 border-gray-200 text-gray-500' : cfg.cls}`}>
+                              <span className={`text-[10px] px-1.5 py-px rounded-full border font-medium ${isResolved ? 'bg-muted border-border text-muted-foreground' : cfg.cls}`}>
                                 {isResolved ? 'Resuelta' : cfg.label}
                               </span>
                             </div>
                             <p className="text-[12px] leading-snug">{alert.message}</p>
-                            <p className="text-[10px] text-gray-400 mt-1">
+                            <p className="text-[10px] text-muted-foreground mt-1">
                               {new Date(alert.triggered_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
                               {isResolved && alert.resolved_at && (
                                 <> · Resuelta {new Date(alert.resolved_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</>
@@ -1011,7 +1011,7 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                           </div>
                           {!isResolved && (
                             <button
-                              className="shrink-0 text-gray-400 hover:text-gray-600 transition-colors p-0.5"
+                              className="shrink-0 text-muted-foreground hover:text-muted-foreground transition-colors p-0.5"
                               title="Marcar como resuelta"
                               disabled={resolvingAlertId === alert.id}
                               onClick={() => resolveAlert(alert.id, data.line.id)}
@@ -1038,8 +1038,8 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                 <div className="flex flex-col items-center gap-3 py-14 text-center">
                   <TrendingUp size={28} className="text-gray-200" />
                   <div>
-                    <p className="text-sm font-medium text-gray-500">Sin actividad registrada</p>
-                    <p className="text-xs text-gray-400 mt-1">Los registros aparecerán cuando la línea comience a enviar mensajes</p>
+                    <p className="text-sm font-medium text-muted-foreground">Sin actividad registrada</p>
+                    <p className="text-xs text-muted-foreground mt-1">Los registros aparecerán cuando la línea comience a enviar mensajes</p>
                   </div>
                 </div>
               ) : (
@@ -1050,7 +1050,7 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                         className={`text-xs px-2.5 py-1 rounded-full border font-medium transition-colors ${
                           logFilter === f
                             ? 'bg-gray-800 text-white border-gray-800'
-                            : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'
+                            : 'bg-card text-muted-foreground border-border hover:border-gray-400'
                         }`}
                       >
                         {f === 'all' ? 'Todos' : f === 'sent' ? 'Enviados' : 'Fallidos'}
@@ -1061,51 +1061,51 @@ export function WarmupLineDetail({ lineId, defaultTab = 'overview', onClose, onR
                         )}
                       </button>
                     ))}
-                    <span className="ml-auto text-[10px] text-gray-400">
+                    <span className="ml-auto text-[10px] text-muted-foreground">
                       Mostrando {allLogs.length}{totalLogs > allLogs.length ? ` de ${totalLogs}` : ''} registros
                     </span>
                   </div>
 
                   {filteredLogs.length === 0 ? (
                     <div className="text-center py-8">
-                      <p className="text-sm text-gray-400">
+                      <p className="text-sm text-muted-foreground">
                         Sin registros {logFilter === 'sent' ? 'enviados' : 'fallidos'} en el historial cargado
                       </p>
                     </div>
                   ) : (
-                    <div className="border border-gray-100 rounded-lg overflow-hidden">
+                    <div className="border border-border rounded-lg overflow-hidden">
                       <table className="w-full text-xs">
                         <thead>
-                          <tr className="border-b border-gray-100 bg-gray-50">
-                            <th className="text-left px-3 py-2 font-medium text-gray-600">Hora</th>
-                            <th className="text-left px-3 py-2 font-medium text-gray-600">Destinatario</th>
-                            <th className="text-left px-3 py-2 font-medium text-gray-600">Tipo</th>
-                            <th className="text-left px-3 py-2 font-medium text-gray-600">Mensaje</th>
-                            <th className="text-left px-3 py-2 font-medium text-gray-600">Estado</th>
-                            <th className="text-left px-3 py-2 font-medium text-gray-600">Día</th>
+                          <tr className="border-b border-border bg-background">
+                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Hora</th>
+                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Destinatario</th>
+                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Tipo</th>
+                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Mensaje</th>
+                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Estado</th>
+                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Día</th>
                           </tr>
                         </thead>
                         <tbody>
                           {filteredLogs.map(l => (
-                            <tr key={l.id} className="border-b border-gray-50 hover:bg-gray-50">
-                              <td className="px-3 py-2 text-gray-400 whitespace-nowrap">
+                            <tr key={l.id} className="border-b border-gray-50 hover:bg-background">
+                              <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
                                 {new Date(l.sent_at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
                               </td>
-                              <td className="px-3 py-2 font-mono text-gray-600">{l.recipient}</td>
-                              <td className="px-3 py-2 text-gray-500">{l.message_type}</td>
-                              <td className="px-3 py-2 text-gray-700 max-w-[200px] truncate">{l.message_preview}</td>
+                              <td className="px-3 py-2 font-mono text-muted-foreground">{l.recipient}</td>
+                              <td className="px-3 py-2 text-muted-foreground">{l.message_type}</td>
+                              <td className="px-3 py-2 text-foreground max-w-[200px] truncate">{l.message_preview}</td>
                               <td className="px-3 py-2">
                                 <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
-                                  l.status === 'sent'    ? 'bg-green-100 text-green-700'
-                                  : l.status === 'failed' ? 'bg-red-100 text-red-600'
-                                  : 'bg-gray-100 text-gray-500'
+                                  l.status === 'sent'    ? 'bg-success/15 text-success'
+                                  : l.status === 'failed' ? 'bg-destructive/15 text-destructive'
+                                  : 'bg-muted text-muted-foreground'
                                 }`}>
                                   {l.status === 'sent'   && <CheckCircle2 size={9} />}
                                   {l.status === 'failed' && <AlertTriangle size={9} />}
                                   {l.status}
                                 </span>
                               </td>
-                              <td className="px-3 py-2 text-gray-400">{l.warmup_day}</td>
+                              <td className="px-3 py-2 text-muted-foreground">{l.warmup_day}</td>
                             </tr>
                           ))}
                         </tbody>

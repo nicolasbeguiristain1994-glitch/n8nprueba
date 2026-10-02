@@ -59,6 +59,9 @@ function mockDbQuery(...rows: unknown[][]) {
   for (const row of rows) mock = mock.mockResolvedValueOnce(row) as typeof mock
 }
 
+// Template writes first read which optional legacy columns exist (modern table here).
+const MODERN_TEMPLATE_COLUMNS = { domain: false, body: false }
+
 function dbAdminRow() {
   return { role: 'admin', sectors: [], is_active: true, session_version: 1 }
 }
@@ -114,26 +117,36 @@ describe('Flujo 1 — RBAC journey: sector check en GET /api/templates', () => {
 
   it('step 2 — operator with "campaigns" sector can read templates (200)', async () => {
     const operator = makeOperatorSession(['campaigns'])
+    const lineId = 'cccccccc-0000-0000-0000-cccccccccccc'
     mockDbQuery(
       [dbOperatorRow(['campaigns'])], // RBAC check (checkPermissionWithUser)
-      [],                              // SELECT templates → empty result
+      [{ id: lineId }],                 // get_accessible_line_ids for this operator
+      [],                              // SELECT templates within that scope
     )
 
     const res  = await templatesGet(makeGetReq(operator))
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(Array.isArray(body.templates)).toBe(true)
+    expect(db.query).toHaveBeenNthCalledWith(2,
+      expect.stringContaining('get_accessible_line_ids($1)'), [operator.user_id])
+    expect(db.query).toHaveBeenNthCalledWith(3,
+      expect.stringContaining('cn.whatsapp_line_id=ANY($4::uuid[])'), ['', '', '', [lineId]])
   })
 
   it('step 2 — admin always passes regardless of sectors', async () => {
     const admin = makeAdminSession()
     mockDbQuery(
       [dbAdminRow()], // RBAC check
+      [],              // Non-super-admin line visibility remains scoped
       [],              // SELECT templates
     )
 
     const res = await templatesGet(makeGetReq(admin))
     expect(res.status).toBe(200)
+    expect((await res.json()).templates).toEqual([])
+    expect(db.query).toHaveBeenNthCalledWith(3,
+      expect.stringContaining('cn.whatsapp_line_id=ANY($4::uuid[])'), ['', '', '', []])
   })
 })
 
@@ -175,7 +188,7 @@ describe('Flujo 2 — Create journey: inválido → 400, corregido → 201 + aud
   it('step 2 — corrected payload returns 201 with the new resource id', async () => {
     const admin = makeAdminSession()
     const newId = 'bbbbbbbb-1111-0000-0000-bbbbbbbbbbbb'
-    mockDbQuery([dbAdminRow()], [{ id: newId }])
+    mockDbQuery([dbAdminRow()], [MODERN_TEMPLATE_COLUMNS], [{ id: newId }])
 
     const res = await templatesPost(adminPost(TEMPLATES_URL, admin, {
       name:       'promo_julio',
@@ -190,7 +203,7 @@ describe('Flujo 2 — Create journey: inválido → 400, corregido → 201 + aud
   it('step 2 — successful create emits audit with action, resource and resource_id', async () => {
     const admin = makeAdminSession()
     const newId = 'bbbbbbbb-2222-0000-0000-bbbbbbbbbbbb'
-    mockDbQuery([dbAdminRow()], [{ id: newId }])
+    mockDbQuery([dbAdminRow()], [MODERN_TEMPLATE_COLUMNS], [{ id: newId }])
 
     await templatesPost(adminPost(TEMPLATES_URL, admin, {
       name:       'promo_agosto',
@@ -218,6 +231,7 @@ describe('Flujo 3 — Update journey: PATCH parcial → audit.fields exacto', ()
     const admin = makeAdminSession()
     mockDbQuery(
       [dbAdminRow()],         // RBAC check
+      [{ waba_id: null }],    // Existing local draft, eligible for a local edit
       [{ id: TEMPLATE_ID }],  // UPDATE RETURNING id
     )
     return adminPatch(TEMPLATE_URL, admin, body)
@@ -234,6 +248,10 @@ describe('Flujo 3 — Update journey: PATCH parcial → audit.fields exacto', ()
     const res = await callPatch({ status: 'APROBADA' })
     expect(res.status).toBe(200)
     expect((await res.json()).ok).toBe(true)
+    expect(db.query).toHaveBeenNthCalledWith(2,
+      'SELECT waba_id FROM whatsapp_templates WHERE id=$1', [TEMPLATE_ID])
+    expect(db.query).toHaveBeenLastCalledWith(
+      expect.stringContaining('AND waba_id IS NULL RETURNING id'), ['APROBADA', TEMPLATE_ID])
   })
 
   it('audit fields contains exactly the single updated field', async () => {

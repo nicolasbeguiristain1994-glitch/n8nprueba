@@ -94,7 +94,7 @@ export function distributorVisibilityClause(
   if (!operatorId) return { clause: '', params: [] }
   const col = tableAlias ? `${tableAlias}.id` : 'id'
   return {
-    clause: `AND ${col} = ANY(get_accessible_line_ids($${startAt}::uuid))`,
+    clause: `AND ${col} IN (SELECT id FROM get_accessible_line_ids($${startAt}::uuid) AS visible_lines(id))`,
     params: [operatorId],
   }
 }

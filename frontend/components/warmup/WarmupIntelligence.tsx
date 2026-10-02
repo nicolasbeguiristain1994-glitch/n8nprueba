@@ -49,10 +49,10 @@ interface Props {
 // ── Helpers de UI ─────────────────────────────────────────────────────────────
 
 const SEVERITY_CFG: Record<string, { cls: string; dot: string; label: string }> = {
-  critical: { cls: 'bg-red-50 border-red-200 text-red-800',    dot: 'bg-red-500',    label: 'Crítica' },
+  critical: { cls: 'bg-destructive/10 border-destructive/20 text-destructive',    dot: 'bg-red-500',    label: 'Crítica' },
   high:     { cls: 'bg-orange-50 border-orange-200 text-orange-800', dot: 'bg-orange-500', label: 'Alta' },
-  medium:   { cls: 'bg-amber-50 border-amber-200 text-amber-800',    dot: 'bg-amber-400',  label: 'Media' },
-  low:      { cls: 'bg-gray-50 border-gray-200 text-gray-700',  dot: 'bg-gray-400',   label: 'Baja' },
+  medium:   { cls: 'bg-warning/10 border-warning/20 text-warning',    dot: 'bg-amber-400',  label: 'Media' },
+  low:      { cls: 'bg-background border-border text-foreground',  dot: 'bg-gray-400',   label: 'Baja' },
 }
 
 const ALERT_TYPE_LABEL: Record<string, string> = {
@@ -109,7 +109,7 @@ function AlertsSection({ onOpenLine }: { onOpenLine?: (id: string) => void }) {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-sm text-gray-400 py-4">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
         <Loader2 size={14} className="animate-spin" /> Cargando alertas…
       </div>
     )
@@ -119,8 +119,8 @@ function AlertsSection({ onOpenLine }: { onOpenLine?: (id: string) => void }) {
     return (
       <div className="flex flex-col items-center gap-2 py-8 text-center">
         <CheckCircle size={28} className="text-green-400" />
-        <p className="text-sm font-medium text-gray-600">Sin alertas activas</p>
-        <p className="text-xs text-gray-400">El sistema no detectó riesgos en el último análisis</p>
+        <p className="text-sm font-medium text-muted-foreground">Sin alertas activas</p>
+        <p className="text-xs text-muted-foreground">El sistema no detectó riesgos en el último análisis</p>
         <Button size="sm" variant="outline" className="mt-1 text-xs h-7" onClick={load}>
           <RefreshCw size={11} className="mr-1" /> Actualizar
         </Button>
@@ -131,8 +131,8 @@ function AlertsSection({ onOpenLine }: { onOpenLine?: (id: string) => void }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between mb-1">
-        <p className="text-xs text-gray-500">{total} alerta{total !== 1 ? 's' : ''} activa{total !== 1 ? 's' : ''}</p>
-        <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px] text-gray-400" onClick={load}>
+        <p className="text-xs text-muted-foreground">{total} alerta{total !== 1 ? 's' : ''} activa{total !== 1 ? 's' : ''}</p>
+        <Button size="sm" variant="ghost" className="h-6 px-2 text-[11px] text-muted-foreground" onClick={load}>
           <RefreshCw size={10} className="mr-1" /> Actualizar
         </Button>
       </div>
@@ -145,10 +145,10 @@ function AlertsSection({ onOpenLine }: { onOpenLine?: (id: string) => void }) {
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <SeverityBadge severity={a.severity} />
-                <span className="text-[10px] text-gray-500 font-medium">
+                <span className="text-[10px] text-muted-foreground font-medium">
                   {ALERT_TYPE_LABEL[a.type] ?? a.type}
                 </span>
-                <span className="text-[10px] text-gray-400">{timeAgoShort(a.triggered_at)}</span>
+                <span className="text-[10px] text-muted-foreground">{timeAgoShort(a.triggered_at)}</span>
               </div>
               <p className="text-xs mt-0.5 leading-snug">{a.message}</p>
               {onOpenLine && (
@@ -195,14 +195,14 @@ function EffectivenessSection() {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 text-sm text-gray-400 py-4">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
         <Loader2 size={14} className="animate-spin" /> Calculando métricas…
       </div>
     )
   }
 
   if (!report || report.totalLines === 0) {
-    return <p className="text-sm text-gray-400 py-4">Sin datos de efectividad aún.</p>
+    return <p className="text-sm text-muted-foreground py-4">Sin datos de efectividad aún.</p>
   }
 
   const PRESET_LABEL: Record<string, string> = {
@@ -215,27 +215,27 @@ function EffectivenessSection() {
     <div className="space-y-4">
       {/* KPIs principales */}
       <div className="grid grid-cols-3 gap-3">
-        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 text-center">
-          <p className="text-2xl font-bold text-green-600">{report.overallSuccessRate}%</p>
-          <p className="text-[11px] text-gray-500 mt-0.5">Tasa de éxito</p>
-          <p className="text-[10px] text-gray-400">vs. estados terminales</p>
+        <div className="rounded-xl border border-border bg-background p-3 text-center">
+          <p className="text-2xl font-bold text-success">{report.overallSuccessRate}%</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">Tasa de éxito</p>
+          <p className="text-[10px] text-muted-foreground">vs. estados terminales</p>
         </div>
-        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 text-center">
+        <div className="rounded-xl border border-border bg-background p-3 text-center">
           <p className="text-2xl font-bold text-amber-600">{report.completionRatio}%</p>
-          <p className="text-[11px] text-gray-500 mt-0.5">Completadas</p>
-          <p className="text-[10px] text-gray-400">{report.completedLines} de {report.totalLines}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">Completadas</p>
+          <p className="text-[10px] text-muted-foreground">{report.completedLines} de {report.totalLines}</p>
         </div>
-        <div className="rounded-xl border border-gray-100 bg-gray-50 p-3 text-center">
+        <div className="rounded-xl border border-border bg-background p-3 text-center">
           <p className="text-2xl font-bold text-red-500">{report.banRate}%</p>
-          <p className="text-[11px] text-gray-500 mt-0.5">Tasa de ban</p>
-          <p className="text-[10px] text-gray-400">{report.bannedLines} línea{report.bannedLines !== 1 ? 's' : ''}</p>
+          <p className="text-[11px] text-muted-foreground mt-0.5">Tasa de ban</p>
+          <p className="text-[10px] text-muted-foreground">{report.bannedLines} línea{report.bannedLines !== 1 ? 's' : ''}</p>
         </div>
       </div>
 
       {/* Top estrategia */}
       {report.topPerformingStrategy && (
-        <div className="flex items-center gap-2 text-xs text-gray-600 bg-green-50 border border-green-100 rounded-lg px-3 py-2">
-          <TrendingUp size={12} className="text-green-600 shrink-0" />
+        <div className="flex items-center gap-2 text-xs text-muted-foreground bg-success/10 border border-success/20 rounded-lg px-3 py-2">
+          <TrendingUp size={12} className="text-success shrink-0" />
           <span>Mejor estrategia: <strong>{PRESET_LABEL[report.topPerformingStrategy]}</strong></span>
         </div>
       )}
@@ -243,18 +243,18 @@ function EffectivenessSection() {
       {/* Desglose por estrategia */}
       {report.byStrategy.length > 0 && (
         <div className="space-y-2">
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Por estrategia</p>
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Por estrategia</p>
           {report.byStrategy.map(s => (
             <div key={s.preset} className="flex items-center gap-3">
-              <span className="text-[11px] text-gray-600 w-24 shrink-0">{PRESET_LABEL[s.preset]}</span>
-              <div className="flex-1 bg-gray-100 rounded-full h-1.5">
+              <span className="text-[11px] text-muted-foreground w-24 shrink-0">{PRESET_LABEL[s.preset]}</span>
+              <div className="flex-1 bg-muted rounded-full h-1.5">
                 <div className="h-1.5 rounded-full bg-green-400" style={{ width: `${s.successRate}%` }} />
               </div>
-              <span className="text-[11px] text-gray-500 w-10 text-right shrink-0">{s.successRate}%</span>
-              <span className="text-[10px] text-gray-400 w-16 text-right shrink-0">
+              <span className="text-[11px] text-muted-foreground w-10 text-right shrink-0">{s.successRate}%</span>
+              <span className="text-[10px] text-muted-foreground w-16 text-right shrink-0">
                 {s.completedLines}/{s.totalLines} líneas
               </span>
-              <span className="text-[10px] text-gray-400 w-14 text-right shrink-0">
+              <span className="text-[10px] text-muted-foreground w-14 text-right shrink-0">
                 {s.avgHealthScore} salud
               </span>
             </div>
@@ -317,9 +317,9 @@ function SimulatorSection() {
   ]
 
   const RISK_CLS: Record<string, string> = {
-    low:    'text-green-700 bg-green-50 border-green-200',
-    medium: 'text-amber-700 bg-amber-50 border-amber-200',
-    high:   'text-red-700 bg-red-50 border-red-200',
+    low:    'text-success bg-success/10 border-success/20',
+    medium: 'text-warning bg-warning/10 border-warning/20',
+    high:   'text-destructive bg-destructive/10 border-destructive/20',
   }
 
   return (
@@ -331,7 +331,7 @@ function SimulatorSection() {
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${
               scenario === s.key
                 ? 'bg-amber-500 text-white border-amber-500'
-                : 'bg-white text-gray-600 border-gray-200 hover:border-amber-300'
+                : 'bg-card text-muted-foreground border-border hover:border-amber-300'
             }`}
           >
             {s.icon} {s.label}
@@ -344,34 +344,34 @@ function SimulatorSection() {
         {scenario === 'add_lines' && (
           <>
             <div className="flex items-center gap-1.5">
-              <label className="text-[11px] text-gray-500">Líneas:</label>
+              <label className="text-[11px] text-muted-foreground">Líneas:</label>
               <input type="number" min={1} max={20} value={newCount}
                 onChange={e => setNewCount(e.target.value)}
-                className="w-14 text-xs border border-gray-200 rounded px-2 py-1 text-center" />
+                className="w-14 text-xs border border-border rounded px-2 py-1 text-center" />
             </div>
             <div className="flex items-center gap-1.5">
-              <label className="text-[11px] text-gray-500">Estrategia:</label>
+              <label className="text-[11px] text-muted-foreground">Estrategia:</label>
               <select value={newStrategy} onChange={e => setNewStrategy(e.target.value)}
-                className="text-xs border border-gray-200 rounded px-2 py-1">
+                className="text-xs border border-border rounded px-2 py-1">
                 <option value="conservadora">Conservadora</option>
                 <option value="normal">Normal</option>
                 <option value="agresiva">Agresiva</option>
               </select>
             </div>
             <div className="flex items-center gap-1.5">
-              <label className="text-[11px] text-gray-500">Días objetivo:</label>
+              <label className="text-[11px] text-muted-foreground">Días objetivo:</label>
               <input type="number" min={7} max={60} value={newDays}
                 onChange={e => setNewDays(e.target.value)}
-                className="w-14 text-xs border border-gray-200 rounded px-2 py-1 text-center" />
+                className="w-14 text-xs border border-border rounded px-2 py-1 text-center" />
             </div>
           </>
         )}
 
         {scenario === 'change_strategy' && (
           <div className="flex items-center gap-1.5">
-            <label className="text-[11px] text-gray-500">Nueva estrategia (todas las activas):</label>
+            <label className="text-[11px] text-muted-foreground">Nueva estrategia (todas las activas):</label>
             <select value={targetStrategy} onChange={e => setTargetStrategy(e.target.value)}
-              className="text-xs border border-gray-200 rounded px-2 py-1">
+              className="text-xs border border-border rounded px-2 py-1">
               <option value="conservadora">Conservadora (−30% cuota)</option>
               <option value="normal">Normal (cuota base)</option>
               <option value="agresiva">Agresiva (+30% cuota)</option>
@@ -381,14 +381,14 @@ function SimulatorSection() {
 
         {scenario === 'project_health' && (
           <div className="flex items-center gap-1.5">
-            <label className="text-[11px] text-gray-500">Proyectar en:</label>
+            <label className="text-[11px] text-muted-foreground">Proyectar en:</label>
             {[7, 14, 21].map(d => (
               <button key={d}
                 onClick={() => setProjDays(String(d))}
                 className={`text-xs px-2.5 py-1 rounded border transition-colors ${
                   projDays === String(d)
                     ? 'bg-gray-800 text-white border-gray-800'
-                    : 'border-gray-200 text-gray-600 hover:border-gray-400'
+                    : 'border-border text-muted-foreground hover:border-gray-400'
                 }`}
               >
                 {d} días
@@ -406,28 +406,28 @@ function SimulatorSection() {
 
       {/* Resultados */}
       {result && (
-        <div className="space-y-3 border-t border-gray-100 pt-3">
-          <p className="text-xs text-gray-500 italic">{result.inputSummary}</p>
+        <div className="space-y-3 border-t border-border pt-3">
+          <p className="text-xs text-muted-foreground italic">{result.inputSummary}</p>
 
           {/* Totales */}
           <div className="grid grid-cols-4 gap-2">
-            <div className="bg-gray-50 rounded-lg p-2.5 text-center">
-              <p className="text-sm font-bold text-gray-700">{result.totals.currentQuota}</p>
-              <p className="text-[10px] text-gray-400">Cuota actual</p>
+            <div className="bg-background rounded-lg p-2.5 text-center">
+              <p className="text-sm font-bold text-foreground">{result.totals.currentQuota}</p>
+              <p className="text-[10px] text-muted-foreground">Cuota actual</p>
             </div>
-            <div className="bg-gray-50 rounded-lg p-2.5 text-center">
+            <div className="bg-background rounded-lg p-2.5 text-center">
               <p className="text-sm font-bold text-amber-600">{result.totals.projectedQuota}</p>
-              <p className="text-[10px] text-gray-400">Cuota proyectada</p>
+              <p className="text-[10px] text-muted-foreground">Cuota proyectada</p>
             </div>
-            <div className="bg-gray-50 rounded-lg p-2.5 text-center">
-              <p className={`text-sm font-bold ${result.totals.quotaChange >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+            <div className="bg-background rounded-lg p-2.5 text-center">
+              <p className={`text-sm font-bold ${result.totals.quotaChange >= 0 ? 'text-success' : 'text-red-500'}`}>
                 {result.totals.quotaChange >= 0 ? '+' : ''}{result.totals.quotaChange}
               </p>
-              <p className="text-[10px] text-gray-400">Cambio</p>
+              <p className="text-[10px] text-muted-foreground">Cambio</p>
             </div>
-            <div className="bg-gray-50 rounded-lg p-2.5 text-center">
+            <div className="bg-background rounded-lg p-2.5 text-center">
               <p className="text-sm font-bold text-blue-600">{result.insights.avgProjectedHealth}</p>
-              <p className="text-[10px] text-gray-400">Salud prom.</p>
+              <p className="text-[10px] text-muted-foreground">Salud prom.</p>
             </div>
           </div>
 
@@ -440,42 +440,42 @@ function SimulatorSection() {
             </div>
           </div>
 
-          <p className="text-[11px] text-gray-600 bg-amber-50 border border-amber-100 rounded px-2.5 py-1.5">
+          <p className="text-[11px] text-muted-foreground bg-warning/10 border border-amber-100 rounded px-2.5 py-1.5">
             {result.insights.recommendation}
           </p>
 
           {/* Tabla de proyecciones (máx 8 filas) */}
           {result.projections.length > 0 && (
-            <div className="border border-gray-100 rounded-lg overflow-hidden">
+            <div className="border border-border rounded-lg overflow-hidden">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="border-b border-gray-100 bg-gray-50">
-                    <th className="text-left px-3 py-2 font-medium text-gray-600">Línea</th>
-                    <th className="text-right px-3 py-2 font-medium text-gray-600">Salud</th>
-                    <th className="text-right px-3 py-2 font-medium text-gray-600">Cuota</th>
-                    <th className="text-left px-2 py-2 font-medium text-gray-600">Nota</th>
+                  <tr className="border-b border-border bg-background">
+                    <th className="text-left px-3 py-2 font-medium text-muted-foreground">Línea</th>
+                    <th className="text-right px-3 py-2 font-medium text-muted-foreground">Salud</th>
+                    <th className="text-right px-3 py-2 font-medium text-muted-foreground">Cuota</th>
+                    <th className="text-left px-2 py-2 font-medium text-muted-foreground">Nota</th>
                   </tr>
                 </thead>
                 <tbody>
                   {result.projections.slice(0, 8).map((p, i) => (
-                    <tr key={i} className="border-b border-gray-50 hover:bg-gray-50">
-                      <td className="px-3 py-1.5 text-gray-700 truncate max-w-[120px]">
+                    <tr key={i} className="border-b border-gray-50 hover:bg-background">
+                      <td className="px-3 py-1.5 text-foreground truncate max-w-[120px]">
                         {p.lineId.startsWith('nueva') ? <span className="text-amber-600">{p.lineId}</span> : p.lineId.slice(0, 8) + '…'}
                       </td>
                       <td className="px-3 py-1.5 text-right">
-                        <span className={p.projectedHealthScore >= 70 ? 'text-green-600' : p.projectedHealthScore >= 40 ? 'text-amber-600' : 'text-red-500'}>
+                        <span className={p.projectedHealthScore >= 70 ? 'text-success' : p.projectedHealthScore >= 40 ? 'text-amber-600' : 'text-red-500'}>
                           {p.currentHealthScore > 0 ? `${p.currentHealthScore}→` : ''}{p.projectedHealthScore}
                         </span>
                       </td>
-                      <td className="px-3 py-1.5 text-right text-gray-600">
+                      <td className="px-3 py-1.5 text-right text-muted-foreground">
                         {p.currentDailyQuota > 0 ? `${p.currentDailyQuota}→` : ''}{p.projectedDailyQuota}
                       </td>
-                      <td className="px-2 py-1.5 text-gray-400 text-[10px] truncate max-w-[140px]">{p.changeNote}</td>
+                      <td className="px-2 py-1.5 text-muted-foreground text-[10px] truncate max-w-[140px]">{p.changeNote}</td>
                     </tr>
                   ))}
                   {result.projections.length > 8 && (
                     <tr>
-                      <td colSpan={4} className="px-3 py-1.5 text-center text-[10px] text-gray-400 italic">
+                      <td colSpan={4} className="px-3 py-1.5 text-center text-[10px] text-muted-foreground italic">
                         +{result.projections.length - 8} líneas más…
                       </td>
                     </tr>
@@ -515,10 +515,10 @@ export function WarmupIntelligence({ onOpenLine }: Props) {
       <CardContent className="p-0">
         {/* Header colapsable */}
         <button
-          className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors"
+          className="w-full flex items-center justify-between px-4 py-3 hover:bg-background transition-colors"
           onClick={() => setOpen(v => !v)}
         >
-          <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
             <Brain size={14} className="text-purple-500" />
             Inteligencia Predictiva
             {alertCount !== null && alertCount > 0 && (
@@ -527,24 +527,24 @@ export function WarmupIntelligence({ onOpenLine }: Props) {
               </span>
             )}
           </div>
-          {open ? <ChevronUp size={14} className="text-gray-400" /> : <ChevronDown size={14} className="text-gray-400" />}
+          {open ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
         </button>
 
         {open && (
-          <div className="border-t border-gray-100">
+          <div className="border-t border-border">
             {/* Tab bar interno */}
-            <div className="flex gap-1 px-4 py-2 border-b border-gray-100">
+            <div className="flex gap-1 px-4 py-2 border-b border-border">
               {TABS.map(t => (
                 <button key={t.key} onClick={() => setTab(t.key)}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
                     tab === t.key
-                      ? 'bg-gray-100 text-gray-800'
-                      : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                      ? 'bg-muted text-foreground'
+                      : 'text-muted-foreground hover:text-foreground hover:bg-background'
                   }`}
                 >
                   {t.icon} {t.label}
                   {t.key === 'alerts' && alertCount !== null && alertCount > 0 && (
-                    <span className="ml-0.5 bg-red-100 text-red-600 rounded-full px-1.5 py-px text-[10px]">
+                    <span className="ml-0.5 bg-destructive/15 text-destructive rounded-full px-1.5 py-px text-[10px]">
                       {alertCount}
                     </span>
                   )}

@@ -10,6 +10,7 @@
  */
 
 import { z }          from 'zod'
+import { CampaignTemplateParamsSchema } from './campaign-template'
 import { NextResponse } from 'next/server'
 import { audit }       from '@/lib/audit'
 import { securityLog } from '@/lib/security-log'
@@ -71,7 +72,6 @@ export const SECTORS = [
   'dashboard', 'contacts', 'campaigns', 'conversations', 'lines',
   'warmup', 'tasks', 'estadisticas', 'automations', 'blacklist',
   'templates', 'tickets', 'users', 'settings', 'lists', 'send',
-  'encuestas',
 ] as const
 
 const RoleEnum    = z.enum(ROLES)
@@ -162,8 +162,8 @@ export const CreateCampaignSchema = z.object({
   list_id:              z.string().uuid('list_id debe ser un UUID válido').optional().nullable(),
   prospect_list_id:     z.string().uuid('prospect_list_id debe ser un UUID válido').optional().nullable(),
   scheduled_at:         z.string().optional().nullable(),
-  antiblock_delay_min:  z.number().min(1).optional(),
-  antiblock_delay_max:  z.number().min(1).optional(),
+  antiblock_delay_min:  z.number().int().min(3).max(300).optional(),
+  antiblock_delay_max:  z.number().int().min(3).max(300).optional(),
   type:                 z.enum(CAMPAIGN_TYPES).optional(),
   personalize_name:     z.boolean().optional(),
   use_multi_line:       z.boolean().optional(),
@@ -173,6 +173,9 @@ export const CreateCampaignSchema = z.object({
   anti_ban_profile_id:  z.string().uuid('anti_ban_profile_id debe ser un UUID válido').optional().nullable(),
   enable_mini_sessions: z.boolean().optional(),
   mini_session_text:    z.string().max(500).optional(),
+  message_type:        z.enum(['text', 'template']).optional(),
+  template_id:         z.string().uuid().nullable().optional(),
+  template_params:     CampaignTemplateParamsSchema.nullable().optional(),
 })
 export type CreateCampaignInput = z.infer<typeof CreateCampaignSchema>
 
@@ -208,29 +211,11 @@ export type UpdateCasinoPlayerInput = z.infer<typeof UpdateCasinoPlayerSchema>
 
 // ── Template schemas ──────────────────────────────────────────────────────────
 
-const TEMPLATE_CATEGORIES = ['UTILITY', 'MARKETING', 'AUTHENTICATION'] as const
-const TEMPLATE_LANGUAGES  = ['es', 'en', 'pt_BR', 'pt', 'fr', 'de', 'it', 'ar', 'zh_CN'] as const
-const TEMPLATE_STATUSES   = ['BORRADOR', 'EN_REVISION', 'APROBADA', 'RECHAZADA', 'DESHABILITADA'] as const
-
-const TemplateComponentSchema = z.record(z.string(), z.unknown())
-
-export const CreateTemplateSchema = z.object({
-  name:       z.string().min(1, 'El nombre es requerido').max(255),
-  category:   z.enum(TEMPLATE_CATEGORIES),
-  language:   z.enum(TEMPLATE_LANGUAGES).optional().default('es'),
-  components: z.array(TemplateComponentSchema).optional().default([]),
-})
-export type CreateTemplateInput = z.infer<typeof CreateTemplateSchema>
-
-export const UpdateTemplateSchema = z.object({
-  name:             z.string().min(1).max(255).optional(),
-  category:         z.enum(TEMPLATE_CATEGORIES).optional(),
-  language:         z.enum(TEMPLATE_LANGUAGES).optional(),
-  components:       z.array(TemplateComponentSchema).optional(),
-  status:           z.enum(TEMPLATE_STATUSES).optional(),
-  rejection_reason: z.string().max(1000).optional().nullable(),
-})
-export type UpdateTemplateInput = z.infer<typeof UpdateTemplateSchema>
+// Defined in a browser-safe module so the templates page validates with the same rules.
+export {
+  CreateTemplateSchema, UpdateTemplateSchema,
+  type CreateTemplateInput, type UpdateTemplateInput,
+} from './template-validation'
 
 // ── Automation schemas ────────────────────────────────────────────────────────
 

@@ -1,3 +1,6 @@
+import { complianceRepository } from './cloud-api/repositories/compliance.repository'
+import { conversationRepository } from './cloud-api/repositories/conversation.repository'
+import { OptOutError, ConversationWindowError } from './cloud-api/errors'
 /**
  * campaign-distributor.ts
  *
@@ -31,6 +34,7 @@
  */
 
 import { query } from '@/lib/db'
+import { prepareCampaignRouting, campaignRoutingCondition } from '@/lib/campaign-routing'
 import { distributorVisibilityClause } from '@/lib/line-visibility'
 import { humanLikeDelay, buildDelayConfig } from '@/lib/anti-ban-delays'
 import { clog } from '@/lib/campaign-logger'
@@ -54,9 +58,10 @@ import { ContactFrequencyEngine } from '@/lib/contact-frequency/ContactFrequency
 import { lineEligibleExpr, cloudEligibleExpr } from '@/lib/line-eligibility'
 import { enforceRateLimit } from '@/lib/cloud-api/rate-limiter'
 import { getTokenForNumber } from '@/lib/cloud-api/token-store'
-import { MessageSenderService } from '@/lib/cloud-api/infrastructure/message-sender.service'
+import { MessageSenderService, buildMessagePayload } from '@/lib/cloud-api/infrastructure/message-sender.service'
 import { CloudApiError } from '@/lib/cloud-api/errors'
 import type { SendMessageRequest, TemplateContent, TemplateParameter } from '@/lib/cloud-api/types/messages'
+import { resolveTemplateContactValue } from '@/lib/campaign-personalization'
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -69,7 +74,7 @@ const LOCK_HEARTBEAT_EVERY   = 50  // refresh processor_locked_at every N sends
 // Cloud API error codes that are contact-level and non-retryable → 'skipped'.
 // These come from MetaHttpGateway as CloudApiError, not from the use-case layer.
 // 131021: number not on WhatsApp
-// 131026: recipient opted out of business messages
+// 131026: Meta could not deliver (not evidence of an opt-out).
 // 131047: 24h conversation window closed (free-form text requires open session)
 const CLOUD_SKIP_CODES = new Set([131021, 131026, 131047])
 
@@ -79,6 +84,7 @@ export type EligibleLine = {
   id:                 string
   line_type:          'evolution' | 'cloud'
   phone_number_id:    string | null   // cloud lines only
+  waba_id?:          string | null   // Cloud template ownership boundary
   evolution_instance: string | null   // evolution lines only
   evolution_url:      string | null   // evolution lines only
   msgs_sent_hour:     number
@@ -118,13 +124,23 @@ export type CampaignForDispatch = {
   template_name:     string | null     // denormalizado del JOIN con whatsapp_templates
   template_language: string | null
   template_params:   CampaignTemplateParams | null
+  template_waba_id?: string | null
+  template_status?: string | null
 }
 
 // Payload discriminado para sendViaCloud — separa texto de plantilla
 // sin sobrecargar la firma con parámetros opcionales ambiguos.
 type CloudSendPayload =
   | { kind: 'text';     body: string; mediaUrl: string | null }
-  | { kind: 'template'; content: TemplateContent }
+  | { kind: 'template'; content: TemplateContent; wabaId: string; templateId: string }
+
+export class CampaignLineUnavailableError extends CloudApiError {
+  constructor() { super('La línea Cloud ya no está habilitada o no tiene capacidad para campañas.') }
+}
+
+export class CloudSendOutcomeUnknownError extends CloudApiError {
+  constructor() { super('No se pudo confirmar el resultado del envío Cloud; no se reintentará automáticamente.') }
+}
 
 type DispatchUnit = {
   id:           string
@@ -175,15 +191,6 @@ function personalize(raw: string, firstName: string, campaign: CampaignForDispat
 
 // ── Template helpers ───────────────────────────────────────────────────────────
 
-// Resuelve placeholders de contacto en los valores de template_params.
-// Soportados: {{first_name}}, {{phone_number}}.
-// Cualquier otro placeholder se deja intacto — Meta los recibirá literalmente.
-function resolveTemplateVar(value: string, unit: DispatchUnit): string {
-  return value
-    .replace(/\{\{first_name\}\}/gi,    unit.first_name   || '')
-    .replace(/\{\{phone_number\}\}/gi,  unit.phone_number || '')
-}
-
 /**
  * Construye el TemplateContent para la Graph API a partir de los datos de la
  * campaña y el destinatario. No hace ninguna llamada a DB — todo viene en
@@ -192,13 +199,21 @@ function resolveTemplateVar(value: string, unit: DispatchUnit): string {
  *
  * Lanza si template_name está vacío — el caller debe validar antes.
  */
-function buildTemplatePayload(
-  campaign: CampaignForDispatch,
-  unit:     DispatchUnit,
+export function buildTemplatePayload(
+  campaign: Pick<CampaignForDispatch, 'template_name' | 'template_language' | 'template_params'>,
+  unit:     Pick<DispatchUnit, 'first_name' | 'phone_number'>,
 ): TemplateContent {
-  const name     = campaign.template_name!
-  const language = campaign.template_language ?? 'es'
+  const name     = campaign.template_name
+  const language = campaign.template_language
   const params   = campaign.template_params ?? {}
+  if (!name || !language || !/^[a-z0-9_]+$/.test(name) || !/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(language)) {
+    throw new CloudApiError('La campaña requiere nombre e idioma exactos de la plantilla.')
+  }
+  if ((params.body !== undefined && (!Array.isArray(params.body) || !params.body.every(value => typeof value === 'string')))
+      || (params.header && (!['image', 'video', 'document'].includes(params.header.type) || typeof params.header.link !== 'string'))
+      || (params.buttons !== undefined && (!Array.isArray(params.buttons) || params.buttons.some(button => !button
+        || !['url', 'quick_reply'].includes(button.sub_type) || !Number.isInteger(button.index) || button.index < 0
+        || typeof button.payload !== 'string')))) throw new CloudApiError('Parámetros de plantilla inválidos.')
 
   const components: TemplateContent['components'] = []
 
@@ -214,7 +229,7 @@ function buildTemplatePayload(
   if (params.body && params.body.length > 0) {
     components.push({
       type:       'body',
-      parameters: params.body.map(v => ({ type: 'text' as const, text: resolveTemplateVar(v, unit) })),
+      parameters: params.body.map(v => ({ type: 'text' as const, text: resolveTemplateContactValue(v, unit, true) })),
     })
   }
 
@@ -224,7 +239,9 @@ function buildTemplatePayload(
         type:       'button',
         sub_type:   btn.sub_type,
         index:      String(btn.index),
-        parameters: [{ type: 'payload', payload: btn.payload }],
+        parameters: btn.sub_type === 'url'
+          ? [{ type: 'text', text: resolveTemplateContactValue(btn.payload, unit) }]
+          : [{ type: 'payload', payload: resolveTemplateContactValue(btn.payload, unit) }],
       })
     }
   }
@@ -285,6 +302,7 @@ export async function getEligibleLines(operatorId?: string | null): Promise<Elig
       wl.id,
       wl.line_type,
       cn.phone_number_id,
+      cn.waba_id,
       wl.evolution_instance,
       wl.evolution_url,
       wl.msgs_sent_hour,  wl.msgs_sent_today,
@@ -586,28 +604,25 @@ export async function sendViaEvolution(
  *   - kind='template' → plantilla pre-aprobada por Meta (no requiere ventana)
  *
  * Reuses token management (getTokenForNumber) and HTTP layer (MessageSenderService)
- * without going through SendMessageUseCase — the use-case's window check does
- * not apply to campaigns, and its DB persistence conflicts with our pre-insert fence.
+ * while preserving the campaign's pre-insert fence. Free-form messages enforce
+ * the same service window and opt-out checks as direct messages.
  *
  * Rate limiting (20 msg/s) is enforced via enforceRateLimit().
  * Pacing between messages is handled by the distributor's humanLikeDelay.
  */
 export async function sendViaCloud(
-  line:      EligibleLine,
+  line:      Pick<EligibleLine, 'id' | 'phone_number_id'>,
   phone:     string,
   payload:   CloudSendPayload,
   campaignId?: string,
+  options: { reserveCapacity?: boolean } = {},
 ): Promise<{ messageId: string | null }> {
   const phoneNumberId = line.phone_number_id
   if (!phoneNumberId) throw new Error(`No phone_number_id for cloud line ${line.id}`)
 
-  await enforceRateLimit(phoneNumberId)
-
-  const accessToken = await getTokenForNumber(phoneNumberId)
-  const sender      = new MessageSenderService(accessToken, phoneNumberId)
-
   // Cloud API expects E.164 format (with leading +)
   const to = phone.startsWith('+') ? phone : `+${phone}`
+  if (!/^\+[1-9]\d{6,14}$/.test(to)) throw new CloudApiError('Destinatario inválido para Cloud API.')
 
   let req: SendMessageRequest
   if (payload.kind === 'template') {
@@ -618,8 +633,56 @@ export async function sendViaCloud(
     req = { phoneNumberId, to, type: 'text', text: { body: payload.body }, campaignId }
   }
 
-  const { wamid } = await sender.send(req)
-  return { messageId: wamid || null }
+  if (await complianceRepository.isOptedOut(to, phoneNumberId)) throw new OptOutError(to)
+  if (req.type !== 'template') {
+    const window = await conversationRepository.findWindow(phoneNumberId, to)
+    if (!window?.windowExpiresAt || window.windowExpiresAt <= new Date()) throw new ConversationWindowError()
+  }
+  buildMessagePayload(req)
+  await enforceRateLimit(phoneNumberId)
+  const accessToken = await getTokenForNumber(phoneNumberId)
+
+  // The loop caches eligible lines. Re-read the kill switch and quotas immediately
+  // before the provider request so a disabled/capped cached line cannot keep sending.
+  const [current] = await query<{ waba_id: string }>(
+    `SELECT cn.waba_id FROM whatsapp_lines wl
+     JOIN cloud_numbers cn ON cn.whatsapp_line_id = wl.id AND cn.status = 'active'
+     WHERE wl.id = $1 AND cn.phone_number_id = $2 AND ${cloudEligibleExpr('wl')}`,
+    [line.id, phoneNumberId],
+  )
+  if (!current) throw new CampaignLineUnavailableError()
+  if (payload.kind === 'template') {
+    if (!payload.wabaId || current.waba_id !== payload.wabaId) throw new CloudApiError('La plantilla no pertenece a la WABA de la línea.')
+    const [template] = await query<{ id: string }>(
+      `SELECT id FROM whatsapp_templates WHERE id = $1 AND waba_id = $2
+         AND name = $3 AND language = $4 AND status = 'APROBADA'`,
+      [payload.templateId, current.waba_id, payload.content.name, payload.content.language.code],
+    )
+    if (!template) throw new CloudApiError('La plantilla no está aprobada para esta WABA, nombre e idioma.')
+  }
+  // Standalone tests reserve capacity atomically before touching Meta. These
+  // attempts count toward line limits even if Meta's response is uncertain.
+  if (options.reserveCapacity) {
+    const reserved = await query(
+      `UPDATE whatsapp_lines wl SET msgs_sent_hour=msgs_sent_hour+1,
+         msgs_sent_today=msgs_sent_today+1, updated_at=NOW()
+       WHERE wl.id=$1 AND ${cloudEligibleExpr('wl')}
+         AND EXISTS (SELECT 1 FROM cloud_numbers cn WHERE cn.whatsapp_line_id=wl.id
+           AND cn.phone_number_id=$2 AND cn.waba_id=$3 AND cn.status='active') RETURNING wl.id`,
+      [line.id, phoneNumberId, current.waba_id])
+    if (!reserved.length) throw new CampaignLineUnavailableError()
+  }
+  const sender = new MessageSenderService(accessToken, phoneNumberId)
+  try {
+    const { wamid } = await sender.send(req)
+    if (!wamid) throw new CloudSendOutcomeUnknownError()
+    return { messageId: wamid }
+  } catch (error) {
+    // A timeout/disconnected response cannot prove that Meta rejected the message.
+    // Keep its queued fence intact instead of making an automatic duplicate possible.
+    if (error instanceof CloudApiError && error.code) throw error
+    throw new CloudSendOutcomeUnknownError()
+  }
 }
 
 // ── Stale recovery ─────────────────────────────────────────────────────────────
@@ -686,7 +749,7 @@ export async function recoverStaleUnits(campaignId: string): Promise<void> {
  *
  * Ordering: created_at ASC, id ASC — deterministic, matches existing processor.
  */
-async function claimNextUnit(
+export async function claimNextUnit(
   campaignId: string,
   lineId: string,
 ): Promise<DispatchUnit | null> {
@@ -699,11 +762,12 @@ async function claimNextUnit(
               attempts   = attempts + 1,
               updated_at = NOW()
        WHERE  id = (
-         SELECT id
-         FROM   campaign_recipients
-         WHERE  campaign_id = $1
-           AND  status      = 'pending'
-         ORDER BY created_at ASC, id ASC
+         SELECT cr.id
+         FROM   campaign_recipients cr
+         WHERE  cr.campaign_id = $1
+           AND  cr.status = 'pending'
+           AND ${campaignRoutingCondition('cr', 'ARRAY[$2::uuid]')}
+         ORDER BY cr.created_at ASC, cr.id ASC
          LIMIT  1
          FOR UPDATE SKIP LOCKED
        )
@@ -744,6 +808,8 @@ async function handleSuccess(
          SET status               = 'sent',
              evolution_message_id = $1,
              sent_at              = NOW(),
+             error_detail         = NULL,
+             failed_at            = NULL,
              updated_at           = NOW()
          WHERE campaign_recipient_id = $2
            AND status = 'queued'`,
@@ -756,6 +822,8 @@ async function handleSuccess(
              locked_at            = NULL,
              message_body         = $1,
              evolution_message_id = $2,
+             error_detail         = NULL,
+             failed_at            = NULL,
              updated_at           = NOW()
          WHERE id = $3`,
         [messageBody, messageId, unit.id]
@@ -780,8 +848,13 @@ async function handleSuccess(
      ON CONFLICT (campaign_recipient_id)
        WHERE campaign_recipient_id IS NOT NULL
      DO UPDATE SET
-       status               = CASE WHEN whatsapp_messages.status IN ('delivered','read') THEN whatsapp_messages.status ELSE 'sent' END,
+       status               = CASE WHEN whatsapp_messages.status IN ('delivered','read')
+                                    OR (whatsapp_messages.status='failed' AND whatsapp_messages.evolution_message_id IS NOT NULL)
+                                   THEN whatsapp_messages.status ELSE 'sent' END,
        evolution_message_id = COALESCE(whatsapp_messages.evolution_message_id, EXCLUDED.evolution_message_id),
+       sent_at              = COALESCE(whatsapp_messages.sent_at, EXCLUDED.sent_at),
+       error_detail         = CASE WHEN whatsapp_messages.status='failed' AND whatsapp_messages.evolution_message_id IS NOT NULL THEN whatsapp_messages.error_detail ELSE NULL END,
+       failed_at            = CASE WHEN whatsapp_messages.status='failed' AND whatsapp_messages.evolution_message_id IS NOT NULL THEN whatsapp_messages.failed_at ELSE NULL END,
        updated_at           = NOW()`,
     [unit.contact_id, campaignId, unit.phone_number, messageBody, messageId, unit.id]
   ).catch(e =>
@@ -790,6 +863,14 @@ async function handleSuccess(
       recipientId: unit.id, error: e instanceof Error ? e.message : String(e),
     })
   )
+
+  // A delivery webhook can fail an accepted message while acceptance is being
+  // persisted. Preserve that terminal outcome in both progress representations.
+  await query(`UPDATE campaign_recipients cr SET status='failed', failed_at=wm.failed_at,
+      error_detail=wm.error_detail, locked_at=NULL, updated_at=NOW()
+    FROM whatsapp_messages wm WHERE wm.campaign_recipient_id=cr.id AND cr.id=$1
+      AND wm.status='failed' AND wm.evolution_message_id=$2`, [unit.id, messageId])
+    .catch(e => clog.warn({ event: 'delivery.reconcile.error', campaignId, error: e instanceof Error ? e.message : String(e) }))
 
   // Queries 3 + 4: no críticas, independientes entre sí → paralelo, swallow errors
   await Promise.all([
@@ -973,7 +1054,7 @@ type SendOneUnitOptions = {
   onFreqFailOpen?: () => void
 }
 
-async function sendOneUnit(
+export async function sendOneUnit(
   campaignId:  string,
   line:        EligibleLine,
   campaign:    CampaignForDispatch,
@@ -1089,7 +1170,9 @@ async function sendOneUnit(
     : `evo:${line.evolution_instance}`
 
   // Pre-insert idempotency fence
-  await query(
+  let fenced: { id: string }[]
+  try {
+    fenced = await query<{ id: string }>(
     `INSERT INTO whatsapp_messages
        (contact_id, campaign_id, phone_number, message_body, direction, status,
         campaign_recipient_id, created_at, updated_at)
@@ -1099,15 +1182,39 @@ async function sendOneUnit(
      DO UPDATE SET
        status       = 'queued',
        message_body = EXCLUDED.message_body,
+       error_detail = NULL,
+       failed_at    = NULL,
        updated_at   = NOW()
-     WHERE whatsapp_messages.status NOT IN ('sent', 'delivered', 'read')`,
+     WHERE whatsapp_messages.status = 'failed'
+       AND whatsapp_messages.evolution_message_id IS NULL
+       AND COALESCE(whatsapp_messages.error_detail, '') NOT LIKE '[provider-outcome-unknown-no-resend]%'
+     RETURNING id`,
     [unit.contact_id, campaignId, unit.phone_number, messageBody, unit.id]
-  ).catch(e =>
+    )
+  } catch (e) {
     clog.warn({
       event: 'pre.insert.queued.error', campaignId, mode: 'multi-line',
       lineLabel, error: e instanceof Error ? e.message : String(e),
     })
-  )
+    await query(`UPDATE campaign_recipients SET status='failed', locked_at=NULL,
+      error_detail='message-storage-unavailable-no-send', updated_at=NOW() WHERE id=$1`, [unit.id]).catch(() => {})
+    return 'failed'
+  }
+  if (!fenced.length) {
+    const [existing] = await query<{ status: string; evolution_message_id: string | null }>(
+      'SELECT status, evolution_message_id FROM whatsapp_messages WHERE campaign_recipient_id=$1', [unit.id],
+    )
+    const confirmed = existing && ['sent', 'delivered', 'read'].includes(existing.status)
+    if (confirmed) {
+      await query(`UPDATE campaign_recipients SET status='sent', locked_at=NULL,
+        evolution_message_id=$1, sent_at=COALESCE(sent_at,NOW()), error_detail=NULL, failed_at=NULL, updated_at=NOW() WHERE id=$2`,
+      [existing.evolution_message_id, unit.id])
+      return 'sent'
+    }
+    await query(`UPDATE campaign_recipients SET status='failed', locked_at=NULL,
+      error_detail='[provider-outcome-unknown-no-resend] Existing queued message', updated_at=NOW() WHERE id=$1`, [unit.id])
+    return 'failed'
+  }
 
   // Proxy: Evolution-only. Cloud lines call Graph API directly — no proxy involved.
   const proxy = line.line_type === 'evolution'
@@ -1132,29 +1239,51 @@ async function sendOneUnit(
     clog.info({ event: 'unit.send.start', campaignId, mode: 'multi-line', lineLabel })
   }
 
+  let providerAccepted = false
   try {
     const { messageId } = line.line_type === 'cloud'
       ? await sendViaCloud(
           line, unit.phone_number,
           campaign.message_type === 'template'
-            ? { kind: 'template', content: buildTemplatePayload(campaign, unit) }
+            ? { kind: 'template', content: buildTemplatePayload(campaign, unit), wabaId: campaign.template_waba_id!, templateId: campaign.template_id! }
             : { kind: 'text', body: messageBody, mediaUrl: campaign.media_url },
           campaignId,
         )
       : await sendViaEvolution(line, unit.phone_number, messageBody, campaign.media_url)
 
+    providerAccepted = true
     await handleSuccess(campaignId, unit, line, messageId, messageBody,
       campaign.message_type, campaign.template_name ?? undefined)
-    updateLastActiveAt(line.id)
+    if (line.line_type === 'evolution') updateLastActiveAt(line.id)
     return 'sent'
   } catch (err) {
+    if (providerAccepted) {
+      clog.error({ event: 'handle.success.write.error', campaignId, mode: 'multi-line',
+        recipientId: unit.id, lineId: line.id, detail: 'Provider accepted; preserve the fence and do not retry.' })
+      return 'sent'
+    }
+    if (err instanceof CampaignLineUnavailableError) {
+      await query(`UPDATE whatsapp_messages SET status='failed', error_detail='line-unavailable-no-send', updated_at=NOW()
+        WHERE campaign_recipient_id=$1 AND status='queued'`, [unit.id])
+      await query(`UPDATE campaign_recipients SET status='pending', locked_at=NULL, line_id=NULL,
+        attempts=GREATEST(attempts-1,0), error_detail='line-unavailable-no-send', updated_at=NOW() WHERE id=$1`, [unit.id])
+      return 'failed'
+    }
+    if (err instanceof CloudSendOutcomeUnknownError) {
+      await query(`UPDATE campaign_recipients SET status='failed', locked_at=NULL,
+        error_detail='[provider-outcome-unknown-no-resend] Meta response was not confirmed', updated_at=NOW() WHERE id=$1`, [unit.id]).catch(() => {})
+      return 'failed'
+    }
     // Cloud API: contact-level non-retryable errors (see CLOUD_SKIP_CODES).
     // These come from MetaHttpGateway as CloudApiError — not from the use-case layer.
     // Marking as 'skipped' avoids wasting MAX_RETRIES on structurally unsendable recipients.
     if (err instanceof CloudApiError && CLOUD_SKIP_CODES.has(err.code ?? -1)) {
-      const reason = err.code === 131047 ? 'cloud-no-window'
-                   : err.code === 131026 ? 'cloud-opted-out'
+      const reason = err instanceof OptOutError ? 'cloud-opted-out'
+                   : err.code === 131047 ? 'cloud-no-window'
+                   : err.code === 131026 ? 'cloud-undeliverable'
                    : 'cloud-non-retryable'
+      await query(`UPDATE whatsapp_messages SET status='failed', failed_at=NOW(), error_detail=$1, updated_at=NOW()
+        WHERE campaign_recipient_id=$2 AND status='queued'`, [`[${reason}] ${err.message}`, unit.id]).catch(() => {})
       await query(
         `UPDATE campaign_recipients
          SET status       = 'skipped',
@@ -1185,7 +1314,8 @@ async function sendOneUnit(
     if (proxy && isNetworkError(err)) {
       await reportProxySendFailure(proxy.id, line.id, errMsg).catch(() => {})
     }
-    await handleFailure(campaignId, unit, line, errMsg, maxRetries,
+    const retries = err instanceof CloudApiError && !err.retryable ? 1 : maxRetries
+    await handleFailure(campaignId, unit, line, errMsg, retries,
       campaign.message_type, campaign.template_name ?? undefined)
     return 'failed'
   }
@@ -1202,7 +1332,7 @@ async function sendOneUnit(
  *  - Re-evaluates eligible lines on each iteration (respects updated counters)
  *  - Routes per line_type: Evolution (per-instance URL) or Cloud API (Graph API)
  *  - Pauses the campaign automatically if no eligible lines remain
- *  - Clears the unit's line_id on retryable failure (allows line re-selection)
+ *  - Preserves the durable sender assignment across retryable failures
  *
  * No-eligible-lines behaviour:
  *  - Campaign status is set to 'paused'
@@ -1258,10 +1388,11 @@ export async function processMultiLineInBackground(
     // Template campaigns require a resolved template_name (denormalized via JOIN in dispatch
     // routes). Fail fast here so the whole campaign pauses immediately rather than producing
     // per-recipient silent fallbacks or errors at scale.
-    if (campaign.message_type === 'template' && !campaign.template_name) {
+    if (campaign.message_type === 'template' && (!campaign.template_id || !campaign.template_name
+        || !campaign.template_language || !campaign.template_waba_id || campaign.template_status !== 'APROBADA')) {
       clog.critical({
         event: 'config.missing', campaignId: id, mode: 'multi-line',
-        detail: 'message_type=template pero template_name es null — verificar JOIN en dispatch routes',
+        detail: 'La plantilla requiere ID, nombre, idioma, WABA y estado APROBADA.',
       })
       await query(
         `UPDATE campaigns
@@ -1370,7 +1501,7 @@ export async function processMultiLineInBackground(
         })
         continue
       }
-      if (!current || current.status === 'paused' || current.status === 'cancelled' || current.status === 'completed') {
+      if (!current || current.status !== 'running') {
         delayController.abort()  // cancelar cualquier delay en curso
         break
       }
@@ -1446,8 +1577,16 @@ export async function processMultiLineInBackground(
       // Template gate: las campañas de tipo 'template' solo pueden enviarse por
       // Cloud API (Meta requiere plantillas aprobadas para mensajes proactivos).
       // Las líneas Evolution se excluyen para evitar 'skipped' masivos innecesarios.
-      const activeLines = eligibleLines.filter(l => {
-        if (campaign.message_type === 'template' && l.line_type !== 'cloud') return false
+      const providerLines = campaign.message_type === 'template'
+        ? eligibleLines.filter(line => line.line_type === 'cloud' && line.waba_id === campaign.template_waba_id)
+        : eligibleLines
+      if (!providerLines.length) {
+        await query(`UPDATE campaigns SET status='paused', pause_reason='no_eligible_lines'
+          WHERE id=$1 AND status='running'`, [id])
+        break
+      }
+      const activeLines = providerLines.filter(l => {
+        if (l.line_type === 'cloud') return true
         if (!l.has_personality) return true
         const personality = getLoadedPersonality(l.id)
         return !personality || shouldLineBeActiveNow(personality)
@@ -1474,6 +1613,8 @@ export async function processMultiLineInBackground(
         )
         break
       }
+
+      await prepareCampaignRouting(id, activeLines.map(line => line.id))
 
       // ── 3-5. Claim + send en paralelo: una unidad por línea activa ──────────
       // claimNextUnit usa FOR UPDATE SKIP LOCKED — seguro para concurrencia.
@@ -1510,7 +1651,14 @@ export async function processMultiLineInBackground(
       const allEmpty = results.every(
         r => r.status === 'fulfilled' && r.value === 'no-unit'
       )
-      if (allEmpty) break
+      if (allEmpty) {
+        const { pending } = await syncCounters(id)
+        if (pending > 0) {
+          await query(`UPDATE campaigns SET status='paused', pause_reason='assigned_line_unavailable'
+            WHERE id=$1 AND status='running'`, [id])
+        }
+        break
+      }
 
       // Detectar ciclos donde TODAS las promises fueron rechazadas (error de DB en
       // claimNextUnit). allEmpty nunca sería true en ese caso, causando loop infinito.
@@ -1546,8 +1694,8 @@ export async function processMultiLineInBackground(
       // Un delay por ciclo (no por línea) — el batch completo ya se envió.
       // Se usa la personalidad de la primera línea activa (mayor capacidad residual).
       const leadLine = activeLines[0]
-      let leadPersonality = getLoadedPersonality(leadLine.id)
-      if (!leadPersonality) {
+      let leadPersonality = leadLine.line_type === 'evolution' ? getLoadedPersonality(leadLine.id) : null
+      if (leadLine.line_type === 'evolution' && !leadPersonality) {
         try {
           leadPersonality = await getLinePersonality(leadLine.id)
         } catch (personalityErr) {
@@ -1559,7 +1707,9 @@ export async function processMultiLineInBackground(
           })
         }
       }
-      const adjustedDelay = leadPersonality
+      const adjustedDelay = leadLine.line_type === 'cloud'
+        ? { ...buildDelayConfig(campaign), burstProbability: 0, microJitterMs: { min: 0, max: 0 } }
+        : leadPersonality
         ? getAdjustedDelayConfig(buildDelayConfig(campaign), leadPersonality)
         : buildDelayConfig(campaign)
       await humanLikeDelay(adjustedDelay, delayController.signal)
@@ -1744,7 +1894,7 @@ export async function getContactEligibilityBreakdown(
     FROM contacts c
     JOIN contact_list_members clm ON clm.contact_id = c.id
     WHERE clm.list_id = $1
-  `, [listId]).catch(() => [null])
+  `, [listId])
 
   return {
     total_in_list:  Number(row?.total_in_list  ?? 0),

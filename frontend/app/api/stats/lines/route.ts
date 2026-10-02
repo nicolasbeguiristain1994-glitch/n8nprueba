@@ -4,7 +4,7 @@ import { checkPermissionWithUser } from '@/lib/permissions'
 import { getAccessibleLineIds, lineVisibilityClause } from '@/lib/line-visibility'
 
 export async function GET(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'dashboard', 'read')
+  const auth = await checkPermissionWithUser(req, 'estadisticas', 'read')
   if (!auth.ok) return auth.response
 
   try {

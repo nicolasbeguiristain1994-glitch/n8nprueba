@@ -1,3 +1,4 @@
+import { campaignAudienceError } from '@/lib/campaign-audience'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
@@ -34,6 +35,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   if (!isCampaignOwnerOrAdmin(session, campaign.owned_by)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  if ((campaign as CampaignRow & {message_type?: string}).message_type === 'template') {
+    return NextResponse.json({ error: 'Las campañas de plantilla deben usar el distribuidor de WhatsApp API' }, { status: 409 })
+  }
+
+  try {
+    const audienceError = await campaignAudienceError(session, campaign)
+    if (audienceError) return NextResponse.json({ error: audienceError.error }, { status: audienceError.status })
+  } catch {
+    return NextResponse.json({ error: 'No se pudo verificar la audiencia' }, { status: 500 })
   }
 
   const RESUMABLE = ['draft', 'scheduled', 'paused', 'running']
@@ -101,9 +113,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
   } catch (e) {
     console.error('[campaign send] populate recipients error:', e instanceof Error ? e.message : e)
-    if (campaign.status !== 'running') {
-      return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-    }
+    return NextResponse.json({ error: 'No se pudieron preparar los destinatarios' }, { status: 500 })
   }
 
   // ── Count pending work ─────────────────────────────────────────────────────
@@ -117,24 +127,42 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     totalPending = Number(row?.count || 0)
   } catch (e) {
     console.error('[campaign send] count pending error:', e instanceof Error ? e.message : e)
+    return NextResponse.json({ error: 'No se pudieron consultar los destinatarios pendientes' }, { status: 500 })
   }
 
   if (totalPending === 0 && campaign.status !== 'running') {
-    const [totals] = await query<{ total: string; sent: string }>(
-      `SELECT COUNT(*)::text AS total,
+    let totals: { total: string; sent: string } | undefined
+    try {
+      ;[totals] = await query<{ total: string; sent: string }>(
+        `SELECT COUNT(*)::text AS total,
               COUNT(*) FILTER (WHERE status IN ('sent','failed','skipped'))::text AS sent
        FROM campaign_recipients WHERE campaign_id = $1`,
-      [id]
-    ).catch(() => [null])
+        [id]
+      )
+    } catch (e) {
+      console.error('[campaign send] totals error:', e instanceof Error ? e.message : e)
+      return NextResponse.json({ error: 'No se pudo comprobar el estado de los destinatarios' }, { status: 500 })
+    }
 
     if (Number(totals?.sent || 0) > 0) {
-      await query(
-        `UPDATE campaigns
+      try {
+        const completed = await query<{ id: string }>(
+          `UPDATE campaigns
          SET status = 'completed', completed_at = COALESCE(completed_at, NOW()),
              pause_reason = NULL
-         WHERE id = $1 AND status != 'completed'`,
-        [id]
-      ).catch(() => {})
+         WHERE id = $1 AND status = $2::campaign_status
+           AND owned_by IS NOT DISTINCT FROM $3::uuid
+           AND processor_locked_at IS NULL AND processor_lock_token IS NULL
+           AND NOT EXISTS (SELECT 1 FROM campaign_recipients
+                           WHERE campaign_id = $1 AND status IN ('pending','sending'))
+         RETURNING id`,
+          [id, campaign.status, campaign.owned_by]
+        )
+        if (!completed.length) return NextResponse.json({ error: 'El estado cambió o hay un procesador activo. Actualizá la campaña.' }, { status: 409 })
+      } catch (e) {
+        console.error('[campaign send] completion error:', e instanceof Error ? e.message : e)
+        return NextResponse.json({ error: 'No se pudo actualizar el estado de la campaña' }, { status: 500 })
+      }
       return NextResponse.json(
         { error: 'La campaña ya envió todos sus contactos. Se marcó como completada.' },
         { status: 409 }
@@ -226,7 +254,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           console.warn(`[campaign ${id}] 0 contactos elegibles:`, eligibilityBreakdown)
         }
       }
-    } catch { /* diagnóstico no crítico */ }
+    } catch (e) {
+      console.error('[campaign send] eligibility error:', e instanceof Error ? e.message : e)
+      return NextResponse.json({ error: 'No se pudo consultar la elegibilidad de la lista' }, { status: 500 })
+    }
     return NextResponse.json({ error: eligibilityMsg, breakdown: eligibilityBreakdown }, { status: 400 })
   }
 
@@ -285,13 +316,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         error: e instanceof Error ? e.message : String(e),
         detail: 'processInBackground lanzó error no capturado — pausando campaña',
       })
-      await query(
-        `UPDATE campaigns
+      try {
+        const released = await query<{ id: string }>(
+          `UPDATE campaigns
          SET status = 'paused', pause_reason = 'systemic_error',
              processor_locked_at = NULL, processor_lock_token = NULL
-         WHERE id = $1 AND status = 'running'`,
-        [id],
-      ).catch(() => {})
+         WHERE id = $1 AND status = 'running' AND processor_lock_token = $2
+         RETURNING id`,
+          [id, capturedToken],
+        )
+        if (!released.length) clog.warn({ event: 'processor.crash.cleanup.skipped', campaignId: id, mode: 'single-line', detail: 'El estado o el propietario del lock cambió; no se modificó la campaña' })
+      } catch (cleanupError) {
+        clog.critical({ event: 'processor.crash.cleanup.failed', campaignId: id, mode: 'single-line', error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError) })
+      }
     }
   })()
 

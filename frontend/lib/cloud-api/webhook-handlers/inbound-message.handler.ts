@@ -1,6 +1,9 @@
 // Handler: mensaje entrante de un cliente (field 'messages', direction inbound).
 
-import { conversationRepository, messageRepository } from '../repositories/conversation.repository'
+import { evaluateAutomations } from '@/lib/automation-engine'
+import { cloudMessageText } from '../message-content'
+import { sseEmitter } from '@/lib/sse-events'
+import { conversationRepository } from '../repositories/conversation.repository'
 import { complianceRepository }                      from '../repositories/compliance.repository'
 import { cloudMetrics }                              from '../infrastructure/metrics'
 import { createLogger }                              from '../infrastructure/logger'
@@ -17,15 +20,18 @@ export async function handleInboundMessage(
   const contactPhone = `+${msg.from}`
   const profileName  = contacts.find(c => c.wa_id === msg.from)?.profile.name ?? null
 
-  await conversationRepository.openWindow(phoneNumberId, contactPhone, 'customer_initiated')
+  // Persist the original event once; retries must not reopen the 24-hour window.
+  await conversationRepository.receive(phoneNumberId, contactPhone, msg)
+  sseEmitter.emit('update', { source: 'message' })
 
-  if (msg.type === 'text' && msg.text?.body) {
-    const isStop = await complianceRepository.matchesStopKeyword(msg.text.body)
+  const inboundText = cloudMessageText(msg, msg.type)
+  if (inboundText) {
+    const isStop = await complianceRepository.matchesStopKeyword(inboundText)
     if (isStop) {
       await complianceRepository.recordOptOut({
         phone: contactPhone, phoneNumberId,
         reason: 'stop_keyword', wamid: msg.id,
-        metadata: { keyword: msg.text.body.trim().toUpperCase() },
+        metadata: { keyword: inboundText.trim().toUpperCase() },
       })
       cloudMetrics.optOut(phoneNumberId, 'stop_keyword')
       log.logInfo('opt_out detected', { wamid: msg.id })
@@ -37,13 +43,8 @@ export async function handleInboundMessage(
     void conversationRepository.updateContactDisplayName(contactPhone, profileName)
   }
 
-  const preview = msg.type === 'text' ? (msg.text?.body?.slice(0, 100) ?? '') : `[${msg.type}]`
-  const convId  = await conversationRepository.upsertWithMessage({ phoneNumberId, contactPhone, lastMessagePreview: preview })
 
-  await messageRepository.insertInbound({
-    conversationId: convId, phoneNumberId,
-    wamid: msg.id, messageType: msg.type, content: msg, timestamp: msg.timestamp,
-  })
+  await evaluateAutomations(msg.from, inboundText, msg.id, { provider: 'cloud', phoneNumberId })
 
   cloudMetrics.messageReceived(phoneNumberId, msg.type)
   log.logInfo('processed', { wamid: msg.id, type: msg.type })

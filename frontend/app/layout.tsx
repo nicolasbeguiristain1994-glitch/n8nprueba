@@ -22,8 +22,13 @@ export const metadata: Metadata = {
  * bug donde capsize-font-metrics.json no se incluye en el paquete publicado.
  *
  * El componente es async para leer el nonce CSP inyectado por el middleware
- * vía el header x-nonce. El nonce se aplica al <style> inline para reflejar
- * la política Content-Security-Policy en modo enforcement (Fase 2).
+ * vía el header x-nonce (el mismo que figura en Content-Security-Policy). Se
+ * aplica a:
+ *   - el <style> inline de abajo;
+ *   - ThemeProvider: next-themes inyecta un <script> inline anti-flash que,
+ *     con script-src nonce-only, el navegador bloquea si no lleva el nonce.
+ * Los <script> propios de Next (runtime y payload RSC) reciben el nonce solos,
+ * a partir del header Content-Security-Policy del request (ver middleware.ts).
  */
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const nonce = (await headers()).get('x-nonce') ?? ''
@@ -45,6 +50,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           defaultTheme="system"
           enableSystem
           disableTransitionOnChange
+          nonce={nonce}
         >
           {children}
         </ThemeProvider>

@@ -1,5 +1,7 @@
+import { getAccessibleLineIds } from '@/lib/line-visibility'
+import { cloudNumberAccess } from '@/lib/cloud-api/access'
 import { NextRequest, NextResponse } from 'next/server'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser } from '@/lib/permissions'
 import { query } from '@/lib/db'
 import { MetaCloudApiClient } from '@/lib/cloud-api/client'
 import { getTokenForNumber, revokeToken } from '@/lib/cloud-api/token-store'
@@ -11,9 +13,10 @@ import { appLog } from '@/lib/security-log'
 // DELETE /api/cloud/numbers?id=xxx   — desactivar número
 
 export async function GET(req: NextRequest) {
-  const err = await checkPermission(req, 'lines', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'lines', 'read')
+  if (!auth.ok) return auth.response
 
+  const ids = await getAccessibleLineIds(auth.user)
   const id = req.nextUrl.searchParams.get('id')
 
   if (id) {
@@ -22,8 +25,8 @@ export async function GET(req: NextRequest) {
               status, coexistence_enabled, contacts_synced, history_synced,
               quality_rating, messaging_limit_tier, whatsapp_line_id,
               onboarded_at, created_at, updated_at
-       FROM cloud_numbers WHERE id = $1`,
-      [id],
+       FROM cloud_numbers WHERE id = $1 AND ($2::uuid[] IS NULL OR whatsapp_line_id=ANY($2::uuid[]))`,
+      [id,ids],
     )
     if (!result[0]) return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
     return NextResponse.json(result[0])
@@ -34,8 +37,8 @@ export async function GET(req: NextRequest) {
             status, coexistence_enabled, contacts_synced, history_synced,
             quality_rating, messaging_limit_tier, whatsapp_line_id,
             onboarded_at, created_at, updated_at
-     FROM cloud_numbers
-     ORDER BY created_at DESC`,
+     FROM cloud_numbers WHERE ($1::uuid[] IS NULL OR whatsapp_line_id=ANY($1::uuid[]))
+     ORDER BY created_at DESC`, [ids],
   )
   return NextResponse.json(result)
 }
@@ -43,8 +46,8 @@ export async function GET(req: NextRequest) {
 // POST /api/cloud/numbers/refresh-quality — actualizar calidad desde Meta
 
 export async function POST(req: NextRequest) {
-  const err = await checkPermission(req, 'lines', 'manage')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'lines', 'manage')
+  if (!auth.ok) return auth.response
 
   let body: { phoneNumberId?: string }
   try { body = await req.json() } catch {
@@ -54,6 +57,8 @@ export async function POST(req: NextRequest) {
   const { phoneNumberId } = body
   if (!phoneNumberId) return NextResponse.json({ error: 'phoneNumberId requerido' }, { status: 400 })
 
+  const denied = await cloudNumberAccess(auth.user, phoneNumberId)
+  if (denied) return denied
   try {
     const token = await getTokenForNumber(phoneNumberId)
     const client = new MetaCloudApiClient(token)
@@ -79,8 +84,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const err = await checkPermission(req, 'lines', 'manage')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'lines', 'manage')
+  if (!auth.ok) return auth.response
 
   const id = req.nextUrl.searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'id requerido' }, { status: 400 })
@@ -92,7 +97,10 @@ export async function DELETE(req: NextRequest) {
   const row = result[0]
   if (!row) return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
 
+  const denied = await cloudNumberAccess(auth.user, row.phone_number_id)
+  if (denied) return denied
   await revokeToken(row.phone_number_id)
+  await query('UPDATE whatsapp_lines SET is_connected=false, sending_enabled=false WHERE id=(SELECT whatsapp_line_id FROM cloud_numbers WHERE id=$1)',[id])
 
   void audit({
     req,

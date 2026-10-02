@@ -37,11 +37,11 @@ const FIELD_LABELS: Record<EditableField, string> = {
 const TIER_LABELS: Record<TierName, string> = { super_vip: 'Super Vip', vip_alto: 'Vip Alto', vip_medio: 'Vip Medio', vip: 'Vip Bajo', medio: 'Medio', bajo: 'Bajo' }
 const TIER_COLORS: Record<TierName, string> = {
   super_vip: 'bg-purple-50 text-purple-800 font-semibold',
-  vip_alto:  'bg-red-50 text-red-800 font-semibold',
+  vip_alto:  'bg-destructive/10 text-destructive font-semibold',
   vip_medio: 'bg-orange-50 text-orange-800 font-semibold',
   vip:       'bg-yellow-50 text-yellow-800 font-semibold',
-  medio:     'bg-gray-50 text-gray-700 font-medium',
-  bajo:      'bg-gray-50 text-gray-400 font-medium',
+  medio:     'bg-background text-foreground font-medium',
+  bajo:      'bg-background text-muted-foreground font-medium',
 }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -292,12 +292,12 @@ export function SegmentationTab() {
 
   if (loading) return (
     <div className="flex items-center justify-center h-32">
-      <Loader2 size={20} className="animate-spin text-gray-400" />
+      <Loader2 size={20} className="animate-spin text-muted-foreground" />
     </div>
   )
 
   if (fetchError) return (
-    <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+    <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3">
       <AlertCircle size={16} className="shrink-0" /> {fetchError}
     </div>
   )
@@ -319,17 +319,17 @@ export function SegmentationTab() {
         <CardHeader className="pb-2">
           <CardTitle className="text-base">Tiers de Segmentación</CardTitle>
           {!isAdmin && (
-            <p className="text-xs text-gray-400 mt-1">Solo los administradores pueden modificar estos valores.</p>
+            <p className="text-xs text-muted-foreground mt-1">Solo los administradores pueden modificar estos valores.</p>
           )}
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="text-left py-2 pr-4 font-medium text-gray-500 text-xs uppercase tracking-wide">Tier</th>
+                <tr className="border-b border-border">
+                  <th className="text-left py-2 pr-4 font-medium text-muted-foreground text-xs uppercase tracking-wide">Tier</th>
                   {FIELDS.map(f => (
-                    <th key={f} className="text-right py-2 px-3 font-medium text-gray-500 text-xs uppercase tracking-wide whitespace-nowrap">
+                    <th key={f} className="text-right py-2 px-3 font-medium text-muted-foreground text-xs uppercase tracking-wide whitespace-nowrap">
                       {FIELD_LABELS[f]}
                       {CRITICAL_FIELDS.includes(f) && (
                         <span className="ml-1 text-orange-400" title="Campo crítico — requiere motivo">*</span>
@@ -347,7 +347,7 @@ export function SegmentationTab() {
                       workspace_id: 'default', updated_at: '',
                     }))
                 ).map(tierRow => (
-                  <tr key={tierRow.tier} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/50">
+                  <tr key={tierRow.tier} className="border-b border-gray-50 last:border-0 hover:bg-background/50">
                     <td className="py-2.5 pr-4">
                       <span className={`inline-block px-2 py-0.5 rounded text-xs ${TIER_COLORS[tierRow.tier]}`}>
                         {TIER_LABELS[tierRow.tier]}
@@ -402,12 +402,12 @@ export function SegmentationTab() {
           </div>
 
           {isAdmin && (
-            <p className="text-xs text-gray-400 mt-3">
+            <p className="text-xs text-muted-foreground mt-3">
               * Campos críticos. Haz click en una celda para editarla. Enter confirma, Escape cancela.
             </p>
           )}
           {saving && !pendingCritical && (
-            <div className="flex items-center gap-1 text-xs text-gray-500 mt-2">
+            <div className="flex items-center gap-1 text-xs text-muted-foreground mt-2">
               <Loader2 size={12} className="animate-spin" /> Guardando…
             </div>
           )}
@@ -441,7 +441,7 @@ export function SegmentationTab() {
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-gray-700">
+                <label className="text-sm font-medium text-foreground">
                   Motivo del cambio <span className="text-red-500">*</span>
                 </label>
                 <Textarea
@@ -451,7 +451,7 @@ export function SegmentationTab() {
                   className="text-sm resize-none"
                   rows={3}
                 />
-                <p className={`text-xs ${reason.trim().length < 10 ? 'text-gray-400' : 'text-green-600'}`}>
+                <p className={`text-xs ${reason.trim().length < 10 ? 'text-muted-foreground' : 'text-success'}`}>
                   {reason.trim().length}/10 caracteres mínimos
                 </p>
               </div>

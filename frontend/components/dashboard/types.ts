@@ -1,7 +1,15 @@
+import { argentinaToday, shiftDate, validDateRange } from '@/lib/dashboard-format'
+import { validCustomRange } from '@/lib/dashboard-date-range'
+
 // ── Date range ────────────────────────────────────────────────────────────────
 
 export type DateRangePreset = '7d' | '30d' | 'this_month' | '90d' | 'custom'
 
+/**
+ * Presets: `to` is an included full day. Custom: `to` is exclusive (00:00 Argentina),
+ * so { from: '2026-08-01', to: '2026-09-01' } is all of August. Build API queries
+ * with queryDateRange from '@/lib/dashboard-date-range'.
+ */
 export interface DateRange {
   preset: DateRangePreset
   from: string  // YYYY-MM-DD
@@ -16,48 +24,15 @@ export const DATE_RANGE_LABELS: Record<DateRangePreset, string> = {
   'custom':    'Personalizado',
 }
 
-function toISODate(d: Date): string {
-  return d.toISOString().split('T')[0]
-}
-
 export function computeDateRange(preset: DateRangePreset): { from: string; to: string } {
-  const now = new Date()
-  const today = toISODate(now)
-  switch (preset) {
-    case '7d': {
-      const f = new Date(now); f.setDate(f.getDate() - 7)
-      return { from: toISODate(f), to: today }
-    }
-    case '30d': {
-      const f = new Date(now); f.setDate(f.getDate() - 30)
-      return { from: toISODate(f), to: today }
-    }
-    case 'this_month': {
-      const f = new Date(now.getFullYear(), now.getMonth(), 1)
-      return { from: toISODate(f), to: today }
-    }
-    case '90d': {
-      const f = new Date(now); f.setDate(f.getDate() - 90)
-      return { from: toISODate(f), to: today }
-    }
-    case 'custom':
-      return { from: today, to: today }
-  }
+  const today = argentinaToday()
+  const days = preset === '7d' ? 7 : preset === '30d' ? 30 : preset === '90d' ? 90 : 1
+  return { from: preset === 'this_month' ? `${today.slice(0, 7)}-01` : shiftDate(today, 1 - days), to: today }
 }
 
 export const DEFAULT_DATE_RANGE: DateRange = {
   preset: '7d',
   ...computeDateRange('7d'),
-}
-
-export function formatCustomRange(from: string, to: string): string {
-  // Parse as local date to avoid UTC-offset shifting the day
-  const parse = (iso: string) => new Date(iso + 'T00:00:00')
-  const fmt = (d: Date) =>
-    d.toLocaleDateString('es-AR', { day: 'numeric', month: 'short' })
-  if (!from || !to) return 'Personalizado'
-  if (from === to) return fmt(parse(from))
-  return `${fmt(parse(from))} → ${fmt(parse(to))}`
 }
 
 // ── Widget types ──────────────────────────────────────────────────────────────
@@ -120,7 +95,7 @@ export const WIDGET_REGISTRY: WidgetConfig[] = [
   {
     id:             'mensajeria',
     label:          'WhatsApp',
-    description:    'Actividad de mensajería del día',
+    description:    'Envíos de las últimas 24 horas y actividad de los últimos 30 días',
     defaultEnabled: true,
     span:           1,
   },
@@ -148,4 +123,16 @@ export interface DashboardLayout {
 export const DEFAULT_LAYOUT: DashboardLayout = {
   order:  WIDGET_REGISTRY.map(w => w.id),
   hidden: [],
+}
+
+/** Saved presets are relative to today in Argentina; stale or malformed values reset safely. */
+export function normalizeDateRange(value: unknown): DateRange {
+  const v = value as Partial<DateRange> | null
+  if (!v || typeof v !== 'object' || !Object.hasOwn(DATE_RANGE_LABELS, v.preset ?? '')) return { preset: '7d', ...computeDateRange('7d') }
+  const preset = v.preset as DateRangePreset
+  if (preset !== 'custom') return { preset, ...computeDateRange(preset) }
+  if (typeof v.from !== 'string' || typeof v.to !== 'string' || !validDateRange(v.from, v.to)) return { preset: '7d', ...computeDateRange('7d') }
+  // An empty custom range (saved before custom ends became exclusive) meant that single full day.
+  if (!validCustomRange(v.from, v.to)) return { preset, from: v.from, to: shiftDate(v.from, 1) }
+  return { preset, from: v.from, to: v.to }
 }

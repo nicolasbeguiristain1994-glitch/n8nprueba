@@ -45,6 +45,9 @@ afterEach(() => {
 
 type DbUserRow = { role: 'admin' | 'operator' | 'viewer'; sectors: string[]; is_active: boolean; session_version: number }
 
+// Template writes first read which optional legacy columns exist (modern table here).
+const MODERN_TEMPLATE_COLUMNS = { domain: false, body: false }
+
 /** Mock db.query (used by checkPermissionWithUser and route INSERT calls). */
 function mockDbQuery(...rows: unknown[][]) {
   let mock = vi.mocked(db.query)
@@ -222,6 +225,7 @@ describe('Flujo 2 — RBAC en rutas (POST /api/templates)', () => {
     const newId = 'cccccccc-0000-0000-0000-cccccccccccc'
     mockDbQuery(
       [{ role: 'admin', sectors: [], is_active: true, session_version: 1 }], // RBAC check
+      [MODERN_TEMPLATE_COLUMNS],                                               // optional legacy columns
       [{ id: newId }],                                                         // INSERT RETURNING
     )
 
@@ -255,6 +259,7 @@ describe('Flujo 3 — Auditoría al crear un recurso', () => {
     const newId = 'dddddddd-0000-0000-0000-dddddddddddd'
     mockDbQuery(
       [{ role: 'admin', sectors: [], is_active: true, session_version: 1 }],
+      [MODERN_TEMPLATE_COLUMNS],
       [{ id: newId }],
     )
 
@@ -269,6 +274,7 @@ describe('Flujo 3 — Auditoría al crear un recurso', () => {
     const newId = 'eeeeeeee-0000-0000-0000-eeeeeeeeeeee'
     mockDbQuery(
       [{ role: 'admin', sectors: [], is_active: true, session_version: 1 }],
+      [MODERN_TEMPLATE_COLUMNS],
       [{ id: newId }],
     )
 

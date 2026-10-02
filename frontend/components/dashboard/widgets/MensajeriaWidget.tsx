@@ -33,21 +33,21 @@ export const MensajeriaWidget = memo(function MensajeriaWidget({ msgs, loading }
       bg:    'bg-blue-50 dark:bg-blue-950/30',
     },
     {
-      label: 'Tasa de lectura',
+      label: 'Lectura sobre enviados (30 días)',
       value: `${m.read_rate ?? 0}%`,
       icon:  Eye,
       color: 'text-emerald-500',
       bg:    'bg-emerald-50 dark:bg-emerald-950/30',
     },
     {
-      label: 'Fallidos',
+      label: 'Fallidos (30 días)',
       value: Number(m.failed).toLocaleString('es-AR'),
       icon:  XCircle,
       color: Number(m.failed) > 0 ? 'text-rose-500' : 'text-slate-400',
-      bg:    Number(m.failed) > 0 ? 'bg-rose-50 dark:bg-rose-950/30' : 'bg-slate-50 dark:bg-slate-800/30',
+      bg:    Number(m.failed) > 0 ? 'bg-rose-50 dark:bg-rose-950/30' : 'bg-background dark:bg-slate-800/30',
     },
     {
-      label: 'Respuestas',
+      label: 'Recibidos (30 días)',
       value: Number(m.inbound).toLocaleString('es-AR'),
       icon:  MessageCircle,
       color: 'text-primary',
@@ -60,8 +60,9 @@ export const MensajeriaWidget = memo(function MensajeriaWidget({ msgs, loading }
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-sm">
           <MessageSquare className="w-4 h-4 text-green-500" />
-          WhatsApp — Actividad del día
+          WhatsApp — Últimos 30 días
         </CardTitle>
+        <p className="text-xs text-muted-foreground">Enviados: últimas 24 horas. Lecturas, fallidos y recibidos: últimos 30 días, con reintentos y mensajes duplicados unificados.</p>
       </CardHeader>
       <CardContent>
         {loading ? (

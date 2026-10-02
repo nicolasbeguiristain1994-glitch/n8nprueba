@@ -12,9 +12,9 @@ export interface WarmupToastItem {
 }
 
 const VARIANT_CLS: Record<ToastVariant, string> = {
-  critical: 'border-red-200 bg-red-50',
-  warning:  'border-amber-200 bg-amber-50',
-  success:  'border-green-200 bg-green-50',
+  critical: 'border-destructive/20 bg-destructive/10',
+  warning:  'border-warning/20 bg-warning/10',
+  success:  'border-success/20 bg-success/10',
   info:     'border-blue-200 bg-blue-50',
 }
 
@@ -43,12 +43,12 @@ export function WarmupToastStack({ toasts, onDismiss }: StackProps) {
         >
           {VARIANT_ICON[t.variant]}
           <div className="flex-1 min-w-0">
-            <p className="font-medium text-gray-800 text-xs leading-snug">{t.title}</p>
-            {t.body && <p className="text-[11px] text-gray-500 mt-0.5 leading-snug">{t.body}</p>}
+            <p className="font-medium text-foreground text-xs leading-snug">{t.title}</p>
+            {t.body && <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">{t.body}</p>}
           </div>
           <button
             onClick={() => onDismiss(t.id)}
-            className="shrink-0 text-gray-400 hover:text-gray-600 -mt-0.5 ml-1"
+            className="shrink-0 text-muted-foreground hover:text-muted-foreground -mt-0.5 ml-1"
           >
             <X size={12} />
           </button>

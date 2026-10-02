@@ -11,7 +11,7 @@
 export const runtime = 'nodejs'
 
 import { NextRequest, NextResponse } from 'next/server'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { getSessionFromRequest } from '@/lib/auth'
 
 // ── Route classification ──────────────────────────────────────────────────────
@@ -29,13 +29,6 @@ const UNPROTECTED_API_PREFIXES: readonly string[] = [
   // Webhook receivers — verified via HMAC / Meta challenge internally
   '/api/webhook/',
   '/api/cloud/webhook',
-  '/api/cloud/sync',
-  // Internal cron/worker endpoints — protected by WARMUP_PROCESS_SECRET
-  '/api/warmup/process',
-  '/api/warmup/schedule',
-  '/api/warmup/daily-reset',
-  '/api/warmup/orchestrator/run',
-  '/api/warmup/conversations/process',
 ]
 
 const UNPROTECTED_PAGES: readonly string[] = [
@@ -59,9 +52,9 @@ function isUnprotected(pathname: string): boolean {
 /**
  * Phase 2: CSP in enforcement mode with per-request nonces.
  *
- * script-src: nonce-only — 'unsafe-inline' and 'unsafe-eval' removed.
- *   Next.js 16 App Router does not generate inline <script> tags in production;
- *   RSC payloads travel as streaming JSON, not embedded scripts.
+ * script-src: framework and inline scripts use a per-request nonce.
+ *   Development also needs eval for the Next.js development runtime.
+ *   Production never enables unsafe-eval.
  *
  * style-src: 'unsafe-inline' kept — Tailwind generates inline utility classes
  *   that cannot be nonce'd without a build-time CSS extraction step.
@@ -73,13 +66,15 @@ function isUnprotected(pathname: string): boolean {
  *   external font dependency and eliminate the fonts.gstatic.com allowance.
  */
 function buildCsp(nonce: string): string {
+  const isDev = process.env.NODE_ENV === 'development'
   return [
     "default-src 'self'",
-    `script-src 'self' 'nonce-${nonce}'`,
+    `script-src 'self' 'nonce-${nonce}'${isDev ? " 'unsafe-eval'" : ''}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data: https://fonts.gstatic.com",
     "connect-src 'self' wss: https:",
+    "frame-src 'self' https://www.facebook.com https://web.facebook.com",
     "frame-ancestors 'none'",
     "object-src 'none'",
     "base-uri 'self'",
@@ -115,10 +110,29 @@ export function middleware(req: NextRequest): NextResponse {
 
   const requestHeaders = new Headers(req.headers)
   requestHeaders.set('x-nonce', nonce)
+  // Next.js reads the request CSP to nonce its generated scripts.
+  requestHeaders.set('Content-Security-Policy', buildCsp(nonce))
 
   const passThrough = (): NextResponse => {
     const res = NextResponse.next({ request: { headers: requestHeaders } })
     return applySecurityHeaders(res, nonce)
+  }
+
+  // Retired module: reject stale tabs and cron calls before any handler executes.
+  if (pathname === '/api/anti-ban-profiles' || pathname === '/api/warmup' || pathname.startsWith('/api/warmup/')) {
+    return applySecurityHeaders(NextResponse.json(
+      { error: 'El módulo de calentamiento fue retirado', code: 'MODULE_RETIRED' },
+      { status: 410, headers: { 'Cache-Control': 'no-store' } },
+    ), nonce)
+  }
+
+  // This endpoint already accepts CRON_SECRET; recognize the same credential
+  // here without bypassing sessions for any other path or method.
+  const cronSecret = process.env.CRON_SECRET
+  const suppliedSecret = req.headers.get('x-cron-secret')
+  if (['/api/contacts/recompute-priorities', '/api/cron/campaigns'].includes(pathname) && req.method === 'POST' && cronSecret && suppliedSecret) {
+    const expected = Buffer.from(cronSecret), supplied = Buffer.from(suppliedSecret)
+    if (expected.length === supplied.length && timingSafeEqual(expected, supplied)) return passThrough()
   }
 
   if (isUnprotected(pathname)) return passThrough()

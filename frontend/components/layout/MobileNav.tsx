@@ -30,6 +30,8 @@ import {
   MessageSquare,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { useCurrentUser } from '@/lib/useCurrentUser'
+import { BASE_NAV, ADMIN_NAV } from './navigation'
 import { cn } from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
@@ -67,14 +69,20 @@ interface MobileNavProps {
 
 export function MobileNav({ items = DEFAULT_ITEMS }: MobileNavProps) {
   const pathname = usePathname()
+  const { user } = useCurrentUser()
+  const visibleItems = items.filter(item => {
+    const nav = [...BASE_NAV, ...ADMIN_NAV].find(link => link.href === item.href)
+    return user?.role === 'admin' || (nav && user?.sectors?.includes(nav.sector))
+  })
 
   return (
     <nav
-      className="fixed bottom-0 inset-x-0 z-30 md:hidden bg-background/95 backdrop-blur-sm border-t border-border"
+      className="fixed bottom-0 inset-x-0 z-30 md:hidden bg-card/95 backdrop-blur-sm border-t border-border"
       aria-label="Navegación mobile"
+      style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
     >
       <div className="flex items-center justify-around h-16">
-        {items.map(({ href, label, icon: Icon }) => {
+        {visibleItems.map(({ href, label, icon: Icon }) => {
           const isActive =
             href === '/' ? pathname === '/' : pathname.startsWith(href)
 
@@ -82,11 +90,12 @@ export function MobileNav({ items = DEFAULT_ITEMS }: MobileNavProps) {
             <Link
               key={href}
               href={href}
+              aria-current={isActive ? 'page' : undefined}
               className={cn(
                 'flex flex-col items-center gap-1 px-3 py-2 rounded-lg',
                 'transition-all duration-200 min-w-[56px]',
                 isActive
-                  ? 'text-primary font-semibold bg-gradient-to-b from-primary/10 to-primary/[.03] border-b-[3px] border-primary/70'
+                  ? 'text-primary font-semibold bg-accent'
                   : 'text-muted-foreground hover:text-foreground hover:bg-muted/50',
               )}
             >

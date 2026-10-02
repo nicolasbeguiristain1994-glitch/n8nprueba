@@ -48,7 +48,7 @@ export function InternalNotes({ phone }: Props) {
 
   return (
     <div className="px-3 py-2.5">
-      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2 flex items-center gap-1">
+      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1">
         <StickyNote size={10} />
         Notas del equipo
       </p>
@@ -61,7 +61,7 @@ export function InternalNotes({ phone }: Props) {
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); save() } }}
           placeholder="Agregar nota interna…"
           rows={2}
-          className="flex-1 text-xs border border-gray-200 rounded px-2 py-1.5 resize-none focus:outline-none focus:border-indigo-300 placeholder:text-gray-300"
+          className="flex-1 text-xs border border-border rounded px-2 py-1.5 resize-none focus:outline-none focus:border-indigo-300 placeholder:text-muted-foreground/60"
         />
         <button
           onClick={save}
@@ -74,15 +74,15 @@ export function InternalNotes({ phone }: Props) {
 
       {/* List */}
       {loading
-        ? <p className="text-[11px] text-gray-400 text-center py-2">Cargando…</p>
+        ? <p className="text-[11px] text-muted-foreground text-center py-2">Cargando…</p>
         : notes.length === 0
-        ? <p className="text-[11px] text-gray-400 text-center py-2">Sin notas aún</p>
+        ? <p className="text-[11px] text-muted-foreground text-center py-2">Sin notas aún</p>
         : (
           <div className="space-y-2 max-h-48 overflow-y-auto pr-0.5">
             {notes.map(n => (
-              <div key={n.id} className="bg-amber-50 border border-amber-100 rounded px-2.5 py-2">
-                <p className="text-xs text-gray-700 whitespace-pre-wrap">{n.content}</p>
-                <p className="text-[10px] text-gray-400 mt-1">
+              <div key={n.id} className="bg-warning/10 border border-amber-100 rounded px-2.5 py-2">
+                <p className="text-xs text-foreground whitespace-pre-wrap">{n.content}</p>
+                <p className="text-[10px] text-muted-foreground mt-1">
                   {n.author_name} · {fmtNote(n.created_at)}
                 </p>
               </div>

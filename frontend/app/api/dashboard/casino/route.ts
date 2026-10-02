@@ -1,16 +1,19 @@
+import { financialLedgerSql } from '@/lib/dashboard-financial-ledger'
+import { dashboardAgent, dashboardAgentSql, movementDateSql, movementPeriodSql, platformCanonicalAgentSql } from '@/lib/dashboard-scope'
+import { argentinaToday, shiftDate, validDateRange } from '@/lib/dashboard-format'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
-import { getPlatformFilterSql, getCanonicalAgenteExpr, isValidPlatform } from '@/lib/casino-agents'
+import { getPlatformFilterSql, isValidPlatform } from '@/lib/casino-agents'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface CasinoSummary {
-  nuevos_mes:              number  // fecha_primera >= hoy - 30
-  activos_mes:             number  // fecha_ultima  >= hoy - 30
-  nuevos_anterior:         number  // fecha_primera en días 31-60 atrás
-  activos_anterior:        number  // fecha_ultima  en días 31-60 atrás
-  total_vip:               number  // seg_monto = 'super_vip'
+  nuevos_mes:              number  // primer depósito registrado en el período
+  activos_mes:             number  // cuenta con movimientos en el período
+  nuevos_anterior:         number  // período anterior de igual duración
+  activos_anterior:        number  // movimientos del período anterior
+  total_vip:               number  // todos los niveles VIP
   prioridad_reactivacion:  number  // super_vip/vip + inactivo/en_riesgo/perdido
   total_jugadores:         number
 }
@@ -22,8 +25,8 @@ export interface CasinoAgente {
   activos_mes:   number
   vip:           number
   en_riesgo:     number   // inactivo + en_riesgo + perdido
-  sum_cargas:    number   // Σ cargas acumuladas históricas del agente
-  sum_retiros:   number   // Σ retiros acumulados históricos del agente
+  sum_cargas:    number   // depósitos del período
+  sum_retiros:   number   // retiros del período
   avg_cargas:    number   // promedio de cargas por jugador
   response_rate: number   // % jugadores con actividad en el período (activos_mes / total)
   reload_rate:   number   // % jugadores con al menos 1 depósito en el período
@@ -44,180 +47,118 @@ export interface CasinoVip {
 }
 
 export interface SegCount { seg: string; cnt: number }
+export interface CasinoDashboardData { summary: CasinoSummary; agentes: CasinoAgente[]; vips: CasinoVip[]; seg_actividad: SegCount[]; seg_monto: SegCount[] }
 
-// ── GET /api/dashboard/casino ─────────────────────────────────────────────────
-// "Último mes" = trailing 30 days from today.
-// "Período anterior" = días 31–60 atrás (equal-length comparison window).
-// dias_ultimo: computed live as CURRENT_DATE - fecha_ultima — always current.
-
+// Period KPIs use the transaction ledger; segmentation describes the current state.
 export async function GET(req: Request) {
   const err = await checkPermission(req, 'dashboard', 'read')
   if (err) return err
-
-  const url          = new URL(req.url)
-  const platformParam = url.searchParams.get('platform')?.trim() || 'zeus'
-  if (!isValidPlatform(platformParam)) {
-    return NextResponse.json(
-      { error: `Plataforma inválida: "${platformParam}"` },
-      { status: 400 },
-    )
+  const params = new URL(req.url).searchParams
+  const platform = params.get('platform')?.trim() || 'zeus'
+  const from = params.get('from') ?? shiftDate(argentinaToday(), -29)
+  const to = params.get('to') ?? argentinaToday()
+  if (!isValidPlatform(platform) || !validDateRange(from, to)) {
+    return NextResponse.json({ error: 'Plataforma o período inválido' }, { status: 400 })
   }
-
-  // Date range for nuevos_mes / activos_mes — defaults to trailing 30 days
-  function isoToday() { return new Date().toISOString().slice(0, 10) }
-  function iso30dAgo() {
-    const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10)
-  }
-  const fromParam  = url.searchParams.get('from')?.trim()  || iso30dAgo()
-  const toParam    = url.searchParams.get('to')?.trim()    || isoToday()
-  // Optional single-agent filter (for widget-level filtering; empty = all agents)
-  const agentParam = url.searchParams.get('agent')?.trim() || null
-
-  // H3 fix: filtra por la columna `platform` (poblada por el conector desde la
-  // migración 127), con fallback a la lista de agentes SOLO para filas legacy
-  // sin platform todavía — ya no se usa la lista de agentes como proxy único.
-  const platformFilter    = getPlatformFilterSql(platformParam)
-  const platformFilterCp  = getPlatformFilterSql(platformParam, 'cp')
-  const isConsolidado = platformParam === 'consolidado'
-  const agenteExpr    = isConsolidado ? getCanonicalAgenteExpr('cp.agente') : 'cp.agente'
-  // Extra WHERE clause and query params when a specific agent is requested
-  const agentClause  = agentParam ? 'AND cp.agente = $3' : ''
-  const agentParams  = agentParam ? [fromParam, toParam, agentParam] : [fromParam, toParam]
-
+  const agent = dashboardAgent(platform, params.get('agent') || '') || null
+  const filter = getPlatformFilterSql(platform)
+  const cpFilter = getPlatformFilterSql(platform, 'cp')
+  const agentExpr = platform === 'consolidado' ? platformCanonicalAgentSql('a') : 'a.agente'
+  const vipLevels = "('super_vip','vip_alto','vip_medio','vip')"
+  const scopedAccounts = `SELECT * FROM casino_dashboard_players cp WHERE ${cpFilter}`
+  // Both period consumers share the same bounded ledger. Without this scope,
+  // PostgreSQL scans the complete transaction history twice for every refresh.
+  const ledgerScope = (alias: string) => `${getPlatformFilterSql(platform, alias)}
+    AND ${dashboardAgentSql(platform, 3, alias)}
+    AND ${movementPeriodSql(alias, '$1::date - ($2::date - $1::date + 1)')}`
   try {
-    const [summary, agentes, vips, segActividad, segMonto] = await Promise.all([
-
-      // ── Resumen global ──────────────────────────────────────────────────────
-      query<CasinoSummary>(`
+    // The account projection is maintained atomically with ledger writes.
+    // First deposits belong to their original agent; VIP/risk use the current agent.
+    const result = await query<{ dashboard: CasinoDashboardData }>(`
+      WITH ledger AS MATERIALIZED (${financialLedgerSql(ledgerScope)}), all_players AS MATERIALIZED (${scopedAccounts}),
+      players AS MATERIALIZED (SELECT * FROM all_players cp WHERE ${dashboardAgentSql(platform, 3, 'cp')}),
+      firsts AS MATERIALIZED (
+        SELECT * FROM (SELECT platform,username_lower,first_deposit_agent AS agente,fecha_primera FROM all_players) cp
+        WHERE fecha_primera IS NOT NULL AND ${dashboardAgentSql(platform, 3, 'cp')}
+      ),
+      summary AS (
+        WITH activity AS (
+          SELECT platform, LOWER(username) AS uname,
+            BOOL_OR(${movementDateSql()} BETWEEN $1::date AND $2::date) AS current_active,
+            BOOL_OR(${movementDateSql()} < $1::date) AS previous_active
+          FROM ledger
+          WHERE ${filter} AND ${dashboardAgentSql(platform, 3)}
+            AND ${movementDateSql()} BETWEEN ($1::date - ($2::date - $1::date + 1)) AND $2::date
+          GROUP BY platform, LOWER(username)
+        )
         SELECT
-          COUNT(*) FILTER (
-            WHERE fecha_primera >= CURRENT_DATE - 30
-          )::int                                                        AS nuevos_mes,
-          COUNT(*) FILTER (
-            WHERE fecha_ultima  >= CURRENT_DATE - 30
-          )::int                                                        AS activos_mes,
-          COUNT(*) FILTER (
-            WHERE fecha_primera BETWEEN CURRENT_DATE - 60
-                                    AND CURRENT_DATE - 31
-          )::int                                                        AS nuevos_anterior,
-          COUNT(*) FILTER (
-            WHERE fecha_ultima  BETWEEN CURRENT_DATE - 60
-                                    AND CURRENT_DATE - 31
-          )::int                                                        AS activos_anterior,
-          COUNT(*) FILTER (WHERE seg_monto = 'super_vip')::int          AS total_vip,
-          COUNT(*) FILTER (
-            WHERE seg_monto    IN ('super_vip','vip')
-              AND seg_actividad IN ('inactivo','en_riesgo','perdido')
-          )::int                                                        AS prioridad_reactivacion,
-          COUNT(*)::int                                                 AS total_jugadores
-        FROM casino_players
-        WHERE ${platformFilter}
-      `),
-
-      // ── Por agente ──────────────────────────────────────────────────────────
-      // nuevos_mes / activos_mes respetan el rango from/to del request.
-      // sum_cargas / sum_retiros / avg_cargas son totales del PERÍODO (casino_transactions).
-      // en_riesgo: jugadores sin actividad (fecha_ultima) antes del inicio del período.
-      // reload_rate: % con ≥1 carga en el período.
-      // response_rate: % activos (fecha_ultima) en el período.
-      // agentParam (opcional) filtra a un único agente.
-      query<CasinoAgente>(`
-        SELECT
-          ${agenteExpr}                                                                AS agente,
-          COUNT(*)::int                                                                AS total,
-          COUNT(*) FILTER (WHERE cp.fecha_primera BETWEEN $1::date AND $2::date)::int AS nuevos_mes,
-          COUNT(*) FILTER (WHERE cp.fecha_ultima  BETWEEN $1::date AND $2::date)::int AS activos_mes,
-          COUNT(*) FILTER (WHERE cp.seg_monto = 'super_vip')::int                      AS vip,
-          COUNT(*) FILTER (
-            WHERE cp.fecha_ultima < $1::date OR cp.fecha_ultima IS NULL
-          )::int                                                                       AS en_riesgo,
-          COALESCE(SUM(ct.carga_total),  0)::float8                                   AS sum_cargas,
-          COALESCE(SUM(ct.retiro_total), 0)::float8                                   AS sum_retiros,
-          ROUND(COALESCE(SUM(ct.carga_total), 0)::numeric / NULLIF(COUNT(*), 0))::float8 AS avg_cargas,
-          ROUND(
-            100.0 * COUNT(*) FILTER (WHERE cp.fecha_ultima BETWEEN $1::date AND $2::date)
-            / NULLIF(COUNT(*), 0), 1
-          )::numeric                                                                   AS response_rate,
-          ROUND(
-            100.0 * COUNT(ct.uname) FILTER (WHERE ct.has_carga = 1) / NULLIF(COUNT(*), 0), 1
-          )::numeric                                                                   AS reload_rate
-        FROM casino_players cp
-        LEFT JOIN (
-          SELECT
-            platform,
-            agente,
-            LOWER(username)                                              AS uname,
-            SUM(CASE WHEN tipo = 'carga'  THEN monto ELSE 0 END)        AS carga_total,
-            SUM(CASE WHEN tipo = 'retiro' THEN monto ELSE 0 END)        AS retiro_total,
-            MAX(CASE WHEN tipo = 'carga'  THEN 1     ELSE 0 END)        AS has_carga
-          FROM casino_transactions
-          WHERE fecha BETWEEN $1::date AND $2::date
-            AND ${platformFilter}
-          GROUP BY platform, agente, LOWER(username)
-        ) ct ON ct.uname = cp.username_lower AND ct.platform = cp.platform AND ct.agente = cp.agente
-        WHERE ${platformFilterCp}
-          ${agentClause}
-        GROUP BY 1
-        ORDER BY total DESC
-      `, agentParams),
-
-      // ── VIP / Alto — seguimiento urgencia ───────────────────────────────────
-      // Ordenado: perdido → inactivo → en_riesgo → resto; luego días sin movimiento DESC,
-      // luego gasto total DESC.  Limitado a 100 filas.
-      query<CasinoVip>(`
-        SELECT
-          username,
-          platform,
-          agente,
-          seg_monto,
-          seg_actividad,
-          (CURRENT_DATE - fecha_ultima)::int  AS dias_ultimo,
-          total_cargas::float8                AS total_cargas,
-          cant_cargas,
-          total_retiros::float8               AS total_retiros,
-          cant_retiros,
-          fecha_ultima::text                  AS fecha_ultima
-        FROM casino_players
-        WHERE seg_monto IN ('super_vip','vip')
-          AND fecha_ultima IS NOT NULL
-          AND ${platformFilter}
-        ORDER BY
-          CASE seg_actividad
-            WHEN 'perdido'    THEN 1
-            WHEN 'inactivo'   THEN 2
-            WHEN 'en_riesgo'  THEN 3
-            WHEN 'ocasional'  THEN 4
-            ELSE                   5
-          END ASC,
-          (CURRENT_DATE - fecha_ultima) DESC,
-          total_cargas DESC
-        LIMIT 100
-      `),
-
-      query<{ seg: string; cnt: number }>(`
-        SELECT seg_actividad AS seg, COUNT(*)::int AS cnt
-        FROM casino_players
-        WHERE ${platformFilter}
-        GROUP BY seg_actividad
-      `),
-
-      query<{ seg: string; cnt: number }>(`
-        SELECT seg_monto AS seg, COUNT(*)::int AS cnt
-        FROM casino_players
-        WHERE ${platformFilter}
-        GROUP BY seg_monto
-      `),
-    ])
-
-    return NextResponse.json({
-      summary:       summary[0] ?? null,
-      agentes,
-      vips,
-      seg_actividad: segActividad,
-      seg_monto:     segMonto,
-    })
+          (SELECT COUNT(*)::int FROM firsts WHERE fecha_primera BETWEEN $1::date AND $2::date) AS nuevos_mes,
+          (SELECT COUNT(*)::int FROM activity WHERE current_active) AS activos_mes,
+          (SELECT COUNT(*)::int FROM firsts WHERE fecha_primera BETWEEN ($1::date - ($2::date - $1::date + 1)) AND ($1::date - 1)) AS nuevos_anterior,
+          (SELECT COUNT(*)::int FROM activity WHERE previous_active) AS activos_anterior,
+          COUNT(*) FILTER (WHERE cp.seg_monto IN ${vipLevels})::int AS total_vip,
+          COUNT(*) FILTER (WHERE cp.seg_monto IN ${vipLevels} AND cp.seg_actividad IN ('inactivo','en_riesgo','perdido'))::int AS prioridad_reactivacion,
+          COUNT(*)::int AS total_jugadores
+        FROM players cp
+        WHERE ${cpFilter} AND ${dashboardAgentSql(platform, 3, 'cp')}
+      ),
+      agents AS (
+        WITH period_tx AS (
+          SELECT platform, LOWER(BTRIM(agente)) AS agente, LOWER(username) AS uname,
+            SUM(CASE WHEN tipo = 'carga' THEN monto ELSE 0 END) AS carga_total,
+            SUM(CASE WHEN tipo = 'retiro' THEN monto ELSE 0 END) AS retiro_total,
+            BOOL_OR(tipo = 'carga') AS has_carga
+          FROM ledger
+          WHERE ${movementDateSql()} BETWEEN $1::date AND $2::date AND ${filter}
+            AND ${dashboardAgentSql(platform, 3)}
+          GROUP BY platform, LOWER(BTRIM(agente)), LOWER(username)
+        ), accounts AS (
+          SELECT platform, agente, username_lower AS uname FROM players
+          UNION SELECT platform, agente, uname FROM period_tx
+          UNION SELECT platform, agente, username_lower FROM firsts WHERE fecha_primera BETWEEN $1::date AND $2::date
+        )
+        SELECT ${agentExpr} AS agente, COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE fp.fecha_primera BETWEEN $1::date AND $2::date)::int AS nuevos_mes,
+          COUNT(ct.uname)::int AS activos_mes,
+          COUNT(*) FILTER (WHERE cp.seg_monto IN ${vipLevels})::int AS vip,
+          COUNT(*) FILTER (WHERE cp.seg_actividad IN ('inactivo','en_riesgo','perdido'))::int AS en_riesgo,
+          COALESCE(SUM(ct.carga_total),0)::float8 AS sum_cargas,
+          COALESCE(SUM(ct.retiro_total),0)::float8 AS sum_retiros,
+          ROUND(COALESCE(SUM(ct.carga_total),0) / NULLIF(COUNT(*),0), 2)::float8 AS avg_cargas,
+          ROUND(100.0 * COUNT(ct.uname) / NULLIF(COUNT(*),0),1)::float8 AS response_rate,
+          ROUND(100.0 * COUNT(*) FILTER (WHERE ct.has_carga) / NULLIF(COUNT(*),0),1)::float8 AS reload_rate
+        FROM accounts a
+        LEFT JOIN players cp ON cp.platform = a.platform AND cp.agente = a.agente AND cp.username_lower = a.uname
+        LEFT JOIN firsts fp ON fp.platform = a.platform AND fp.agente = a.agente AND fp.username_lower = a.uname
+        LEFT JOIN period_tx ct ON ct.platform = a.platform AND ct.agente = a.agente AND ct.uname = a.uname
+        GROUP BY 1 ORDER BY total DESC
+      ),
+      vips AS (
+        SELECT username_lower AS username, platform, agente, seg_monto, seg_actividad,
+          ((CURRENT_TIMESTAMP AT TIME ZONE 'America/Argentina/Buenos_Aires')::date - fecha_ultima)::int AS dias_ultimo,
+          total_cargas::float8, cant_cargas, total_retiros::float8, cant_retiros, fecha_ultima::text
+        FROM players
+        WHERE ${filter} AND ${dashboardAgentSql(platform, 3)}
+          AND seg_monto IN ${vipLevels} AND fecha_ultima IS NOT NULL
+          AND seg_actividad IN ('inactivo','en_riesgo','perdido')
+        ORDER BY CASE seg_actividad WHEN 'perdido' THEN 1 WHEN 'inactivo' THEN 2 WHEN 'en_riesgo' THEN 3 ELSE 4 END,
+          fecha_ultima ASC, total_cargas DESC LIMIT 100
+      ),
+      activity_segments AS (SELECT seg_actividad AS seg, COUNT(*)::int AS cnt FROM players
+        WHERE ${filter} AND ${dashboardAgentSql(platform, 3)} GROUP BY seg_actividad),
+      value_segments AS (SELECT seg_monto AS seg, COUNT(*)::int AS cnt FROM players
+        WHERE ${filter} AND ${dashboardAgentSql(platform, 3)} GROUP BY seg_monto)
+      SELECT json_build_object(
+        'summary', (SELECT row_to_json(s) FROM summary s),
+        'agentes', COALESCE((SELECT json_agg(a) FROM agents a), '[]'::json),
+        'vips', COALESCE((SELECT json_agg(v) FROM vips v), '[]'::json),
+        'seg_actividad', COALESCE((SELECT json_agg(a) FROM activity_segments a), '[]'::json),
+        'seg_monto', COALESCE((SELECT json_agg(v) FROM value_segments v), '[]'::json)
+      ) AS dashboard
+    `, [from, to, agent])
+    return NextResponse.json(result[0].dashboard, { headers: { 'Cache-Control': 'no-store' } })
   } catch (e) {
     console.error('[/api/dashboard/casino GET]', e instanceof Error ? e.message : e)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return NextResponse.json({ error: 'No se pudieron consultar las cuentas de casino' }, { status: 500 })
   }
 }

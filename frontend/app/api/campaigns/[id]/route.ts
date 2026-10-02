@@ -21,27 +21,35 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { status } = parsed.data
 
   try {
-    // Ownership check for non-admin users
-    if (session.role !== 'admin') {
-      const [row] = await query<{ owned_by: string | null }>(
-        'SELECT owned_by FROM campaigns WHERE id = $1', [id]
-      )
-      if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-      if (!isCampaignOwnerOrAdmin(session, row.owned_by))
-        return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    const [row] = await query<{ owned_by: string | null; status: string }>(
+      'SELECT owned_by, status FROM campaigns WHERE id = $1', [id]
+    )
+    if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (!isCampaignOwnerOrAdmin(session, row.owned_by))
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    const allowedFrom = {
+      paused: ['scheduled', 'running', 'paused'],
+      cancelled: ['draft', 'scheduled', 'running', 'paused', 'cancelled'],
+      draft: ['draft', 'scheduled'],
     }
+    if (!allowedFrom[status].includes(row.status)) {
+      return NextResponse.json({ error: `No se puede cambiar una campaña ${row.status} a ${status}` }, { status: 409 })
+    }
+    if (row.status === status) return NextResponse.json({ ok: true, changed: false })
 
     const updated = await query<{ id: string }>(
       `UPDATE campaigns
        SET status       = $1::campaign_status,
            pause_reason = CASE WHEN $1 = 'paused' THEN 'manual' ELSE NULL END,
+           scheduled_at = CASE WHEN $1 = 'draft' THEN NULL ELSE scheduled_at END,
            updated_at   = NOW(),
            updated_by   = $3
-       WHERE id = $2
+       WHERE id = $2 AND status = $4::campaign_status
+         AND owned_by IS NOT DISTINCT FROM $5::uuid
        RETURNING id`,
-      [status, id, session.user_id]
+      [status, id, session.user_id, row.status, row.owned_by]
     )
-    if (!updated[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (!updated[0]) return NextResponse.json({ error: 'La campaña cambió; actualizá antes de volver a intentar' }, { status: 409 })
 
     if (status === 'paused') {
       clog.info({ event: 'campaign.paused', campaignId: id, reason: 'manual' })

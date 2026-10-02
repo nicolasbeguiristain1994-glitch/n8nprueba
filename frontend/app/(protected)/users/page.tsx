@@ -44,7 +44,7 @@ type User = {
 const ALL_AGENTS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas'] as const
 
 const ALL_SECTORS = [
-  'dashboard', 'contacts', 'campaigns', 'conversations', 'lines', 'warmup',
+  'dashboard', 'contacts', 'campaigns', 'conversations', 'lines',
   'tasks', 'estadisticas', 'automations', 'blacklist', 'templates',
   'users', 'settings', 'lists', 'send',
 ] as const
@@ -55,7 +55,6 @@ const SECTOR_LABELS: Record<string, string> = {
   campaigns:     'Campañas',
   conversations: 'Conversaciones',
   lines:         'Líneas',
-  warmup:        'Calentamiento',
   tasks:         'Tareas',
   estadisticas:  'Estadísticas',
   automations:   'Automatizaciones',
@@ -91,7 +90,7 @@ function RoleBadge({ role }: { role: Role }) {
     )
   }
   return (
-    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-gray-100 text-gray-600">
+    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-muted text-muted-foreground">
       Viewer
     </span>
   )
@@ -99,7 +98,7 @@ function RoleBadge({ role }: { role: Role }) {
 
 function SectorPills({ sectors }: { sectors: string[] }) {
   if (!sectors || sectors.length === 0) {
-    return <span className="text-xs text-gray-400">—</span>
+    return <span className="text-xs text-muted-foreground">—</span>
   }
   return (
     <div className="flex flex-wrap gap-1">
@@ -204,7 +203,7 @@ function UserFormModal({
         <form onSubmit={handleSubmit} className="space-y-4 pt-1">
           {mode === 'create' && (
             <div>
-              <label className="text-xs font-medium text-gray-600 mb-1 block">Email *</label>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Email *</label>
               <Input
                 type="email"
                 value={form.email}
@@ -216,7 +215,7 @@ function UserFormModal({
           )}
 
           <div>
-            <label className="text-xs font-medium text-gray-600 mb-1 block">Nombre</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Nombre</label>
             <Input
               type="text"
               value={form.name}
@@ -227,8 +226,8 @@ function UserFormModal({
 
           {mode === 'create' && (
             <div>
-              <label className="text-xs font-medium text-gray-600 mb-1 block">
-                Contraseña * <span className="text-gray-400">(mín. 10 caracteres)</span>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                Contraseña * <span className="text-muted-foreground">(mín. 10 caracteres)</span>
               </label>
               <Input
                 type="password"
@@ -242,11 +241,11 @@ function UserFormModal({
           )}
 
           <div>
-            <label className="text-xs font-medium text-gray-600 mb-1 block">Rol *</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Rol *</label>
             <select
               value={form.role}
               onChange={e => setForm(f => ({ ...f, role: e.target.value as Role }))}
-              className="w-full h-8 rounded-lg border border-gray-200 px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+              className="w-full h-8 rounded-lg border border-border px-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
               required
             >
               <option value="admin">Admin</option>
@@ -256,7 +255,7 @@ function UserFormModal({
           </div>
 
           <div>
-            <label className="text-xs font-medium text-gray-600 mb-2 block">Sectores</label>
+            <label className="text-xs font-medium text-muted-foreground mb-2 block">Sectores</label>
             <div className="flex flex-wrap gap-2">
               {ALL_SECTORS.map(s => (
                 <button
@@ -265,8 +264,8 @@ function UserFormModal({
                   onClick={() => toggleSector(s)}
                   className={`rounded-full px-2.5 py-0.5 text-xs font-medium border transition-colors ${
                     form.sectors.includes(s)
-                      ? 'bg-green-100 border-green-400 text-green-700'
-                      : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+                      ? 'bg-success/15 border-green-400 text-success'
+                      : 'bg-card border-border text-muted-foreground hover:bg-background'
                   }`}
                 >
                   {SECTOR_LABELS[s] ?? s}
@@ -284,14 +283,14 @@ function UserFormModal({
               onChange={e => setForm(f => ({ ...f, can_download_contacts: e.target.checked }))}
               className="rounded"
             />
-            <label htmlFor="form-can-download" className="text-sm text-gray-700">
+            <label htmlFor="form-can-download" className="text-sm text-foreground">
               Permitir descarga de contactos
             </label>
           </div>
 
           {/* Agentes permitidos */}
           <div className="mt-2">
-            <label className="text-xs font-medium text-gray-600 mb-1 block">Agentes permitidos (vacío = todos)</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Agentes permitidos (vacío = todos)</label>
             <div className="flex flex-wrap gap-2">
               {ALL_AGENTS.map(agent => (
                 <label key={agent} className="flex items-center gap-1.5 text-sm cursor-pointer">
@@ -313,7 +312,7 @@ function UserFormModal({
           </div>
 
           {error && (
-            <p className="text-xs text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+            <p className="text-xs text-red-500 bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
               {error}
             </p>
           )}
@@ -389,8 +388,8 @@ function ResetPasswordModal({
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 pt-1">
           <div>
-            <label className="text-xs font-medium text-gray-600 mb-1 block">
-              Nueva contraseña <span className="text-gray-400">(mín. 10 caracteres)</span>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">
+              Nueva contraseña <span className="text-muted-foreground">(mín. 10 caracteres)</span>
             </label>
             <Input
               type="password"
@@ -401,8 +400,8 @@ function ResetPasswordModal({
               required
             />
           </div>
-          {error   && <p className="text-xs text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{error}</p>}
-          {success && <p className="text-xs text-green-600 bg-green-50 border border-green-100 rounded-lg px-3 py-2">Contraseña actualizada</p>}
+          {error   && <p className="text-xs text-red-500 bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">{error}</p>}
+          {success && <p className="text-xs text-success bg-success/10 border border-success/20 rounded-lg px-3 py-2">Contraseña actualizada</p>}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose} disabled={loading}>Cancelar</Button>
             <Button type="submit" disabled={loading || success}>
@@ -512,12 +511,12 @@ export default function UsersPage() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-green-50 rounded-xl flex items-center justify-center">
-            <Users size={18} className="text-green-600" />
+          <div className="w-9 h-9 bg-success/10 rounded-xl flex items-center justify-center">
+            <Users size={18} className="text-success" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-gray-900">Usuarios</h1>
-            <p className="text-xs text-gray-500">Gestión de usuarios y permisos (RBAC)</p>
+            <h1 className="text-lg font-semibold text-foreground">Usuarios</h1>
+            <p className="text-xs text-muted-foreground">Gestión de usuarios y permisos (RBAC)</p>
           </div>
         </div>
         <Button onClick={() => setCreateOpen(true)}>
@@ -528,7 +527,7 @@ export default function UsersPage() {
       {/* Search */}
       <div className="mb-4">
         <div className="relative max-w-xs">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="text"
             value={search}
@@ -541,20 +540,20 @@ export default function UsersPage() {
 
       {/* Error */}
       {apiError && (
-        <p className="mb-4 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+        <p className="mb-4 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
           {apiError}
         </p>
       )}
 
       {/* Table */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="bg-card rounded-xl border border-border overflow-hidden">
         {loading ? (
-          <div className="flex items-center justify-center py-16 text-gray-400">
+          <div className="flex items-center justify-center py-16 text-muted-foreground">
             <Loader2 size={20} className="animate-spin mr-2" />
             <span className="text-sm">Cargando usuarios…</span>
           </div>
         ) : users.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-gray-400">
+          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <Users size={32} className="mb-3 opacity-40" />
             <p className="text-sm font-medium">No hay usuarios</p>
             <p className="text-xs mt-1">Creá el primer usuario con el botón de arriba</p>
@@ -562,7 +561,7 @@ export default function UsersPage() {
         ) : (
           <Table>
             <TableHeader>
-              <TableRow className="bg-gray-50">
+              <TableRow className="bg-background">
                 <TableHead>Nombre / Email</TableHead>
                 <TableHead>Rol</TableHead>
                 <TableHead>Sectores</TableHead>
@@ -576,8 +575,8 @@ export default function UsersPage() {
                 <TableRow key={user.id}>
                   <TableCell>
                     <div>
-                      <p className="text-sm font-medium text-gray-900">{user.name || '—'}</p>
-                      <p className="text-xs text-gray-500">{user.email}</p>
+                      <p className="text-sm font-medium text-foreground">{user.name || '—'}</p>
+                      <p className="text-xs text-muted-foreground">{user.email}</p>
                     </div>
                   </TableCell>
                   <TableCell>
@@ -588,19 +587,19 @@ export default function UsersPage() {
                   </TableCell>
                   <TableCell>
                     {user.is_active ? (
-                      <span className="inline-flex items-center gap-1 text-xs text-green-700">
+                      <span className="inline-flex items-center gap-1 text-xs text-success">
                         <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
                         Activo
                       </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+                      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                         <span className="w-1.5 h-1.5 rounded-full bg-gray-300 inline-block" />
                         Inactivo
                       </span>
                     )}
                   </TableCell>
                   <TableCell>
-                    <span className="text-xs text-gray-500">{formatDate(user.last_login_at)}</span>
+                    <span className="text-xs text-muted-foreground">{formatDate(user.last_login_at)}</span>
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center justify-end gap-1">
@@ -628,7 +627,7 @@ export default function UsersPage() {
                         size="icon-sm"
                         title={user.is_active ? 'Desactivar' : 'Activar'}
                         onClick={() => handleToggleActive(user)}
-                        className={user.is_active ? 'text-red-500 hover:bg-red-50' : 'text-green-600 hover:bg-green-50'}
+                        className={user.is_active ? 'text-red-500 hover:bg-destructive/10' : 'text-success hover:bg-success/10'}
                       >
                         {user.is_active ? <UserX size={13} /> : <UserCheck size={13} />}
                       </Button>
@@ -663,7 +662,7 @@ export default function UsersPage() {
           >
             Anterior
           </Button>
-          <span className="text-xs text-gray-500">Página {page} de {totalPages}</span>
+          <span className="text-xs text-muted-foreground">Página {page} de {totalPages}</span>
           <Button
             variant="outline"
             size="sm"

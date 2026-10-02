@@ -74,26 +74,26 @@ export function PageHeader({
   return (
     <div
       className={cn(
-        'flex items-start justify-between gap-4 mb-6',
+        'flex flex-col items-start justify-between gap-4 mb-6 xl:flex-row',
         className,
       )}
     >
       {/* ── Izquierda: título + badge + descripción ── */}
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 shrink-0 xl:max-w-md">
         <div className="flex items-center gap-2.5 flex-wrap">
-          <h1 className="text-xl font-semibold text-foreground leading-tight">
+          <h1 className="page-title text-foreground">
             {title}
           </h1>
 
           {count !== undefined && (
-            <span className="inline-flex items-center text-sm text-muted-foreground bg-muted px-2 py-0.5 rounded-full font-medium tabular-nums shrink-0">
+            <span className="inline-flex items-center border text-xs text-muted-foreground bg-card px-2 py-0.5 rounded-md font-medium tabular-nums shrink-0">
               {count.toLocaleString('es-AR')}
             </span>
           )}
         </div>
 
         {description && (
-          <div className="mt-1 text-sm text-muted-foreground leading-snug">
+          <div className="mt-1.5 text-sm text-muted-foreground leading-relaxed">
             {description}
           </div>
         )}
@@ -101,7 +101,7 @@ export function PageHeader({
 
       {/* ── Derecha: acciones ── */}
       {actionsSlot && (
-        <div className="flex items-center gap-2 flex-wrap justify-end shrink-0">
+        <div className="flex min-w-0 max-w-full items-center gap-2 flex-wrap xl:justify-end">
           {actionsSlot}
         </div>
       )}

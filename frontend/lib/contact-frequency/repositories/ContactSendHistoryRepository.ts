@@ -24,6 +24,7 @@
  */
 
 import { query } from '@/lib/db'
+import { FAILED_RESERVATION_SQL } from '@/lib/campaign-retry'
 import type { PoolClient } from 'pg'
 import type {
   ContactFrequencyProfile,
@@ -80,9 +81,11 @@ export class ContactSendHistoryRepository {
         COUNT(*) FILTER (WHERE sent_at >= NOW() - INTERVAL '24 hours') AS sent_today,
         COUNT(*) FILTER (WHERE sent_at >= NOW() - INTERVAL '7 days')   AS sent_week,
         MAX(sent_at)                                                    AS last_sent_at
-      FROM contact_send_history
+      FROM contact_send_history h
       WHERE contact_id = $1
-        AND sent_at    >= NOW() - INTERVAL '7 days'
+        AND sent_at >= NOW() - INTERVAL '7 days'
+        AND frequency_released_at IS NULL
+        AND NOT (${FAILED_RESERVATION_SQL})
     `
     const rows = client
       ? (await client.query<ProfileRow>(sql, [contactId])).rows

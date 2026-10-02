@@ -45,11 +45,13 @@ export interface WebhookContact {
 }
 
 export interface WebhookMessage {
+  to?:          string
   from:         string
   id:           string
   timestamp:    string
-  type:         MessageType
+  type:         MessageType | 'button'
   text?:        { body: string }
+  button?:      { text: string; payload: string }
   image?:       { caption?: string; mime_type: string; sha256: string; id: string }
   video?:       { caption?: string; mime_type: string; sha256: string; id: string }
   audio?:       { mime_type: string; sha256: string; id: string; voice?: boolean }

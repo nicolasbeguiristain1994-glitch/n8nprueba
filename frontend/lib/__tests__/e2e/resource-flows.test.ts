@@ -66,6 +66,11 @@ function mockInsert(id: string): void {
   vi.mocked(db.query).mockResolvedValueOnce([{ id }] as never)
 }
 
+/** Template writes first read which optional legacy columns exist (modern table here). */
+function mockTemplateColumns(): void {
+  vi.mocked(db.query).mockResolvedValueOnce([{ domain: false, body: false }] as never)
+}
+
 // ── Audit helpers ─────────────────────────────────────────────────────────────
 
 function getAuditCall(action: string): AuditEvent | undefined {
@@ -122,18 +127,18 @@ describe('Test 1 — Template POST: validación Zod, regla BODY y creación exit
   it('paso 1b — schema válido pero sin componente BODY → 400 con mensaje de negocio', async () => {
     const admin = makeAdminSession()
     mockAdminCheck()
-    // components pasa la validación Zod (array de objetos genéricos) pero ninguno tiene type=BODY
+    // El schema compartido exige exactamente un componente BODY.
     const res  = await templatesPost(
       adminPost(TEMPLATES_URL, admin, {
         name:       'promo_test',
         category:   'MARKETING',
-        components: [{ type: 'HEADER', text: 'Título' }],
+        components: [{ type: 'HEADER', format: 'TEXT', text: 'Título' }],
       }) as never
     )
     const body = await res.json()
 
     expect(res.status).toBe(400)
-    expect(body.error).toContain('BODY')
+    expect(body.issues.some((i: { message: string }) => i.message.includes('BODY'))).toBe(true)
   })
 
   it('paso 1b — regla de negocio no genera audit create', async () => {
@@ -157,13 +162,14 @@ describe('Test 1 — Template POST: validación Zod, regla BODY y creación exit
     const admin = makeAdminSession()
     const newId = 'dddddddd-1111-0000-0000-dddddddddddd'
     mockAdminCheck()
+    mockTemplateColumns()
     mockInsert(newId)
 
     const res  = await templatesPost(
       adminPost(TEMPLATES_URL, admin, {
         name:       'bienvenida_julio',
         category:   'UTILITY',
-        components: [{ type: 'BODY', text: 'Bienvenido, {{1}}' }],
+        components: [{ type: 'BODY', text: 'Bienvenido, {{1}}', example: { body_text: [['Ana']] } }],
       }) as never
     )
 
@@ -175,6 +181,7 @@ describe('Test 1 — Template POST: validación Zod, regla BODY y creación exit
     const admin = makeAdminSession()
     const newId = 'dddddddd-2222-0000-0000-dddddddddddd'
     mockAdminCheck()
+    mockTemplateColumns()
     mockInsert(newId)
 
     await templatesPost(
@@ -197,6 +204,7 @@ describe('Test 1 — Template POST: validación Zod, regla BODY y creación exit
     const admin = makeAdminSession()
     const newId = 'dddddddd-3333-0000-0000-dddddddddddd'
     mockAdminCheck()
+    mockTemplateColumns()
     mockInsert(newId)
 
     const res = await templatesPost(
@@ -204,7 +212,7 @@ describe('Test 1 — Template POST: validación Zod, regla BODY y creación exit
         name:       'template_ingles',
         category:   'UTILITY',
         language:   'en',
-        components: [{ type: 'BODY', text: 'Hello, {{1}}' }],
+        components: [{ type: 'BODY', text: 'Hello, {{1}}', example: { body_text: [['Ana']] } }],
       }) as never
     )
 
@@ -219,9 +227,10 @@ describe('Test 1 — Template POST: validación Zod, regla BODY y creación exit
 
 describe('Test 2 — Template PATCH: metadata.fields refleja exactamente los campos enviados', () => {
 
-  /** Setup estándar: admin RBAC + UPDATE RETURNING id. */
+  /** Setup estándar: admin RBAC + ownership of a local draft + UPDATE RETURNING id. */
   function mockPatchSuccess(): void {
     mockAdminCheck()
+    vi.mocked(db.query).mockResolvedValueOnce([{ waba_id: null }] as never)
     vi.mocked(db.query).mockResolvedValueOnce([{ id: TEMPLATE_ID }] as never)
   }
 
@@ -238,6 +247,10 @@ describe('Test 2 — Template PATCH: metadata.fields refleja exactamente los cam
     const res = await patch({ status: 'APROBADA' })
     expect(res.status).toBe(200)
     expect((await res.json()).ok).toBe(true)
+    expect(db.query).toHaveBeenNthCalledWith(2,
+      'SELECT waba_id FROM whatsapp_templates WHERE id=$1', [TEMPLATE_ID])
+    expect(db.query).toHaveBeenLastCalledWith(
+      expect.stringContaining('AND waba_id IS NULL RETURNING id'), ['APROBADA', TEMPLATE_ID])
   })
 
   it('enviar solo status → metadata.fields contiene únicamente "status"', async () => {

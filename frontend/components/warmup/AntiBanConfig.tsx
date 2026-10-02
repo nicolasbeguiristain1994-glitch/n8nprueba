@@ -31,7 +31,7 @@ function PresetCard({ preset, active, onApply }: {
       className={`text-left rounded-xl border-2 px-3 py-2.5 transition-all ${
         active
           ? preset.badge.replace('bg-', 'border-').replace('-100', '-400') + ' ' + preset.badge
-          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+          : 'border-border bg-card text-muted-foreground hover:border-input'
       }`}
     >
       <div className="flex items-center gap-1 mb-1">
@@ -73,17 +73,17 @@ export function AntiBanConfig({ value, onChange }: Props) {
   }
 
   return (
-    <div className="rounded-xl border border-gray-200 overflow-hidden">
+    <div className="rounded-xl border border-border overflow-hidden">
 
       {/* Header toggle */}
-      <div className={`flex items-center justify-between px-4 py-3 ${value.enabled ? 'bg-blue-50 border-b border-blue-100' : 'bg-gray-50'}`}>
+      <div className={`flex items-center justify-between px-4 py-3 ${value.enabled ? 'bg-blue-50 border-b border-blue-100' : 'bg-background'}`}>
         <div className="flex items-center gap-2">
-          <ShieldAlert size={15} className={value.enabled ? 'text-blue-600' : 'text-gray-400'} />
+          <ShieldAlert size={15} className={value.enabled ? 'text-blue-600' : 'text-muted-foreground'} />
           <div>
-            <p className={`text-xs font-semibold ${value.enabled ? 'text-blue-800' : 'text-gray-700'}`}>
+            <p className={`text-xs font-semibold ${value.enabled ? 'text-blue-800' : 'text-foreground'}`}>
               Modo Anti-Ban Avanzado
             </p>
-            <p className="text-[10px] text-gray-500 leading-tight">
+            <p className="text-[10px] text-muted-foreground leading-tight">
               Delays aleatorios, ventanas horarias y días activos
             </p>
           </div>
@@ -93,13 +93,13 @@ export function AntiBanConfig({ value, onChange }: Props) {
           type="button"
           onClick={() => set('enabled', !value.enabled)}
           className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none ${
-            value.enabled ? 'bg-blue-600' : 'bg-gray-200'
+            value.enabled ? 'bg-blue-600' : 'bg-border'
           }`}
           aria-checked={value.enabled}
           role="switch"
         >
           <span
-            className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-lg transition-transform ${
+            className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-card shadow-lg transition-transform ${
               value.enabled ? 'translate-x-4' : 'translate-x-0'
             }`}
           />
@@ -108,11 +108,11 @@ export function AntiBanConfig({ value, onChange }: Props) {
 
       {/* Config body — shown only when enabled */}
       {value.enabled && (
-        <div className="p-4 space-y-4 bg-white">
+        <div className="p-4 space-y-4 bg-card">
 
           {/* Preset cards */}
           <div>
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
               Estrategia anti-ban
             </p>
             <div className="grid grid-cols-3 gap-2">
@@ -129,12 +129,12 @@ export function AntiBanConfig({ value, onChange }: Props) {
 
           {/* Delay range */}
           <div>
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
               Delay entre mensajes
             </p>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] text-gray-500 mb-1 block">Mínimo (segundos)</label>
+                <label className="text-[10px] text-muted-foreground mb-1 block">Mínimo (segundos)</label>
                 <Input
                   type="number" min={5} max={600}
                   value={value.delayMin}
@@ -147,7 +147,7 @@ export function AntiBanConfig({ value, onChange }: Props) {
                 />
               </div>
               <div>
-                <label className="text-[10px] text-gray-500 mb-1 block">Máximo (segundos)</label>
+                <label className="text-[10px] text-muted-foreground mb-1 block">Máximo (segundos)</label>
                 <Input
                   type="number" min={10} max={3600}
                   value={value.delayMax}
@@ -160,9 +160,9 @@ export function AntiBanConfig({ value, onChange }: Props) {
                 />
               </div>
             </div>
-            <p className="text-[10px] text-gray-400 mt-1.5">
+            <p className="text-[10px] text-muted-foreground mt-1.5">
               Con esta configuración enviarás aprox.{' '}
-              <span className="font-semibold text-gray-600">
+              <span className="font-semibold text-muted-foreground">
                 {Math.round(3600 / ((value.delayMin + value.delayMax) / 2))} msgs/hora
               </span>
               {' '}(delay promedio ≈ {Math.round((value.delayMin + value.delayMax) / 2)}s)
@@ -171,12 +171,12 @@ export function AntiBanConfig({ value, onChange }: Props) {
 
           {/* Sending window */}
           <div>
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
               Ventana de envío
             </p>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-[10px] text-gray-500 mb-1 block">Inicio</label>
+                <label className="text-[10px] text-muted-foreground mb-1 block">Inicio</label>
                 <Input
                   type="time"
                   value={value.windowStart}
@@ -185,7 +185,7 @@ export function AntiBanConfig({ value, onChange }: Props) {
                 />
               </div>
               <div>
-                <label className="text-[10px] text-gray-500 mb-1 block">Fin</label>
+                <label className="text-[10px] text-muted-foreground mb-1 block">Fin</label>
                 <Input
                   type="time"
                   value={value.windowEnd}
@@ -199,7 +199,7 @@ export function AntiBanConfig({ value, onChange }: Props) {
               const [eh, em] = value.windowEnd.split(':').map(Number)
               const hrs = Math.max(0, (eh * 60 + em - sh * 60 - sm) / 60)
               return (
-                <p className="text-[10px] text-gray-400 mt-1.5">
+                <p className="text-[10px] text-muted-foreground mt-1.5">
                   Ventana activa: {hrs.toFixed(1)} horas · {value.windowStart} → {value.windowEnd}
                 </p>
               )
@@ -208,7 +208,7 @@ export function AntiBanConfig({ value, onChange }: Props) {
 
           {/* Active days */}
           <div>
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
               Días activos
             </p>
             <div className="flex gap-1.5">
@@ -225,7 +225,7 @@ export function AntiBanConfig({ value, onChange }: Props) {
                     className={`w-8 h-8 rounded-lg text-xs font-semibold transition-colors ${
                       isOn
                         ? 'bg-blue-600 text-white'
-                        : 'bg-gray-100 text-gray-400 hover:bg-gray-200'
+                        : 'bg-muted text-muted-foreground hover:bg-border'
                     }`}
                   >
                     {d}
@@ -233,14 +233,14 @@ export function AntiBanConfig({ value, onChange }: Props) {
                 )
               })}
             </div>
-            <p className="text-[10px] text-gray-400 mt-1.5">
+            <p className="text-[10px] text-muted-foreground mt-1.5">
               {value.activeDays.length} día{value.activeDays.length !== 1 ? 's' : ''} activo{value.activeDays.length !== 1 ? 's' : ''}
             </p>
           </div>
 
           {/* Randomness level */}
           <div>
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
               Nivel de aleatoriedad
             </p>
             <div className="grid grid-cols-3 gap-2">
@@ -252,7 +252,7 @@ export function AntiBanConfig({ value, onChange }: Props) {
                   className={`text-left rounded-lg border px-3 py-2 transition-all text-xs ${
                     value.randomness === key
                       ? 'border-blue-400 bg-blue-50 text-blue-800'
-                      : 'border-gray-200 bg-white text-gray-500 hover:border-gray-300'
+                      : 'border-border bg-card text-muted-foreground hover:border-input'
                   }`}
                 >
                   <p className="font-semibold">{cfg.label}</p>
@@ -263,21 +263,21 @@ export function AntiBanConfig({ value, onChange }: Props) {
           </div>
 
           {/* Natural distribution toggle */}
-          <div className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2.5">
+          <div className="flex items-center justify-between rounded-lg bg-background px-3 py-2.5">
             <div>
-              <p className="text-xs font-medium text-gray-700">Distribución natural</p>
-              <p className="text-[10px] text-gray-500 mt-0.5">Más actividad al mediodía, menos al inicio/fin del día</p>
+              <p className="text-xs font-medium text-foreground">Distribución natural</p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">Más actividad al mediodía, menos al inicio/fin del día</p>
             </div>
             <button
               type="button"
               onClick={() => set('naturalDist', !value.naturalDist)}
               className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
-                value.naturalDist ? 'bg-blue-600' : 'bg-gray-200'
+                value.naturalDist ? 'bg-blue-600' : 'bg-border'
               }`}
               role="switch"
               aria-checked={value.naturalDist}
             >
-              <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow-lg transition-transform ${
+              <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-card shadow-lg transition-transform ${
                 value.naturalDist ? 'translate-x-4' : 'translate-x-0'
               }`} />
             </button>

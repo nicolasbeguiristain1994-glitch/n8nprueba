@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,10 +9,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Send, Plus, Loader2, Eye, Play, BarChart2, Shield, Clock, Pause, XCircle, CheckCheck, Truck, AlertTriangle, HelpCircle, Trash2, Shuffle, UserCheck, UserX, Zap, GitBranch, RefreshCw, Ban, ImageIcon, X, Upload, ListPlus } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
+import { CloudReadiness } from '@/components/campaigns/CloudReadiness'
+import { CampaignTestSend } from '@/components/campaigns/CampaignTestSend'
+import { CONTACT_NAME_VARIABLE, hasTemplateContactName, resolveTemplateContactValue } from '@/lib/campaign-personalization'
 
 interface CampaignList { id: string; name: string; contact_count: number }
 interface ProspectListOption { id: string; name: string; member_count: number }
-interface AntiBanProfile { id: string; profile_name: string; is_default: boolean; timing_mode: string; risk_tolerance: string; recommended_for: string | null }
 interface CampaignContact {
   id: string; contact_id: string | null; prospect_id: string | null
   first_name: string; last_name: string; phone_number: string
@@ -30,8 +32,31 @@ interface Campaign {
   prospect_list_id: string | null; prospect_list_name: string | null
   antiblock_delay_min: number; antiblock_delay_max: number
   personalize_name: boolean; use_multi_line: boolean; created_at: string
-  pause_reason: 'manual' | 'no_eligible_lines' | 'all_lines_outside_schedule' | 'systemic_error' | 'config_missing' | 'frequency_exhausted' | 'unknown' | null
+  pause_reason: 'manual' | 'no_eligible_lines' | 'all_lines_outside_schedule' | 'systemic_error' | 'config_missing' | 'frequency_exhausted' | 'assigned_line_unavailable' | 'unknown' | null
   processor_locked_at: string | null
+  // Opcionales: sólo presentes si la API los devuelve
+  message_type?: 'text' | 'template' | null
+  template_id?: string | null
+  template_name?: string | null
+}
+interface TemplateButton { type?: string; text?: string; url?: string }
+interface TemplateComponent { type?: string; format?: string; text?: string; buttons?: TemplateButton[] }
+interface WaTemplate {
+  id: string; name: string; language: string | null; status: string
+  waba_id: string | null; components: TemplateComponent[] | string | null
+}
+type TemplateHeaderType = 'image' | 'video' | 'document'
+interface TemplateAnalysis {
+  bodyText: string
+  bodyCount: number
+  header: TemplateHeaderType | null
+  buttons: { index: number; sub_type: 'url' | 'quick_reply'; label: string; required: boolean }[]
+  unsupported: string[]
+}
+interface TemplateParams {
+  body?: string[]
+  header?: { type: TemplateHeaderType; link: string }
+  buttons?: { index: number; sub_type: 'url' | 'quick_reply'; payload: string }[]
 }
 interface DispatchSummary {
   total: number; queued: number; processing: number
@@ -42,12 +67,12 @@ interface DispatchSummary {
 }
 
 const STATUS_BADGE: Record<string, string> = {
-  draft:      'bg-gray-100 text-gray-600',
+  draft:      'bg-muted text-muted-foreground',
   scheduled:  'bg-blue-100 text-blue-700',
   running:    'bg-yellow-100 text-yellow-700',
-  completed:  'bg-green-100 text-green-700',
+  completed:  'bg-success/15 text-success',
   paused:     'bg-orange-100 text-orange-700',
-  cancelled:  'bg-red-100 text-red-600',
+  cancelled:  'bg-destructive/15 text-destructive',
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -59,15 +84,158 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: 'Cancelado',
 }
 
+const AR_TZ = 'America/Argentina/Buenos_Aires'
+
+function formatAR(iso: string) {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso
+  return `${d.toLocaleString('es-AR', { timeZone: AR_TZ })} (hora Argentina)`
+}
+
+// datetime-local ("YYYY-MM-DDTHH:mm") → ISO con offset explícito de Argentina (-03:00, sin horario de verano)
+function toArgentinaIso(local: string): string | null {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})(:\d{2})?$/.exec(local.trim())
+  if (!m) return null
+  return `${m[1]}T${m[2]}${m[3] ?? ':00'}-03:00`
+}
+
+const HEADER_LABEL: Record<TemplateHeaderType, string> = { image: 'imagen', video: 'video', document: 'documento' }
+
+// Determina qué parámetros pide la plantilla y qué componentes no se pueden enviar desde campañas.
+// Replica las reglas de validateCampaignTemplate (lib/campaign-template.ts): tipos exactos en mayúsculas,
+// variables de cuerpo {{1}}…{{N}} consecutivas y URL dinámica sólo con {{1}} al final.
+function analyzeTemplate(tpl: WaTemplate): TemplateAnalysis {
+  let raw: unknown = tpl.components
+  if (typeof raw === 'string') { try { raw = JSON.parse(raw) } catch { raw = null } }
+  const res: TemplateAnalysis = { bodyText: '', bodyCount: 0, header: null, buttons: [], unsupported: [] }
+  if (!Array.isArray(raw)) {
+    res.unsupported.push('La plantilla no tiene componentes válidos')
+    return res
+  }
+  const comps: TemplateComponent[] = raw
+  let hasBody = false
+  for (const c of comps) {
+    const type = c?.type ?? ''
+    if (type === 'BODY') {
+      if (hasBody) continue  // el backend sólo considera el primer cuerpo
+      hasBody = true
+      res.bodyText = c.text ?? ''
+      const vars = [...new Set([...res.bodyText.matchAll(/\{\{([^}]+)\}\}/g)].map(m => m[1]))]
+      const consecutive = vars.every(v => /^[1-9]\d*$/.test(v) && Number(v) <= vars.length)
+      if (!consecutive) {
+        res.unsupported.push(`Cuerpo con variables no compatibles (${vars.map(v => `{{${v}}}`).join(', ')}); sólo se admiten {{1}}, {{2}}… consecutivas`)
+      } else if (vars.length > 30) {
+        res.unsupported.push('Cuerpo con más de 30 variables')
+      } else {
+        res.bodyCount = vars.length
+      }
+    } else if (type === 'HEADER') {
+      const format = c.format ?? ''
+      if (format === 'IMAGE' || format === 'VIDEO' || format === 'DOCUMENT') {
+        res.header = format.toLowerCase() as TemplateHeaderType
+      } else if (format === 'TEXT') {
+        if (/\{\{/.test(c.text ?? '')) res.unsupported.push('Encabezado de texto con variables')
+      } else {
+        res.unsupported.push(format ? `Encabezado de tipo ${format}` : 'Encabezado sin formato indicado')
+      }
+    } else if (type === 'FOOTER') {
+      // Texto fijo: no requiere parámetros
+    } else if (type === 'BUTTONS') {
+      (Array.isArray(c.buttons) ? c.buttons : []).forEach((b, index) => {
+        const bt = b?.type ?? ''
+        const label = b?.text || `Botón ${index + 1}`
+        if (bt === 'URL') {
+          const url = b.url ?? ''
+          if (!/\{\{/.test(url)) return  // URL fija: sin parámetros
+          if (!/\{\{1\}\}$/.test(url) || (url.match(/\{\{/g)?.length ?? 0) !== 1) {
+            res.unsupported.push(`Botón "${label}" con URL dinámica no compatible (sólo {{1}} al final)`)
+          } else {
+            res.buttons.push({ index, sub_type: 'url', label, required: true })
+          }
+        } else if (bt === 'QUICK_REPLY') {
+          res.buttons.push({ index, sub_type: 'quick_reply', label, required: false })
+        } else if (bt !== 'PHONE_NUMBER') {
+          res.unsupported.push(`Botón "${label}" de tipo ${bt || 'desconocido'}`)
+        }
+      })
+    } else {
+      res.unsupported.push(`Componente ${type || 'desconocido'}`)
+    }
+  }
+  if (!hasBody) res.unsupported.push('La plantilla no tiene cuerpo (BODY) legible')
+  return res
+}
+
+// Límites de CampaignTemplateParamsSchema
+const MAX_BODY_PARAM = 1024
+const MAX_URL_LENGTH = 2048
+
+// Pausa entre envíos de la campaña (antiblock_delay_min/max), en segundos
+const DELAY_MIN_SECONDS = 3
+const DELAY_MAX_SECONDS = 300
+
+function buildTemplateParams(
+  a: TemplateAnalysis, body: string[], headerLink: string, buttons: Record<number, string>,
+): { params: TemplateParams; missing: string[]; invalid: string[] } {
+  const params: TemplateParams = {}
+  const missing: string[] = []
+  const invalid: string[] = []
+  if (a.bodyCount > 0) {
+    params.body = Array.from({ length: a.bodyCount }, (_, i) => (body[i] ?? '').trim())
+    params.body.forEach((v, i) => {
+      if (!v) missing.push(`parámetro {{${i + 1}}} del cuerpo`)
+      else if (v.length > MAX_BODY_PARAM) invalid.push(`el parámetro {{${i + 1}}} del cuerpo supera ${MAX_BODY_PARAM} caracteres`)
+    })
+  }
+  if (a.header) {
+    const link = headerLink.trim()
+    if (!/^https:\/\/\S+$/i.test(link)) missing.push(`URL https del encabezado (${HEADER_LABEL[a.header]})`)
+    else if (link.length > MAX_URL_LENGTH) invalid.push(`la URL del encabezado supera ${MAX_URL_LENGTH} caracteres`)
+    params.header = { type: a.header, link }
+  }
+  const btns = a.buttons
+    .map(b => ({ index: b.index, sub_type: b.sub_type, payload: (buttons[b.index] ?? '').trim(), required: b.required, label: b.label }))
+  btns.forEach(b => {
+    if (b.required && !b.payload) missing.push(`valor del botón "${b.label}"`)
+    else if (b.payload.length > MAX_URL_LENGTH) invalid.push(`el valor del botón "${b.label}" supera ${MAX_URL_LENGTH} caracteres`)
+  })
+  const filled = btns.filter(b => b.payload).map(({ index, sub_type, payload }) => ({ index, sub_type, payload }))
+  if (filled.length) params.buttons = filled
+  return { params, missing, invalid }
+}
+
+function fillTemplatePreview(text: string, values: string[]) {
+  return text.replace(/\{\{\s*(\d+)\s*\}\}/g, (m, n) => {
+    const value = values[Number(n) - 1]?.trim()
+    return value ? resolveTemplateContactValue(value, { first_name: 'pablo', phone_number: '[teléfono del contacto]' }, true) : m
+  })
+}
+
 export default function Campaigns() {
-  const { user } = useCurrentUser()
+  const { user, permissions } = useCurrentUser()
   const isAdmin  = user?.role === 'admin'
 
   const [campaigns, setCampaigns]         = useState<Campaign[]>([])
+  const [campaignsLoaded, setCampaignsLoaded]   = useState(false)
+  const [campaignsLoading, setCampaignsLoading] = useState(true)
+  const [campaignsError, setCampaignsError]     = useState<string | null>(null)
+  const [schedulerEnabled, setSchedulerEnabled] = useState(false)
+  const [lookupFailures, setLookupFailures]     = useState<string[]>([])
   const [lists, setLists]                 = useState<CampaignList[]>([])
   const [prospectLists, setProspectLists] = useState<ProspectListOption[]>([])
-  const [antiBanProfiles, setAntiBanProfiles] = useState<AntiBanProfile[]>([])
   const [showNew, setShowNew]             = useState(false)
+  const canOpenNew = isAdmin || (permissions?.campaigns?.includes('create') ?? false)
+  useEffect(() => {
+    if (!canOpenNew) return
+    const open = () => setShowNew(true)
+    const url = new URL(window.location.href)
+    if (url.searchParams.get('action') === 'new') {
+      open(); url.searchParams.delete('action'); window.history.replaceState(null, '', url)
+    }
+    window.addEventListener('cmd:new-campaign', open)
+    return () => window.removeEventListener('cmd:new-campaign', open)
+  }, [canOpenNew])
+
   const [selected, setSelected]       = useState<Campaign | null>(null)
   const [campContacts, setCampContacts] = useState<CampaignContact[]>([])
   const [loadingContacts, setLoadingContacts] = useState(false)
@@ -86,16 +254,16 @@ export default function Campaigns() {
   const [creatingFailedList, setCreatingFailedList] = useState(false)
   const [failedListMsg, setFailedListMsg]           = useState<string | null>(null)
   const [contactStatusFilter, setContactStatusFilter] = useState<string>('all')
+  const [dispatchError, setDispatchError]             = useState<string | null>(null)
+  // Identificador de la última apertura de detalle: descarta respuestas de campañas anteriores
+  const detailReqRef    = useRef(0)
+  const campaignsReqRef = useRef(0)
 
   const FORM_DEFAULT = {
     name: '', list_id: '', prospect_list_id: '', audience_type: 'contacts' as 'contacts' | 'prospects',
     scheduled_at: '',
     media_url: '', antiblock_delay_min: 3, antiblock_delay_max: 8,
-    type: 'promotion', personalize_name: true, use_multi_line: false,
-    delay_type: 'gaussian', custom_delay_seconds: 18,
-    daily_limit_override: '' as '' | number,
-    anti_ban_profile_id: '',
-    enable_mini_sessions: false, mini_session_text: '👍',
+    type: 'promotion', personalize_name: true, use_multi_line: true,
   }
 
   // Form
@@ -127,56 +295,153 @@ export default function Campaigns() {
 
   // Plantillas
   const [useTemplate,      setUseTemplate]      = useState(false)
-  const [templateList,     setTemplateList]     = useState<{ id: string; name: string; components: unknown[] }[]>([])
+  const [templateList,     setTemplateList]     = useState<WaTemplate[]>([])
+  const [templatesStatus,  setTemplatesStatus]  = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [selectedTemplate, setSelectedTemplate] = useState<string>('')
+  const [tplBody,       setTplBody]       = useState<string[]>([])
+  const [tplHeaderLink, setTplHeaderLink] = useState('')
+  const [tplButtons,    setTplButtons]    = useState<Record<number, string>>({})
 
-  // Cargar plantillas aprobadas cuando se abre el modal
+  // Cargar plantillas aprobadas cuando se abre el modal. Sólo sirven las que tienen WABA asociada.
   const loadTemplates = useCallback(() => {
-    fetchJson<{ templates: { id: string; name: string; components: unknown[] }[] }>('/api/templates?status=APROBADA')
-      .then(d => setTemplateList(d.templates || []))
-      .catch(() => setTemplateList([]))
+    setTemplatesStatus('loading')
+    fetchJson<{ templates: WaTemplate[] }>('/api/templates?status=APROBADA')
+      .then(d => {
+        setTemplateList((d.templates || []).filter(t =>
+          t && t.waba_id != null && String(t.waba_id).trim() !== '' && (!t.status || t.status === 'APROBADA')))
+        setTemplatesStatus('ready')
+      })
+      .catch(() => setTemplatesStatus('error'))
   }, [])
 
-  const load = useCallback(() => {
-    fetchJson<{ campaigns: Campaign[] }>('/api/campaigns')
-      .then(d => setCampaigns(d.campaigns || []))
-      .catch(() => setCampaigns([]))
-    fetchJson<{ lists: CampaignList[] }>('/api/lists')
-      .then(d => setLists(d.lists || []))
-      .catch(() => setLists([]))
-    fetchJson<{ lists: ProspectListOption[] }>('/api/prospect-lists?limit=100')
-      .then(d => setProspectLists(d.lists || []))
-      .catch(() => setProspectLists([]))
-    fetchJson<{ profiles: AntiBanProfile[] }>('/api/anti-ban-profiles')
-      .then(d => setAntiBanProfiles(d.profiles || []))
-      .catch(() => setAntiBanProfiles([]))
+  // Importa a la base local el catálogo de las WABAs Cloud accesibles. No crea plantillas en Meta ni envía mensajes.
+  const [syncingTemplates, setSyncingTemplates] = useState(false)
+  const [templateSyncMsg,  setTemplateSyncMsg]  = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
+  const syncTemplatesFromMeta = async () => {
+    setSyncingTemplates(true)
+    setTemplateSyncMsg(null)
+    try {
+      const res = await fetch('/api/templates/sync-cloud', { method: 'POST' })
+      const d = await res.json().catch(() => ({}))
+      if (res.ok) {
+        setTemplateSyncMsg({ kind: 'ok', text: `Se sincronizaron ${d.synced ?? 0} plantillas de ${d.accounts ?? 0} cuentas WABA.` })
+        loadTemplates()
+      } else {
+        // 502 con synced: sincronización parcial; se recarga lo que sí se importó
+        const partial = typeof d.synced === 'number'
+        setTemplateSyncMsg({
+          kind: 'error',
+          text: `${d.error || `Error ${res.status}`}${partial ? ` (sincronización parcial: ${d.synced} plantillas importadas)` : ''}`,
+        })
+        if (partial) loadTemplates()
+      }
+    } catch {
+      setTemplateSyncMsg({ kind: 'error', text: 'Error de red al sincronizar plantillas desde Meta' })
+    } finally {
+      setSyncingTemplates(false)
+    }
+  }
+
+  const selectedTpl  = templateList.find(t => t.id === selectedTemplate) ?? null
+  const tplAnalysis  = useMemo(() => selectedTpl ? analyzeTemplate(selectedTpl) : null, [selectedTpl])
+  const tplBuild     = tplAnalysis ? buildTemplateParams(tplAnalysis, tplBody, tplHeaderLink, tplButtons) : null
+  const templateReady = !!tplAnalysis && tplAnalysis.unsupported.length === 0 &&
+    tplBuild?.missing.length === 0 && tplBuild.invalid.length === 0
+
+  // Sólo campañas: se usa tras cada acción. Un fallo conserva la última lista conocida.
+  const loadCampaigns = useCallback(() => {
+    const req = ++campaignsReqRef.current
+    setCampaignsLoading(true)
+    fetchJson<{ campaigns: Campaign[]; scheduler_enabled?: boolean }>('/api/campaigns')
+      .then(d => {
+        if (req !== campaignsReqRef.current) return
+        if (!Array.isArray(d?.campaigns)) throw new Error('respuesta inválida del servidor')
+        const list = d.campaigns
+        setCampaigns(list)
+        setSchedulerEnabled(d.scheduler_enabled === true)
+        setCampaignsLoaded(true)
+        setCampaignsError(null)
+        setSelected(prev => prev ? (list.find(c => c.id === prev.id) ?? prev) : prev)
+      })
+      .catch(err => {
+        if (req !== campaignsReqRef.current) return
+        setCampaignsError(`No se pudieron cargar las campañas${err instanceof Error ? ` (${err.message})` : ''}`)
+      })
+      .finally(() => { if (req === campaignsReqRef.current) setCampaignsLoading(false) })
   }, [])
 
-  useEffect(() => { load() }, [load])
+  // Listas: al montar y cuando cambian (no en cada refresco de estado de campañas)
+  const loadLookups = useCallback(() => {
+    const failed: string[] = []
+    const track = <T,>(p: Promise<T>, label: string, apply: (v: T) => void) =>
+      p.then(apply).catch(() => { failed.push(label) })
+    Promise.all([
+      track(fetchJson<{ lists: CampaignList[] }>('/api/lists'), 'listas de contactos', d => setLists(d.lists || [])),
+      track(fetchJson<{ lists: ProspectListOption[] }>('/api/prospect-lists?limit=100'), 'listas de difusión', d => setProspectLists(d.lists || [])),
+    ]).then(() => setLookupFailures(failed))
+  }, [])
+
+  useEffect(() => { loadCampaigns(); loadLookups() }, [loadCampaigns, loadLookups])
+
+  const resetTemplateState = () => {
+    setUseTemplate(false)
+    setSelectedTemplate('')
+    setTplBody([]); setTplHeaderLink(''); setTplButtons({})
+    setTemplateSyncMsg(null)
+  }
 
   const createCampaign = async () => {
-    setCreating(true)
     setCreateError(null)
     const validMsgs = messages.filter(m => m.trim())
-    if (form.daily_limit_override !== '' && Number(form.daily_limit_override) < 5) {
-      setCreating(false)
-      setCreateError('El límite diario por línea debe ser al menos 5')
+    const delayMin = form.antiblock_delay_min
+    const delayMax = form.antiblock_delay_max
+    const validDelay = (n: number) => Number.isInteger(n) && n >= DELAY_MIN_SECONDS && n <= DELAY_MAX_SECONDS
+    if (!validDelay(delayMin) || !validDelay(delayMax)) {
+      setCreateError(`Las pausas deben ser números enteros entre ${DELAY_MIN_SECONDS} y ${DELAY_MAX_SECONDS} segundos`)
       return
     }
+    if (delayMin > delayMax) {
+      setCreateError('La pausa mínima no puede ser mayor que la pausa máxima')
+      return
+    }
+    let scheduledAt: string | null = null
+    if (form.scheduled_at && schedulerEnabled) {
+      scheduledAt = toArgentinaIso(form.scheduled_at)
+      if (!scheduledAt) { setCreateError('Fecha de programación inválida'); return }
+    }
+    if (useTemplate) {
+      if (!selectedTpl || !tplAnalysis || !tplBuild) { setCreateError('Seleccioná una plantilla aprobada'); return }
+      if (tplAnalysis.unsupported.length) { setCreateError('La plantilla tiene componentes no compatibles; no se puede crear la campaña'); return }
+      if (tplBuild.missing.length) { setCreateError(`Falta completar: ${tplBuild.missing.join(', ')}`); return }
+      if (tplBuild.invalid.length) { setCreateError(`Corregí: ${tplBuild.invalid.join(', ')}`); return }
+    }
+    setCreating(true)
     let res: Response
     try {
-      const payload: Record<string, unknown> = {
+      const base: Record<string, unknown> = {
         ...form,
-        messages: validMsgs,
-        message: validMsgs[0],
-        daily_limit_override: form.daily_limit_override === '' ? null : Number(form.daily_limit_override),
-        anti_ban_profile_id: form.anti_ban_profile_id === '' ? null : form.anti_ban_profile_id,
+        scheduled_at: scheduledAt,
+        antiblock_delay_min: delayMin,
+        antiblock_delay_max: delayMax,
         // Audiencia: solo uno de los dos debe ir en el payload
         list_id:          form.audience_type === 'contacts'  ? (form.list_id          || null) : null,
         prospect_list_id: form.audience_type === 'prospects' ? (form.prospect_list_id || null) : null,
       }
-      if (useTemplate && selectedTemplate) {
-        payload.template_id = selectedTemplate
+      let payload: Record<string, unknown>
+      if (useTemplate && tplBuild) {
+        // Plantilla: sin texto libre, variantes ni imagen suelta; siempre por el distribuidor multi-línea
+        const rest = { ...base }
+        delete rest.media_url
+        payload = {
+          ...rest,
+          message_type: 'template',
+          template_id: selectedTemplate,
+          template_params: tplBuild.params,
+          use_multi_line: true,
+          personalize_name: false,
+        }
+      } else {
+        payload = { ...base, message_type: 'text', messages: validMsgs, message: validMsgs[0] }
       }
       res = await fetch('/api/campaigns', {
         method: 'POST',
@@ -198,19 +463,15 @@ export default function Campaigns() {
     setForm(FORM_DEFAULT)
     setMessages([''])
     setPreviewIdx(0)
-    load()
+    resetTemplateState()
+    loadCampaigns()
   }
 
+  // La plantilla no reemplaza los mensajes de texto: se envía como template con sus parámetros
   const onSelectTemplate = (tplId: string | null) => {
-    if (!tplId) return
+    if (!tplId || tplId.startsWith('_')) return
     setSelectedTemplate(tplId)
-    const tpl = templateList.find(t => t.id === tplId)
-    if (!tpl) return
-    const bodyComp = (tpl.components as Array<{ type: string; text?: string }>).find(c => c.type === 'BODY')
-    if (bodyComp?.text) {
-      setMessages([bodyComp.text])
-      setPreviewIdx(0)
-    }
+    setTplBody([]); setTplHeaderLink(''); setTplButtons({})
   }
 
   const addMessage    = () => { if (messages.length < 10) setMessages(m => [...m, '']) }
@@ -230,12 +491,12 @@ export default function Campaigns() {
         const d = await res.json().catch(() => ({}))
         // 409 = campaign auto-completed (all contacts already processed) — just refresh
         if (res.status === 409) {
-          load()
+          loadCampaigns()
         } else {
           setSendError(d.error || `Error ${res.status}`)
         }
       } else {
-        setTimeout(load, 1000)
+        setTimeout(loadCampaigns,1000)
       }
     } catch {
       setSendError('Error de red al enviar')
@@ -245,18 +506,18 @@ export default function Campaigns() {
   }
 
   const resetFreq = async (campaign: Campaign) => {
-    if (!confirm(`¿Resetear campaña "${campaign.name}" para re-prueba?\n\nEsto va a:\n• Borrar el historial de frecuencia (levanta el bloqueo de 48h)\n• Volver TODOS los contactos a "pendiente" (incluso los ya enviados)\n• Resetear contadores de la campaña\n\nUsar solo en entornos de prueba.`)) return
+    if (!confirm(`¿Reiniciar los destinatarios sin envío de "${campaign.name}"?\n\nEl historial se conservará. Si hay mensajes aceptados o pendientes de confirmación, el reinicio se bloqueará: creá una campaña nueva para un nuevo envío.`)) return
     setFreqResetting(campaign.id)
     try {
-      const res = await fetch(`/api/campaigns/${campaign.id}/freq-reset`, { method: 'DELETE' })
+      const res = await fetch(`/api/campaigns/${campaign.id}/freq-reset`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm_reset: true }) })
       const d = await res.json().catch(() => ({}))
       if (!res.ok) {
         setSendError(d.error || 'Error al resetear campaña')
       } else {
         setSendError(null)
         // Cerrar el modal si está abierto y recargar la lista
-        if (selected?.id === campaign.id) setSelected(null)
-        load()
+        if (selected?.id === campaign.id) closeDetail()
+        loadCampaigns()
       }
     } catch {
       setSendError('Error de red al limpiar frecuencia')
@@ -266,7 +527,7 @@ export default function Campaigns() {
   }
 
   const retryFailed = async (campaign: Campaign) => {
-    if (!confirm(`¿Reintentar los ${campaign.total_failed} contactos fallidos de "${campaign.name}"?\n\nLos ${campaign.total_sent} ya enviados NO se re-enviarán.`)) return
+    if (!confirm(`¿Reintentar los fallos confirmados y los omitidos por frecuencia de "${campaign.name}"?\n\nLos fallos confirmados no consumirán el límite de frecuencia. Se conservará el historial y se excluirán los mensajes entregados o pendientes de confirmación. Los omitidos volverán a evaluarse con los límites vigentes.`)) return
     setRetryingFailed(campaign.id)
     setSendError(null)
     try {
@@ -276,7 +537,7 @@ export default function Campaigns() {
         setSendError(d.error || 'Error al preparar reintento')
       } else {
         setSendError(null)
-        load()
+        loadCampaigns()
         // Reanudar el procesador automáticamente
         await resumeProcessor(campaign.id)
       }
@@ -325,7 +586,7 @@ export default function Campaigns() {
         setFailedListMsg(`Error: ${d.error || 'No se pudo crear la lista'}`)
       } else {
         setFailedListMsg(`Lista "${name}" creada con ${failed.length} contacto${failed.length !== 1 ? 's' : ''}.`)
-        load()
+        loadLookups()
       }
     } catch {
       setFailedListMsg('Error de red al crear la lista')
@@ -344,12 +605,12 @@ export default function Campaigns() {
         const d = await res.json().catch(() => ({}))
         if (res.status === 409) {
           // All contacts already processed → campaign auto-completed → just refresh
-          load()
+          loadCampaigns()
         } else {
           setSendError(d.error || `Error al reanudar`)
         }
       } else {
-        setTimeout(load, 1500)
+        setTimeout(loadCampaigns,1500)
       }
     } catch {
       setSendError('Error de red al reanudar')
@@ -368,7 +629,7 @@ export default function Campaigns() {
       if (!res.ok) {
         setSendError(d.error || 'Error al liberar el lock')
       } else {
-        load()
+        loadCampaigns()
       }
     } catch {
       setSendError('Error de red al liberar el lock')
@@ -380,42 +641,64 @@ export default function Campaigns() {
   const syncStatus = async (campaign: Campaign) => {
     setSyncing(campaign.id)
     try {
-      await fetch(`/api/campaigns/${campaign.id}/sync-status`, { method: 'POST' })
-      load()
-    } catch { /* best effort */ } finally {
+      const response = await fetch(`/api/campaigns/${campaign.id}/sync-status`, { method: 'POST' })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) { setSendError(result.error || 'No se pudieron sincronizar los estados'); return }
+      setSendError(null)
+      loadCampaigns()
+    } catch { setSendError('Error de red al sincronizar estados') } finally {
       setSyncing(null)
     }
   }
 
+  const loadDispatch = async (id: string, req: number) => {
+    setLoadingDispatch(true)
+    setDispatchError(null)
+    try {
+      const d = await fetchJson<DispatchSummary>(`/api/campaigns/${id}/dispatch`)
+      if (req !== detailReqRef.current) return
+      setDispatch({ ...d, line_usage: Array.isArray(d.line_usage) ? d.line_usage : [] })
+    } catch {
+      if (req === detailReqRef.current) setDispatchError('No se pudo cargar el progreso de distribución')
+    } finally {
+      if (req === detailReqRef.current) setLoadingDispatch(false)
+    }
+  }
+
   const openDetail = async (c: Campaign) => {
+    const req = ++detailReqRef.current
     setSelected(c)
     setCampContacts([])
     setDetailError(null)
     setDispatch(null)
+    setDispatchError(null)
+    setLoadingDispatch(false)
     setFailedListMsg(null)
     setContactStatusFilter('all')
     setLoadingContacts(true)
 
-    // Fetch contacts and (for multi-line) dispatch summary in parallel
+    // Fetch contacts and (for multi-line) dispatch summary in parallel.
+    // Si mientras tanto se abre otra campaña, las respuestas tardías se descartan.
     const contactsFetch = fetch(`/api/campaigns/${c.id}/contacts`)
       .then(async r => {
-        const d = await r.json()
+        const d = await r.json().catch(() => ({}))
         if (!r.ok) throw new Error(d.error || `Error ${r.status}`)
-        setCampContacts(d.contacts || [])
+        if (req === detailReqRef.current) setCampContacts(d.contacts || [])
       })
-      .catch(err => setDetailError(err instanceof Error ? err.message : 'Error al cargar destinatarios'))
-      .finally(() => setLoadingContacts(false))
+      .catch(err => {
+        if (req === detailReqRef.current) setDetailError(err instanceof Error ? err.message : 'Error al cargar destinatarios')
+      })
+      .finally(() => { if (req === detailReqRef.current) setLoadingContacts(false) })
 
-    const dispatchFetch = c.use_multi_line
-      ? (setLoadingDispatch(true),
-         fetch(`/api/campaigns/${c.id}/dispatch`)
-           .then(r => r.json())
-           .then(d => setDispatch(d))
-           .catch(() => null)
-           .finally(() => setLoadingDispatch(false)))
-      : Promise.resolve()
+    const dispatchFetch = c.use_multi_line ? loadDispatch(c.id, req) : Promise.resolve()
 
     await Promise.all([contactsFetch, dispatchFetch])
+  }
+
+  const closeDetail = () => {
+    detailReqRef.current++
+    setSelected(null)
+    setDetailError(null)
   }
 
   const updateStatus = async (id: string, status: 'paused' | 'cancelled' | 'draft') => {
@@ -430,7 +713,7 @@ export default function Campaigns() {
         const d = await res.json().catch(() => ({}))
         setSendError(d.error || `Error al actualizar estado`)
       } else {
-        load()
+        loadCampaigns()
       }
     } catch {
       setSendError('Error de red al actualizar estado')
@@ -441,95 +724,134 @@ export default function Campaigns() {
   const previewName = form.personalize_name ? 'Juan' : ''
   const previewMsg = (messages[previewIdx] || '').replace(/\{\{nombre\}\}/gi, previewName).replace(/\{\{name\}\}/gi, previewName)
 
+  const openNew = () => {
+    if (lookupFailures.length) loadLookups()
+    setShowNew(true)
+  }
+
+  const canCreate = !creating && !!form.name.trim() &&
+    (useTemplate ? templateReady : messages.some(m => m.trim()))
+
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Campañas</h1>
-          <p className="text-sm text-gray-500">{campaigns.length} campañas</p>
+          <h1 className="page-title">Campañas</h1>
+          <p className="text-sm text-muted-foreground">
+            {campaignsLoaded ? `${campaigns.length} campañas` : campaignsLoading ? 'Cargando…' : 'Sin datos'}
+          </p>
         </div>
-        <Button onClick={() => setShowNew(true)} className="bg-green-600 hover:bg-green-700" size="sm">
-          <Plus size={14} className="mr-1" /> Nueva campaña
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={loadCampaigns} disabled={campaignsLoading}>
+            <RefreshCw size={13} className={`mr-1 ${campaignsLoading ? 'animate-spin' : ''}`} /> Actualizar
+          </Button>
+          <Button onClick={openNew} className="bg-primary hover:bg-primary/90" size="sm">
+            <Plus size={14} className="mr-1" /> Nueva campaña
+          </Button>
+        </div>
       </div>
+
+      <CloudReadiness />
+
+      {/* Error de carga: no se vacía la lista ni se muestra "sin campañas" */}
+      {campaignsError && (
+        <div role="alert" className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-2 text-sm text-destructive flex items-center justify-between gap-3">
+          <span>
+            {campaignsError}.
+            {campaignsLoaded && ' Se muestran los últimos datos cargados.'}
+          </span>
+          <Button variant="outline" size="sm" onClick={loadCampaigns} disabled={campaignsLoading}>Reintentar</Button>
+        </div>
+      )}
 
       {/* Error de envío */}
       {sendError && (
-        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-sm text-red-600 flex items-center justify-between">
+        <div className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-2 text-sm text-destructive flex items-center justify-between">
           <span>{sendError}</span>
-          <button onClick={() => setSendError(null)} className="ml-4 text-red-400 hover:text-red-600">✕</button>
+          <button onClick={() => setSendError(null)} className="ml-4 text-red-400 hover:text-destructive">✕</button>
         </div>
       )}
 
       {/* Lista de campañas */}
-      {campaigns.length === 0
-        ? <Card><CardContent className="py-16 text-center text-gray-400">
+      {!campaignsLoaded
+        ? (campaignsError
+            ? null
+            : <Card><CardContent className="py-16 text-center text-muted-foreground flex items-center justify-center gap-2">
+                <Loader2 size={16} className="animate-spin" /> Cargando campañas…
+              </CardContent></Card>)
+        : campaigns.length === 0
+        ? <Card><CardContent className="py-16 text-center text-muted-foreground">
             <BarChart2 size={32} className="mx-auto mb-3 opacity-30" />
             <p>No hay campañas todavía</p>
-            <Button variant="outline" size="sm" className="mt-3" onClick={() => setShowNew(true)}>Crear la primera</Button>
+            <Button variant="outline" size="sm" className="mt-3" onClick={openNew}>Crear la primera</Button>
           </CardContent></Card>
         : <div className="space-y-3">
             {campaigns.map(c => (
               <Card key={c.id} className="hover:shadow-sm transition-shadow">
                 <CardContent className="p-4">
-                  <div className="flex items-start justify-between gap-4">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
+                      <div className="flex flex-wrap items-center gap-2 mb-1">
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_BADGE[c.status] || ''}`}>
                           {STATUS_LABEL[c.status] ?? c.status}
                         </span>
                         {c.use_multi_line && (
-                          <span className="text-xs bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded-full flex items-center gap-1">
+                          <span className="text-xs bg-accent text-primary px-1.5 py-0.5 rounded-full flex items-center gap-1">
                             <GitBranch size={10}/> multi-línea
                           </span>
                         )}
                         {c.scheduled_at && c.status === 'scheduled' && (
-                          <span className="text-xs text-gray-400 flex items-center gap-1">
-                            <Clock size={11}/> {new Date(c.scheduled_at).toLocaleString('es-AR')}
+                          <span className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Clock size={11}/> {formatAR(c.scheduled_at)}
                           </span>
+                        )}
+                        {c.status === 'scheduled' && !schedulerEnabled && (
+                          <span className="text-xs text-orange-500">Programación automática no habilitada: requiere envío manual</span>
                         )}
                       </div>
                       <h3 className="font-medium truncate">{c.name}</h3>
                       <div className="flex items-center gap-2">
-                        <p className="text-sm text-gray-500 truncate">{c.message}</p>
-                        {Array.isArray(c.messages) && c.messages.length > 1 && (
-                          <span className="text-xs bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full whitespace-nowrap flex items-center gap-1 shrink-0">
+                        {c.message_type === 'template'
+                          ? <p className="text-sm text-muted-foreground truncate">Plantilla de WhatsApp{c.template_name ? `: ${c.template_name}` : ''}</p>
+                          : <p className="text-sm text-muted-foreground truncate">{c.message}</p>}
+                        {c.message_type !== 'template' && Array.isArray(c.messages) && c.messages.length > 1 && (
+                          <span className="text-xs bg-accent text-primary px-1.5 py-0.5 rounded-full whitespace-nowrap flex items-center gap-1 shrink-0">
                             <Shuffle size={10} /> {c.messages.length} variantes
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 mt-2 text-xs text-gray-400">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-xs text-muted-foreground">
                         {(c.list_name || c.prospect_list_name) && (
-                          <span>Lista: <b className="text-gray-600">{c.list_name || c.prospect_list_name}</b></span>
+                          <span>Lista: <b className="text-muted-foreground">{c.list_name || c.prospect_list_name}</b></span>
                         )}
                         <span>{c.total_targets} dest.</span>
                         <span className="flex items-center gap-1"><Shield size={10}/> {c.antiblock_delay_min}-{c.antiblock_delay_max}s</span>
                         {c.personalize_name
-                          ? <span className="flex items-center gap-1 text-green-600"><UserCheck size={10}/> con nombre</span>
-                          : <span className="flex items-center gap-1 text-gray-400"><UserX size={10}/> sin nombre</span>
+                          ? <span className="flex items-center gap-1 text-success"><UserCheck size={10}/> con nombre</span>
+                          : <span className="flex items-center gap-1 text-muted-foreground"><UserX size={10}/> sin nombre</span>
                         }
                       </div>
                     </div>
 
                     {/* Métricas inline */}
                     {(c.total_sent > 0 || c.total_skipped > 0 || c.total_failed > 0) && (
-                      <div className="flex gap-4 text-center shrink-0">
+                      <div className="flex max-w-full flex-wrap gap-4 text-center">
                         <MiniStat label="Enviados"   value={c.total_sent}      color="blue" />
                         <MiniStat label="Entregados" value={c.total_delivered} color="green" />
                         <MiniStat label="Leídos"     value={c.total_read}      pct={c.read_rate} color="purple" />
                         {c.total_failed  > 0 && <MiniStat label="Fallidos"       value={c.total_failed}  color="red" />}
-                        {c.total_skipped > 0 && <MiniStat label="Omitidos (freq.)" value={c.total_skipped} color="orange" />}
+                        {c.total_skipped > 0 && <MiniStat label="Omitidos" value={c.total_skipped} color="orange" />}
                       </div>
                     )}
 
-                    <div className="flex gap-2 shrink-0">
-                      <Button variant="outline" size="sm" onClick={() => openDetail(c)}>
+                    <div className="flex flex-wrap gap-2 shrink-0">
+                      <Button variant="outline" size="sm" onClick={() => openDetail(c)} aria-label={`Ver detalle de ${c.name}`}>
                         <Eye size={13} />
                       </Button>
 
                       {/* Enviar: draft, scheduled */}
                       {(c.status === 'draft' || c.status === 'scheduled') && (c.list_name || c.prospect_list_name) && (
-                        <Button size="sm" className="bg-green-600 hover:bg-green-700"
+                        <Button size="sm" className="bg-primary hover:bg-primary/90"
                                 onClick={() => sendNow(c)} disabled={sending === c.id}>
                           {sending === c.id
                             ? <Loader2 size={13} className="animate-spin"/>
@@ -539,7 +861,7 @@ export default function Campaigns() {
 
                       {/* Reanudar: paused */}
                       {c.status === 'paused' && (c.list_name || c.prospect_list_name) && (
-                        <Button size="sm" className="bg-green-600 hover:bg-green-700"
+                        <Button size="sm" className="bg-primary hover:bg-primary/90"
                                 onClick={() => c.use_multi_line ? resumeProcessor(c.id) : sendNow(c)}
                                 disabled={sending === c.id || resuming === c.id}>
                           {(sending === c.id || resuming === c.id)
@@ -550,7 +872,7 @@ export default function Campaigns() {
 
                       {/* Verificar / completar: running con todos los contactos ya enviados */}
                       {c.status === 'running' && c.total_sent > 0 && c.use_multi_line && (
-                        <Button size="sm" className="bg-green-600 hover:bg-green-700"
+                        <Button size="sm" className="bg-primary hover:bg-primary/90"
                                 onClick={() => resumeProcessor(c.id)}
                                 disabled={resuming === c.id}>
                           {resuming === c.id
@@ -574,7 +896,7 @@ export default function Campaigns() {
                       {/* Cancelar: draft, scheduled, running, paused */}
                       {['draft','scheduled','running','paused'].includes(c.status) && (
                         <Button size="sm" variant="outline"
-                                className="border-red-200 text-red-500 hover:bg-red-50"
+                                className="border-destructive/20 text-red-500 hover:bg-destructive/10"
                                 onClick={() => { if (confirm(`¿Cancelar "${c.name}"?`)) updateStatus(c.id, 'cancelled') }}
                                 disabled={actioning === c.id}>
                           <XCircle size={13} />
@@ -595,23 +917,23 @@ export default function Campaigns() {
                       )}
 
                       {/* Reintentar solo fallidos — sin re-enviar a los ya enviados */}
-                      {['completed','paused','cancelled','running'].includes(c.status) && c.total_failed > 0 && (
+                      {['completed','paused'].includes(c.status) && !c.processor_locked_at && (c.total_failed > 0 || c.total_skipped > 0) && (
                         <Button size="sm" variant="outline"
-                                className="border-red-200 text-red-600 hover:bg-red-50"
-                                title={`Reintentar ${c.total_failed} fallidos (sin re-enviar a los ${c.total_sent} ya enviados)`}
+                                className="border-destructive/20 text-destructive hover:bg-destructive/10"
+                                title="Reintentar fallidos y omitidos por frecuencia"
                                 onClick={() => retryFailed(c)}
                                 disabled={retryingFailed === c.id || resuming === c.id}>
                           {retryingFailed === c.id
                             ? <Loader2 size={13} className="animate-spin"/>
-                            : <span className="text-xs font-bold">↺F</span>}
+                            : <span className="text-xs font-bold">Reintentar</span>}
                         </Button>
                       )}
 
-                      {/* Reset completo para re-prueba — en campañas ya procesadas */}
-                      {['completed','paused','cancelled','running'].includes(c.status) && (c.total_sent > 0 || c.total_skipped > 0 || c.total_failed > 0) && (
+                      {/* Reinicio de destinatarios sin envío; conserva el historial */}
+                      {isAdmin && ['completed','paused','cancelled'].includes(c.status) && !c.processor_locked_at && (c.total_sent > 0 || c.total_skipped > 0 || c.total_failed > 0) && (
                         <Button size="sm" variant="outline"
                                 className="border-orange-200 text-orange-500 hover:bg-orange-50"
-                                title="Resetear para re-prueba (admin)"
+                                title="Reiniciar destinatarios sin envío confirmado (admin)"
                                 onClick={() => resetFreq(c)}
                                 disabled={freqResetting === c.id}>
                           {freqResetting === c.id
@@ -628,30 +950,33 @@ export default function Campaigns() {
                       <AlertTriangle size={11} className="shrink-0 mt-0.5" />
                       <span>
                         {c.pause_reason === 'manual' && (
-                          <>Pausado manualmente. <span className="text-gray-500">Presioná Reanudar para continuar.</span></>
+                          <>Pausado manualmente. <span className="text-muted-foreground">Presioná Reanudar para continuar.</span></>
                         )}
                         {c.pause_reason === 'no_eligible_lines' && (() => {
                           const pending = c.total_targets - c.total_sent - c.total_failed - c.total_skipped
-                          return <>{pending} destinatarios pendientes — sin líneas activas o con cuota agotada. <span className="text-gray-500">Reconectá líneas o esperá que se reinicien los contadores, luego reanudar.</span></>
+                          return <>{pending} destinatarios pendientes — sin líneas activas o con cuota agotada. <span className="text-muted-foreground">Reconectá líneas o esperá que se reinicien los contadores, luego reanudar.</span></>
                         })()}
+                        {c.pause_reason === 'assigned_line_unavailable' && (
+                          <>Hay clientes pendientes cuya línea habitual no está disponible o no tiene cupo. Se conserva su número de contacto. Reanudá cuando esa línea vuelva a estar disponible.</>
+                        )}
                         {c.pause_reason === 'all_lines_outside_schedule' && (() => {
                           const pending = c.total_targets - c.total_sent - c.total_failed - c.total_skipped
-                          return <>{pending} destinatarios pendientes — todas las líneas fuera de su ventana de horario. <span className="text-gray-500">Se retomarán automáticamente al reanudar cuando las líneas entren en horario.</span></>
+                          return <>{pending} destinatarios pendientes — todas las líneas fuera de su ventana de horario. <span className="text-muted-foreground">Reanudá cuando las líneas entren en horario.</span></>
                         })()}
                         {c.pause_reason === 'systemic_error' && (() => {
                           const pending = c.total_targets - c.total_sent - c.total_failed - c.total_skipped
-                          return <>{pending} destinatarios pendientes — error sistémico del procesador. <span className="text-gray-500">Revisá los logs antes de reanudar. Si el problema persiste, contactá soporte.</span></>
+                          return <>{pending} destinatarios pendientes — error sistémico del procesador. <span className="text-muted-foreground">Revisá los logs antes de reanudar. Si el problema persiste, contactá soporte.</span></>
                         })()}
                         {c.pause_reason === 'config_missing' && (
-                          <>Configuración incompleta: falta <code className="bg-orange-100 px-0.5 rounded">EVOLUTION_API_KEY</code> o <code className="bg-orange-100 px-0.5 rounded">EVOLUTION_GLOBAL_API_KEY</code>. <span className="text-gray-500">Configurar la variable de entorno y reanudar.</span></>
+                          <>No se pudo iniciar con la configuración actual. <span className="text-muted-foreground">Revisá la lista, los permisos del responsable y la conexión o plantilla de WhatsApp antes de reanudar.</span></>
                         )}
                         {c.pause_reason === 'frequency_exhausted' && (
-                          <>Todos los contactos bloqueados por límite de frecuencia. <span className="text-gray-500">Los contactos podrán recibir mensajes en la siguiente ventana (24h/7d).</span></>
+                          <>Todos los contactos bloqueados por límite de frecuencia. <span className="text-muted-foreground">Los contactos podrán recibir mensajes en la siguiente ventana (24h/7d).</span></>
                         )}
                         {(c.pause_reason === 'unknown' || !c.pause_reason) && (() => {
                           const pending = c.total_targets - c.total_sent - c.total_failed - c.total_skipped
                           return pending > 0
-                            ? <>{pending} destinatarios pendientes — pausado automáticamente. <span className="text-gray-500">Reanudar para continuar.</span></>
+                            ? <>{pending} destinatarios pendientes — pausado automáticamente. <span className="text-muted-foreground">Reanudar para continuar.</span></>
                             : <>Pausado.</>
                         })()}
                       </span>
@@ -659,7 +984,7 @@ export default function Campaigns() {
                   )}
 
                   {/* Force-unlock para admin: campaña en running con lock activo */}
-                  {isAdmin && c.status === 'running' && c.processor_locked_at && (() => {
+                  {isAdmin && ['running','paused'].includes(c.status) && c.processor_locked_at && (() => {
                     const lockedMs = Date.now() - new Date(c.processor_locked_at).getTime()
                     const lockedMin = Math.floor(lockedMs / 60_000)
                     if (lockedMin < 20) return null  // lock reciente, no mostramos
@@ -668,7 +993,7 @@ export default function Campaigns() {
                         <AlertTriangle size={11} className="shrink-0" />
                         <span>Procesador bloqueado hace {lockedMin} min sin progreso evidente.</span>
                         <button
-                          className="underline hover:text-red-700 disabled:opacity-50 whitespace-nowrap"
+                          className="underline hover:text-destructive disabled:opacity-50 whitespace-nowrap"
                           disabled={unlocking === c.id}
                           onClick={() => forceUnlock(c)}
                         >
@@ -690,13 +1015,13 @@ export default function Campaigns() {
                   {/* Barra de progreso */}
                   {c.status === 'running' && c.total_targets > 0 && (
                     <div className="mt-3">
-                      <div className="flex justify-between text-xs text-gray-400 mb-1">
+                      <div className="flex justify-between text-xs text-muted-foreground mb-1">
                         <span>Enviando…</span>
                         <span>{c.total_sent + c.total_failed + c.total_skipped}/{c.total_targets}</span>
                       </div>
-                      <div className="w-full bg-gray-100 rounded-full h-1.5">
+                      <div className="w-full bg-muted rounded-full h-1.5">
                         <div className="bg-green-500 h-1.5 rounded-full transition-all"
-                             style={{ width: `${((c.total_sent + c.total_failed + c.total_skipped)/c.total_targets)*100}%` }} />
+                             style={{ width: `${Math.min(100, Math.max(0, ((c.total_sent + c.total_failed + c.total_skipped)/c.total_targets)*100))}%` }} />
                       </div>
                     </div>
                   )}
@@ -717,8 +1042,7 @@ export default function Campaigns() {
           setCreating(false)
           setCreateError(null)
           setSendError(null)
-          setUseTemplate(false)
-          setSelectedTemplate('')
+          resetTemplateState()
           setUploadError(null)
         }
       }}>
@@ -729,9 +1053,9 @@ export default function Campaigns() {
           <div className="grid grid-cols-2 gap-4">
             {/* Nombre de campaña */}
             <div className="col-span-2">
-              <label className="text-xs font-medium text-gray-600 mb-1 block">Nombre de campaña</label>
+              <label htmlFor="campaign-name" className="text-xs font-medium text-muted-foreground mb-1 block">Nombre de campaña</label>
               <Input
-                placeholder="Ej: Retención VIP Mayo, Promo Slots Junio…"
+                id="campaign-name" placeholder="Ej: Retención VIP Mayo, Promo Slots Junio…"
                 value={form.name}
                 onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
               />
@@ -744,38 +1068,156 @@ export default function Campaigns() {
                 onClick={() => {
                   const next = !useTemplate
                   setUseTemplate(next)
-                  if (next) { loadTemplates(); setSelectedTemplate('') }
-                  else { setSelectedTemplate('') }
+                  setSelectedTemplate('')
+                  setTplBody([]); setTplHeaderLink(''); setTplButtons({})
+                  setTemplateSyncMsg(null)
+                  if (next) loadTemplates()
                 }}
                 className={`flex items-center gap-3 w-full rounded-lg border px-4 py-3 text-sm transition-colors ${
                   useTemplate
-                    ? 'border-green-200 bg-green-50 text-green-800'
-                    : 'border-gray-200 bg-gray-50 text-gray-500'
+                    ? 'border-success/20 bg-success/10 text-success'
+                    : 'border-border bg-background text-muted-foreground'
                 }`}
               >
                 <div className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${useTemplate ? 'bg-green-500' : 'bg-gray-300'}`}>
-                  <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${useTemplate ? 'translate-x-4' : ''}`} />
+                  <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card shadow transition-transform ${useTemplate ? 'translate-x-4' : ''}`} />
                 </div>
                 {useTemplate ? 'Usar plantilla aprobada activado' : 'Usar plantilla aprobada (opcional)'}
               </button>
               {useTemplate && (
-                <div className="mt-2">
-                  <Select value={selectedTemplate} onValueChange={onSelectTemplate}>
-                    <SelectTrigger className="text-sm"><SelectValue placeholder="Seleccionar plantilla…" /></SelectTrigger>
-                    <SelectContent>
-                      {templateList.length === 0
-                        ? <SelectItem value="_none" disabled>No hay plantillas aprobadas</SelectItem>
-                        : templateList.map(t => <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>)
-                      }
-                    </SelectContent>
-                  </Select>
-                  {selectedTemplate && <p className="text-xs text-green-600 mt-1">Mensaje cargado desde la plantilla seleccionada.</p>}
+                <div className="mt-2 space-y-3">
+                  <div className="flex items-start gap-2">
+                    <div className="flex-1 min-w-0">
+                      {templatesStatus === 'error' ? (
+                        <p role="alert" className="text-xs text-destructive flex items-center gap-1">
+                          <AlertTriangle size={11} /> No se pudieron cargar las plantillas.
+                          <button type="button" onClick={loadTemplates} className="underline">Reintentar</button>
+                        </p>
+                      ) : (
+                        <Select
+                          value={selectedTemplate}
+                          onValueChange={onSelectTemplate}
+                          items={templateList.map(t => ({ value: t.id, label: `${t.name} · ${t.language || 'idioma no indicado'}` }))}
+                        >
+                          <SelectTrigger className="text-sm"><SelectValue placeholder="Seleccionar plantilla…" /></SelectTrigger>
+                          <SelectContent>
+                            {templatesStatus === 'loading'
+                              ? <SelectItem value="_loading" disabled>Cargando plantillas…</SelectItem>
+                              : templateList.length === 0
+                              ? <SelectItem value="_none" disabled>No hay plantillas aprobadas con cuenta WABA</SelectItem>
+                              : templateList.map(t => (
+                                  <SelectItem key={t.id} value={t.id}>{t.name} · {t.language || 'idioma no indicado'}</SelectItem>
+                                ))
+                            }
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </div>
+                    <Button type="button" variant="outline" size="sm" className="shrink-0"
+                            onClick={syncTemplatesFromMeta}
+                            disabled={syncingTemplates || templatesStatus === 'loading'}>
+                      <RefreshCw size={13} className={`mr-1 ${syncingTemplates ? 'animate-spin' : ''}`} />
+                      {syncingTemplates ? 'Sincronizando…' : 'Sincronizar desde Meta'}
+                    </Button>
+                  </div>
+                  {templatesStatus === 'ready' && templateList.length === 0 && !templateSyncMsg && (
+                    <p className="text-xs text-orange-500">
+                      No hay plantillas locales. Usá &quot;Sincronizar desde Meta&quot; para importar el catálogo de tus cuentas WhatsApp Cloud.
+                    </p>
+                  )}
+                  {templateSyncMsg && (
+                    templateSyncMsg.kind === 'error'
+                      ? <p role="alert" className="text-xs text-destructive flex items-center gap-1"><AlertTriangle size={11} /> {templateSyncMsg.text}</p>
+                      : <p role="status" className="text-xs text-success">{templateSyncMsg.text}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Se envía como plantilla de WhatsApp Cloud API por el distribuidor multi-línea. Sólo se listan plantillas aprobadas con cuenta WABA asociada.
+                    La sincronización sólo importa el catálogo existente en Meta: no crea plantillas ni envía mensajes.
+                  </p>
+
+                  {selectedTpl && tplAnalysis && (tplAnalysis.unsupported.length > 0 ? (
+                    <div role="alert" className="bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 text-xs text-destructive space-y-1">
+                      <p className="font-medium flex items-center gap-1"><AlertTriangle size={12} /> Esta plantilla no se puede usar en campañas todavía</p>
+                      <ul className="list-disc pl-5">
+                        {tplAnalysis.unsupported.map((u, i) => <li key={i}>{u}</li>)}
+                      </ul>
+                      <p>No se admite la creación con esta plantilla. Elegí otra o usá un mensaje de texto.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {tplAnalysis.header && (
+                        <div>
+                          <label htmlFor="tpl-header-link" className="text-xs font-medium text-muted-foreground mb-1 block">
+                            URL del encabezado ({HEADER_LABEL[tplAnalysis.header]})
+                          </label>
+                          <Input id="tpl-header-link" placeholder="https://…" value={tplHeaderLink}
+                                 onChange={e => setTplHeaderLink(e.target.value)} />
+                        </div>
+                      )}
+                      {Array.from({ length: tplAnalysis.bodyCount }, (_, i) => (
+                        <div key={i}>
+                          <label htmlFor={`tpl-body-${i}`} className="text-xs font-medium text-muted-foreground mb-1 block">
+                            Parámetro {`{{${i + 1}}}`} del cuerpo
+                          </label>
+                          <Input id={`tpl-body-${i}`} value={tplBody[i] ?? ''}
+                                 placeholder="Escribí un valor o usá el nombre del contacto"
+                                 aria-describedby={`tpl-body-help-${i}`}
+                                 onChange={e => {
+                                   const v = e.target.value
+                                   setTplBody(prev => { const next = [...prev]; next[i] = v; return next })
+                                 }} />
+                          <Button type="button" variant="outline" size="sm" className="mt-2"
+                                  aria-label={`Usar nombre del contacto en {{${i + 1}}}`}
+                                  onClick={() => setTplBody(prev => {
+                                    const next = [...prev]; next[i] = CONTACT_NAME_VARIABLE; return next
+                                  })}>
+                            <UserCheck size={13} className="mr-1" /> Usar nombre del contacto
+                          </Button>
+                          <p id={`tpl-body-help-${i}`} className="text-xs text-muted-foreground mt-1">
+                            {hasTemplateContactName(tplBody[i] ?? '')
+                              ? 'Se reemplaza por el nombre guardado de cada contacto al enviar.'
+                              : 'Un valor escrito sin llaves, como nombre o Pablo, se envía igual a todos.'}
+                          </p>
+                        </div>
+                      ))}
+                      {tplAnalysis.buttons.map(b => (
+                        <div key={b.index}>
+                          <label htmlFor={`tpl-button-${b.index}`} className="text-xs font-medium text-muted-foreground mb-1 block">
+                            {b.sub_type === 'url'
+                              ? `Valor variable de la URL del botón "${b.label}"`
+                              : `Payload del botón "${b.label}" (opcional)`}
+                          </label>
+                          <Input id={`tpl-button-${b.index}`} value={tplButtons[b.index] ?? ''}
+                                 onChange={e => {
+                                   const v = e.target.value
+                                   setTplButtons(prev => ({ ...prev, [b.index]: v }))
+                                 }} />
+                        </div>
+                      ))}
+                      {tplAnalysis.bodyCount === 0 && !tplAnalysis.header && tplAnalysis.buttons.length === 0 && (
+                        <p className="text-xs text-muted-foreground">Esta plantilla no requiere parámetros.</p>
+                      )}
+                      <div className="bg-background rounded-lg p-3">
+                        <p className="text-xs font-medium text-muted-foreground mb-1">Vista previa del cuerpo (WhatsApp la arma al enviar)</p>
+                        <p className="text-sm text-foreground whitespace-pre-wrap">{fillTemplatePreview(tplAnalysis.bodyText, tplBody)}</p>
+                        {tplBody.some(hasTemplateContactName) && (
+                          <p className="text-xs text-muted-foreground mt-1">Pablo es un nombre de ejemplo. Cada contacto recibe el suyo.</p>
+                        )}
+                        {tplBuild && tplBuild.missing.length > 0 && (
+                          <p className="text-xs text-orange-600 mt-1">Falta completar: {tplBuild.missing.join(', ')}</p>
+                        )}
+                        {tplBuild && tplBuild.invalid.length > 0 && (
+                          <p className="text-xs text-destructive mt-1">Corregí: {tplBuild.invalid.join(', ')}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
 
             <div className="col-span-2">
-              <label className="text-xs font-medium text-gray-600 mb-1 block">Tipo de campaña</label>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Tipo de campaña</label>
               <Select value={form.type} onValueChange={v => setForm(f => ({ ...f, type: v ?? 'promotion' }))}>
                 <SelectTrigger>
                   <SelectValue placeholder="Seleccioná el tipo de campaña" />
@@ -793,7 +1235,7 @@ export default function Campaigns() {
             </div>
 
             <div>
-              <label className="text-xs font-medium text-gray-600 mb-1 block">Tipo de audiencia</label>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Tipo de audiencia</label>
               <div className="flex gap-2 mb-2">
                 <button
                   type="button"
@@ -801,7 +1243,7 @@ export default function Campaigns() {
                   className={`flex-1 py-1.5 text-xs rounded-md border transition-colors font-medium ${
                     form.audience_type === 'contacts'
                       ? 'border-blue-500 bg-blue-50 text-blue-700'
-                      : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                      : 'border-border text-muted-foreground hover:border-input'
                   }`}
                 >
                   Contactos
@@ -812,7 +1254,7 @@ export default function Campaigns() {
                   className={`flex-1 py-1.5 text-xs rounded-md border transition-colors font-medium ${
                     form.audience_type === 'prospects'
                       ? 'border-violet-500 bg-violet-50 text-violet-700'
-                      : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                      : 'border-border text-muted-foreground hover:border-input'
                   }`}
                 >
                   Listas de Difusión
@@ -826,7 +1268,7 @@ export default function Campaigns() {
                       {lists.map(l => <SelectItem key={l.id} value={l.id}>{l.name} ({l.contact_count} contactos)</SelectItem>)}
                     </SelectContent>
                   </Select>
-                  {lists.length === 0 && <p className="text-xs text-orange-500 mt-1">Creá primero una lista en Contactos</p>}
+                  {lists.length === 0 && !lookupFailures.includes('listas de contactos') && <p className="text-xs text-orange-500 mt-1">Creá primero una lista en Contactos</p>}
                 </>
               ) : (
                 <>
@@ -836,32 +1278,48 @@ export default function Campaigns() {
                       {prospectLists.map(l => <SelectItem key={l.id} value={l.id}>{l.name} ({l.member_count.toLocaleString()} prospectos)</SelectItem>)}
                     </SelectContent>
                   </Select>
-                  {prospectLists.length === 0 && <p className="text-xs text-orange-500 mt-1">Creá primero una lista en Contactos › Listas de Difusión</p>}
+                  {prospectLists.length === 0 && !lookupFailures.includes('listas de difusión') && <p className="text-xs text-orange-500 mt-1">Creá primero una lista en Contactos › Listas de Difusión</p>}
                 </>
+              )}
+              {lookupFailures.length > 0 && (
+                <p role="alert" className="text-xs text-destructive mt-1">
+                  No se pudieron cargar: {lookupFailures.join(', ')}.{' '}
+                  <button type="button" onClick={loadLookups} className="underline">Reintentar</button>
+                </p>
               )}
             </div>
 
             <div>
-              <label className="text-xs font-medium text-gray-600 mb-1 block">
-                <Clock size={12} className="inline mr-1"/>Programar envío (opcional)
+              <label htmlFor="campaign-scheduled-at" className="text-xs font-medium text-muted-foreground mb-1 block">
+                <Clock size={12} className="inline mr-1"/>Programar envío (opcional, hora Argentina UTC−03:00)
               </label>
-              <Input type="datetime-local" value={form.scheduled_at} onChange={e => setForm(f=>({...f,scheduled_at:e.target.value}))} />
+              <Input
+                id="campaign-scheduled-at"
+                type="datetime-local"
+                value={schedulerEnabled ? form.scheduled_at : ''}
+                disabled={!schedulerEnabled}
+                onChange={e => setForm(f=>({...f,scheduled_at:e.target.value}))}
+              />
+              {schedulerEnabled
+                ? <p className="text-xs text-muted-foreground mt-1">Se interpreta como hora de Argentina (America/Argentina/Buenos_Aires).</p>
+                : <p className="text-xs text-orange-500 mt-1">Programación automática no habilitada. Podés guardar la campaña como borrador y enviarla manualmente.</p>}
             </div>
 
-            {/* Mensajes con variantes */}
+            {/* Mensajes con variantes (sólo texto; las plantillas usan sus propios parámetros) */}
+            {!useTemplate && <>
             <div className="col-span-2 space-y-3">
               <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-gray-600">
+                <label className="text-xs font-medium text-muted-foreground">
                   Mensajes{' '}
-                  <span className="text-gray-400 font-normal">(usá {'{{nombre}}'} para personalizar)</span>
+                  <span className="text-muted-foreground font-normal">(usá {'{{nombre}}'} para personalizar)</span>
                 </label>
                 <div className="flex items-center gap-2">
                   {messages.length > 1 && (
-                    <span className="text-xs text-indigo-600 flex items-center gap-1">
+                    <span className="text-xs text-primary flex items-center gap-1">
                       <Shuffle size={11} /> Se envían aleatoriamente
                     </span>
                   )}
-                  <span className="text-xs text-gray-400">{messages.length}/10</span>
+                  <span className="text-xs text-muted-foreground">{messages.length}/10</span>
                 </div>
               </div>
 
@@ -870,19 +1328,19 @@ export default function Campaigns() {
                   <div className="flex items-start gap-2">
                     <div className="flex-1">
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-gray-500">
+                        <span className="text-xs text-muted-foreground">
                           Variante {i + 1}
                           {messages.length > 1 && (
                             <button
                               type="button"
                               onClick={() => setPreviewIdx(i)}
-                              className={`ml-2 text-xs underline ${previewIdx === i ? 'text-indigo-600 font-medium' : 'text-gray-400'}`}
+                              className={`ml-2 text-xs underline ${previewIdx === i ? 'text-primary font-medium' : 'text-muted-foreground'}`}
                             >
                               {previewIdx === i ? 'previsualizando' : 'previsualizar'}
                             </button>
                           )}
                         </span>
-                        <span className="text-xs text-gray-400">{msg.length} car.</span>
+                        <span className="text-xs text-muted-foreground">{msg.length} car.</span>
                       </div>
                       <Textarea
                         placeholder={i === 0 ? 'Hola {{nombre}}, tenemos una oferta especial…' : `Variante alternativa ${i + 1}…`}
@@ -896,7 +1354,7 @@ export default function Campaigns() {
                       <button
                         type="button"
                         onClick={() => removeMessage(i)}
-                        className="mt-6 text-gray-300 hover:text-red-400 transition-colors"
+                        className="mt-6 text-muted-foreground/60 hover:text-red-400 transition-colors"
                       >
                         <Trash2 size={14} />
                       </button>
@@ -909,35 +1367,20 @@ export default function Campaigns() {
                 <button
                   type="button"
                   onClick={addMessage}
-                  className="w-full border-2 border-dashed border-gray-200 rounded-lg py-2 text-xs text-gray-400 hover:border-indigo-300 hover:text-indigo-500 transition-colors flex items-center justify-center gap-1.5"
+                  className="w-full border-2 border-dashed border-border rounded-lg py-2 text-xs text-muted-foreground hover:border-indigo-300 hover:text-indigo-500 transition-colors flex items-center justify-center gap-1.5"
                 >
                   <Plus size={13} /> Agregar variante de mensaje
                 </button>
               )}
             </div>
+            </>}
 
-            {/* Modo multi-línea */}
-            <div className="col-span-2">
-              <button
-                type="button"
-                onClick={() => setForm(f => ({ ...f, use_multi_line: !f.use_multi_line }))}
-                className={`flex items-center gap-3 w-full rounded-lg border px-4 py-3 text-sm transition-colors ${
-                  form.use_multi_line
-                    ? 'border-indigo-200 bg-indigo-50 text-indigo-800'
-                    : 'border-gray-200 bg-gray-50 text-gray-500'
-                }`}
-              >
-                <div className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${form.use_multi_line ? 'bg-indigo-500' : 'bg-gray-300'}`}>
-                  <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${form.use_multi_line ? 'translate-x-4' : ''}`} />
-                </div>
-                <GitBranch size={15} className="shrink-0" />
-                {form.use_multi_line
-                  ? <span>Modo multi-línea activado — distribuye envíos entre todas las líneas elegibles</span>
-                  : <span>Modo multi-línea desactivado — usa el flujo estándar de n8n (una línea)</span>
-                }
-              </button>
+            <div className="col-span-2 rounded-lg border border-primary/20 bg-accent px-4 py-3 text-sm text-accent-foreground">
+              <div className="flex items-center gap-2 font-medium"><GitBranch size={15} />Reparto automático entre líneas activas</div>
+              <p className="mt-1 text-xs">Los clientes nuevos se reparten por turnos. Cada cliente conserva su línea en próximas campañas. Si no está disponible o no tiene cupo, queda pendiente.</p>
             </div>
 
+            {!useTemplate && <>
             {/* Personalización de nombre */}
             <div className="col-span-2">
               <button
@@ -945,24 +1388,24 @@ export default function Campaigns() {
                 onClick={() => setForm(f => ({ ...f, personalize_name: !f.personalize_name }))}
                 className={`flex items-center gap-3 w-full rounded-lg border px-4 py-3 text-sm transition-colors ${
                   form.personalize_name
-                    ? 'border-green-200 bg-green-50 text-green-800'
-                    : 'border-gray-200 bg-gray-50 text-gray-500'
+                    ? 'border-success/20 bg-success/10 text-success'
+                    : 'border-border bg-background text-muted-foreground'
                 }`}
               >
                 <div className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${form.personalize_name ? 'bg-green-500' : 'bg-gray-300'}`}>
-                  <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${form.personalize_name ? 'translate-x-4' : ''}`} />
+                  <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card shadow transition-transform ${form.personalize_name ? 'translate-x-4' : ''}`} />
                 </div>
                 {form.personalize_name
-                  ? <><UserCheck size={15} className="shrink-0" /><span>Nombre personalizado activado — <code className="bg-green-100 px-1 rounded">{'{{nombre}}'}</code> se reemplaza con el nombre de cada contacto</span></>
-                  : <><UserX size={15} className="shrink-0" /><span>Nombre personalizado desactivado — <code className="bg-gray-100 px-1 rounded">{'{{nombre}}'}</code> se omite del mensaje</span></>
+                  ? <><UserCheck size={15} className="shrink-0" /><span>Nombre personalizado activado — <code className="bg-success/15 px-1 rounded">{'{{nombre}}'}</code> se reemplaza con el nombre de cada contacto</span></>
+                  : <><UserX size={15} className="shrink-0" /><span>Nombre personalizado desactivado — <code className="bg-muted px-1 rounded">{'{{nombre}}'}</code> se omite del mensaje</span></>
                 }
               </button>
             </div>
 
             {/* Preview */}
             {messages[previewIdx]?.trim() && (
-              <div className="col-span-2 bg-gray-50 rounded-lg p-3">
-                <p className="text-xs font-medium text-gray-500 mb-2">
+              <div className="col-span-2 bg-background rounded-lg p-3">
+                <p className="text-xs font-medium text-muted-foreground mb-2">
                   Preview — Variante {previewIdx + 1}
                 </p>
                 <div className="inline-block bg-green-500 text-white text-sm px-3 py-2 rounded-2xl rounded-bl-sm max-w-xs">
@@ -973,27 +1416,27 @@ export default function Campaigns() {
 
             {/* Imagen adjunta */}
             <div className="col-span-2">
-              <label className="text-xs font-medium text-gray-600 mb-2 block flex items-center gap-1">
+              <label className="text-xs font-medium text-muted-foreground mb-2 block flex items-center gap-1">
                 <ImageIcon size={12} /> Imagen adjunta (opcional)
               </label>
 
               {form.media_url ? (
-                <div className="relative w-full rounded-lg border border-gray-200 overflow-hidden bg-gray-50 flex items-center gap-3 p-3">
+                <div className="relative w-full rounded-lg border border-border overflow-hidden bg-background flex items-center gap-3 p-3">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={form.media_url}
                     alt="Media preview"
-                    className="h-20 w-20 object-cover rounded-md border border-gray-200 shrink-0"
+                    className="h-20 w-20 object-cover rounded-md border border-border shrink-0"
                     onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                   />
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs text-gray-500 truncate">{form.media_url}</p>
-                    <p className="text-xs text-green-600 mt-0.5">Imagen cargada correctamente</p>
+                    <p className="text-xs text-muted-foreground truncate">{form.media_url}</p>
+                    <p className="text-xs text-success mt-0.5">Imagen cargada correctamente</p>
                   </div>
                   <button
                     type="button"
                     onClick={() => { setForm(f => ({ ...f, media_url: '' })); setUploadError(null) }}
-                    className="p-1 rounded-full text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0"
+                    className="p-1 rounded-full text-muted-foreground hover:text-red-500 hover:bg-destructive/10 transition-colors shrink-0"
                     title="Quitar imagen"
                   >
                     <X size={16} />
@@ -1022,18 +1465,18 @@ export default function Campaigns() {
                       const file = e.dataTransfer.files?.[0]
                       if (file) uploadMedia(file)
                     }}
-                    className="w-full border-2 border-dashed border-gray-200 rounded-lg py-6 text-sm text-gray-400 hover:border-indigo-300 hover:text-indigo-500 transition-colors flex flex-col items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full border-2 border-dashed border-border rounded-lg py-6 text-sm text-muted-foreground hover:border-indigo-300 hover:text-indigo-500 transition-colors flex flex-col items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {uploadingMedia
                       ? <><Loader2 size={20} className="animate-spin text-indigo-400" /><span>Subiendo imagen…</span></>
-                      : <><Upload size={20} /><span>Hacé clic o arrastrá una imagen aquí</span><span className="text-xs text-gray-300">JPG, PNG, WEBP, GIF · máx. 10 MB</span></>
+                      : <><Upload size={20} /><span>Hacé clic o arrastrá una imagen aquí</span><span className="text-xs text-muted-foreground/60">JPG, PNG, WEBP, GIF · máx. 10 MB</span></>
                     }
                   </button>
                   {/* También permitir pegar URL directamente */}
                   <div className="mt-2 flex items-center gap-2">
-                    <div className="h-px flex-1 bg-gray-100" />
-                    <span className="text-xs text-gray-300">o pegá una URL</span>
-                    <div className="h-px flex-1 bg-gray-100" />
+                    <div className="h-px flex-1 bg-muted" />
+                    <span className="text-xs text-muted-foreground/60">o pegá una URL</span>
+                    <div className="h-px flex-1 bg-muted" />
                   </div>
                   <Input
                     className="mt-2"
@@ -1045,132 +1488,68 @@ export default function Campaigns() {
               )}
 
               {uploadError && (
-                <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+                <p className="text-xs text-destructive mt-1 flex items-center gap-1">
                   <AlertTriangle size={11} /> {uploadError}
                 </p>
               )}
             </div>
+            </>}
 
-            {/* Configuración Anti-Ban */}
+            {/* Pausas y límites: sólo antiblock_delay_min/max, que son los que usan los procesadores de envío */}
             <div className="col-span-2 border border-indigo-100 rounded-xl p-4 space-y-4 bg-indigo-50/30">
               <div className="flex items-center gap-2">
                 <Shield size={14} className="text-indigo-500" />
-                <span className="text-sm font-semibold text-gray-700">Configuración Anti-Ban</span>
-              </div>
-
-              {/* Perfil Anti-Ban */}
-              <div>
-                <label className="text-xs font-medium text-gray-600 mb-1 block">Perfil Anti-Ban</label>
-                <Select value={form.anti_ban_profile_id} onValueChange={v => setForm(f => ({ ...f, anti_ban_profile_id: (!v || v === '_default') ? '' : v }))}>
-                  <SelectTrigger className="text-sm bg-white">
-                    <SelectValue placeholder="Usar perfil por defecto (Meta-Stealth-2026)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="_default">Usar perfil por defecto</SelectItem>
-                    {antiBanProfiles.map(p => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.profile_name}{p.is_default ? ' ★' : ''} — {p.risk_tolerance}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {antiBanProfiles.length === 0 && (
-                  <p className="text-xs text-orange-500 mt-1">No se pudieron cargar los perfiles. Aplicá la migración 071 si aún no lo hiciste.</p>
-                )}
+                <span className="text-sm font-semibold text-foreground">Pausas y límites</span>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
-                {/* Tipo de delay */}
                 <div>
-                  <label className="text-xs font-medium text-gray-600 mb-1 block">Tipo de Delay</label>
-                  <Select value={form.delay_type} onValueChange={v => setForm(f => ({ ...f, delay_type: v ?? f.delay_type }))}>
-                    <SelectTrigger className="text-sm bg-white"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="gaussian">Gaussiano (recomendado)</SelectItem>
-                      <SelectItem value="human_noisy">Humano con ruido</SelectItem>
-                      <SelectItem value="uniform">Uniforme</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Delay base */}
-                <div>
-                  <label className="text-xs font-medium text-gray-600 mb-1 block">Delay base (seg)</label>
+                  <label htmlFor="campaign-delay-min" className="text-xs font-medium text-muted-foreground mb-1 block">Pausa mínima (segundos)</label>
                   <Input
+                    id="campaign-delay-min"
                     type="number"
-                    min={5}
-                    max={120}
-                    className="bg-white"
-                    value={form.custom_delay_seconds}
-                    onChange={e => setForm(f => ({ ...f, custom_delay_seconds: Number(e.target.value) }))}
+                    inputMode="numeric"
+                    min={DELAY_MIN_SECONDS}
+                    max={DELAY_MAX_SECONDS}
+                    step={1}
+                    className="bg-card"
+                    value={form.antiblock_delay_min}
+                    onChange={e => setForm(f => ({ ...f, antiblock_delay_min: Number(e.target.value) }))}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="campaign-delay-max" className="text-xs font-medium text-muted-foreground mb-1 block">Pausa máxima (segundos)</label>
+                  <Input
+                    id="campaign-delay-max"
+                    type="number"
+                    inputMode="numeric"
+                    min={DELAY_MIN_SECONDS}
+                    max={DELAY_MAX_SECONDS}
+                    step={1}
+                    className="bg-card"
+                    value={form.antiblock_delay_max}
+                    onChange={e => setForm(f => ({ ...f, antiblock_delay_max: Number(e.target.value) }))}
                   />
                 </div>
               </div>
-
-              {/* Límite diario por línea */}
-              <div>
-                <label className="text-xs font-medium text-gray-600 mb-1 block">Límite diario por línea (opcional)</label>
-                <Input
-                  type="number"
-                  min={5}
-                  placeholder="Sin límite adicional"
-                  className="bg-white"
-                  value={form.daily_limit_override}
-                  onChange={e => setForm(f => ({ ...f, daily_limit_override: e.target.value === '' ? '' : Number(e.target.value) }))}
-                />
-                <p className="text-xs text-gray-400 mt-1">
-                  Este límite se aplica solo a esta campaña. El perfil define el comportamiento general.
-                </p>
-              </div>
-
-              {/* Mini-sessions */}
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setForm(f => ({ ...f, enable_mini_sessions: !f.enable_mini_sessions }))}
-                  className={`flex items-center gap-3 w-full rounded-lg border px-4 py-3 text-sm transition-colors ${
-                    form.enable_mini_sessions
-                      ? 'border-purple-200 bg-purple-50 text-purple-800'
-                      : 'border-gray-200 bg-white text-gray-500'
-                  }`}
-                >
-                  <div className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${form.enable_mini_sessions ? 'bg-purple-500' : 'bg-gray-300'}`}>
-                    <div className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${form.enable_mini_sessions ? 'translate-x-4' : ''}`} />
-                  </div>
-                  <Zap size={15} className="shrink-0" />
-                  {form.enable_mini_sessions
-                    ? <span>Mini-sesión activada — envía seguimiento corto tras cada mensaje exitoso</span>
-                    : <span>Mini-sesión desactivada</span>
-                  }
-                </button>
-                {form.enable_mini_sessions && (
-                  <div className="mt-2">
-                    <label className="text-xs font-medium text-gray-600 mb-1 block">Texto de seguimiento</label>
-                    <Input
-                      placeholder="👍"
-                      className="bg-white"
-                      value={form.mini_session_text}
-                      maxLength={100}
-                      onChange={e => setForm(f => ({ ...f, mini_session_text: e.target.value }))}
-                    />
-                    <p className="text-xs text-gray-400 mt-1">Emoji o frase corta enviada tras el mensaje principal.</p>
-                  </div>
-                )}
-              </div>
+              <p className="text-xs text-muted-foreground">
+                Pausa aleatoria entre envíos, entre {DELAY_MIN_SECONDS} y {DELAY_MAX_SECONDS} segundos. Se respetan además los límites y horarios de cada línea.
+                En modo multi-línea pueden añadirse pausas según la configuración de cada línea.
+              </p>
             </div>
 
             {createError && (
-              <div className="col-span-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-600 flex items-center justify-between">
+              <div role="alert" className="col-span-2 bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 text-sm text-destructive flex items-center justify-between">
                 <span>{createError}</span>
-                <button onClick={() => setCreateError(null)} className="ml-3 text-red-400 hover:text-red-600">✕</button>
+                <button onClick={() => setCreateError(null)} className="ml-3 text-red-400 hover:text-destructive">✕</button>
               </div>
             )}
             <div className="col-span-2 flex gap-2">
               <Button variant="outline" className="flex-1" onClick={() => setShowNew(false)} disabled={creating}>Cancelar</Button>
-              <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={createCampaign}
-                      disabled={creating || !form.name || !messages.some(m => m.trim())}>
+              <Button className="flex-1 bg-primary hover:bg-primary/90" onClick={createCampaign}
+                      disabled={!canCreate}>
                 {creating ? <Loader2 size={14} className="mr-1 animate-spin"/> : <Send size={14} className="mr-1"/>}
-                {form.scheduled_at ? 'Programar campaña' : 'Guardar campaña'}
+                {form.scheduled_at && schedulerEnabled ? 'Programar campaña' : 'Guardar campaña'}
               </Button>
             </div>
           </div>
@@ -1178,18 +1557,19 @@ export default function Campaigns() {
       </Dialog>
 
       {/* Modal detalle campaña */}
-      <Dialog open={!!selected} onOpenChange={() => { setSelected(null); setDetailError(null) }}>
+      <Dialog open={!!selected} onOpenChange={v => { if (!v) closeDetail() }}>
         <DialogContent className="w-[95vw] max-w-7xl sm:w-[95vw] sm:max-w-7xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {selected?.name}
-              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_BADGE[selected?.status || ''] || 'bg-gray-100 text-gray-600'}`}>
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_BADGE[selected?.status || ''] || 'bg-muted text-muted-foreground'}`}>
                 {STATUS_LABEL[selected?.status ?? ''] ?? selected?.status}
               </span>
             </DialogTitle>
           </DialogHeader>
           {selected && (
             <div className="space-y-4">
+              {isAdmin && selected.message_type === 'template' && <CampaignTestSend key={selected.id} campaignId={selected.id} />}
               {/* Métricas */}
               <div className={`grid gap-3 text-center ${selected.total_skipped > 0 ? 'grid-cols-5' : 'grid-cols-4'}`}>
                 <StatBox label="Enviados"    value={selected.total_sent}      color="blue"   />
@@ -1197,7 +1577,7 @@ export default function Campaigns() {
                 <StatBox label="Leídos"      value={selected.total_read}      color="purple" pct={selected.read_rate} />
                 <StatBox label="Fallidos"    value={selected.total_failed}    color="red"    />
                 {selected.total_skipped > 0 && (
-                  <StatBox label="Omitidos (freq.)" value={selected.total_skipped} color="orange" />
+                  <StatBox label="Omitidos" value={selected.total_skipped} color="orange" />
                 )}
               </div>
 
@@ -1220,15 +1600,15 @@ export default function Campaigns() {
 
               {/* Detalle de fallos — visible inmediatamente si hay fallidos */}
               {selected.total_failed > 0 && (
-                <div className="border border-red-200 rounded-lg p-3 bg-red-50 space-y-2">
+                <div className="border border-destructive/20 rounded-lg p-3 bg-destructive/10 space-y-2">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm font-medium text-red-700 flex items-center gap-1.5">
+                    <p className="text-sm font-medium text-destructive flex items-center gap-1.5">
                       <AlertTriangle size={14} /> {selected.total_failed} envío{selected.total_failed !== 1 ? 's' : ''} fallido{selected.total_failed !== 1 ? 's' : ''}
                     </p>
                     {!loadingContacts && campContacts.filter(c => c.msg_status === 'failed').length > 0 && (
                       <Button
                         size="sm" variant="outline"
-                        className="border-red-300 text-red-600 hover:bg-red-100 text-xs h-7 px-2 shrink-0"
+                        className="border-red-300 text-destructive hover:bg-destructive/15 text-xs h-7 px-2 shrink-0"
                         onClick={() => createListFromFailed(selected)}
                         disabled={creatingFailedList}
                         title="Crear una nueva lista de contactos con los fallidos para volver a difundirles"
@@ -1256,21 +1636,21 @@ export default function Campaigns() {
                             {/* Resumen agrupado por error */}
                             <div className="space-y-1">
                               {Object.entries(grouped).sort((a,b) => b[1]-a[1]).map(([err, cnt], i) => (
-                                <div key={i} className="flex items-start gap-2 text-xs bg-white border border-red-100 rounded px-2 py-1.5">
+                                <div key={i} className="flex items-start gap-2 text-xs bg-card border border-destructive/20 rounded px-2 py-1.5">
                                   <span className="shrink-0 font-bold text-red-500 min-w-[2rem]">{cnt}×</span>
-                                  <span className="font-mono text-red-700 break-all">{err}</span>
+                                  <span className="font-mono text-destructive break-all">{err}</span>
                                 </div>
                               ))}
                             </div>
                             {/* Lista individual de contactos fallidos */}
-                            <div className="space-y-1 pt-1 border-t border-red-100">
-                              <p className="text-[11px] font-semibold text-red-600 uppercase tracking-wide">Contactos fallidos</p>
+                            <div className="space-y-1 pt-1 border-t border-destructive/20">
+                              <p className="text-[11px] font-semibold text-destructive uppercase tracking-wide">Contactos fallidos</p>
                               <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
                                 {failed.map((c, i) => (
-                                  <div key={c.id ?? i} className="flex items-center gap-2 text-xs bg-white border border-red-100 rounded px-2 py-1.5">
-                                    <span className="font-mono text-gray-600 shrink-0">{c.phone_number}</span>
+                                  <div key={c.id ?? i} className="flex items-center gap-2 text-xs bg-card border border-destructive/20 rounded px-2 py-1.5">
+                                    <span className="font-mono text-muted-foreground shrink-0">{c.phone_number}</span>
                                     {(c.first_name || c.last_name) && (
-                                      <span className="text-gray-500 truncate">{[c.first_name, c.last_name].filter(Boolean).join(' ')}</span>
+                                      <span className="text-muted-foreground truncate">{[c.first_name, c.last_name].filter(Boolean).join(' ')}</span>
                                     )}
                                     {c.error_detail && (
                                       <span className="ml-auto text-red-500 font-mono text-[10px] truncate max-w-[140px]" title={c.error_detail}>{c.error_detail}</span>
@@ -1284,7 +1664,7 @@ export default function Campaigns() {
                       })()
                   }
                   {failedListMsg && (
-                    <p className={`text-xs pt-1 ${failedListMsg.startsWith('Error') ? 'text-red-600' : 'text-green-700 font-medium'}`}>
+                    <p className={`text-xs pt-1 ${failedListMsg.startsWith('Error') ? 'text-destructive' : 'text-success font-medium'}`}>
                       {failedListMsg}
                     </p>
                   )}
@@ -1292,10 +1672,16 @@ export default function Campaigns() {
               )}
 
               {/* Mensajes */}
-              <div className="bg-gray-50 rounded-lg p-3 text-sm space-y-2">
-                <p className="font-medium text-gray-700 flex items-center gap-2">
+              {selected.message_type === 'template' ? (
+                <div className="bg-background rounded-lg p-3 text-sm space-y-1">
+                  <p className="font-medium text-foreground">Plantilla de WhatsApp{selected.template_name ? `: ${selected.template_name}` : ''}</p>
+                  <p className="text-xs text-muted-foreground">El texto final lo arma WhatsApp con los parámetros de la campaña al enviar.</p>
+                </div>
+              ) : (
+              <div className="bg-background rounded-lg p-3 text-sm space-y-2">
+                <p className="font-medium text-foreground flex items-center gap-2">
                   Mensaje{Array.isArray(selected.messages) && selected.messages.length > 1 && (
-                    <span className="text-xs bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full flex items-center gap-1">
+                    <span className="text-xs bg-accent text-primary px-1.5 py-0.5 rounded-full flex items-center gap-1">
                       <Shuffle size={10} /> {selected.messages.length} variantes aleatorias
                     </span>
                   )}
@@ -1306,30 +1692,36 @@ export default function Campaigns() {
                 ).map((msg, i) => (
                   <div key={i} className="flex gap-2">
                     {selected.messages?.length > 1 && (
-                      <span className="text-xs text-gray-400 shrink-0 mt-0.5">#{i + 1}</span>
+                      <span className="text-xs text-muted-foreground shrink-0 mt-0.5">#{i + 1}</span>
                     )}
-                    <p className="text-gray-600">{msg}</p>
+                    <p className="text-muted-foreground">{msg}</p>
                   </div>
                 ))}
               </div>
+              )}
 
-              <div className="text-xs text-gray-400 space-y-1">
+              <div className="text-xs text-muted-foreground space-y-1">
                 {(selected.list_name || selected.prospect_list_name) && (
-                  <p>Lista: <b className="text-gray-600">{selected.list_name || selected.prospect_list_name}</b></p>
+                  <p>Lista: <b className="text-muted-foreground">{selected.list_name || selected.prospect_list_name}</b></p>
                 )}
-                {selected.scheduled_at && <p>Programado: {new Date(selected.scheduled_at).toLocaleString('es-AR')}</p>}
-                {selected.completed_at && <p>Completado: {new Date(selected.completed_at).toLocaleString('es-AR')}</p>}
+                {selected.scheduled_at && (
+                  <p>
+                    Programado: {formatAR(selected.scheduled_at)}
+                    {selected.status === 'scheduled' && !schedulerEnabled && ' — Programación automática no habilitada: requiere envío manual'}
+                  </p>
+                )}
+                {selected.completed_at && <p>Completado: {formatAR(selected.completed_at)}</p>}
                 <p>Antibloqueo: {selected.antiblock_delay_min}–{selected.antiblock_delay_max} seg entre mensajes</p>
                 <p className="flex items-center gap-1">
                   {selected.personalize_name
                     ? <><UserCheck size={11} className="text-green-500"/> Nombre personalizado activado</>
-                    : <><UserX size={11} className="text-gray-400"/> Nombre personalizado desactivado</>
+                    : <><UserX size={11} className="text-muted-foreground"/> Nombre personalizado desactivado</>
                   }
                 </p>
                 <p className="flex items-center gap-1">
                   {selected.use_multi_line
                     ? <><GitBranch size={11} className="text-indigo-500"/> Modo multi-línea</>
-                    : <><Zap size={11} className="text-gray-400"/> Modo estándar (n8n)</>
+                    : <><Zap size={11} className="text-muted-foreground"/> Envío individual</>
                   }
                 </p>
               </div>
@@ -1338,35 +1730,35 @@ export default function Campaigns() {
               {selected.use_multi_line && (
                 <div className="border rounded-lg p-4 space-y-3">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                    <p className="text-sm font-medium text-foreground flex items-center gap-1.5">
                       <GitBranch size={14} className="text-indigo-500" /> Progreso de distribución
                     </p>
                     <button
-                      className="text-xs text-gray-400 hover:text-gray-600 flex items-center gap-1"
-                      onClick={async () => {
-                        setLoadingDispatch(true)
-                        try {
-                          const d = await fetchJson<DispatchSummary>(`/api/campaigns/${selected.id}/dispatch`)
-                          setDispatch(d)
-                        } catch { /* ignore */ } finally { setLoadingDispatch(false) }
-                      }}
+                      className="text-xs text-muted-foreground hover:text-muted-foreground flex items-center gap-1"
+                      disabled={loadingDispatch}
+                      onClick={() => loadDispatch(selected.id, detailReqRef.current)}
                     >
-                      <RefreshCw size={11} className={loadingDispatch ? 'animate-spin' : ''}/> Actualizar
+                      <RefreshCw size={11} className={loadingDispatch ? 'animate-spin' : ''}/> Actualizar distribución
                     </button>
                   </div>
+                  {dispatchError && (
+                    <p role="alert" className="text-xs text-red-500">
+                      {dispatchError}{dispatch ? ' Se muestran los últimos datos cargados.' : ''}
+                    </p>
+                  )}
                   {loadingDispatch && !dispatch
-                    ? <p className="text-xs text-gray-400 flex items-center gap-1"><Loader2 size={12} className="animate-spin"/> Cargando…</p>
+                    ? <p className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 size={12} className="animate-spin"/> Cargando…</p>
                     : dispatch
                     ? <>
                         <div className={`grid gap-2 text-center text-xs ${dispatch.skipped > 0 ? 'grid-cols-5' : 'grid-cols-4'}`}>
-                          <div className="bg-gray-50 rounded p-2"><p className="font-bold text-gray-700">{dispatch.total}</p><p className="text-gray-400">Total</p></div>
-                          <div className="bg-yellow-50 rounded p-2"><p className="font-bold text-yellow-600">{dispatch.queued + dispatch.processing}</p><p className="text-gray-400">Pendiente</p></div>
-                          <div className="bg-green-50 rounded p-2"><p className="font-bold text-green-600">{dispatch.sent}</p><p className="text-gray-400">Enviados</p></div>
-                          <div className="bg-red-50 rounded p-2"><p className="font-bold text-red-500">{dispatch.failed}</p><p className="text-gray-400">Fallidos</p></div>
+                          <div className="bg-background rounded p-2"><p className="font-bold text-foreground">{dispatch.total}</p><p className="text-muted-foreground">Total</p></div>
+                          <div className="bg-yellow-50 rounded p-2"><p className="font-bold text-yellow-600">{dispatch.queued + dispatch.processing}</p><p className="text-muted-foreground">Pendiente</p></div>
+                          <div className="bg-success/10 rounded p-2"><p className="font-bold text-success">{dispatch.sent}</p><p className="text-muted-foreground">Enviados</p></div>
+                          <div className="bg-destructive/10 rounded p-2"><p className="font-bold text-red-500">{dispatch.failed}</p><p className="text-muted-foreground">Fallidos</p></div>
                           {dispatch.skipped > 0 && (
                             <div className="bg-orange-50 rounded p-2">
                               <p className="font-bold text-orange-500">{dispatch.skipped}</p>
-                              <p className="text-gray-400">Omitidos</p>
+                              <p className="text-muted-foreground">Omitidos</p>
                             </div>
                           )}
                         </div>
@@ -1375,28 +1767,28 @@ export default function Campaigns() {
                             <p className="text-xs text-orange-600 flex items-center gap-1.5">
                               <Ban size={11}/> {dispatch.skipped} contacto{dispatch.skipped !== 1 ? 's fueron' : ' fue'} omitido{dispatch.skipped !== 1 ? 's' : ''} por límite de frecuencia (48h entre envíos).
                             </p>
-                            <button
+                            {isAdmin && <button
                               className="text-xs text-orange-600 underline hover:text-orange-800 whitespace-nowrap flex items-center gap-1 disabled:opacity-50"
-                              disabled={freqResetting === selected.id}
+                              disabled={freqResetting === selected.id || !!selected.processor_locked_at || !['paused', 'completed', 'cancelled'].includes(selected.status)}
                               onClick={() => resetFreq(selected)}
                             >
                               {freqResetting === selected.id
                                 ? <Loader2 size={11} className="animate-spin"/>
                                 : <RefreshCw size={11}/>}
-                              Limpiar (pruebas)
-                            </button>
+                              Reiniciar no enviados
+                            </button>}
                           </div>
                         )}
-                        <div className="text-xs text-gray-500">
+                        <div className="text-xs text-muted-foreground">
                           {dispatch.eligible_lines} línea{dispatch.eligible_lines !== 1 ? 's' : ''} elegible{dispatch.eligible_lines !== 1 ? 's' : ''} ahora
                         </div>
                         {dispatch.line_usage.length > 0 && (
                           <div className="space-y-1">
-                            <p className="text-xs font-medium text-gray-600">Uso por línea</p>
+                            <p className="text-xs font-medium text-muted-foreground">Uso por línea</p>
                             {dispatch.line_usage.map(lu => (
                               <div key={lu.line_id} className="flex items-center gap-2 text-xs">
-                                <span className="text-gray-500 truncate flex-1">{lu.display_name || lu.line_key}</span>
-                                <span className="text-green-600">{lu.sent} env.</span>
+                                <span className="text-muted-foreground truncate flex-1">{lu.display_name || lu.line_key}</span>
+                                <span className="text-success">{lu.sent} env.</span>
                                 {lu.failed > 0 && <span className="text-red-400">{lu.failed} err.</span>}
                               </div>
                             ))}
@@ -1404,17 +1796,17 @@ export default function Campaigns() {
                         )}
                         {dispatch.top_errors && dispatch.top_errors.length > 0 && (
                           <div className="space-y-1">
-                            <p className="text-xs font-medium text-red-600">Errores frecuentes</p>
+                            <p className="text-xs font-medium text-destructive">Errores frecuentes</p>
                             {dispatch.top_errors.map((e, i) => (
-                              <div key={i} className="flex items-start gap-2 text-xs bg-red-50 border border-red-100 rounded p-2">
+                              <div key={i} className="flex items-start gap-2 text-xs bg-destructive/10 border border-destructive/20 rounded p-2">
                                 <span className="shrink-0 font-bold text-red-500">{e.count}×</span>
-                                <span className="text-red-700 break-all font-mono">{e.error}</span>
+                                <span className="text-destructive break-all font-mono">{e.error}</span>
                               </div>
                             ))}
                           </div>
                         )}
                       </>
-                    : <p className="text-xs text-gray-400">Sin datos de distribución</p>
+                    : <p className="text-xs text-muted-foreground">Sin datos de distribución</p>
                   }
                 </div>
               )}
@@ -1422,7 +1814,7 @@ export default function Campaigns() {
               {/* Tabla de contactos */}
               <div>
                 <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-                  <p className="text-sm font-medium text-gray-700">Destinatarios</p>
+                  <p className="text-sm font-medium text-foreground">Destinatarios</p>
                   {!loadingContacts && campContacts.length > 0 && (
                     <div className="flex items-center gap-1 text-xs">
                       {[
@@ -1437,9 +1829,9 @@ export default function Campaigns() {
                           className={`px-2 py-0.5 rounded-full border transition-colors ${
                             contactStatusFilter === t.key
                               ? t.key === 'failed'
-                                ? 'bg-red-100 border-red-300 text-red-700 font-semibold'
-                                : 'bg-indigo-100 border-indigo-300 text-indigo-700 font-semibold'
-                              : 'border-gray-200 text-gray-500 hover:bg-gray-50'
+                                ? 'bg-destructive/15 border-red-300 text-destructive font-semibold'
+                                : 'bg-accent border-indigo-300 text-primary font-semibold'
+                              : 'border-border text-muted-foreground hover:bg-background'
                           }`}
                         >
                           {t.label} {t.count > 0 && <span className="ml-0.5 opacity-70">{t.count}</span>}
@@ -1449,11 +1841,11 @@ export default function Campaigns() {
                   )}
                 </div>
                 {detailError
-                  ? <p className="text-sm text-red-500 bg-red-50 border border-red-200 rounded px-3 py-2">{detailError}</p>
+                  ? <p className="text-sm text-red-500 bg-destructive/10 border border-destructive/20 rounded px-3 py-2">{detailError}</p>
                   : loadingContacts
-                  ? <div className="flex items-center gap-2 py-4 text-gray-400 text-sm"><Loader2 size={14} className="animate-spin"/> Cargando…</div>
+                  ? <div className="flex items-center gap-2 py-4 text-muted-foreground text-sm"><Loader2 size={14} className="animate-spin"/> Cargando…</div>
                   : campContacts.length === 0
-                    ? <p className="text-sm text-gray-400">Sin contactos registrados</p>
+                    ? <p className="text-sm text-muted-foreground">Sin contactos registrados</p>
                     : (() => {
                         const filtered = contactStatusFilter === 'all'
                           ? campContacts
@@ -1465,32 +1857,32 @@ export default function Campaigns() {
                         return (
                           <div className="border rounded-lg overflow-hidden">
                             <table className="w-full text-sm">
-                              <thead className="bg-gray-50 border-b border-gray-100">
+                              <thead className="bg-background border-b border-border">
                                 <tr>
-                                  <th className="text-left px-3 py-2 font-medium text-gray-600">Contacto</th>
-                                  <th className="text-left px-3 py-2 font-medium text-gray-600">Teléfono</th>
-                                  <th className="text-left px-3 py-2 font-medium text-gray-600">Estado</th>
-                                  <th className="text-left px-3 py-2 font-medium text-gray-600">Enviado</th>
-                                  <th className="text-left px-3 py-2 font-medium text-gray-600">Leído</th>
+                                  <th className="text-left px-3 py-2 font-medium text-muted-foreground">Contacto</th>
+                                  <th className="text-left px-3 py-2 font-medium text-muted-foreground">Teléfono</th>
+                                  <th className="text-left px-3 py-2 font-medium text-muted-foreground">Estado</th>
+                                  <th className="text-left px-3 py-2 font-medium text-muted-foreground">Enviado</th>
+                                  <th className="text-left px-3 py-2 font-medium text-muted-foreground">Leído</th>
                                 </tr>
                               </thead>
                               <tbody>
                                 {filtered.map(c => (
-                                  <tr key={c.id} className={`border-b border-gray-100 last:border-0 hover:bg-gray-50 ${c.msg_status === 'failed' ? 'bg-red-50/40' : ''}`}>
+                                  <tr key={c.id} className={`border-b border-border last:border-0 hover:bg-background ${c.msg_status === 'failed' ? 'bg-red-50/40' : ''}`}>
                                     <td className="px-3 py-2">
                                       {[c.first_name, c.last_name].filter(Boolean).join(' ') || '—'}
                                     </td>
-                                    <td className="px-3 py-2 font-mono text-xs text-gray-500">{c.phone_number}</td>
+                                    <td className="px-3 py-2 font-mono text-xs text-muted-foreground">{c.phone_number}</td>
                                     <td className="px-3 py-2">
                                       <ContactStatusBadge status={c.msg_status} />
                                       {c.msg_status === 'failed' && c.error_detail && (
                                         <p className="text-xs text-red-500 font-mono mt-0.5 break-all max-w-xs">{c.error_detail}</p>
                                       )}
                                     </td>
-                                    <td className="px-3 py-2 text-xs text-gray-400">
+                                    <td className="px-3 py-2 text-xs text-muted-foreground">
                                       {c.sent_at ? new Date(c.sent_at).toLocaleString('es-AR', { dateStyle:'short', timeStyle:'short' }) : '—'}
                                     </td>
-                                    <td className="px-3 py-2 text-xs text-gray-400">
+                                    <td className="px-3 py-2 text-xs text-muted-foreground">
                                       {c.read_at ? new Date(c.read_at).toLocaleString('es-AR', { dateStyle:'short', timeStyle:'short' }) : '—'}
                                     </td>
                                   </tr>
@@ -1511,17 +1903,17 @@ export default function Campaigns() {
 }
 
 function MiniStat({ label, value, pct, color }: { label: string; value: number; pct?: number; color: string }) {
-  const colors: Record<string, string> = { blue:'text-blue-600', green:'text-green-600', purple:'text-purple-600', red:'text-red-500', orange:'text-orange-500' }
+  const colors: Record<string, string> = { blue:'text-blue-600', green:'text-success', purple:'text-purple-600', red:'text-red-500', orange:'text-orange-500' }
   return (
     <div>
       <p className={`text-lg font-bold ${colors[color]}`}>{value}{pct !== undefined ? <span className="text-xs font-normal ml-0.5">{pct}%</span> : ''}</p>
-      <p className="text-xs text-gray-400">{label}</p>
+      <p className="text-xs text-muted-foreground">{label}</p>
     </div>
   )
 }
 
 function StatBox({ label, value, color, pct }: { label: string; value: number; color: string; pct?: number }) {
-  const colors: Record<string, string> = { blue:'text-blue-600 bg-blue-50', green:'text-green-600 bg-green-50', purple:'text-purple-600 bg-purple-50', red:'text-red-500 bg-red-50', orange:'text-orange-500 bg-orange-50' }
+  const colors: Record<string, string> = { blue:'text-blue-600 bg-blue-50', green:'text-success bg-success/10', purple:'text-purple-600 bg-purple-50', red:'text-red-500 bg-destructive/10', orange:'text-orange-500 bg-orange-50' }
   return (
     <div className={`rounded-lg p-3 ${colors[color]}`}>
       <p className="text-xl font-bold">{value}</p>
@@ -1535,8 +1927,8 @@ function ProgressBar({ label, value, color }: { label: string; value: number; co
   const colors: Record<string, string> = { green: 'bg-green-500', purple: 'bg-purple-500' }
   return (
     <div>
-      <div className="flex justify-between text-xs text-gray-500 mb-1"><span>{label}</span><span>{value}%</span></div>
-      <div className="w-full bg-gray-100 rounded-full h-2">
+      <div className="flex justify-between text-xs text-muted-foreground mb-1"><span>{label}</span><span>{value}%</span></div>
+      <div className="w-full bg-muted rounded-full h-2">
         <div className={`${colors[color]} h-2 rounded-full transition-all`} style={{ width: `${Math.min(value,100)}%` }} />
       </div>
     </div>
@@ -1545,20 +1937,20 @@ function ProgressBar({ label, value, color }: { label: string; value: number; co
 
 function ContactStatusBadge({ status }: { status: string | null }) {
   if (!status) return (
-    <span className="flex items-center gap-1 text-xs text-gray-400">
+    <span className="flex items-center gap-1 text-xs text-muted-foreground">
       <HelpCircle size={12}/> Sin enviar
     </span>
   )
   const map: Record<string, { label: string; className: string; icon: React.ReactNode }> = {
     read:      { label: 'Leído',      className: 'text-purple-600', icon: <CheckCheck size={12}/> },
-    delivered: { label: 'Entregado',  className: 'text-green-600',  icon: <Truck size={12}/> },
+    delivered: { label: 'Entregado',  className: 'text-success',  icon: <Truck size={12}/> },
     sent:      { label: 'Enviado',    className: 'text-blue-500',   icon: <Send size={12}/> },
     failed:    { label: 'Fallido',    className: 'text-red-500',    icon: <AlertTriangle size={12}/> },
     skipped:   { label: 'Omitido (freq.)', className: 'text-orange-500', icon: <Ban size={12}/> },
     sending:   { label: 'Enviando…',  className: 'text-yellow-600', icon: <Loader2 size={12} className="animate-spin"/> },
-    pending:   { label: 'En cola',    className: 'text-gray-400',   icon: <Clock size={12}/> },
+    pending:   { label: 'En cola',    className: 'text-muted-foreground',   icon: <Clock size={12}/> },
   }
-  const s = map[status] || { label: status, className: 'text-gray-500', icon: <HelpCircle size={12}/> }
+  const s = map[status] || { label: status, className: 'text-muted-foreground', icon: <HelpCircle size={12}/> }
   return (
     <span className={`flex items-center gap-1 text-xs font-medium ${s.className}`}>
       {s.icon} {s.label}

@@ -97,7 +97,7 @@ export function scoreUrgency(daysInactive: number, tier: ValueTier, cfg: Scoring
   const span = maxDays - minDays
   if (span <= 0) return 0
 
-  const position = Math.min(1, (daysInactive - minDays) / span)
+  const position = Math.max(0, Math.min(1, (daysInactive - minDays) / span))
   return Math.max(0, Math.round((1 - position) * 40))
 }
 
@@ -151,9 +151,9 @@ export function computeScore(
   const segment = resolveReactivationSegment(tier, metrics.daysInactive, cfg)
 
   return {
-    valueScore:          vScore,
+    valueScore:          Math.max(0, Math.min(60, vScore)),
     urgencyScore:        uScore,
-    total:               vScore + uScore,
+    total:               Math.max(0, Math.min(60, vScore)) + uScore,
     valueTier:           tier,
     reactivationSegment: segment,
   }

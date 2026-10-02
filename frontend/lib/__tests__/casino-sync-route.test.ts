@@ -1,266 +1,266 @@
 // @vitest-environment node
 /**
- * casino-sync-route.test.ts
+ * POST /api/dashboard/casino/sync — route-level tests (mocks; sin DB ni procesos reales)
  *
- * Regression tests for POST /api/dashboard/casino/sync (fase 1, H4 + review
- * fixes):
- *   - the 4 platforms are recognized (zeus/bet30/ganamos/argenbet), not just
- *     zeus/bet30 — before this fix, ganamos/argenbet crashed with a raw
- *     TypeError instead of a clean 503.
- *   - each platform's credential model is checked correctly (Zeus/Bet30:
- *     apiKey+token or apiKey+admin; Argenbet: bearer token or admin;
- *     Ganamos: at least one per-agent user/password pair).
- *   - desde/hasta are validated as real calendar dates, and desde <= hasta —
- *     otherwise sync-casino-players-live.js can silently no-op with exit 0.
- *   - the supervisor is spawned with an argument array (never a shell string):
- *     query params must not be interpolated into a shell command.
- *   - a spawn failure (async 'error' event, e.g. ENOENT) must not be reported
- *     as a successful launch.
- *   - pending fix: a config/credential failure (503) or a spawn failure (500)
- *     — cases where the child process never gets to run and so can never
- *     write its own row — must leave a 'failed' platform-level row (agente
- *     NULL) in casino_sync_runs, with a safe hint/message (env var NAMES,
- *     never values). Auth/input rejections (403/400) must NOT write anything
- *     — those aren't real sync failures.
- *   - an `agentes` override is validated against getAgentsForPlatform(platform)
- *     — an agent name from a different platform is rejected with 400 before
- *     ever reaching spawn.
+ * Covers:
+ *  1. Auth: 401 passthrough, 403 para no-admin (rol fresco de la DB)
+ *  2. Validación: plataformas sin conector, fechas, agentes → 400 controlado
+ *  3. Credenciales faltantes → 503
+ *  4. Corrida en curso → 409; migración pendiente → 503
+ *  5. Lanzamiento sin shell: spawn(node, argv) + run_id registrado y devuelto (202)
+ *  6. Fallos de arranque (error de spawn, salida temprana) quedan registrados
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { NextRequest } from 'next/server'
 import { EventEmitter } from 'events'
 
-vi.mock('@/lib/permissions', () => ({ checkPermission: vi.fn() }))
-vi.mock('@/lib/auth', () => ({ getSessionFromRequest: vi.fn() }))
+vi.mock('@/lib/db', () => ({ query: vi.fn() }))
+vi.mock('@/lib/permissions', () => ({ checkPermissionWithUser: vi.fn() }))
+vi.mock('child_process', () => {
+  const spawn = vi.fn()
+  return { spawn, default: { spawn } }
+})
 
-const spawnMock = vi.fn()
-vi.mock('child_process', () => ({ spawn: (...args: unknown[]) => spawnMock(...args) }))
-
-const queryMock = vi.fn()
-vi.mock('@/lib/db', () => ({ query: (...args: unknown[]) => queryMock(...args) }))
-
+import { spawn } from 'child_process'
+import { NextResponse } from 'next/server'
+import * as db from '@/lib/db'
 import * as permissions from '@/lib/permissions'
-import * as auth        from '@/lib/auth'
 import { POST } from '@/app/api/dashboard/casino/sync/route'
 
-// spawnAndConfirm() in the route awaits either the 'spawn' or 'error' event
-// before resolving — the fake child must emit one of those, not 'exit'.
-function makeFakeChild({ willError }: { willError?: Error } = {}) {
-  const child = new EventEmitter() as EventEmitter & { unref: () => void; pid: number }
-  child.unref = vi.fn()
-  child.pid = 4242
-  queueMicrotask(() => {
-    if (willError) child.emit('error', willError)
-    else child.emit('spawn')
-  })
-  return child
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+function makeReq(qs = ''): Request {
+  return new Request(`http://localhost/api/dashboard/casino/sync${qs}`, { method: 'POST' })
 }
 
-function req(url: string) {
-  return new NextRequest(new Request(url))
+function asRole(role: 'admin' | 'operator' | 'viewer') {
+  vi.mocked(permissions.checkPermissionWithUser).mockResolvedValue({
+    ok:   true,
+    user: { user_id: 'u1', role, sectors: ['dashboard'] },
+  } as never)
 }
 
-const ENV_KEYS = [
-  'DATABASE_URL', 'ZEUS_API_KEY', 'ZEUS_PLAYER_TOKEN', 'ZEUS_ADMIN_USER', 'ZEUS_ADMIN_PASSWORD',
-  'BET30_API_KEY', 'BET30_PLAYER_TOKEN', 'BET30_ADMIN_USER', 'BET30_ADMIN_PASSWORD',
-  'ARGENBET_PLAYER_TOKEN', 'ARGENBET_ADMIN_USER', 'ARGENBET_ADMIN_PASSWORD',
-  'GANAMOS_ADMINBTC_USER', 'GANAMOS_ADMINBTC_PASSWORD',
-]
+type FakeChild = EventEmitter & { unref: ReturnType<typeof vi.fn>; pid: number }
+
+function fakeChild(): FakeChild {
+  return Object.assign(new EventEmitter(), { unref: vi.fn(), pid: 4242 })
+}
+
+const ENV_KEYS = ['ZEUS_API_KEY', 'ZEUS_ADMIN_USER', 'ZEUS_ADMIN_PASSWORD', 'ZEUS_PLAYER_TOKEN', 'BET30_API_KEY', 'BET30_PLAYER_TOKEN', 'CASINO_SYNC_PAUSED']
+const savedEnv: Record<string, string | undefined> = {}
+
+beforeEach(() => {
+  vi.resetAllMocks()
+  for (const k of ENV_KEYS) savedEnv[k] = process.env[k]
+  delete process.env.CASINO_SYNC_PAUSED   // los tests existentes corren sin pausa
+  process.env.ZEUS_API_KEY        = 'k'
+  process.env.ZEUS_ADMIN_USER     = 'u'
+  process.env.ZEUS_ADMIN_PASSWORD = 'p'
+  process.env.BET30_API_KEY       = 'k'
+  process.env.BET30_PLAYER_TOKEN  = 't'
+  asRole('admin')
+  vi.mocked(db.query).mockResolvedValue([])
+})
+
+afterEach(() => {
+  for (const k of ENV_KEYS) {
+    if (savedEnv[k] === undefined) delete process.env[k]
+    else process.env[k] = savedEnv[k]
+  }
+})
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe('POST /api/dashboard/casino/sync', () => {
-  beforeEach(() => {
-    vi.mocked(permissions.checkPermission).mockResolvedValue(undefined as never)
-    vi.mocked(auth.getSessionFromRequest).mockReturnValue({ role: 'admin' } as never)
-    spawnMock.mockReset()
-    spawnMock.mockImplementation(() => makeFakeChild())
-    queryMock.mockReset()
-    queryMock.mockResolvedValue([])
-    process.env.DATABASE_URL = 'postgresql://fixture.invalid/test'
-    process.env.ZEUS_API_KEY = 'key'
-    process.env.ZEUS_PLAYER_TOKEN = 'token'
-  })
-  afterEach(() => {
-    for (const k of ENV_KEYS) delete process.env[k]
+  it('passes through the 401 from the permission check', async () => {
+    vi.mocked(permissions.checkPermissionWithUser).mockResolvedValue({
+      ok: false, response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
+    } as never)
+    const res = await POST(makeReq())
+    expect(res.status).toBe(401)
+    expect(spawn).not.toHaveBeenCalled()
   })
 
-  it('rejects a missing database configuration and records the failure when possible', async () => {
-    delete process.env.DATABASE_URL
-    const res = await POST(req('http://x/api/dashboard/casino/sync'))
-    expect(res.status).toBe(503)
-    expect((await res.json()).error).toContain('DATABASE_URL')
-    expect(queryMock).toHaveBeenCalled()
-    expect(spawnMock).not.toHaveBeenCalled()
-  })
-
-  it('rejects an end date without a start and an empty agent list before recording a sync', async () => {
-    for (const query of ['hasta=2026-09-21', 'agentes=,,']) {
-      const res = await POST(req(`http://x/api/dashboard/casino/sync?${query}`))
-      expect(res.status).toBe(400)
-    }
-    expect(queryMock).not.toHaveBeenCalled()
-    expect(spawnMock).not.toHaveBeenCalled()
-  })
-
-  it('rejects an invalid platform with 400 listing all 4 valid values', async () => {
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=nope'))
-    expect(res.status).toBe(400)
-    const body = await res.json()
-    expect(body.error).toContain('zeus, bet30, ganamos, argenbet')
-  })
-
-  it('zeus/bet30 without any credential configured → 503, no process spawned', async () => {
-    delete process.env.ZEUS_API_KEY
-    delete process.env.ZEUS_PLAYER_TOKEN
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=zeus'))
-    expect(res.status).toBe(503)
-    expect(spawnMock).not.toHaveBeenCalled()
-  })
-
-  it('argenbet with only ARGENBET_PLAYER_TOKEN set → accepted (H4: no longer a TypeError)', async () => {
-    process.env.ARGENBET_PLAYER_TOKEN = 'jwt-token'
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=argenbet'))
-    expect(res.status).toBe(202)
-    expect(spawnMock).toHaveBeenCalled()
-  })
-
-  it('argenbet with no credentials at all → 503 with a hint mentioning ARGENBET_PLAYER_TOKEN', async () => {
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=argenbet'))
-    expect(res.status).toBe(503)
-    const body = await res.json()
-    expect(body.error).toContain('ARGENBET_PLAYER_TOKEN')
-  })
-
-  it('ganamos with one agent configured (out of 6) → accepted', async () => {
-    process.env.GANAMOS_ADMINBTC_USER     = 'user'
-    process.env.GANAMOS_ADMINBTC_PASSWORD = 'pass'
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=ganamos'))
-    expect(res.status).toBe(202)
-  })
-
-  it('ganamos with zero agents configured → 503 with a per-agent hint', async () => {
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=ganamos'))
-    expect(res.status).toBe(503)
-    const body = await res.json()
-    expect(body.error).toContain('GANAMOS_<AGENTE>_USER')
-  })
-
-  it('rejects a malformed desde with 400 (never reaches spawn)', async () => {
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=zeus&desde=not-a-date'))
-    expect(res.status).toBe(400)
-    expect(spawnMock).not.toHaveBeenCalled()
-  })
-
-  it('rejects a non-existent calendar date (e.g. 2025-02-30) with 400', async () => {
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=zeus&desde=2025-02-30'))
-    expect(res.status).toBe(400)
-    expect(spawnMock).not.toHaveBeenCalled()
-  })
-
-  it('rejects desde > hasta with 400 (would otherwise silently no-op with exit 0)', async () => {
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=zeus&desde=2025-02-01&hasta=2025-01-01'))
-    expect(res.status).toBe(400)
-    const body = await res.json()
-    expect(body.error).toMatch(/no puede ser posterior/)
-    expect(spawnMock).not.toHaveBeenCalled()
-  })
-
-  it('spawns ONE supervisor process with an argument array — no shell, no string interpolation', async () => {
-    await POST(req('http://x/api/dashboard/casino/sync?platform=zeus&agentes=betcoin,royal'))
-    expect(spawnMock).toHaveBeenCalledTimes(1)
-    const [cmd, args] = spawnMock.mock.calls[0]
-    expect(cmd).toBe(process.execPath) // never 'sh', never a bare 'node' off $PATH
-    expect(Array.isArray(args)).toBe(true)
-    expect(args[0]).toMatch(/casino-sync-then-segment\.js$/)
-    expect(args).toContain('--')
-    // the payload survives as ONE argv entry, never parsed by a shell
-    expect(args.some((a: string) => a === '--agentes=betcoin,royal')).toBe(true)
-  })
-
-  it('rejects a shell-injection-shaped agentes value with 400 — it fails the platform allowlist and never reaches spawn', async () => {
-    // Since agentes is now validated against getAgentsForPlatform(), a payload
-    // like this can't survive as an argv entry anymore — it's rejected before
-    // spawn is ever called, not merely defused at the spawn() call itself.
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=zeus&agentes=betcoin;rm -rf /'))
-    expect(res.status).toBe(400)
-    expect(spawnMock).not.toHaveBeenCalled()
-  })
-
-  it('waits for the spawn to actually start before responding — a spawn error (ENOENT) is a 500, not a fake 200', async () => {
-    spawnMock.mockImplementationOnce(() => makeFakeChild({ willError: new Error('spawn ENOENT') }))
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=zeus'))
-    expect(res.status).toBe(500)
-  })
-
-  it('rejects an agent from a different platform with 400, before ever calling spawn or writing to casino_sync_runs', async () => {
-    // 'btcuno' only exists under bet30 — using it against zeus must be rejected.
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=zeus&agentes=betcoin,btcuno'))
-    expect(res.status).toBe(400)
-    const body = await res.json()
-    expect(body.error).toContain('btcuno')
-    expect(spawnMock).not.toHaveBeenCalled()
-    expect(queryMock).not.toHaveBeenCalled()
-  })
-
-  it('accepts agentes that all belong to the requested platform', async () => {
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=zeus&agentes=betcoin,royal'))
-    expect(res.status).toBe(202)
-  })
-
-  it('a missing-credentials 503 records a failed platform-level run in casino_sync_runs with a safe hint (no secret values)', async () => {
-    delete process.env.ZEUS_API_KEY
-    delete process.env.ZEUS_PLAYER_TOKEN
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=zeus'))
-    expect(res.status).toBe(503)
-
-    expect(queryMock).toHaveBeenCalledTimes(1)
-    const [sql, params] = queryMock.mock.calls[0]
-    expect(sql).toContain('INSERT INTO casino_sync_runs')
-    expect(sql).toContain("'failed'")
-    expect(params[0]).toBe('zeus')
-    // the recorded error is the credential hint (env var NAMES), never a value
-    expect(params[3]).toContain('ZEUS_API_KEY')
-    expect(params[3]).not.toContain('key')
-  })
-
-  it('an invalid platform (400) never writes to casino_sync_runs — not a real sync failure', async () => {
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=nope'))
-    expect(res.status).toBe(400)
-    expect(queryMock).not.toHaveBeenCalled()
-  })
-
-  it('a forbidden non-admin request (403) never writes to casino_sync_runs', async () => {
-    vi.mocked(auth.getSessionFromRequest).mockReturnValue({ role: 'operator' } as never)
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=zeus'))
+  it('rejects non-admin users with 403', async () => {
+    asRole('operator')
+    const res = await POST(makeReq())
     expect(res.status).toBe(403)
-    expect(queryMock).not.toHaveBeenCalled()
+    expect(spawn).not.toHaveBeenCalled()
   })
 
-  it('an invalid desde/hasta (400) never writes to casino_sync_runs', async () => {
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=zeus&desde=not-a-date'))
-    expect(res.status).toBe(400)
-    expect(queryMock).not.toHaveBeenCalled()
+  describe('pausa operativa (CASINO_SYNC_PAUSED)', () => {
+    it.each(['1', 'true', 'valor-desconocido'])('con %s responde 503 sin validar, consultar ni lanzar procesos', async value => {
+      process.env.CASINO_SYNC_PAUSED = value
+      vi.mocked(spawn).mockReturnValue(fakeChild() as never)
+
+      const res  = await POST(makeReq('?platform=zeus&desde=2026-01-01&hasta=2026-01-31'))
+      const body = await res.json()
+
+      expect(res.status).toBe(503)
+      expect(body.code).toBe('CASINO_SYNC_PAUSED')
+      expect(body.error).toMatch(/pausadas/)
+      expect(db.query).not.toHaveBeenCalled()
+      expect(spawn).not.toHaveBeenCalled()
+      // no expone configuración ni variables
+      expect(JSON.stringify(body)).not.toMatch(/ZEUS_|BET30_|DATABASE_URL/)
+    })
+
+    it('la autenticación sigue primero: 401 pasa aunque esté pausado', async () => {
+      process.env.CASINO_SYNC_PAUSED = '1'
+      vi.mocked(permissions.checkPermissionWithUser).mockResolvedValue({
+        ok: false, response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }),
+      } as never)
+      expect((await POST(makeReq())).status).toBe(401)
+      expect(permissions.checkPermissionWithUser).toHaveBeenCalledWith(expect.any(Request), 'dashboard', 'read')
+    })
+
+    it('un no-admin sigue recibiendo 403 aunque esté pausado', async () => {
+      process.env.CASINO_SYNC_PAUSED = '1'
+      asRole('operator')
+      expect((await POST(makeReq())).status).toBe(403)
+    })
+
+    it.each(['0', 'false', ''])('con %p el disparo sigue funcionando', async value => {
+      process.env.CASINO_SYNC_PAUSED = value
+      vi.mocked(spawn).mockReturnValue(fakeChild() as never)
+      const res = await POST(makeReq('?platform=zeus'))
+      expect(res.status).toBe(202)
+      expect(spawn).toHaveBeenCalledTimes(1)
+    })
   })
 
-  it('a spawn failure (500) also records a failed platform-level run', async () => {
-    spawnMock.mockImplementationOnce(() => makeFakeChild({ willError: new Error('spawn ENOENT') }))
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=zeus'))
-    expect(res.status).toBe(500)
-
-    expect(queryMock).toHaveBeenCalledTimes(1)
-    const [sql, params] = queryMock.mock.calls[0]
-    expect(sql).toContain('INSERT INTO casino_sync_runs')
-    expect(params[0]).toBe('zeus')
-    expect(params[3]).toContain('ENOENT')
-  })
-
-  it('if casino_sync_runs itself is unreachable, the original 503 is still returned — no fake success is invented', async () => {
-    delete process.env.ZEUS_API_KEY
-    delete process.env.ZEUS_PLAYER_TOKEN
-    queryMock.mockRejectedValueOnce(new Error('connection refused'))
-    const res = await POST(req('http://x/api/dashboard/casino/sync?platform=zeus'))
-    expect(res.status).toBe(503)
+  it.each(['argenbet', 'ganamos'])('rejects %s (no connector) with a controlled 400, not a 500', async platform => {
+    const res  = await POST(makeReq(`?platform=${platform}`))
     const body = await res.json()
-    expect(body.error).toContain('ZEUS_API_KEY')
+    expect(res.status).toBe(400)
+    expect(body.error).toMatch(/no tiene conector/)
+    expect(body.error).toMatch(/zeus, bet30/)
+    expect(db.query).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['?platform=consolidado',                    /Plataforma inválida/],
+    ['?platform=zeus;rm',                        /Plataforma inválida/],
+    ['?hasta=2026-01-31',                        /requiere "desde"/],
+    ['?desde=2026-02-30',                        /"desde"/],
+    ['?desde=2026-01-31&hasta=2026-01-01',       /posterior/],
+    ['?desde=2026-01-01&hasta=2999-01-01',       /futura/],
+    ['?desde=2020-01-01&hasta=2026-01-01',       /366 días/],
+    ['?agentes=betcoin,$(reboot)',               /inválidos/],
+    ['?agentes=,,',                              /vacío/],
+  ])('rejects %s with 400', async (qs, message) => {
+    const res = await POST(makeReq(qs))
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toMatch(message)
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('returns 503 when the platform credentials are not configured', async () => {
+    delete process.env.ZEUS_API_KEY
+    const res = await POST(makeReq('?platform=zeus'))
+    expect(res.status).toBe(503)
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('returns 409 when a run of the same platform is in progress', async () => {
+    vi.mocked(db.query).mockResolvedValueOnce([{ run_id: 'running-id' }])
+    const res = await POST(makeReq('?platform=zeus'))
+    expect(res.status).toBe(409)
+    expect((await res.json()).run_id).toBe('running-id')
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('returns 503 MIGRATION_PENDING when casino_sync_runs does not exist', async () => {
+    vi.mocked(db.query).mockRejectedValueOnce(Object.assign(new Error('relation does not exist'), { code: '42P01' }))
+    const res = await POST(makeReq('?platform=zeus'))
+    expect(res.status).toBe(503)
+    expect((await res.json()).code).toBe('MIGRATION_PENDING')
+  })
+
+  it('launches node with explicit argv (no shell), pre-registers and returns the run_id (202)', async () => {
+    const child = fakeChild()
+    vi.mocked(spawn).mockReturnValue(child as never)
+
+    const res  = await POST(makeReq('?platform=zeus'))
+    const body = await res.json()
+
+    expect(res.status).toBe(202)
+    expect(body).toMatchObject({ ok: true, status: 'started', platform: 'zeus', mode: 'auto' })
+    expect(body.run_id).toMatch(UUID_RE)
+    expect(body.message).not.toMatch(/actualizar[aá]n en/)
+
+    const [cmd, args, opts] = vi.mocked(spawn).mock.calls[0] as unknown as [string, string[], Record<string, unknown>]
+    expect(cmd).toBe(process.execPath)
+    expect(cmd).not.toBe('sh')
+    expect(args[0]).toMatch(/scripts[\\/]casino-sync-and-segment\.js$/)
+    expect(args).toEqual(expect.arrayContaining([`--run-id=${body.run_id}`, '--platform=zeus', '--trigger=api', '--auto']))
+    expect(opts).toMatchObject({ detached: true, stdio: 'ignore' })
+    expect(child.unref).toHaveBeenCalled()
+
+    const insert = vi.mocked(db.query).mock.calls.find(c => /INSERT INTO casino_sync_runs/.test(String(c[0])))
+    expect(insert?.[1]?.[0]).toBe(body.run_id)
+    // pre-registro sin runner: instance_id NULL (el runner solo adopta filas así)
+    expect(String(insert?.[0])).toMatch(/'pending', NULL\)/)
+    expect(insert?.[1]).toHaveLength(6)
+  })
+
+  it('only confirms that the run started (chunks commit as they finish)', async () => {
+    vi.mocked(spawn).mockReturnValue(fakeChild() as never)
+    const body = await (await POST(makeReq('?platform=zeus'))).json()
+    expect(body.message).toMatch(/aceptada/)
+    expect(body.message).not.toMatch(/Monitoreo/)
+    expect(body.message).not.toMatch(/hasta que la corrida termine|actualizar[aá]n en/)
+  })
+
+  it('passes range and agents as separate argv entries', async () => {
+    vi.mocked(spawn).mockReturnValue(fakeChild() as never)
+    const res = await POST(makeReq('?platform=bet30&desde=2026-01-01&hasta=2026-01-31&agentes=btcuno,%20btcdos'))
+    expect(res.status).toBe(202)
+    const args = vi.mocked(spawn).mock.calls[0][1] as string[]
+    expect(args).toEqual(expect.arrayContaining([
+      '--platform=bet30', '--desde=2026-01-01', '--hasta=2026-01-31', '--agentes=btcuno,btcdos',
+    ]))
+    expect(args).not.toContain('--auto')
+  })
+
+  it('records SPAWN_FAILED when the child emits an error', async () => {
+    const child = fakeChild()
+    vi.mocked(spawn).mockReturnValue(child as never)
+    const res = await POST(makeReq('?platform=zeus'))
+    const { run_id } = await res.json()
+
+    child.emit('error', Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' }))
+    await new Promise(r => setImmediate(r))
+
+    const update = vi.mocked(db.query).mock.calls.find(c => /UPDATE casino_sync_runs/.test(String(c[0])))
+    expect(update?.[1]).toEqual([run_id, 'SPAWN_FAILED', expect.any(String)])
+  })
+
+  it('records CHILD_EXIT when the child exits non-zero, and nothing on exit 0', async () => {
+    const ok = fakeChild()
+    vi.mocked(spawn).mockReturnValueOnce(ok as never)
+    await POST(makeReq('?platform=zeus'))
+    ok.emit('exit', 0)
+    await new Promise(r => setImmediate(r))
+    expect(vi.mocked(db.query).mock.calls.some(c => /UPDATE casino_sync_runs/.test(String(c[0])))).toBe(false)
+
+    const bad = fakeChild()
+    vi.mocked(spawn).mockReturnValueOnce(bad as never)
+    await POST(makeReq('?platform=zeus'))
+    bad.emit('exit', 2)
+    await new Promise(r => setImmediate(r))
+    const update = vi.mocked(db.query).mock.calls.find(c => /UPDATE casino_sync_runs/.test(String(c[0])))
+    expect(update?.[1]?.[1]).toBe('CHILD_EXIT')
+    expect(String(update?.[0])).toMatch(/WHERE run_id = \$1 AND status = 'running'/)
+  })
+
+  it('returns 500 and records SPAWN_FAILED when spawn throws synchronously', async () => {
+    vi.mocked(spawn).mockImplementation(() => { throw Object.assign(new Error('EAGAIN'), { code: 'EAGAIN' }) })
+    const res = await POST(makeReq('?platform=zeus'))
+    expect(res.status).toBe(500)
+    const update = vi.mocked(db.query).mock.calls.find(c => /UPDATE casino_sync_runs/.test(String(c[0])))
+    expect(update?.[1]?.[1]).toBe('SPAWN_FAILED')
   })
 })

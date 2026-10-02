@@ -12,6 +12,8 @@ import { z } from 'zod'
 // ── Constantes ─────────────────────────────────────────────────────────────────
 
 export const TASK_TYPES     = ['difusion', 'envio_manual', 'calentamiento', 'atencion', 'seguimiento', 'revision', 'otro'] as const
+// Historical task types remain readable; retired modules cannot be selected for new tasks.
+export const ACTIVE_TASK_TYPES = TASK_TYPES.filter(type => type !== 'calentamiento')
 export const TASK_PRIORITIES = ['alta', 'media', 'baja'] as const
 export const TASK_STATUSES  = ['pendiente', 'en_progreso', 'completada', 'cancelada'] as const
 
@@ -254,7 +256,6 @@ export const LOG_ACTION_LABELS: Record<string, string> = {
 export const QUICK_ACCESS: Partial<Record<TaskType, { label: string; href: string }>> = {
   difusion:     { label: 'Ir a Campañas',       href: '/campaigns' },
   envio_manual: { label: 'Ir a Contactos',       href: '/contacts' },
-  calentamiento:{ label: 'Ir a Calentamiento',   href: '/warmup' },
   atencion:     { label: 'Ir a Conversaciones',  href: '/conversations' },
   seguimiento:  { label: 'Ir a Conversaciones',  href: '/conversations' },
   revision:     { label: 'Ir a Campañas',        href: '/campaigns' },

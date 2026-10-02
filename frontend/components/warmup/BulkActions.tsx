@@ -52,7 +52,7 @@ export function BulkActions({
 
       {canPause && (
         <Button size="sm" variant="ghost"
-          className="h-7 px-3 text-xs text-white hover:bg-white/10 rounded-full"
+          className="h-7 px-3 text-xs text-white hover:bg-card/10 rounded-full"
           disabled={busy !== null}
           onClick={() => run('pause', () => onPause(ids))}
         >
@@ -65,7 +65,7 @@ export function BulkActions({
 
       {canResume && (
         <Button size="sm" variant="ghost"
-          className="h-7 px-3 text-xs text-white hover:bg-white/10 rounded-full"
+          className="h-7 px-3 text-xs text-white hover:bg-card/10 rounded-full"
           disabled={busy !== null}
           onClick={() => run('resume', () => onResume(ids))}
         >
@@ -79,16 +79,16 @@ export function BulkActions({
       {/* Strategy picker */}
       <div className="relative">
         <Button size="sm" variant="ghost"
-          className="h-7 px-3 text-xs text-white hover:bg-white/10 rounded-full"
+          className="h-7 px-3 text-xs text-white hover:bg-card/10 rounded-full"
           onClick={() => setShowStrategy(v => !v)}
         >
           Estrategia <ChevronDown size={10} className="ml-1" />
         </Button>
         {showStrategy && (
-          <div className="absolute bottom-10 left-1/2 -translate-x-1/2 bg-white rounded-xl shadow-xl border border-gray-100 py-1.5 min-w-[148px] z-50">
+          <div className="absolute bottom-10 left-1/2 -translate-x-1/2 bg-card rounded-xl shadow-xl border border-border py-1.5 min-w-[148px] z-50">
             {PRESETS.map(p => (
               <button key={p}
-                className="w-full text-left px-3.5 py-1.5 text-xs text-gray-700 hover:bg-gray-50 transition-colors"
+                className="w-full text-left px-3.5 py-1.5 text-xs text-foreground hover:bg-background transition-colors"
                 onClick={() => { setShowStrategy(false); run('strategy', () => onStrategy(ids, p)) }}
               >
                 {PRESET_LABEL[p]}
@@ -99,7 +99,7 @@ export function BulkActions({
       </div>
 
       <Button size="sm" variant="ghost"
-        className="h-7 px-3 text-xs text-white hover:bg-white/10 rounded-full"
+        className="h-7 px-3 text-xs text-white hover:bg-card/10 rounded-full"
         disabled={busy !== null}
         onClick={() => run('reset', () => onReset(ids))}
       >
@@ -112,14 +112,14 @@ export function BulkActions({
       <div className="w-px h-4 bg-gray-600 mx-0.5" />
 
       <Button size="sm" variant="ghost"
-        className="h-7 px-3 text-xs text-white hover:bg-white/10 rounded-full"
+        className="h-7 px-3 text-xs text-white hover:bg-card/10 rounded-full"
         onClick={() => onExport(ids)}
       >
         <Download size={11} className="mr-1" /> CSV
       </Button>
 
       <button
-        className="ml-1 text-gray-500 hover:text-white p-1 rounded-full transition-colors"
+        className="ml-1 text-muted-foreground hover:text-white p-1 rounded-full transition-colors"
         onClick={onClear}
       >
         <X size={13} />

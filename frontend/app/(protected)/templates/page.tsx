@@ -12,6 +12,11 @@ import {
   Phone, ExternalLink, MessageSquare,
 } from 'lucide-react'
 import { useCurrentUser } from '@/lib/useCurrentUser'
+import {
+  TEMPLATE_BUTTON_TEXT_MAX, TEMPLATE_NAME_MAX,
+  analyzeBodyVariables, buildBodyComponent, collectTemplateErrors, normalizeTemplateName,
+  readBodyExamples, validateTemplateDraft, type TemplateIssue,
+} from '@/lib/template-validation'
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -22,7 +27,7 @@ type HeaderComponent = { type: 'HEADER' } & (
   | { format: 'TEXT'; text: string }
   | { format: 'IMAGE' | 'VIDEO' | 'DOCUMENT'; example?: string }
 )
-type BodyComponent    = { type: 'BODY'; text: string }
+type BodyComponent    = { type: 'BODY'; text: string; example?: { body_text: string[][] } }
 type FooterComponent  = { type: 'FOOTER'; text: string }
 type ButtonComponent  = { type: 'BUTTONS'; buttons: TemplateButton[] }
 type TemplateButton   =
@@ -58,11 +63,11 @@ const STATUS_LABEL: Record<TemplateStatus, string> = {
 }
 
 const STATUS_STYLE: Record<TemplateStatus, string> = {
-  BORRADOR:      'bg-gray-100 text-gray-600',
+  BORRADOR:      'bg-muted text-muted-foreground',
   EN_REVISION:   'bg-yellow-100 text-yellow-700',
-  APROBADA:      'bg-green-100 text-green-700',
-  RECHAZADA:     'bg-red-100 text-red-700',
-  DESHABILITADA: 'bg-slate-100 text-slate-500',
+  APROBADA:      'bg-success/15 text-success',
+  RECHAZADA:     'bg-destructive/15 text-destructive',
+  DESHABILITADA: 'bg-muted text-slate-500',
 }
 
 const CATEGORY_LABEL: Record<TemplateCategory, string> = {
@@ -73,6 +78,7 @@ const CATEGORY_LABEL: Record<TemplateCategory, string> = {
 
 const LANGUAGES = [
   { value: 'es',    label: 'Español' },
+  { value: 'es_AR', label: 'Español (Argentina)' },
   { value: 'en',    label: 'Inglés' },
   { value: 'pt_BR', label: 'Portugués (BR)' },
   { value: 'pt',    label: 'Portugués' },
@@ -105,31 +111,31 @@ function WhatsAppPreview({ components }: { components: TemplateComponent[] }) {
 
   return (
     <div className="bg-[#e5ddd5] rounded-xl p-4 min-h-48 flex flex-col items-start">
-      <div className="bg-white rounded-xl shadow-sm max-w-[85%] overflow-hidden">
+      <div className="bg-card rounded-xl shadow-sm max-w-[85%] overflow-hidden">
         {/* Header */}
         {header && (
           <div className="bg-[#d9fdd3] px-3 pt-3 pb-1">
             {header.format === 'TEXT' && (
-              <p className="font-semibold text-sm text-gray-800 whitespace-pre-line">
-                {header.text || <span className="text-gray-400 italic">Encabezado</span>}
+              <p className="font-semibold text-sm text-foreground whitespace-pre-line">
+                {header.text || <span className="text-muted-foreground italic">Encabezado</span>}
               </p>
             )}
             {header.format === 'IMAGE' && (
-              <div className="w-full h-28 bg-gray-200 rounded-lg flex items-center justify-center">
-                <Image size={28} className="text-gray-400" />
-                <span className="text-xs text-gray-400 ml-2">Imagen</span>
+              <div className="w-full h-28 bg-border rounded-lg flex items-center justify-center">
+                <Image size={28} className="text-muted-foreground" />
+                <span className="text-xs text-muted-foreground ml-2">Imagen</span>
               </div>
             )}
             {header.format === 'VIDEO' && (
-              <div className="w-full h-28 bg-gray-200 rounded-lg flex items-center justify-center">
-                <Video size={28} className="text-gray-400" />
-                <span className="text-xs text-gray-400 ml-2">Video</span>
+              <div className="w-full h-28 bg-border rounded-lg flex items-center justify-center">
+                <Video size={28} className="text-muted-foreground" />
+                <span className="text-xs text-muted-foreground ml-2">Video</span>
               </div>
             )}
             {header.format === 'DOCUMENT' && (
-              <div className="w-full h-16 bg-gray-100 rounded-lg flex items-center px-3 gap-2">
-                <File size={24} className="text-gray-500" />
-                <span className="text-xs text-gray-500">Documento adjunto</span>
+              <div className="w-full h-16 bg-muted rounded-lg flex items-center px-3 gap-2">
+                <File size={24} className="text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">Documento adjunto</span>
               </div>
             )}
           </div>
@@ -137,32 +143,32 @@ function WhatsAppPreview({ components }: { components: TemplateComponent[] }) {
         {/* Body */}
         <div className={`px-3 py-2 ${header ? '' : 'pt-3'} bg-[#d9fdd3]`}>
           {body ? (
-            <p className="text-sm text-gray-800 whitespace-pre-line leading-relaxed">
+            <p className="text-sm text-foreground whitespace-pre-line leading-relaxed">
               {highlightVars(body.text || '')}
             </p>
           ) : (
-            <p className="text-sm text-gray-400 italic">Escribe el cuerpo del mensaje…</p>
+            <p className="text-sm text-muted-foreground italic">Escribe el cuerpo del mensaje…</p>
           )}
         </div>
         {/* Footer */}
         {footer && footer.text && (
           <div className="px-3 pb-2 bg-[#d9fdd3]">
-            <p className="text-xs text-gray-400 mt-1">{footer.text}</p>
+            <p className="text-xs text-muted-foreground mt-1">{footer.text}</p>
           </div>
         )}
         {/* Timestamp */}
         <div className="px-3 pb-2 bg-[#d9fdd3] flex justify-end">
-          <span className="text-[10px] text-gray-400">12:00 ✓✓</span>
+          <span className="text-[10px] text-muted-foreground">12:00 ✓✓</span>
         </div>
         {/* Buttons */}
         {buttons && buttons.buttons.length > 0 && (
-          <div className="border-t border-gray-200">
+          <div className="border-t border-border">
             {buttons.buttons.map((btn, i) => (
-              <button key={i} className="w-full py-2 px-3 text-sm text-[#00a5f4] flex items-center justify-center gap-1.5 border-b border-gray-100 last:border-0 hover:bg-gray-50">
+              <button key={i} className="w-full py-2 px-3 text-sm text-[#00a5f4] flex items-center justify-center gap-1.5 border-b border-border last:border-0 hover:bg-background">
                 {btn.type === 'PHONE_NUMBER' && <Phone size={13} />}
                 {btn.type === 'URL'          && <ExternalLink size={13} />}
                 {btn.type === 'QUICK_REPLY'  && <MessageSquare size={13} />}
-                {btn.text || <span className="text-gray-300 italic text-xs">Botón</span>}
+                {btn.text || <span className="text-muted-foreground/60 italic text-xs">Botón</span>}
               </button>
             ))}
           </div>
@@ -182,6 +188,7 @@ interface FormState {
   headerFormat: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT'
   headerText: string
   bodyText: string
+  bodyExamples: string[]   // ejemplo de {{n}} en la posición n - 1
   footerEnabled: boolean
   footerText: string
   buttonsEnabled: boolean
@@ -191,11 +198,13 @@ interface FormState {
 const DEFAULT_FORM: FormState = {
   name: '', category: 'MARKETING', language: 'es',
   headerEnabled: false, headerFormat: 'TEXT', headerText: '',
-  bodyText: '',
+  bodyText: '', bodyExamples: [],
   footerEnabled: false, footerText: '',
   buttonsEnabled: false, buttons: [],
 }
 
+// Las secciones activadas se envían aunque estén vacías para que la validación
+// las marque; las desactivadas se ignoran.
 function formToComponents(f: FormState): TemplateComponent[] {
   const comps: TemplateComponent[] = []
   if (f.headerEnabled) {
@@ -205,14 +214,19 @@ function formToComponents(f: FormState): TemplateComponent[] {
       comps.push({ type: 'HEADER', format: f.headerFormat })
     }
   }
-  comps.push({ type: 'BODY', text: f.bodyText })
-  if (f.footerEnabled && f.footerText) {
+  comps.push(buildBodyComponent(f.bodyText, f.bodyExamples))
+  if (f.footerEnabled) {
     comps.push({ type: 'FOOTER', text: f.footerText })
   }
-  if (f.buttonsEnabled && f.buttons.length > 0) {
+  if (f.buttonsEnabled) {
     comps.push({ type: 'BUTTONS', buttons: f.buttons })
   }
   return comps
+}
+
+function FieldError({ message }: { message?: string }) {
+  if (!message) return null
+  return <p className="text-xs text-destructive mt-1">{message}</p>
 }
 
 function templateToForm(t: Template): FormState {
@@ -228,6 +242,7 @@ function templateToForm(t: Template): FormState {
     headerFormat:   header?.format ?? 'TEXT',
     headerText:     header?.format === 'TEXT' ? header.text : '',
     bodyText:       body?.text ?? '',
+    bodyExamples:   readBodyExamples(t.components),
     footerEnabled:  !!footer,
     footerText:     footer?.text ?? '',
     buttonsEnabled: !!buttons,
@@ -256,6 +271,7 @@ export default function TemplatesPage() {
   const [form,       setForm]       = useState<FormState>(DEFAULT_FORM)
   const [saving,     setSaving]     = useState(false)
   const [saveError,  setSaveError]  = useState<string | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
 
   // Acciones de fila
   const [submitting, setSubmitting] = useState<string | null>(null)
@@ -280,31 +296,23 @@ export default function TemplatesPage() {
 
   useEffect(() => { void load() }, [load])
 
-  function openCreate() {
-    setForm(DEFAULT_FORM)
-    setEditTarget(null)
+  function openForm(f: FormState, target: Template | null, mode: 'create' | 'edit') {
+    setForm(f)
+    setEditTarget(target)
     setSaveError(null)
-    setModal('create')
+    setFieldErrors({})
+    setModal(mode)
   }
 
-  function openEdit(t: Template) {
-    setForm(templateToForm(t))
-    setEditTarget(t)
-    setSaveError(null)
-    setModal('edit')
-  }
+  function openCreate() { openForm(DEFAULT_FORM, null, 'create') }
+
+  function openEdit(t: Template) { openForm(templateToForm(t), t, 'edit') }
 
   function openDuplicate(t: Template) {
-    const f = templateToForm(t)
-    f.name = `${t.name}_copia`
-    setForm(f)
-    setEditTarget(null)
-    setSaveError(null)
-    setModal('create')
+    openForm({ ...templateToForm(t), name: `${t.name}_copia` }, null, 'create')
   }
 
   async function handleSave() {
-    setSaving(true)
     setSaveError(null)
     const payload = {
       name:       form.name,
@@ -312,16 +320,31 @@ export default function TemplatesPage() {
       language:   form.language,
       components: formToComponents(form),
     }
-    if (!payload.name.trim()) { setSaveError('El nombre es requerido'); setSaving(false); return }
-    if (!payload.components.some(c => c.type === 'BODY') || !form.bodyText.trim()) {
-      setSaveError('El cuerpo del mensaje es requerido'); setSaving(false); return
+    // Mismas reglas que la API: no se envía nada si hay campos inválidos.
+    // Errores sin campo propio (p. ej. componentes no soportados) van al resumen.
+    const showErrors = (errors: Record<string, string>) => {
+      setFieldErrors(errors)
+      setSaveError(errors.form ?? errors.components ?? 'Revisá los campos marcados.')
     }
+    const draft = validateTemplateDraft(payload)
+    if (!draft.ok) { showErrors(draft.errors); return }
+    setFieldErrors({})
+    setSaving(true)
     try {
       const url    = modal === 'edit' && editTarget ? `/api/templates/${editTarget.id}` : '/api/templates'
       const method = modal === 'edit' ? 'PATCH' : 'POST'
       const res    = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-      const data   = await res.json() as { error?: string }
-      if (!res.ok) { setSaveError(data.error || `Error ${res.status}`); return }
+      const data   = await res.json().catch(() => ({})) as { error?: string; issues?: TemplateIssue[] }
+      if (!res.ok) {
+        if (data.issues?.length) {
+          showErrors(collectTemplateErrors(data.issues, payload.components))
+        } else if (res.status >= 500) {
+          setSaveError('No se pudo guardar la plantilla. Intentá de nuevo en unos minutos.')
+        } else {
+          setSaveError(data.error || `Error ${res.status}`)
+        }
+        return
+      }
       setModal(null)
       void load()
     } catch { setSaveError('Error de red') } finally { setSaving(false) }
@@ -376,14 +399,16 @@ export default function TemplatesPage() {
   }
 
   const previewComponents = formToComponents(form)
+  const bodyVariables     = analyzeBodyVariables(form.bodyText).variables
+  const normalizedName    = normalizeTemplateName(form.name)
 
   return (
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">Plantillas</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Plantillas de mensajes de WhatsApp Business</p>
+          <h1 className="page-title text-foreground">Plantillas</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">Plantillas de mensajes de WhatsApp Business</p>
         </div>
         {isAdmin && (
           <Button onClick={openCreate} className="h-9 text-sm gap-2">
@@ -421,51 +446,51 @@ export default function TemplatesPage() {
 
       {/* Error de fila */}
       {rowError && (
-        <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+        <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3">
           <AlertCircle size={15} className="shrink-0" /> {rowError}
-          <button onClick={() => setRowError(null)} className="ml-auto text-red-400 hover:text-red-600">✕</button>
+          <button onClick={() => setRowError(null)} className="ml-auto text-red-400 hover:text-destructive">✕</button>
         </div>
       )}
 
       {/* Tabla */}
       {loading ? (
         <div className="flex items-center justify-center h-40">
-          <Loader2 size={22} className="animate-spin text-gray-300" />
+          <Loader2 size={22} className="animate-spin text-muted-foreground/60" />
         </div>
       ) : error ? (
-        <div className="text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3 flex items-center gap-2">
+        <div className="text-sm text-destructive bg-destructive/10 rounded-lg px-4 py-3 flex items-center gap-2">
           <AlertCircle size={15} /> {error}
         </div>
       ) : templates.length === 0 ? (
-        <div className="text-center py-16 text-gray-400">
+        <div className="text-center py-16 text-muted-foreground">
           <FileText size={36} className="mx-auto mb-3 opacity-30" />
           <p className="text-sm">No hay plantillas{filterStatus || filterCategory || filterQ ? ' con esos filtros' : ' todavía'}</p>
           {isAdmin && !filterStatus && !filterCategory && !filterQ && (
-            <Button variant="ghost" size="sm" onClick={openCreate} className="mt-3 text-sm text-green-600">
+            <Button variant="ghost" size="sm" onClick={openCreate} className="mt-3 text-sm text-success">
               <Plus size={14} className="mr-1" /> Crear primera plantilla
             </Button>
           )}
         </div>
       ) : (
-        <div className="border border-gray-200 rounded-xl overflow-hidden">
+        <div className="border border-border rounded-xl overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
+            <thead className="bg-background border-b border-border">
               <tr>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Nombre</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Categoría</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Idioma</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Estado</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Usos</th>
-                <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Actualizada</th>
-                {isAdmin && <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide">Acciones</th>}
+                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Nombre</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Categoría</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Idioma</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Estado</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Usos</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Actualizada</th>
+                {isAdmin && <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Acciones</th>}
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody className="divide-y divide-border">
               {templates.map(t => (
-                <tr key={t.id} className="hover:bg-gray-50 transition-colors">
+                <tr key={t.id} className="hover:bg-background transition-colors">
                   <td className="px-4 py-3">
                     <div>
-                      <p className="font-medium text-gray-900 font-mono text-xs">{t.name}</p>
+                      <p className="font-medium text-foreground font-mono text-xs">{t.name}</p>
                       {t.rejection_reason && (
                         <p className="text-xs text-red-500 mt-0.5 max-w-xs truncate" title={t.rejection_reason}>
                           ↳ {t.rejection_reason}
@@ -473,22 +498,22 @@ export default function TemplatesPage() {
                       )}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-gray-600">{CATEGORY_LABEL[t.category as TemplateCategory]}</td>
-                  <td className="px-4 py-3 text-gray-500 uppercase text-xs">{t.language}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{CATEGORY_LABEL[t.category as TemplateCategory]}</td>
+                  <td className="px-4 py-3 text-muted-foreground uppercase text-xs">{t.language}</td>
                   <td className="px-4 py-3">
                     <Badge className={STATUS_STYLE[t.status as TemplateStatus]}>
                       {STATUS_LABEL[t.status as TemplateStatus]}
                     </Badge>
                   </td>
-                  <td className="px-4 py-3 text-gray-500">{t.usage_count}</td>
-                  <td className="px-4 py-3 text-gray-400 text-xs">{fmtDate(t.updated_at)}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{t.usage_count}</td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs">{fmtDate(t.updated_at)}</td>
                   {isAdmin && (
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 justify-end">
-                        <button onClick={() => openEdit(t)} title="Editar" className="p-1.5 rounded hover:bg-gray-100 text-gray-500">
+                        <button onClick={() => openEdit(t)} title="Editar" className="p-1.5 rounded hover:bg-muted text-muted-foreground">
                           <Pencil size={14} />
                         </button>
-                        <button onClick={() => openDuplicate(t)} title="Duplicar" className="p-1.5 rounded hover:bg-gray-100 text-gray-500">
+                        <button onClick={() => openDuplicate(t)} title="Duplicar" className="p-1.5 rounded hover:bg-muted text-muted-foreground">
                           <Copy size={14} />
                         </button>
                         {(t.status === 'BORRADOR' || t.status === 'RECHAZADA') && (
@@ -506,7 +531,7 @@ export default function TemplatesPage() {
                             onClick={() => void handleSync(t.id)}
                             disabled={syncing === t.id}
                             title="Actualizar estado desde Meta"
-                            className="p-1.5 rounded hover:bg-gray-100 text-gray-400 disabled:opacity-50"
+                            className="p-1.5 rounded hover:bg-muted text-muted-foreground disabled:opacity-50"
                           >
                             {syncing === t.id ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                           </button>
@@ -515,7 +540,7 @@ export default function TemplatesPage() {
                           onClick={() => void handleDelete(t.id)}
                           disabled={deleting === t.id}
                           title="Eliminar"
-                          className="p-1.5 rounded hover:bg-red-50 text-red-400 disabled:opacity-50"
+                          className="p-1.5 rounded hover:bg-destructive/10 text-red-400 disabled:opacity-50"
                         >
                           {deleting === t.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                         </button>
@@ -531,32 +556,40 @@ export default function TemplatesPage() {
 
       {/* Modal crear/editar */}
       <Dialog open={modal !== null} onOpenChange={open => { if (!open) setModal(null) }}>
-        <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+        {/* DialogContent trae sm:max-w-sm: el ancho se sobrescribe con el mismo breakpoint. */}
+        <DialogContent className="sm:max-w-5xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{modal === 'edit' ? 'Editar plantilla' : 'Nueva plantilla'}</DialogTitle>
           </DialogHeader>
 
-          <div className="grid grid-cols-2 gap-6 mt-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-2 min-w-0">
             {/* Columna izquierda — formulario */}
-            <div className="space-y-4">
+            <div className="space-y-4 min-w-0">
               {/* Nombre */}
               <div>
-                <label className="text-sm font-medium text-gray-700 block mb-1">
+                <label htmlFor="template-name" className="text-sm font-medium text-foreground block mb-1">
                   Nombre <span className="text-red-500">*</span>
                 </label>
                 <Input
+                  id="template-name"
                   value={form.name}
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  placeholder="ej: bienvenida_nuevos"
+                  placeholder="ej: aviso_soporte"
+                  aria-invalid={!!fieldErrors.name}
                   className="h-9 text-sm font-mono"
                 />
-                <p className="text-xs text-gray-400 mt-1">Recomendado: snake_case. Se convertirá automáticamente.</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Solo letras minúsculas sin acentos, números y guiones bajos (_), hasta {TEMPLATE_NAME_MAX} caracteres.
+                  Las mayúsculas se pasan a minúsculas y los espacios a _.
+                  {normalizedName && normalizedName !== form.name && <> Se guardará como <code className="bg-muted px-1 rounded break-all">{normalizedName}</code>.</>}
+                </p>
+                <FieldError message={fieldErrors.name} />
               </div>
 
               {/* Categoría + Idioma */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-sm font-medium text-gray-700 block mb-1">
+                  <label className="text-sm font-medium text-foreground block mb-1">
                     Categoría <span className="text-red-500">*</span>
                   </label>
                   <Select value={form.category} onValueChange={v => setForm(f => ({ ...f, category: v as TemplateCategory }))}>
@@ -569,7 +602,7 @@ export default function TemplatesPage() {
                   </Select>
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-gray-700 block mb-1">
+                  <label className="text-sm font-medium text-foreground block mb-1">
                     Idioma <span className="text-red-500">*</span>
                   </label>
                   <Select value={form.language} onValueChange={v => setForm(f => ({ ...f, language: v ?? f.language }))}>
@@ -578,10 +611,12 @@ export default function TemplatesPage() {
                       {LANGUAGES.map(l => <SelectItem key={l.value} value={l.value}>{l.label}</SelectItem>)}
                     </SelectContent>
                   </Select>
+                  <FieldError message={fieldErrors.language} />
                 </div>
               </div>
+              <FieldError message={fieldErrors.category} />
 
-              <hr className="border-gray-100" />
+              <hr className="border-border" />
 
               {/* Header */}
               <div>
@@ -589,7 +624,7 @@ export default function TemplatesPage() {
                   <input type="checkbox" className="w-4 h-4 accent-green-600"
                     checked={form.headerEnabled}
                     onChange={e => setForm(f => ({ ...f, headerEnabled: e.target.checked }))} />
-                  <span className="text-sm font-medium text-gray-700">Encabezado (Header)</span>
+                  <span className="text-sm font-medium text-foreground">Encabezado (Header)</span>
                 </label>
                 {form.headerEnabled && (
                   <div className="space-y-2 pl-6">
@@ -611,16 +646,19 @@ export default function TemplatesPage() {
                         className="h-8 text-sm"
                       />
                     )}
+                    <FieldError message={fieldErrors.header} />
                   </div>
                 )}
               </div>
 
               {/* Body */}
               <div>
-                <label className="text-sm font-medium text-gray-700 block mb-1">
+                <label htmlFor="template-body" className="text-sm font-medium text-foreground block mb-1">
                   Cuerpo del mensaje <span className="text-red-500">*</span>
                 </label>
                 <Textarea
+                  id="template-body"
+                  aria-invalid={!!fieldErrors.body}
                   value={form.bodyText}
                   onChange={e => setForm(f => ({ ...f, bodyText: e.target.value }))}
                   placeholder="Escribe el mensaje. Usa {{1}}, {{2}}, etc. para variables."
@@ -628,11 +666,39 @@ export default function TemplatesPage() {
                   maxLength={1024}
                   className="text-sm resize-none"
                 />
-                <p className="text-xs text-gray-400 mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   {form.bodyText.length}/1024 caracteres. Variables:{' '}
-                  <code className="bg-gray-100 px-1 rounded">{'{{1}}'}</code>,{' '}
-                  <code className="bg-gray-100 px-1 rounded">{'{{2}}'}</code>…
+                  <code className="bg-muted px-1 rounded">{'{{1}}'}</code>,{' '}
+                  <code className="bg-muted px-1 rounded">{'{{2}}'}</code>… consecutivas desde {'{{1}}'}.
                 </p>
+                <FieldError message={fieldErrors.body} />
+                {bodyVariables.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">Ejemplos de variables (requeridos por Meta para revisar la plantilla)</p>
+                    {bodyVariables.map(n => (
+                      <div key={n}>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <code className="bg-blue-50 text-blue-700 px-1 rounded text-xs shrink-0">{`{{${n}}}`}</code>
+                          <Input
+                            aria-label={`Ejemplo para {{${n}}}`}
+                            aria-invalid={!!fieldErrors[`bodyExample.${n}`]}
+                            value={form.bodyExamples[n - 1] ?? ''}
+                            onChange={e => setForm(f => {
+                              const bodyExamples = [...f.bodyExamples]
+                              for (let i = 0; i < n - 1; i++) bodyExamples[i] ??= ''
+                              bodyExamples[n - 1] = e.target.value
+                              return { ...f, bodyExamples }
+                            })}
+                            placeholder="Valor de ejemplo"
+                            className="h-8 text-sm"
+                          />
+                        </div>
+                        <FieldError message={fieldErrors[`bodyExample.${n}`]} />
+                      </div>
+                    ))}
+                    <FieldError message={fieldErrors.bodyExamples} />
+                  </div>
+                )}
               </div>
 
               {/* Footer */}
@@ -641,7 +707,7 @@ export default function TemplatesPage() {
                   <input type="checkbox" className="w-4 h-4 accent-green-600"
                     checked={form.footerEnabled}
                     onChange={e => setForm(f => ({ ...f, footerEnabled: e.target.checked }))} />
-                  <span className="text-sm font-medium text-gray-700">Pie de página (Footer)</span>
+                  <span className="text-sm font-medium text-foreground">Pie de página (Footer)</span>
                 </label>
                 {form.footerEnabled && (
                   <Input
@@ -652,6 +718,7 @@ export default function TemplatesPage() {
                     className="h-8 text-sm ml-6"
                   />
                 )}
+                {form.footerEnabled && <div className="ml-6"><FieldError message={fieldErrors.footer} /></div>}
               </div>
 
               {/* Buttons */}
@@ -666,12 +733,12 @@ export default function TemplatesPage() {
                         ? [{ type: 'QUICK_REPLY', text: '' }]
                         : f.buttons,
                     }))} />
-                  <span className="text-sm font-medium text-gray-700">Botones (máx. 3)</span>
+                  <span className="text-sm font-medium text-foreground">Botones (máx. 3)</span>
                 </label>
                 {form.buttonsEnabled && (
                   <div className="space-y-2 pl-6">
                     {form.buttons.map((btn, i) => (
-                      <div key={i} className="border border-gray-200 rounded-lg p-3 space-y-2">
+                      <div key={i} className="border border-border rounded-lg p-3 space-y-2">
                         <div className="flex items-center gap-2">
                           <Select value={btn.type} onValueChange={v => updateButton(i, { type: v as TemplateButton['type'] })}>
                             <SelectTrigger className="h-7 text-xs flex-1"><SelectValue /></SelectTrigger>
@@ -681,7 +748,7 @@ export default function TemplatesPage() {
                               <SelectItem value="PHONE_NUMBER">Teléfono</SelectItem>
                             </SelectContent>
                           </Select>
-                          <button onClick={() => removeButton(i)} className="p-1 hover:bg-red-50 text-red-400 rounded">
+                          <button onClick={() => removeButton(i)} className="p-1 hover:bg-destructive/10 text-red-400 rounded">
                             <Trash2 size={13} />
                           </button>
                         </div>
@@ -690,7 +757,7 @@ export default function TemplatesPage() {
                           onChange={e => updateButton(i, { text: e.target.value })}
                           placeholder="Texto del botón"
                           className="h-7 text-xs"
-                          maxLength={20}
+                          maxLength={TEMPLATE_BUTTON_TEXT_MAX}
                         />
                         {btn.type === 'URL' && (
                           <Input
@@ -708,27 +775,29 @@ export default function TemplatesPage() {
                             className="h-7 text-xs"
                           />
                         )}
+                        <FieldError message={fieldErrors[`button.${i}`]} />
                       </div>
                     ))}
                     {form.buttons.length < 3 && (
-                      <button onClick={addButton} className="text-xs text-green-600 hover:text-green-700 flex items-center gap-1">
+                      <button onClick={addButton} className="text-xs text-success hover:text-success flex items-center gap-1">
                         <Plus size={12} /> Agregar botón
                       </button>
                     )}
+                    <FieldError message={fieldErrors.buttons} />
                   </div>
                 )}
               </div>
             </div>
 
             {/* Columna derecha — preview */}
-            <div className="space-y-3">
+            <div className="space-y-3 min-w-0">
               <div className="flex items-center gap-2">
-                <Eye size={14} className="text-gray-400" />
-                <p className="text-sm font-medium text-gray-600">Vista previa en tiempo real</p>
+                <Eye size={14} className="text-muted-foreground" />
+                <p className="text-sm font-medium text-muted-foreground">Vista previa en tiempo real</p>
               </div>
               <WhatsAppPreview components={previewComponents} />
-              <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                <p className="text-xs text-amber-700">
+              <div className="bg-warning/10 border border-warning/20 rounded-lg px-3 py-2">
+                <p className="text-xs text-warning">
                   La aprobación de Meta puede tardar entre minutos y varias horas.
                 </p>
               </div>
@@ -737,11 +806,11 @@ export default function TemplatesPage() {
 
           {/* Footer del modal */}
           {saveError && (
-            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2 mt-4">
+            <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-2 mt-4">
               <AlertCircle size={14} /> {saveError}
             </div>
           )}
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-100 mt-4">
+          <div className="flex items-center justify-end gap-3 pt-4 border-t border-border mt-4">
             <Button variant="ghost" onClick={() => setModal(null)} className="h-9 text-sm">Cancelar</Button>
             <Button onClick={() => void handleSave()} disabled={saving} className="h-9 text-sm">
               {saving

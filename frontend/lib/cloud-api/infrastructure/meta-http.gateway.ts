@@ -109,7 +109,7 @@ export async function exchangeCodeForToken(
   url.searchParams.set('client_secret', appSecret)
   url.searchParams.set('code',          code)
 
-  const res  = await fetch(url.toString(), { headers: { 'User-Agent': 'WhatsApp-Platform/1.0' } })
+  const res  = await fetch(url.toString(), { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'WhatsApp-Platform/1.0' } })
   const body = await res.json() as { access_token?: string; token_type?: string } & MetaApiError
 
   if (!res.ok || !body.access_token) {
@@ -133,7 +133,7 @@ export async function generateLongLivedToken(
   url.searchParams.set('client_secret',     appSecret)
   url.searchParams.set('fb_exchange_token', shortLivedToken)
 
-  const res  = await fetch(url.toString(), { headers: { 'User-Agent': 'WhatsApp-Platform/1.0' } })
+  const res  = await fetch(url.toString(), { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'WhatsApp-Platform/1.0' } })
   const body = await res.json() as { access_token?: string; expires_in?: number } & MetaApiError
 
   if (!res.ok || !body.access_token) {

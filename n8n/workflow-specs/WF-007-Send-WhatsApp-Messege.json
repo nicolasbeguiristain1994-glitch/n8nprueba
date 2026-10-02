@@ -38,8 +38,8 @@
       "name": "HTTP Request",
       "credentials": {
         "httpHeaderAuth": {
-          "id": "V8WM8QJb690a2dcm",
-          "name": "Header Auth account"
+          "id": "REPLACE_ME_CREDENTIAL_ID",
+          "name": "REPLACE_ME_CREDENTIAL_NAME"
         }
       }
     },
@@ -172,8 +172,8 @@
       "name": "Insert rows in a table",
       "credentials": {
         "postgres": {
-          "id": "xEGqwiZXpd5tMF9C",
-          "name": "Postgres account"
+          "id": "REPLACE_ME_CREDENTIAL_ID",
+          "name": "REPLACE_ME_CREDENTIAL_NAME"
         }
       }
     }

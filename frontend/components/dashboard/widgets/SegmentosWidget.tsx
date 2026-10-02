@@ -36,6 +36,7 @@ const MONTO_COLORS: Record<string, string> = {
 }
 
 const ACT_LABELS: Record<string, string> = {
+  bajo: 'Bajo', medio: 'Medio', vip: 'VIP', vip_medio: 'VIP medio', vip_alto: 'VIP alto', super_vip: 'Súper VIP',
   nuevo: 'Nuevo', frecuente: 'Frecuente', regular: 'Regular',
   ocasional: 'Ocasional', en_riesgo: 'En riesgo', inactivo: 'Inactivo', perdido: 'Perdido',
 }
@@ -66,7 +67,7 @@ function ChartTooltip({ active, payload, label }: TooltipProps) {
     <div className="rounded-xl border border-border/50 bg-background/80 backdrop-blur-md px-3 py-2 shadow-xl text-xs">
       <p className="font-semibold mb-0.5">{ACT_LABELS[label as string] ?? label}</p>
       <p className="text-muted-foreground">
-        {(Number(payload[0]?.value) || 0).toLocaleString('es-AR')} jugadores
+        {(Number(payload[0]?.value) || 0).toLocaleString('es-AR')} cuentas
       </p>
     </div>
   )
@@ -123,8 +124,9 @@ export const SegmentosWidget = memo(function SegmentosWidget({ segActividad, seg
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-sm">
           <PieChart className="w-4 h-4 text-primary" />
-          Segmentos de jugadores
+          Segmentos de cuentas
         </CardTitle>
+        <p className="text-xs text-muted-foreground">Distribución actual según el historial disponible.</p>
       </CardHeader>
       <CardContent className="space-y-4">
         {loading ? (

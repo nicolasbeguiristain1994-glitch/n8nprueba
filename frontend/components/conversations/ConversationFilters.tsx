@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { SlidersHorizontal, CalendarRange, Calendar, Bell, BellOff } from 'lucide-react'
-import { FILTER_DEFS, applyFilter, type Conv, type Filter } from '@/lib/scoring/conversation-scoring'
+import { FILTER_DEFS, LEVEL_DEFS, applyFilter, type Conv, type Filter, type CampaignOption, type LevelFilter } from '@/lib/scoring/conversation-scoring'
 import type { RealtimeStatus } from '@/hooks/useRealTime'
 
 const RT_DOT: Record<RealtimeStatus, string> = {
@@ -20,6 +20,11 @@ interface Props {
   convs:          Conv[]
   search:         string
   filter:         Filter
+  campaign:       string
+  campaigns:      CampaignOption[]
+  level:          LevelFilter
+  onCampaign:     (v: string) => void
+  onLevel:        (v: LevelFilter) => void
   dateFrom:       string
   dateTo:         string
   followUpOnly:   boolean
@@ -41,14 +46,14 @@ const BELL_TITLE: Record<NotificationPermission, string> = {
 }
 
 export function ConversationFilters({
-  convs, search, filter, dateFrom, dateTo, followUpOnly, realtimeStatus, notifPermission,
+  convs, search, filter, campaign, campaigns, level, onCampaign, onLevel, dateFrom, dateTo, followUpOnly, realtimeStatus, notifPermission,
   searchRef, onSearch, onFilter, onDateFrom, onDateTo, onFollowUp, onRequestNotif,
 }: Props) {
   const [showAdv, setShowAdv] = useState(false)
   const hasAdv = !!dateFrom || !!dateTo || followUpOnly
 
   return (
-    <div className="border-b border-gray-100 p-2 space-y-2 shrink-0">
+    <div className="border-b border-border p-3 space-y-3 shrink-0">
 
       {/* Search + realtime dot */}
       <div className="relative">
@@ -57,20 +62,20 @@ export function ConversationFilters({
           placeholder="Buscar nombre, teléfono…"
           value={search}
           onChange={e => onSearch(e.target.value)}
-          className="h-7 text-xs pr-10"
+          className="h-9 text-xs pr-12" aria-label="Buscar conversaciones"
         />
         <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
           <button
             onClick={onRequestNotif}
             title={BELL_TITLE[notifPermission]}
             disabled={notifPermission === 'denied'}
-            className="text-gray-400 hover:text-gray-600 transition-colors disabled:cursor-not-allowed"
+            className="text-muted-foreground hover:text-muted-foreground transition-colors disabled:cursor-not-allowed"
           >
             {notifPermission === 'denied'
-              ? <BellOff size={11} className="text-gray-300" />
+              ? <BellOff size={11} className="text-muted-foreground/60" />
               : notifPermission === 'granted'
               ? <Bell size={11} className="text-green-500" />
-              : <Bell size={11} className="text-gray-400" />
+              : <Bell size={11} className="text-muted-foreground" />
             }
           </button>
           <div
@@ -78,6 +83,27 @@ export function ConversationFilters({
             className={`w-1.5 h-1.5 rounded-full shrink-0 ${RT_DOT[realtimeStatus]}`}
           />
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <label className="block text-[10px] font-medium text-muted-foreground">
+          Campaña
+          <select aria-label="Filtrar por campaña" value={campaign} onChange={e => onCampaign(e.target.value)}
+            className="mt-1 h-8 w-full min-w-0 rounded-md border border-border bg-card px-2 text-xs text-foreground">
+            <option value="all">Todas las campañas</option>
+            <option value="none">Sin campaña</option>
+            {campaigns.map(item => <option key={item.id} value={item.id}>{item.name} ({item.count})</option>)}
+          </select>
+        </label>
+        <label className="block text-[10px] font-medium text-muted-foreground">
+          Nivel del contacto
+          <select aria-label="Filtrar por nivel" value={level} onChange={e => onLevel(e.target.value as LevelFilter)}
+            className="mt-1 h-8 w-full min-w-0 rounded-md border border-border bg-card px-2 text-xs text-foreground">
+            <option value="all">Todos los niveles</option>
+            {LEVEL_DEFS.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
+            <option value="none">Sin nivel</option>
+          </select>
+        </label>
       </div>
 
       {/* Filter pills + advanced toggle */}
@@ -88,10 +114,11 @@ export function ConversationFilters({
             <button
               key={key}
               onClick={() => onFilter(key)}
-              className={`text-[10px] px-2 py-0.5 rounded-full border font-medium transition-colors ${
+              aria-pressed={filter === key}
+              className={`text-[11px] px-2 py-1 rounded-full border font-medium transition-colors ${
                 filter === key
-                  ? 'bg-green-600 text-white border-green-600'
-                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400'
+                  ? 'bg-accent text-accent-foreground border-primary/20'
+                  : 'bg-card text-muted-foreground border-border hover:border-gray-400'
               }`}
             >
               {label}
@@ -101,10 +128,11 @@ export function ConversationFilters({
         })}
         <button
           onClick={() => setShowAdv(v => !v)}
+          aria-label="Filtros avanzados" aria-expanded={showAdv}
           className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full border font-medium transition-colors ${
             showAdv || hasAdv
-              ? 'bg-indigo-50 text-indigo-600 border-indigo-300'
-              : 'bg-white text-gray-400 border-gray-200 hover:border-gray-400'
+              ? 'bg-accent text-primary border-indigo-300'
+              : 'bg-card text-muted-foreground border-border hover:border-gray-400'
           }`}
         >
           <SlidersHorizontal size={9} className="inline mr-0.5" />
@@ -114,20 +142,20 @@ export function ConversationFilters({
 
       {/* Advanced filters */}
       {showAdv && (
-        <div className="space-y-1.5 pt-1 border-t border-gray-100">
+        <div className="space-y-1.5 pt-1 border-t border-border">
           <div className="flex gap-1 items-center">
-            <CalendarRange size={10} className="text-gray-400 shrink-0" />
+            <CalendarRange size={10} className="text-muted-foreground shrink-0" />
             <input
-              type="date" value={dateFrom} onChange={e => onDateFrom(e.target.value)}
-              className="flex-1 text-[10px] border border-gray-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-300"
+              aria-label="Conversaciones desde" type="date" value={dateFrom} onChange={e => onDateFrom(e.target.value)}
+              className="min-w-0 flex-1 text-[10px] border border-border rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-300"
             />
-            <span className="text-[10px] text-gray-400">—</span>
+            <span className="text-[10px] text-muted-foreground">—</span>
             <input
-              type="date" value={dateTo} onChange={e => onDateTo(e.target.value)}
-              className="flex-1 text-[10px] border border-gray-200 rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-300"
+              aria-label="Conversaciones hasta" type="date" value={dateTo} onChange={e => onDateTo(e.target.value)}
+              className="min-w-0 flex-1 text-[10px] border border-border rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-300"
             />
             {(dateFrom || dateTo) && (
-              <button onClick={() => { onDateFrom(''); onDateTo('') }} className="text-[10px] text-gray-400 hover:text-gray-600">✕</button>
+              <button onClick={() => { onDateFrom(''); onDateTo('') }} className="text-[10px] text-muted-foreground hover:text-muted-foreground">✕</button>
             )}
           </div>
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
@@ -136,7 +164,7 @@ export function ConversationFilters({
               className="w-3 h-3 rounded accent-indigo-600"
             />
             <Calendar size={10} className="text-sky-500 shrink-0" />
-            <span className="text-[10px] text-gray-600">Solo con seguimiento programado</span>
+            <span className="text-[10px] text-muted-foreground">Solo con seguimiento programado</span>
           </label>
         </div>
       )}

@@ -1,19 +1,13 @@
 import { Check, CheckCheck } from 'lucide-react'
-import type { Segment, Intent } from '@/lib/scoring/conversation-scoring'
+import { LEVEL_DEFS, segmentLabel, type Segment, type Intent } from '@/lib/scoring/conversation-scoring'
 
 // ── Segment ────────────────────────────────────────────────────────────────────
 
 export function SegmentBadge({ segment }: { segment: Segment }) {
-  if (!segment || segment === 'bajo' || segment === 'medio') return null
-  if (segment === 'super_vip')
-    return (
-      <span className="inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded border bg-purple-50 text-purple-800 border-purple-300 tracking-wide">
-        Super Vip
-      </span>
-    )
+  const style = LEVEL_DEFS.find(level => level.key === segment)?.badge ?? 'bg-muted text-muted-foreground border-border'
   return (
-    <span className="inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded border bg-yellow-50 text-yellow-800 border-yellow-300 tracking-wide">
-      Vip
+    <span className={`inline-flex items-center text-[10px] font-bold px-1.5 py-0.5 rounded border tracking-wide ${style}`}>
+      {segmentLabel(segment)}
     </span>
   )
 }

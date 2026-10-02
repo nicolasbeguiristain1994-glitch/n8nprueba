@@ -67,9 +67,9 @@ const TRIGGER_LABELS: Record<TriggerType, string> = {
   any_inbound: 'Cualquier mensaje',
 }
 const RESULT_ICON: Record<string, React.ReactNode> = {
-  executed: <CheckCircle size={13} className="text-green-600" />,
+  executed: <CheckCircle size={13} className="text-success" />,
   skipped:  <Clock       size={13} className="text-yellow-600" />,
-  error:    <XCircle     size={13} className="text-red-600" />,
+  error:    <XCircle     size={13} className="text-destructive" />,
 }
 const RESULT_LABEL: Record<string, string> = {
   executed: 'Ejecutada',
@@ -138,12 +138,17 @@ export default function AutomatizacionesPage() {
     finally { setLoading(false) }
   }, [q, typeFilter, statusFilter])
 
+  const [logsError, setLogsError] = useState<string | null>(null)
+  const [logsLoading, setLogsLoading] = useState(false)
   const fetchLogs = useCallback(async () => {
+    setLogsLoading(true)
+    setLogsError(null)
     try {
       const data = await fetchJson<{ logs: AutomationLog[]; total: number }>('/api/automations/logs')
       setLogs(data.logs)
       setLogTotal(data.total)
-    } catch { /* silencioso */ }
+    } catch (e) { setLogsError(e instanceof Error ? e.message : 'No se pudo cargar el historial') }
+    finally { setLogsLoading(false) }
   }, [])
 
   useEffect(() => { void fetchItems() }, [fetchItems])
@@ -284,14 +289,14 @@ export default function AutomatizacionesPage() {
   return (
     <div className="p-6 space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-violet-100 flex items-center justify-center">
             <Bot size={18} className="text-violet-600" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-gray-900">Automatizaciones</h1>
-            <p className="text-sm text-gray-500">Bots y respuestas automáticas para conversaciones</p>
+            <h1 className="page-title text-foreground">Automatizaciones</h1>
+            <p className="text-sm text-muted-foreground">Bots y respuestas automáticas para conversaciones</p>
           </div>
         </div>
         <Button size="sm" onClick={openCreate} className="gap-2 bg-violet-600 hover:bg-violet-700 text-white">
@@ -313,7 +318,7 @@ export default function AutomatizacionesPage() {
             <CardContent className="pt-4">
               <div className="flex flex-wrap gap-3 items-center">
                 <div className="relative flex-1 min-w-[180px]">
-                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                   <Input placeholder="Buscar por nombre..." className="pl-8 h-8 text-sm"
                     value={q} onChange={e => setQ(e.target.value)} />
                 </div>
@@ -345,17 +350,17 @@ export default function AutomatizacionesPage() {
           <Card>
             <CardContent className="p-0">
               {error && (
-                <div className="p-4 text-sm text-red-600 flex items-center gap-2">
+                <div className="p-4 text-sm text-destructive flex items-center gap-2">
                   <AlertTriangle size={14} /> {error}
                 </div>
               )}
               {loading ? (
-                <div className="p-8 text-center text-sm text-gray-500">Cargando...</div>
+                <div className="p-8 text-center text-sm text-muted-foreground">Cargando...</div>
               ) : items.length === 0 ? (
                 <div className="p-12 text-center">
-                  <Bot size={32} className="mx-auto text-gray-300 mb-3" />
-                  <p className="text-sm font-medium text-gray-500">Sin automatizaciones configuradas</p>
-                  <p className="text-xs text-gray-400 mt-1">Creá tu primera automatización para responder mensajes automáticamente.</p>
+                  <Bot size={32} className="mx-auto text-muted-foreground/60 mb-3" />
+                  <p className="text-sm font-medium text-muted-foreground">Sin automatizaciones configuradas</p>
+                  <p className="text-xs text-muted-foreground mt-1">Creá tu primera automatización para responder mensajes automáticamente.</p>
                   <Button size="sm" className="mt-4 bg-violet-600 hover:bg-violet-700 text-white" onClick={openCreate}>
                     <Plus size={13} className="mr-1" /> Crear automatización
                   </Button>
@@ -363,27 +368,27 @@ export default function AutomatizacionesPage() {
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
-                    <thead className="bg-gray-50 border-b border-gray-200">
+                    <thead className="bg-background border-b border-border">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nombre</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tipo</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Trigger</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Prioridad</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Modificada</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Nombre</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Tipo</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Trigger</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Estado</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Prioridad</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Modificada</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Acciones</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100">
+                    <tbody className="divide-y divide-border">
                       {items.map(item => {
                         const tc = item.trigger_config as TriggerConfig
                         const kws = tc.keywords ?? []
                         return (
-                          <tr key={item.id} className="hover:bg-gray-50">
+                          <tr key={item.id} className="hover:bg-background">
                             <td className="px-4 py-3">
-                              <div className="font-medium text-gray-900">{item.name}</div>
+                              <div className="font-medium text-foreground">{item.name}</div>
                               {item.description && (
-                                <div className="text-xs text-gray-400 mt-0.5 line-clamp-1">{item.description}</div>
+                                <div className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{item.description}</div>
                               )}
                             </td>
                             <td className="px-4 py-3">
@@ -392,36 +397,36 @@ export default function AutomatizacionesPage() {
                               </span>
                             </td>
                             <td className="px-4 py-3">
-                              <div className="text-xs text-gray-600 font-medium">{TRIGGER_LABELS[item.trigger_type]}</div>
+                              <div className="text-xs text-muted-foreground font-medium">{TRIGGER_LABELS[item.trigger_type]}</div>
                               {kws.length > 0 && (
-                                <div className="text-xs text-gray-400 mt-0.5 line-clamp-1">
+                                <div className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
                                   {kws.slice(0, 3).join(', ')}{kws.length > 3 ? ` +${kws.length - 3}` : ''}
                                 </div>
                               )}
                             </td>
                             <td className="px-4 py-3">
-                              <Badge className={`text-xs border-0 ${item.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                              <Badge className={`text-xs border-0 ${item.is_active ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground'}`}>
                                 {item.is_active ? 'Activa' : 'Pausada'}
                               </Badge>
                             </td>
-                            <td className="px-4 py-3 text-xs text-gray-500 text-center">{item.priority}</td>
-                            <td className="px-4 py-3 text-xs text-gray-500 whitespace-nowrap">{fmt(item.updated_at)}</td>
+                            <td className="px-4 py-3 text-xs text-muted-foreground text-center">{item.priority}</td>
+                            <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmt(item.updated_at)}</td>
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-1">
                                 <button
                                   onClick={() => handleToggle(item)}
-                                  className={`p-1.5 rounded transition-colors ${item.is_active ? 'text-green-600 hover:bg-green-50' : 'text-gray-400 hover:bg-gray-100'}`}
+                                  className={`p-1.5 rounded transition-colors ${item.is_active ? 'text-success hover:bg-success/10' : 'text-muted-foreground hover:bg-muted'}`}
                                   title={item.is_active ? 'Pausar' : 'Activar'}
                                 >
                                   <Power size={14} />
                                 </button>
                                 <button onClick={() => openEdit(item)}
-                                  className="p-1.5 rounded hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"
+                                  className="p-1.5 rounded hover:bg-blue-50 text-muted-foreground hover:text-blue-600 transition-colors"
                                   title="Editar">
                                   <Pencil size={14} />
                                 </button>
                                 <button onClick={() => setDeleteTarget(item)}
-                                  className="p-1.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
+                                  className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
                                   title="Eliminar">
                                   <Trash2 size={14} />
                                 </button>
@@ -442,43 +447,50 @@ export default function AutomatizacionesPage() {
         <TabsContent value="logs" className="space-y-4 mt-4">
           <Card>
             <CardContent className="p-0">
-              {logs.length === 0 ? (
-                <div className="p-10 text-center text-sm text-gray-400">
+              {logsLoading ? (
+                <div className="p-10 text-center text-sm text-muted-foreground">Cargando historial…</div>
+              ) : logsError ? (
+                <div className="p-6 text-center space-y-3" role="alert">
+                  <p className="text-sm text-destructive">{logsError}</p>
+                  <Button variant="outline" onClick={() => void fetchLogs()}>Reintentar</Button>
+                </div>
+              ) : logs.length === 0 ? (
+                <div className="p-10 text-center text-sm text-muted-foreground">
                   Sin ejecuciones registradas aún.
                 </div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
-                    <thead className="bg-gray-50 border-b border-gray-200">
+                    <thead className="bg-background border-b border-border">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Resultado</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Automatización</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Teléfono</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Detalle</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Resultado</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Automatización</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Teléfono</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Detalle</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Fecha</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100">
+                    <tbody className="divide-y divide-border">
                       {logs.map(log => (
-                        <tr key={log.id} className="hover:bg-gray-50">
+                        <tr key={log.id} className="hover:bg-background">
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1.5 text-xs font-medium">
                               {RESULT_ICON[log.result]}
-                              <span className={log.result === 'executed' ? 'text-green-700' : log.result === 'error' ? 'text-red-700' : 'text-yellow-700'}>
+                              <span className={log.result === 'executed' ? 'text-success' : log.result === 'error' ? 'text-destructive' : 'text-yellow-700'}>
                                 {RESULT_LABEL[log.result] ?? log.result}
                               </span>
                             </div>
                           </td>
-                          <td className="px-4 py-3 text-gray-700 text-xs">{log.automation_name ?? '—'}</td>
-                          <td className="px-4 py-3 font-mono text-xs text-gray-600">{log.conversation_phone}</td>
-                          <td className="px-4 py-3 text-xs text-gray-500 max-w-[200px] line-clamp-1">{log.details ?? '—'}</td>
-                          <td className="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{fmt(log.created_at)}</td>
+                          <td className="px-4 py-3 text-foreground text-xs">{log.automation_name ?? '—'}</td>
+                          <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{log.conversation_phone}</td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground max-w-[200px] line-clamp-1">{log.details ?? '—'}</td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmt(log.created_at)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  <div className="px-4 py-3 border-t border-gray-100">
-                    <span className="text-xs text-gray-400">{logTotal} ejecuciones en total (mostrando últimas 50)</span>
+                  <div className="px-4 py-3 border-t border-border">
+                    <span className="text-xs text-muted-foreground">{logTotal} ejecuciones en total (mostrando últimas 50)</span>
                   </div>
                 </div>
               )}
@@ -501,7 +513,7 @@ export default function AutomatizacionesPage() {
             {/* Nombre y descripción */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Nombre *</label>
+                <label className="block text-sm font-medium text-foreground mb-1.5">Nombre *</label>
                 <Input
                   value={form.name}
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
@@ -510,7 +522,7 @@ export default function AutomatizacionesPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Prioridad</label>
+                <label className="block text-sm font-medium text-foreground mb-1.5">Prioridad</label>
                 <Input
                   type="number"
                   min={1} max={1000}
@@ -518,12 +530,12 @@ export default function AutomatizacionesPage() {
                   onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}
                   className="text-sm"
                 />
-                <p className="text-xs text-gray-400 mt-1">Menor número = mayor prioridad. Se evalúa primero.</p>
+                <p className="text-xs text-muted-foreground mt-1">Menor número = mayor prioridad. Se evalúa primero.</p>
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Descripción (opcional)</label>
+              <label className="block text-sm font-medium text-foreground mb-1.5">Descripción (opcional)</label>
               <Input
                 value={form.description}
                 onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
@@ -534,16 +546,16 @@ export default function AutomatizacionesPage() {
 
             {/* Tipo */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Tipo de automatización *</label>
+              <label className="block text-sm font-medium text-foreground mb-1.5">Tipo de automatización *</label>
               <div className="grid grid-cols-3 gap-2">
                 {(['reply', 'flow', 'handoff'] as AutomationType[]).map(t => (
                   <button
                     key={t}
                     onClick={() => setForm(f => ({ ...f, type: t }))}
-                    className={`p-3 rounded-lg border-2 text-left transition-colors ${form.type === t ? 'border-violet-500 bg-violet-50' : 'border-gray-200 hover:border-gray-300'}`}
+                    className={`p-3 rounded-lg border-2 text-left transition-colors ${form.type === t ? 'border-violet-500 bg-violet-50' : 'border-border hover:border-input'}`}
                   >
-                    <div className="text-xs font-semibold text-gray-800">{TYPE_LABELS[t]}</div>
-                    <div className="text-xs text-gray-500 mt-0.5">
+                    <div className="text-xs font-semibold text-foreground">{TYPE_LABELS[t]}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
                       {t === 'reply'   && 'Responde con un mensaje fijo'}
                       {t === 'flow'    && 'Secuencia de mensajes'}
                       {t === 'handoff' && 'Deriva a un agente humano'}
@@ -554,11 +566,11 @@ export default function AutomatizacionesPage() {
             </div>
 
             {/* Trigger */}
-            <div className="space-y-3 border border-gray-200 rounded-lg p-4">
-              <p className="text-sm font-medium text-gray-700">Condición de activación (trigger)</p>
+            <div className="space-y-3 border border-border rounded-lg p-4">
+              <p className="text-sm font-medium text-foreground">Condición de activación (trigger)</p>
 
               <div>
-                <label className="block text-xs text-gray-600 mb-1">Tipo de trigger</label>
+                <label className="block text-xs text-muted-foreground mb-1">Tipo de trigger</label>
                 <Select value={form.trigger_type} onValueChange={v => setForm(f => ({ ...f, trigger_type: (v ?? 'contains') as TriggerType }))}>
                   <SelectTrigger className="text-sm h-9">
                     <SelectValue />
@@ -573,7 +585,7 @@ export default function AutomatizacionesPage() {
 
               {form.trigger_type !== 'any_inbound' && (
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">
+                  <label className="block text-xs text-muted-foreground mb-1">
                     Palabras clave (separadas por coma) *
                   </label>
                   <Input
@@ -582,7 +594,7 @@ export default function AutomatizacionesPage() {
                     placeholder="precio, costo, tarifa, cuánto vale"
                     className="text-sm"
                   />
-                  <p className="text-xs text-gray-400 mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     Sin acentos, sin mayúsculas — el sistema normaliza automáticamente.
                   </p>
                 </div>
@@ -590,38 +602,38 @@ export default function AutomatizacionesPage() {
             </div>
 
             {/* Acción según tipo */}
-            <div className="space-y-3 border border-gray-200 rounded-lg p-4">
-              <p className="text-sm font-medium text-gray-700">Acción a ejecutar</p>
+            <div className="space-y-3 border border-border rounded-lg p-4">
+              <p className="text-sm font-medium text-foreground">Acción a ejecutar</p>
 
               {form.type === 'reply' && (
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">Mensaje de respuesta *</label>
+                  <label className="block text-xs text-muted-foreground mb-1">Mensaje de respuesta *</label>
                   <textarea
-                    className="w-full border border-gray-300 rounded-md text-sm px-3 py-2 h-28 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"
+                    className="w-full border border-input rounded-md text-sm px-3 py-2 h-28 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"
                     value={form.message}
                     onChange={e => setForm(f => ({ ...f, message: e.target.value }))}
                     placeholder="Hola {{nombre}}! Gracias por contactarnos. Un asesor te escribirá a la brevedad."
                   />
-                  <p className="text-xs text-gray-400 mt-1">
-                    Variables disponibles: <code className="bg-gray-100 px-1 rounded">{'{{nombre}}'}</code>{' '}
-                    <code className="bg-gray-100 px-1 rounded">{'{{empresa}}'}</code>{' '}
-                    <code className="bg-gray-100 px-1 rounded">{'{{fecha}}'}</code>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Variables disponibles: <code className="bg-muted px-1 rounded">{'{{nombre}}'}</code>{' '}
+                    <code className="bg-muted px-1 rounded">{'{{empresa}}'}</code>{' '}
+                    <code className="bg-muted px-1 rounded">{'{{fecha}}'}</code>
                   </p>
                 </div>
               )}
 
               {form.type === 'flow' && (
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">
+                  <label className="block text-xs text-muted-foreground mb-1">
                     Pasos del flujo (un mensaje por línea) *
                   </label>
                   <textarea
-                    className="w-full border border-gray-300 rounded-md text-sm px-3 py-2 h-32 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"
+                    className="w-full border border-input rounded-md text-sm px-3 py-2 h-32 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"
                     value={form.flow_steps}
                     onChange={e => setForm(f => ({ ...f, flow_steps: e.target.value }))}
                     placeholder={`Hola {{nombre}}! ¿En qué podemos ayudarte hoy?\nOpción 1: Consultas\nOpción 2: Soporte`}
                   />
-                  <p className="text-xs text-amber-600 bg-amber-50 rounded px-2 py-1 mt-1">
+                  <p className="text-xs text-amber-600 bg-warning/10 rounded px-2 py-1 mt-1">
                     ⚠ MVP: solo se envía el primer paso inmediatamente. Los pasos siguientes requieren configuración adicional.
                   </p>
                 </div>
@@ -629,16 +641,16 @@ export default function AutomatizacionesPage() {
 
               {form.type === 'handoff' && (
                 <div>
-                  <label className="block text-xs text-gray-600 mb-1">
+                  <label className="block text-xs text-muted-foreground mb-1">
                     Mensaje previo a la derivación (opcional)
                   </label>
                   <textarea
-                    className="w-full border border-gray-300 rounded-md text-sm px-3 py-2 h-20 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"
+                    className="w-full border border-input rounded-md text-sm px-3 py-2 h-20 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"
                     value={form.handoff_msg}
                     onChange={e => setForm(f => ({ ...f, handoff_msg: e.target.value }))}
                     placeholder="Entendido, {{nombre}}! Te estamos conectando con un asesor. 🙏"
                   />
-                  <p className="text-xs text-gray-400 mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     La conversación se marcará como &quot;Necesita atención humana&quot; automáticamente.
                   </p>
                 </div>
@@ -646,26 +658,26 @@ export default function AutomatizacionesPage() {
             </div>
 
             {/* Estado */}
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-medium text-gray-700">Estado inicial</p>
-                <p className="text-xs text-gray-400">Las automatizaciones pausadas no se ejecutan</p>
+                <p className="text-sm font-medium text-foreground">Estado inicial</p>
+                <p className="text-xs text-muted-foreground">Las automatizaciones pausadas no se ejecutan</p>
               </div>
               <button
                 onClick={() => setForm(f => ({ ...f, is_active: !f.is_active }))}
                 className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${form.is_active ? 'bg-green-500' : 'bg-gray-300'}`}
               >
-                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${form.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-card shadow transition-transform ${form.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
               </button>
             </div>
 
             {saveError && (
-              <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded px-3 py-2">
                 <AlertTriangle size={14} /> {saveError}
               </div>
             )}
 
-            <div className="flex justify-end gap-2 pt-1 border-t border-gray-100">
+            <div className="flex justify-end gap-2 pt-1 border-t border-border">
               <Button variant="outline" size="sm" onClick={() => setShowEditor(false)}>Cancelar</Button>
               <Button size="sm" onClick={handleSave} disabled={saving}
                 className="bg-violet-600 hover:bg-violet-700 text-white">
@@ -686,10 +698,10 @@ export default function AutomatizacionesPage() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 pt-1">
-            <p className="text-sm text-gray-700">
+            <p className="text-sm text-foreground">
               ¿Estás seguro de que querés eliminar <span className="font-semibold">{deleteTarget?.name}</span>?
             </p>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-muted-foreground">
               Esta acción no se puede deshacer. El historial de ejecuciones se conservará.
             </p>
             <div className="flex justify-end gap-2">

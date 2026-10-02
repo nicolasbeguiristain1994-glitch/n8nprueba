@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query } from '@/lib/db'
+import { getLongRunningClient } from '@/lib/db'
+import { prepareSegmentation, applySegmentation, activityPreservationPlatforms } from '@/lib/casino-segmentation'
 import { isE164 } from '@/lib/validate'
 import { checkPermission } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
@@ -80,8 +81,13 @@ export async function POST(req: NextRequest) {
 
   // Single bulk upsert via jsonb_to_recordset — N individual queries → 1 query.
   // xmax = 0 means the row was inserted; non-zero means updated (Postgres internal).
+  const client = await getLongRunningClient()
   try {
-    const [row] = await query<{ inserted: string; updated: string }>(
+    await client.query('BEGIN')
+    await client.query("SET LOCAL TIME ZONE 'America/Argentina/Buenos_Aires'")
+    await client.query("SET LOCAL statement_timeout='60s'")
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('casino-segmentation'))")
+    const { rows: [row] } = await client.query<{ inserted: string; updated: string; ids: string[] }>(
       `WITH input AS (
          SELECT phone, name, segment, casino_username,
                 $2::text AS panel_val
@@ -99,8 +105,8 @@ export async function POST(req: NextRequest) {
            panel_val,
            ARRAY(SELECT jsonb_array_elements_text($4::jsonb)),
            CASE
-             WHEN panel_val IS NOT NULL AND NULLIF(name, '') IS NOT NULL
-               THEN jsonb_build_array(jsonb_build_object('panel', panel_val, 'username', NULLIF(name, '')))
+             WHEN NULLIF(casino_username, '') IS NOT NULL
+               THEN jsonb_build_array(jsonb_build_object('panel', panel_val, 'username', LOWER(TRIM(casino_username))))
              ELSE '[]'::jsonb
            END,
            $3,
@@ -118,18 +124,7 @@ export async function POST(req: NextRequest) {
                    ORDER BY unnest
                  )
                ),
-               casino_accounts = CASE
-                 WHEN EXCLUDED.first_name IS NULL OR EXCLUDED.panel IS NULL
-                   THEN contacts.casino_accounts
-                 WHEN EXISTS (
-                   SELECT 1 FROM jsonb_array_elements(contacts.casino_accounts) e
-                   WHERE (e->>'panel') = EXCLUDED.panel AND (e->>'username') = EXCLUDED.first_name
-                 )
-                   THEN contacts.casino_accounts
-                 ELSE contacts.casino_accounts || jsonb_build_array(
-                   jsonb_build_object('panel', EXCLUDED.panel, 'username', EXCLUDED.first_name)
-                 )
-               END,
+               casino_accounts = (SELECT COALESCE(jsonb_agg(DISTINCT account), '[]'::jsonb) FROM jsonb_array_elements(contacts.casino_accounts || EXCLUDED.casino_accounts) account),
                linea      = COALESCE(EXCLUDED.linea, contacts.linea),
                linea_sub  = COALESCE(EXCLUDED.linea_sub, contacts.linea_sub),
                updated_at = NOW()`
@@ -145,18 +140,7 @@ export async function POST(req: NextRequest) {
                    ORDER BY unnest
                  )
                ),
-               casino_accounts = CASE
-                 WHEN EXCLUDED.first_name IS NULL OR EXCLUDED.panel IS NULL
-                   THEN contacts.casino_accounts
-                 WHEN EXISTS (
-                   SELECT 1 FROM jsonb_array_elements(contacts.casino_accounts) e
-                   WHERE (e->>'panel') = EXCLUDED.panel AND (e->>'username') = EXCLUDED.first_name
-                 )
-                   THEN contacts.casino_accounts
-                 ELSE contacts.casino_accounts || jsonb_build_array(
-                   jsonb_build_object('panel', EXCLUDED.panel, 'username', EXCLUDED.first_name)
-                 )
-               END,
+               casino_accounts = (SELECT COALESCE(jsonb_agg(DISTINCT account), '[]'::jsonb) FROM jsonb_array_elements(contacts.casino_accounts || EXCLUDED.casino_accounts) account),
                linea             = COALESCE(EXCLUDED.linea,      contacts.linea),
                linea_sub         = COALESCE(EXCLUDED.linea_sub,  contacts.linea_sub),
                updated_at        = NOW()`}
@@ -164,7 +148,8 @@ export async function POST(req: NextRequest) {
        )
        SELECT
          COUNT(*) FILTER (WHERE xmax = '0')  AS inserted,
-         COUNT(*) FILTER (WHERE xmax != '0') AS updated
+         COUNT(*) FILTER (WHERE xmax != '0') AS updated,
+         COALESCE(array_agg(id), '{}'::uuid[]) AS ids
        FROM upserted`,
       [JSON.stringify(normalized), panelValue, lineaValue, JSON.stringify(panelsValue), lineaSubValue]
     )
@@ -172,158 +157,25 @@ export async function POST(req: NextRequest) {
     const inserted = Number(row?.inserted || 0)
     const updated  = Number(row?.updated  || 0)
 
-    // Auto-tagging: buscar coincidencias con casino_players y agregar tags
-    // Sólo si la tabla casino_players existe y hay contactos con casino_username
-    const casinoLookups = normalized
-      .filter(c => c.casino_username)
-      .map(c => c.casino_username!.toLowerCase())
-
-    if (casinoLookups.length > 0) {
-      try {
-        const casinoInputJson = JSON.stringify(normalized.filter(c => c.casino_username).map(c => ({
-          phone: c.phone,
-          casino_username: c.casino_username,
-        })))
-
-        // Step 1: Clear stale exclusive-family tags for every contact that will be reprocessed.
-        // valor_riesgo and antiguedad are current-state classifications — at most one value per
-        // family per contact. The DELETE runs first (separate query) so the subsequent INSERT
-        // sees a clean slate and ON CONFLICT can never suppress a legitimate new tag value.
-        // We do NOT touch casino:monto, casino:actividad, or casino:agente here.
-        await query(
-          `DELETE FROM contact_tags
-           WHERE (tag LIKE 'casino:valor_riesgo:%' OR tag LIKE 'casino:antiguedad:%')
-             AND contact_id IN (
-               SELECT c.id
-               FROM contacts c
-               JOIN (
-                 SELECT phone, casino_username
-                 FROM jsonb_to_recordset($1::jsonb) AS x(phone text, casino_username text)
-                 WHERE casino_username IS NOT NULL
-               ) inp ON c.phone_number = inp.phone
-               JOIN (
-                 SELECT *, COUNT(*) OVER (PARTITION BY username_lower) AS name_count FROM casino_players
-               ) cp ON cp.username_lower = LOWER(inp.casino_username) AND cp.name_count = 1
-               WHERE cp.seg_monto IS NOT NULL AND cp.seg_actividad IS NOT NULL AND cp.agente IS NOT NULL
-             )`,
-          [casinoInputJson]
-        )
-
-        // Step 2: Insert current tags + set segment.
-        //
-        // El segmento se calcula igual que en scripts/segmentar-casino-players.js:
-        // promedio de cargas sobre los meses CON actividad real. Antes acá se usaba
-        // el máximo rolling de 30 días, un criterio distinto con otros umbrales, así
-        // que el segmento de un contacto cambiaba según si lo había tocado último el
-        // import o el script. Si se ajustan los umbrales, hay que ajustarlos en ambos.
-        await query(
-          `WITH matched AS (
-             SELECT c.id AS contact_id,
-                    LOWER(inp.casino_username) AS username_lower,
-                    cp.agente, cp.seg_monto, cp.seg_actividad, cp.fecha_primera
-             FROM contacts c
-             JOIN (
-               SELECT phone, casino_username
-               FROM jsonb_to_recordset($1::jsonb)
-               AS x(phone text, casino_username text)
-               WHERE casino_username IS NOT NULL
-             ) inp ON c.phone_number = inp.phone
-             JOIN (
-               SELECT *, COUNT(*) OVER (PARTITION BY username_lower) AS name_count FROM casino_players
-             ) cp ON cp.username_lower = LOWER(inp.casino_username) AND cp.name_count = 1
-             WHERE cp.seg_monto IS NOT NULL AND cp.seg_actividad IS NOT NULL AND cp.agente IS NOT NULL
-           ),
-           valor AS (
-             SELECT m.username_lower AS uname,
-                    ROUND(
-                      cp.total_cargas::numeric
-                      / GREATEST(COUNT(DISTINCT DATE_TRUNC('month', ct.fecha)), 1)
-                    ) AS avg_mensual
-             FROM matched m
-             JOIN (
-               SELECT *, COUNT(*) OVER (PARTITION BY username_lower) AS name_count FROM casino_players
-             ) cp ON cp.username_lower = m.username_lower AND cp.name_count = 1
-             LEFT JOIN casino_transactions ct
-               ON LOWER(ct.username) = m.username_lower AND ct.tipo = 'carga'
-             GROUP BY m.username_lower, cp.total_cargas
-           ),
-           tags_insert AS (
-             INSERT INTO contact_tags (id, contact_id, tag, added_by, added_at)
-             SELECT gen_random_uuid(), contact_id,
-               unnest(array_remove(ARRAY[
-                 'casino:monto:'     || seg_monto,
-                 'casino:actividad:' || seg_actividad,
-                 'casino:agente:'    || agente,
-                 CASE
-                   WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto IN ('super_vip','vip_alto','vip_medio','vip') THEN 'casino:valor_riesgo:critico'
-                   WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto = 'medio'         THEN 'casino:valor_riesgo:medio'
-                   WHEN seg_actividad IN ('perdido','inactivo','en_riesgo') AND seg_monto = 'bajo'          THEN 'casino:valor_riesgo:bajo'
-                   ELSE NULL
-                 END,
-                 CASE
-                   WHEN fecha_primera IS NULL                              THEN NULL
-                   WHEN (CURRENT_DATE - fecha_primera) <  30              THEN 'casino:antiguedad:nuevo'
-                   WHEN (CURRENT_DATE - fecha_primera) <  90              THEN 'casino:antiguedad:reciente'
-                   WHEN (CURRENT_DATE - fecha_primera) < 150              THEN 'casino:antiguedad:establecido'
-                   WHEN (CURRENT_DATE - fecha_primera) < 270              THEN 'casino:antiguedad:veterano'
-                   ELSE                                                         'casino:antiguedad:leal'
-                 END
-               ], NULL)),
-               'system', NOW()
-             FROM matched
-             ON CONFLICT (contact_id, tag) DO NOTHING
-           )
-           UPDATE contacts
-             SET panel      = COALESCE(contacts.panel, m.agente),
-                 segment    = CASE
-                   WHEN v.avg_mensual >= 3200000 THEN 'super_vip'::contact_segment
-                   WHEN v.avg_mensual >= 1500000 THEN 'vip_alto'::contact_segment
-                   WHEN v.avg_mensual >= 1000000 THEN 'vip_medio'::contact_segment
-                   WHEN v.avg_mensual >=  500000 THEN 'vip'::contact_segment
-                   WHEN v.avg_mensual >=  100000 THEN 'medio'::contact_segment
-                   WHEN v.avg_mensual IS NOT NULL THEN 'bajo'::contact_segment
-                   ELSE m.seg_monto::contact_segment
-                 END,
-                 updated_at = NOW()
-           FROM matched m
-           LEFT JOIN valor v ON v.uname = m.username_lower
-           WHERE contacts.id = m.contact_id`,
-          [casinoInputJson]
-        )
-      } catch (tagErr) {
-        // No fallar el import si el auto-tagging falla (ej: tabla casino_players no existe aún)
-        console.warn('[contacts/import] casino auto-tag skipped:', tagErr instanceof Error ? tagErr.message : tagErr)
-      }
+    // Only the rows actually inserted/updated are reclassified; skip mode leaves
+    // existing contacts untouched. Use exactly the same account links and rules as the CLI.
+    if (row.ids.length) {
+      await prepareSegmentation(client, { contactIds: row.ids })
+      await applySegmentation(client, { updatePlayers: false, preserveActivityPlatforms: activityPreservationPlatforms() })
     }
-
-    // Zeus panel fallback: contacts whose casino_username ends in 'z' that still
-    // have no panel. These are Zeus players not yet in the metrics export.
-    const zeusPhones = normalized
-      .filter(c => c.casino_username && /z$/i.test(c.casino_username))
-      .map(c => c.phone)
-
-    if (zeusPhones.length > 0) {
-      try {
-        await query(
-          `UPDATE contacts
-           SET panel = 'ofizeus', updated_at = NOW()
-           WHERE phone_number = ANY($1::text[])
-             AND panel IS NULL`,
-          [zeusPhones]
-        )
-      } catch (zeusErr) {
-        console.warn('[contacts/import] zeus fallback skipped:', zeusErr instanceof Error ? zeusErr.message : zeusErr)
-      }
-    }
+    await client.query('COMMIT')
 
     void audit({ req, action: 'import', resource: 'contacts',
       metadata: { inserted, updated, skipped: skipped + invalidCount, invalid: invalidCount, total: contacts.length } })
     return NextResponse.json({ inserted, updated, skipped: skipped + invalidCount, invalid: invalidCount, total: contacts.length })
   } catch (e) {
+    await client.query('ROLLBACK')
     const msg = e instanceof Error ? e.message : String(e)
     const code = (e as Record<string, unknown>)?.code
     const detail = (e as Record<string, unknown>)?.detail
     console.error('[contacts/import] bulk upsert error — code:', code, '| detail:', detail, '| msg:', msg)
-    return NextResponse.json({ error: `Error al importar: ${msg}` }, { status: 500 })
+    return NextResponse.json({ error: 'No se pudo completar la importación y segmentación. No se guardaron cambios.' }, { status: 500 })
+  } finally {
+    await client.end()
   }
 }

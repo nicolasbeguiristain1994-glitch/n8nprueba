@@ -288,7 +288,7 @@ export default function MisTareasPage() {
       {/* KPIs del servidor */}
       <div className="mb-4">
         <div className="flex items-center justify-between mb-2">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Resumen</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Resumen</p>
           <div className="flex items-center gap-3">
 
             {/* Toggle auto-refresh */}
@@ -296,15 +296,15 @@ export default function MisTareasPage() {
               <div
                 onClick={toggleAutoRefresh}
                 className={`relative w-7 h-4 rounded-full transition-colors ${
-                  autoRefresh ? 'bg-blue-500' : 'bg-gray-200'
+                  autoRefresh ? 'bg-blue-500' : 'bg-border'
                 }`}
               >
-                <span className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${
+                <span className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-card shadow transition-transform ${
                   autoRefresh ? 'translate-x-3' : 'translate-x-0'
                 }`} />
               </div>
               <span className={`text-xs transition-colors ${
-                autoRefresh ? 'text-blue-500 font-medium' : 'text-gray-400 group-hover:text-gray-600'
+                autoRefresh ? 'text-blue-500 font-medium' : 'text-muted-foreground group-hover:text-muted-foreground'
               }`}>
                 {autoRefresh ? 'Auto · cada 60s' : 'Auto'}
               </span>
@@ -316,7 +316,7 @@ export default function MisTareasPage() {
               onClick={fetchStats}
               disabled={loadingStats}
               title="Actualizar contadores ahora"
-              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 disabled:opacity-40 transition-colors"
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-muted-foreground disabled:opacity-40 transition-colors"
             >
               <RefreshCw size={12} className={loadingStats ? 'animate-spin' : ''} />
               Actualizar
@@ -326,27 +326,27 @@ export default function MisTareasPage() {
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <Card className="p-3">
-            <div className="text-xs text-gray-500 mb-0.5">Pendientes</div>
+            <div className="text-xs text-muted-foreground mb-0.5">Pendientes</div>
             <div className="text-2xl font-bold text-slate-700">
-              {loadingStats ? <span className="text-gray-300 text-lg">—</span> : (stats?.pendientes ?? 0)}
+              {loadingStats ? <span className="text-muted-foreground/60 text-lg">—</span> : (stats?.pendientes ?? 0)}
             </div>
           </Card>
           <Card className="p-3">
-            <div className="text-xs text-gray-500 mb-0.5">En progreso</div>
+            <div className="text-xs text-muted-foreground mb-0.5">En progreso</div>
             <div className="text-2xl font-bold text-blue-600">
-              {loadingStats ? <span className="text-gray-300 text-lg">—</span> : (stats?.en_progreso ?? 0)}
+              {loadingStats ? <span className="text-muted-foreground/60 text-lg">—</span> : (stats?.en_progreso ?? 0)}
             </div>
           </Card>
           <Card className="p-3">
-            <div className="text-xs text-gray-500 mb-0.5">Completadas hoy</div>
-            <div className="text-2xl font-bold text-green-600">
-              {loadingStats ? <span className="text-gray-300 text-lg">—</span> : (stats?.completadas_hoy ?? 0)}
+            <div className="text-xs text-muted-foreground mb-0.5">Completadas hoy</div>
+            <div className="text-2xl font-bold text-success">
+              {loadingStats ? <span className="text-muted-foreground/60 text-lg">—</span> : (stats?.completadas_hoy ?? 0)}
             </div>
           </Card>
-          <Card className={`p-3 ${(stats?.vencidas ?? 0) > 0 ? 'border-red-200 bg-red-50' : ''}`}>
-            <div className="text-xs text-gray-500 mb-0.5">Vencidas</div>
-            <div className={`text-2xl font-bold ${(stats?.vencidas ?? 0) > 0 ? 'text-red-600' : 'text-gray-400'}`}>
-              {loadingStats ? <span className="text-gray-300 text-lg">—</span> : (stats?.vencidas ?? 0)}
+          <Card className={`p-3 ${(stats?.vencidas ?? 0) > 0 ? 'border-destructive/20 bg-destructive/10' : ''}`}>
+            <div className="text-xs text-muted-foreground mb-0.5">Vencidas</div>
+            <div className={`text-2xl font-bold ${(stats?.vencidas ?? 0) > 0 ? 'text-destructive' : 'text-muted-foreground'}`}>
+              {loadingStats ? <span className="text-muted-foreground/60 text-lg">—</span> : (stats?.vencidas ?? 0)}
             </div>
           </Card>
         </div>
@@ -360,7 +360,7 @@ export default function MisTareasPage() {
           className="flex items-center gap-1"
         >
           <div className="relative">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input
               value={searchInput}
               onChange={e => setSearchInput(e.target.value)}
@@ -401,20 +401,20 @@ export default function MisTareasPage() {
 
       {/* Lista de tareas */}
       {loading ? (
-        <div className="py-20 text-center text-sm text-gray-400">Cargando tareas...</div>
+        <div className="py-20 text-center text-sm text-muted-foreground">Cargando tareas...</div>
       ) : error ? (
         <div className="py-20 text-center text-sm text-red-500">{error}</div>
       ) : tasks.length === 0 ? (
         <div className="py-20 text-center">
-          <ClipboardList size={44} className="mx-auto mb-3 text-gray-300" />
-          <p className="text-gray-500 font-medium">
+          <ClipboardList size={44} className="mx-auto mb-3 text-muted-foreground/60" />
+          <p className="text-muted-foreground font-medium">
             {search
               ? `Sin resultados para "${search}"`
               : filterStatus
                 ? `No hay tareas con estado "${STATUS_LABELS[filterStatus as TaskStatus]}"`
                 : 'No tienes tareas asignadas por el momento'}
           </p>
-          <p className="text-sm text-gray-400 mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             {!search && !filterStatus && 'Cuando el administrador te asigne una tarea, aparecerá aquí'}
           </p>
         </div>
@@ -427,7 +427,7 @@ export default function MisTareasPage() {
             return (
               <Card
                 key={t.id}
-                className={`transition-shadow hover:shadow-md ${overdue ? 'border-red-200' : ''}`}
+                className={`transition-shadow hover:shadow-md ${overdue ? 'border-destructive/20' : ''}`}
               >
                 <CardContent className="p-4">
                   <div className="flex items-start justify-between gap-3">
@@ -444,21 +444,21 @@ export default function MisTareasPage() {
                           {STATUS_LABELS[t.status]}
                         </Badge>
                         {overdue && (
-                          <span className="flex items-center gap-1 text-xs text-red-600 font-medium">
+                          <span className="flex items-center gap-1 text-xs text-destructive font-medium">
                             <AlertTriangle size={11} /> Vencida
                           </span>
                         )}
                       </div>
 
-                      <h3 className="font-semibold text-gray-900 leading-tight">{t.title}</h3>
+                      <h3 className="font-semibold text-foreground leading-tight">{t.title}</h3>
 
                       {t.description && (
-                        <p className="text-sm text-gray-600 mt-1 line-clamp-2">{t.description}</p>
+                        <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{t.description}</p>
                       )}
 
-                      <div className="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                      <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
                         {t.due_date && (
-                          <span className={`flex items-center gap-1 ${overdue ? 'text-red-600 font-medium' : ''}`}>
+                          <span className={`flex items-center gap-1 ${overdue ? 'text-destructive font-medium' : ''}`}>
                             <Calendar size={11} />
                             Vence: {fmtDate(t.due_date)}
                           </span>
@@ -499,7 +499,7 @@ export default function MisTareasPage() {
                       {t.status === 'en_progreso' && (
                         <Button
                           size="sm"
-                          className="h-8 gap-1.5 text-xs bg-green-600 hover:bg-green-700 text-white"
+                          className="h-8 gap-1.5 text-xs bg-primary hover:bg-primary/90 text-primary-foreground"
                           onClick={() => openCompleteModal(t)}
                         >
                           <CheckCircle2 size={13} /> Completar
@@ -518,17 +518,17 @@ export default function MisTareasPage() {
 
                   {/* Notas */}
                   {t.notes && (
-                    <div className="mt-3 bg-amber-50 border border-amber-100 rounded px-3 py-2 text-xs text-amber-800">
+                    <div className="mt-3 bg-warning/10 border border-amber-100 rounded px-3 py-2 text-xs text-warning">
                       <strong>Nota:</strong> {t.notes}
                     </div>
                   )}
 
                   {/* Fecha completada */}
                   {t.status === 'completada' && t.completed_at && (
-                    <div className="mt-2 text-xs text-green-600 flex items-center gap-1">
+                    <div className="mt-2 text-xs text-success flex items-center gap-1">
                       <CheckCircle2 size={11} />
                       Completada el {fmt(t.completed_at)}
-                      {t.completion_notes && <span className="text-gray-500"> · "{t.completion_notes}"</span>}
+                      {t.completion_notes && <span className="text-muted-foreground"> · "{t.completion_notes}"</span>}
                     </div>
                   )}
                 </CardContent>
@@ -540,7 +540,7 @@ export default function MisTareasPage() {
 
       {/* Paginación */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between mt-4 text-sm text-gray-500">
+        <div className="flex items-center justify-between mt-4 text-sm text-muted-foreground">
           <span>{total} tareas · Página {page} de {totalPages}</span>
           <div className="flex gap-1">
             <Button variant="ghost" size="sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>
@@ -560,7 +560,7 @@ export default function MisTareasPage() {
             <DialogTitle>Detalle de tarea</DialogTitle>
           </DialogHeader>
           {loadingDetail ? (
-            <div className="py-10 text-center text-sm text-gray-400">Cargando...</div>
+            <div className="py-10 text-center text-sm text-muted-foreground">Cargando...</div>
           ) : detailTask ? (
             <div className="space-y-4 pt-2">
               <div>
@@ -569,28 +569,28 @@ export default function MisTareasPage() {
                   <Badge className={`text-xs ${PRIORITY_COLORS[detailTask.priority]}`}>{PRIORITY_LABELS[detailTask.priority]}</Badge>
                   <Badge className={`text-xs ${STATUS_COLORS[detailTask.status]}`}>{STATUS_LABELS[detailTask.status]}</Badge>
                 </div>
-                <h2 className="font-semibold text-lg text-gray-900">{detailTask.title}</h2>
+                <h2 className="font-semibold text-lg text-foreground">{detailTask.title}</h2>
               </div>
 
               {detailTask.description && (
-                <div className="bg-gray-50 rounded-md p-3">
-                  <p className="text-xs font-medium text-gray-500 mb-1">Instrucciones</p>
-                  <p className="text-sm text-gray-800 whitespace-pre-line">{detailTask.description}</p>
+                <div className="bg-background rounded-md p-3">
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Instrucciones</p>
+                  <p className="text-sm text-foreground whitespace-pre-line">{detailTask.description}</p>
                 </div>
               )}
 
               <div className="grid grid-cols-2 gap-2 text-sm">
-                <div><span className="text-gray-500">Fecha límite:</span> <strong className={isOverdue(detailTask.due_date, detailTask.status) ? 'text-red-600' : ''}>{fmtDate(detailTask.due_date)}</strong></div>
-                <div><span className="text-gray-500">Creada por:</span> <strong>{detailTask.created_by_name || 'Admin'}</strong></div>
+                <div><span className="text-muted-foreground">Fecha límite:</span> <strong className={isOverdue(detailTask.due_date, detailTask.status) ? 'text-destructive' : ''}>{fmtDate(detailTask.due_date)}</strong></div>
+                <div><span className="text-muted-foreground">Creada por:</span> <strong>{detailTask.created_by_name || 'Admin'}</strong></div>
                 {detailTask.scheduled_at && (
-                  <div><span className="text-gray-500">Inicio programado:</span> <strong>{fmt(detailTask.scheduled_at)}</strong></div>
+                  <div><span className="text-muted-foreground">Inicio programado:</span> <strong>{fmt(detailTask.scheduled_at)}</strong></div>
                 )}
               </div>
 
               {detailTask.notes && (
-                <div className="bg-amber-50 border border-amber-100 rounded-md p-3">
-                  <p className="text-xs font-medium text-amber-700 mb-1">Notas del administrador</p>
-                  <p className="text-sm text-amber-800 whitespace-pre-line">{detailTask.notes}</p>
+                <div className="bg-warning/10 border border-amber-100 rounded-md p-3">
+                  <p className="text-xs font-medium text-warning mb-1">Notas del administrador</p>
+                  <p className="text-sm text-warning whitespace-pre-line">{detailTask.notes}</p>
                 </div>
               )}
 
@@ -619,7 +619,7 @@ export default function MisTareasPage() {
                 )}
                 {detailTask.status === 'en_progreso' && (
                   <Button
-                    className="flex-1 gap-1.5 bg-green-600 hover:bg-green-700 text-white"
+                    className="flex-1 gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground"
                     onClick={() => { setShowDetail(false); openCompleteModal(detailTask) }}
                   >
                     <CheckCircle2 size={14} /> Marcar como completada
@@ -628,20 +628,20 @@ export default function MisTareasPage() {
               </div>
 
               <div>
-                <p className="text-sm font-medium text-gray-700 mb-2">Historial</p>
+                <p className="text-sm font-medium text-foreground mb-2">Historial</p>
                 {detailLogs.length === 0 ? (
-                  <p className="text-xs text-gray-400">Sin historial disponible</p>
+                  <p className="text-xs text-muted-foreground">Sin historial disponible</p>
                 ) : (
-                  <div className="space-y-2 border-l-2 border-gray-200 pl-3">
+                  <div className="space-y-2 border-l-2 border-border pl-3">
                     {detailLogs.map(log => (
                       <div key={log.id}>
-                        <div className="text-xs text-gray-400">{fmt(log.created_at)}</div>
+                        <div className="text-xs text-muted-foreground">{fmt(log.created_at)}</div>
                         <div className="text-sm">
                           <span className="font-medium">{LOG_ACTION_LABELS[log.action] || log.action}</span>
-                          {log.user_name && <span className="text-gray-500"> · {log.user_name}</span>}
+                          {log.user_name && <span className="text-muted-foreground"> · {log.user_name}</span>}
                         </div>
                         {log.comment && (
-                          <div className="text-xs text-gray-600 bg-gray-50 rounded px-2 py-1 mt-0.5 italic">
+                          <div className="text-xs text-muted-foreground bg-background rounded px-2 py-1 mt-0.5 italic">
                             "{log.comment}"
                           </div>
                         )}
@@ -659,17 +659,17 @@ export default function MisTareasPage() {
       <Dialog open={showComplete} onOpenChange={setShowComplete}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-green-700">
+            <DialogTitle className="flex items-center gap-2 text-success">
               <CheckCircle2 size={18} /> Completar tarea
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 pt-2">
-            <p className="text-sm text-gray-700">
+            <p className="text-sm text-foreground">
               Estás por marcar como completada: <strong>"{completeTarget?.title}"</strong>
             </p>
             <div>
-              <label className="text-sm font-medium text-gray-700 block mb-1">
-                Comentario de cierre <span className="text-gray-400 font-normal">(opcional)</span>
+              <label className="text-sm font-medium text-foreground block mb-1">
+                Comentario de cierre <span className="text-muted-foreground font-normal">(opcional)</span>
               </label>
               <Textarea
                 value={completionNote}
@@ -686,7 +686,7 @@ export default function MisTareasPage() {
               <Button
                 onClick={handleComplete}
                 disabled={completing}
-                className="bg-green-600 hover:bg-green-700 text-white gap-1.5"
+                className="bg-primary hover:bg-primary/90 text-primary-foreground gap-1.5"
               >
                 <CheckCircle2 size={14} />
                 {completing ? 'Guardando...' : 'Confirmar completado'}

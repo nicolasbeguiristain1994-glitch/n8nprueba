@@ -342,7 +342,7 @@ export function ProspectListsTab() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h2 className="text-base font-semibold text-gray-800">Listas de Difusión</h2>
+          <h2 className="text-base font-semibold text-foreground">Listas de Difusión</h2>
           <Badge variant="secondary">{total}</Badge>
         </div>
         <div className="flex items-center gap-2">
@@ -371,7 +371,7 @@ export function ProspectListsTab() {
 
       {/* Búsqueda */}
       <div className="relative max-w-xs">
-        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <Input
           placeholder="Buscar lista..."
           className="pl-8 h-8 text-sm"
@@ -386,9 +386,9 @@ export function ProspectListsTab() {
 
       {/* Tabla de listas */}
       {loading ? (
-        <div className="text-sm text-gray-400 py-8 text-center">Cargando…</div>
+        <div className="text-sm text-muted-foreground py-8 text-center">Cargando…</div>
       ) : lists.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-gray-200 py-14 flex flex-col items-center gap-3 text-gray-400">
+        <div className="rounded-xl border border-dashed border-border py-14 flex flex-col items-center gap-3 text-muted-foreground">
           <Users size={32} className="opacity-30" />
           <p className="text-sm">No hay listas de difusión todavía.</p>
           <Button size="sm" variant="outline" onClick={() => setShowCreate(true)}>
@@ -396,10 +396,10 @@ export function ProspectListsTab() {
           </Button>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-gray-200">
+        <div className="overflow-x-auto rounded-xl border border-border">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs text-gray-500 uppercase tracking-wide">
+              <tr className="border-b border-border bg-background text-left text-xs text-muted-foreground uppercase tracking-wide">
                 <th className="px-4 py-2.5 font-medium">Nombre</th>
                 <th className="px-4 py-2.5 font-medium text-right">Prospectos</th>
                 <th className="px-4 py-2.5 font-medium text-right">Campañas</th>
@@ -413,45 +413,45 @@ export function ProspectListsTab() {
               {lists.map((l, i) => (
                 <tr
                   key={l.id}
-                  className={`border-b border-gray-50 cursor-pointer hover:bg-blue-50/40 transition-colors ${i % 2 === 0 ? '' : 'bg-gray-50/30'}`}
+                  className={`border-b border-gray-50 cursor-pointer hover:bg-blue-50/40 transition-colors ${i % 2 === 0 ? '' : 'bg-background/30'}`}
                   onClick={() => openDetail(l)}
                 >
                   <td className="px-4 py-3">
-                    <p className="font-medium text-gray-800">{l.name}</p>
+                    <p className="font-medium text-foreground">{l.name}</p>
                     {l.description && (
-                      <p className="text-[11px] text-gray-400 mt-0.5 truncate max-w-[260px]">{l.description}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5 truncate max-w-[260px]">{l.description}</p>
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className="inline-flex items-center gap-1 text-gray-700">
-                      <Users size={12} className="text-gray-400" />
+                    <span className="inline-flex items-center gap-1 text-foreground">
+                      <Users size={12} className="text-muted-foreground" />
                       {l.member_count.toLocaleString()}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <span className="inline-flex items-center gap-1 text-gray-700">
-                      <Megaphone size={12} className="text-gray-400" />
+                    <span className="inline-flex items-center gap-1 text-foreground">
+                      <Megaphone size={12} className="text-muted-foreground" />
                       {l.campaign_count}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-gray-500 text-[12px]">
-                    {l.last_used_at ? formatDate(l.last_used_at) : <span className="text-gray-300">—</span>}
+                  <td className="px-4 py-3 text-muted-foreground text-[12px]">
+                    {l.last_used_at ? formatDate(l.last_used_at) : <span className="text-muted-foreground/60">—</span>}
                   </td>
-                  <td className="px-4 py-3 text-gray-500 text-[12px]">
-                    {l.owner_name ?? <span className="text-gray-300 italic">—</span>}
+                  <td className="px-4 py-3 text-muted-foreground text-[12px]">
+                    {l.owner_name ?? <span className="text-muted-foreground/60 italic">—</span>}
                   </td>
-                  <td className="px-4 py-3 text-gray-500 text-[12px]">{formatDate(l.created_at)}</td>
+                  <td className="px-4 py-3 text-muted-foreground text-[12px]">{formatDate(l.created_at)}</td>
                   <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                     <div className="flex items-center gap-0.5">
                       <button
-                        className="p-1 text-gray-300 hover:text-teal-600 transition-colors rounded"
+                        className="p-1 text-muted-foreground/60 hover:text-teal-600 transition-colors rounded"
                         title="Descargar lista"
                         onClick={() => setDownloadTarget(l)}
                       >
                         <Download size={14} />
                       </button>
                       <button
-                        className="p-1 text-gray-300 hover:text-red-500 transition-colors rounded"
+                        className="p-1 text-muted-foreground/60 hover:text-red-500 transition-colors rounded"
                         title="Eliminar lista"
                         onClick={() => deleteList(l.id, l.name)}
                       >
@@ -468,12 +468,12 @@ export function ProspectListsTab() {
 
       {/* Paginación */}
       {total > LIMIT && (
-        <div className="flex items-center justify-end gap-2 text-sm text-gray-500">
+        <div className="flex items-center justify-end gap-2 text-sm text-muted-foreground">
           <button disabled={page === 1} onClick={() => setPage(p => p - 1)}
-            className="px-3 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40">←</button>
+            className="px-3 py-1 rounded border border-border hover:bg-background disabled:opacity-40">←</button>
           <span>Página {page} de {Math.ceil(total / LIMIT)}</span>
           <button disabled={page * LIMIT >= total} onClick={() => setPage(p => p + 1)}
-            className="px-3 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40">→</button>
+            className="px-3 py-1 rounded border border-border hover:bg-background disabled:opacity-40">→</button>
         </div>
       )}
 
@@ -497,7 +497,7 @@ export function ProspectListsTab() {
           </DialogHeader>
           <div className="space-y-3 py-2">
             <div>
-              <label className="text-xs font-medium text-gray-600 mb-1 block">Nombre *</label>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Nombre *</label>
               <Input
                 placeholder="Ej: Prospectos Mayo 2025"
                 value={createName}
@@ -506,7 +506,7 @@ export function ProspectListsTab() {
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-600 mb-1 block">Descripción (opcional)</label>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Descripción (opcional)</label>
               <Input
                 placeholder="Ej: Importados de base externa CSV"
                 value={createDesc}
@@ -534,7 +534,7 @@ export function ProspectListsTab() {
             {/* Nombre + descripción */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-medium text-gray-600 mb-1 block">Nombre de la lista *</label>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Nombre de la lista *</label>
                 <Input
                   placeholder="Ej: Prospectos Mayo 2025"
                   value={selectionName}
@@ -542,7 +542,7 @@ export function ProspectListsTab() {
                 />
               </div>
               <div>
-                <label className="text-xs font-medium text-gray-600 mb-1 block">Descripción (opcional)</label>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Descripción (opcional)</label>
                 <Input
                   placeholder="Ej: CSV externo junio"
                   value={selectionDesc}
@@ -554,7 +554,7 @@ export function ProspectListsTab() {
             {/* Buscador + selección */}
             <div className="flex items-center justify-between gap-2">
               <div className="relative flex-1">
-                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder="Buscar prospectos..."
                   className="pl-8 h-8 text-sm"
@@ -562,7 +562,7 @@ export function ProspectListsTab() {
                   onChange={e => { setProspectSearch(e.target.value); setProspectPage(1) }}
                 />
               </div>
-              <div className="flex items-center gap-1.5 text-xs text-gray-500 shrink-0">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
                 <button
                   className="text-blue-600 hover:underline"
                   onClick={() => selectAll(prospects, selectedProspects, setSelectedProspects)}
@@ -570,7 +570,7 @@ export function ProspectListsTab() {
                   <CheckSquare size={12} className="inline mr-0.5" /> Seleccionar página
                 </button>
                 {selectedProspects.size > 0 && (
-                  <button className="text-gray-400 hover:text-red-500" onClick={() => deselectAll(setSelectedProspects)}>
+                  <button className="text-muted-foreground hover:text-red-500" onClick={() => deselectAll(setSelectedProspects)}>
                     <X size={12} className="inline mr-0.5" /> Limpiar ({selectedProspects.size})
                   </button>
                 )}
@@ -578,14 +578,14 @@ export function ProspectListsTab() {
             </div>
 
             {/* Tabla prospectos */}
-            <div className="overflow-y-auto flex-1 rounded-lg border border-gray-200 min-h-0">
+            <div className="overflow-y-auto flex-1 rounded-lg border border-border min-h-0">
               {loadingProspects ? (
-                <div className="text-sm text-gray-400 py-8 text-center">Cargando…</div>
+                <div className="text-sm text-muted-foreground py-8 text-center">Cargando…</div>
               ) : prospects.length === 0 ? (
-                <div className="text-sm text-gray-400 py-8 text-center">Sin resultados</div>
+                <div className="text-sm text-muted-foreground py-8 text-center">Sin resultados</div>
               ) : (
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-gray-50 border-b border-gray-100 text-xs text-gray-500">
+                  <thead className="sticky top-0 bg-background border-b border-border text-xs text-muted-foreground">
                     <tr>
                       <th className="w-8 px-3 py-2" />
                       <th className="px-3 py-2 text-left font-medium">Teléfono</th>
@@ -605,9 +605,9 @@ export function ProspectListsTab() {
                           <td className="px-3 py-2 text-center">
                             <input type="checkbox" readOnly checked={checked} className="accent-blue-600 cursor-pointer" />
                           </td>
-                          <td className="px-3 py-2 font-mono text-[12px] text-gray-700">{p.phone_number}</td>
-                          <td className="px-3 py-2 text-gray-700">
-                            {[p.first_name, p.last_name].filter(Boolean).join(' ') || <span className="text-gray-300">—</span>}
+                          <td className="px-3 py-2 font-mono text-[12px] text-foreground">{p.phone_number}</td>
+                          <td className="px-3 py-2 text-foreground">
+                            {[p.first_name, p.last_name].filter(Boolean).join(' ') || <span className="text-muted-foreground/60">—</span>}
                           </td>
                           <td className="px-3 py-2">
                             <Badge variant={p.opt_in ? 'default' : 'secondary'} className="text-[10px]">
@@ -624,14 +624,14 @@ export function ProspectListsTab() {
 
             {/* Paginación prospectos */}
             {prospectsTotal > 50 && (
-              <div className="flex items-center justify-between text-xs text-gray-500">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span>{prospectsTotal.toLocaleString()} prospectos totales</span>
                 <div className="flex items-center gap-2">
                   <button disabled={prospectPage === 1} onClick={() => setProspectPage(p => p - 1)}
-                    className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40">←</button>
+                    className="px-2 py-1 rounded border border-border hover:bg-background disabled:opacity-40">←</button>
                   <span>Pág. {prospectPage}</span>
                   <button disabled={prospectPage * 50 >= prospectsTotal} onClick={() => setProspectPage(p => p + 1)}
-                    className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40">→</button>
+                    className="px-2 py-1 rounded border border-border hover:bg-background disabled:opacity-40">→</button>
                 </div>
               </div>
             )}
@@ -639,7 +639,7 @@ export function ProspectListsTab() {
             {selectionError && <p className="text-xs text-red-500">{selectionError}</p>}
           </div>
           <DialogFooter className="pt-2">
-            <span className="text-xs text-gray-400 mr-auto">{selectedProspects.size} seleccionado{selectedProspects.size !== 1 ? 's' : ''}</span>
+            <span className="text-xs text-muted-foreground mr-auto">{selectedProspects.size} seleccionado{selectedProspects.size !== 1 ? 's' : ''}</span>
             <Button variant="outline" onClick={() => setShowFromSelection(false)}>Cancelar</Button>
             <Button onClick={submitFromSelection} disabled={savingSelection || selectedProspects.size === 0}>
               {savingSelection ? 'Creando…' : 'Crear lista'}
@@ -703,13 +703,13 @@ function DetailView({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button
-            className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 transition-colors"
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
             onClick={onBack}
           >
             <ChevronLeft size={16} /> Listas de Difusión
           </button>
-          <span className="text-gray-300">/</span>
-          <h2 className="text-base font-semibold text-gray-800">{list.name}</h2>
+          <span className="text-muted-foreground/60">/</span>
+          <h2 className="text-base font-semibold text-foreground">{list.name}</h2>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading}>
@@ -731,26 +731,26 @@ function DetailView({
 
       {/* Stats de la lista */}
       <div className="grid grid-cols-3 gap-3">
-        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-          <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-1">Prospectos</p>
-          <p className="text-2xl font-bold text-gray-800">{list.member_count.toLocaleString()}</p>
+        <div className="rounded-lg border border-border bg-background px-4 py-3">
+          <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1">Prospectos</p>
+          <p className="text-2xl font-bold text-foreground">{list.member_count.toLocaleString()}</p>
         </div>
-        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-          <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-1">Campañas</p>
-          <p className="text-2xl font-bold text-gray-800">{list.campaign_count}</p>
+        <div className="rounded-lg border border-border bg-background px-4 py-3">
+          <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1">Campañas</p>
+          <p className="text-2xl font-bold text-foreground">{list.campaign_count}</p>
         </div>
-        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-          <p className="text-[11px] text-gray-400 uppercase tracking-wide mb-1">Último uso</p>
+        <div className="rounded-lg border border-border bg-background px-4 py-3">
+          <p className="text-[11px] text-muted-foreground uppercase tracking-wide mb-1">Último uso</p>
           <div className="flex items-center gap-1.5 mt-0.5">
-            <Calendar size={14} className="text-gray-400" />
-            <p className="text-sm font-medium text-gray-700">{list.last_used_at ? formatDate(list.last_used_at) : '—'}</p>
+            <Calendar size={14} className="text-muted-foreground" />
+            <p className="text-sm font-medium text-foreground">{list.last_used_at ? formatDate(list.last_used_at) : '—'}</p>
           </div>
         </div>
       </div>
 
       {/* Búsqueda en miembros */}
       <div className="relative max-w-xs">
-        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+        <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <Input
           placeholder="Buscar miembro..."
           className="pl-8 h-8 text-sm"
@@ -765,9 +765,9 @@ function DetailView({
 
       {/* Tabla de miembros */}
       {loading ? (
-        <div className="text-sm text-gray-400 py-8 text-center">Cargando…</div>
+        <div className="text-sm text-muted-foreground py-8 text-center">Cargando…</div>
       ) : members.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-gray-200 py-14 flex flex-col items-center gap-3 text-gray-400">
+        <div className="rounded-xl border border-dashed border-border py-14 flex flex-col items-center gap-3 text-muted-foreground">
           <Users size={32} className="opacity-30" />
           <p className="text-sm">{memberSearch ? 'Sin resultados para esa búsqueda.' : 'Esta lista no tiene prospectos todavía.'}</p>
           {!memberSearch && (
@@ -777,10 +777,10 @@ function DetailView({
           )}
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-gray-200">
+        <div className="overflow-x-auto rounded-xl border border-border">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs text-gray-500 uppercase tracking-wide">
+              <tr className="border-b border-border bg-background text-left text-xs text-muted-foreground uppercase tracking-wide">
                 <th className="px-4 py-2.5 font-medium">Teléfono</th>
                 <th className="px-4 py-2.5 font-medium">Nombre</th>
                 <th className="px-4 py-2.5 font-medium">Email</th>
@@ -793,12 +793,12 @@ function DetailView({
             </thead>
             <tbody>
               {members.map((m, i) => (
-                <tr key={m.id} className={`border-b border-gray-50 ${i % 2 === 0 ? '' : 'bg-gray-50/30'}`}>
-                  <td className="px-4 py-2.5 font-mono text-[12px] text-gray-700">{m.phone_number}</td>
-                  <td className="px-4 py-2.5 text-gray-700">
-                    {[m.first_name, m.last_name].filter(Boolean).join(' ') || <span className="text-gray-300">—</span>}
+                <tr key={m.id} className={`border-b border-gray-50 ${i % 2 === 0 ? '' : 'bg-background/30'}`}>
+                  <td className="px-4 py-2.5 font-mono text-[12px] text-foreground">{m.phone_number}</td>
+                  <td className="px-4 py-2.5 text-foreground">
+                    {[m.first_name, m.last_name].filter(Boolean).join(' ') || <span className="text-muted-foreground/60">—</span>}
                   </td>
-                  <td className="px-4 py-2.5 text-gray-500 text-[12px]">{m.email || <span className="text-gray-300">—</span>}</td>
+                  <td className="px-4 py-2.5 text-muted-foreground text-[12px]">{m.email || <span className="text-muted-foreground/60">—</span>}</td>
                   <td className="px-4 py-2.5">
                     <Badge
                       variant={m.status === 'active' ? 'default' : 'secondary'}
@@ -807,18 +807,18 @@ function DetailView({
                       {m.status === 'active' ? 'activo' : 'baja'}
                     </Badge>
                   </td>
-                  <td className="px-4 py-2.5 text-[12px] text-gray-500">
+                  <td className="px-4 py-2.5 text-[12px] text-muted-foreground">
                     {PROSPECT_STAGE_LABELS[m.stage] ?? m.stage}
                   </td>
                   <td className="px-4 py-2.5">
-                    <span className={`text-[11px] font-medium ${m.opt_in ? 'text-green-600' : 'text-red-400'}`}>
+                    <span className={`text-[11px] font-medium ${m.opt_in ? 'text-success' : 'text-red-400'}`}>
                       {m.opt_in ? 'Sí' : 'No'}
                     </span>
                   </td>
-                  <td className="px-4 py-2.5 text-gray-400 text-[12px]">{formatDateTime(m.added_at)}</td>
+                  <td className="px-4 py-2.5 text-muted-foreground text-[12px]">{formatDateTime(m.added_at)}</td>
                   <td className="px-4 py-2.5">
                     <button
-                      className="p-1 text-gray-300 hover:text-red-500 transition-colors rounded disabled:opacity-40"
+                      className="p-1 text-muted-foreground/60 hover:text-red-500 transition-colors rounded disabled:opacity-40"
                       title="Quitar de la lista"
                       disabled={deletingMemberId === m.id}
                       onClick={() => onDelete(m.id)}
@@ -835,12 +835,12 @@ function DetailView({
 
       {/* Paginación miembros */}
       {membersTotal > MEMBER_LIMIT && (
-        <div className="flex items-center justify-end gap-2 text-sm text-gray-500">
+        <div className="flex items-center justify-end gap-2 text-sm text-muted-foreground">
           <button disabled={memberPage === 1} onClick={() => setMemberPage(memberPage - 1)}
-            className="px-3 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40">←</button>
+            className="px-3 py-1 rounded border border-border hover:bg-background disabled:opacity-40">←</button>
           <span>Página {memberPage} de {Math.ceil(membersTotal / MEMBER_LIMIT)}</span>
           <button disabled={memberPage * MEMBER_LIMIT >= membersTotal} onClick={() => setMemberPage(memberPage + 1)}
-            className="px-3 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40">→</button>
+            className="px-3 py-1 rounded border border-border hover:bg-background disabled:opacity-40">→</button>
         </div>
       )}
 
@@ -853,7 +853,7 @@ function DetailView({
           <div className="flex flex-col gap-3 overflow-hidden flex-1 min-h-0">
             <div className="flex items-center justify-between gap-2">
               <div className="relative flex-1">
-                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input
                   placeholder="Buscar prospectos..."
                   className="pl-8 h-8 text-sm"
@@ -861,26 +861,26 @@ function DetailView({
                   onChange={e => { setAddSearch(e.target.value); setAddPage(1) }}
                 />
               </div>
-              <div className="flex items-center gap-1.5 text-xs text-gray-500 shrink-0">
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
                 <button className="text-blue-600 hover:underline" onClick={onSelectAllAdd}>
                   <CheckSquare size={12} className="inline mr-0.5" /> Seleccionar página
                 </button>
                 {selectedAdd.size > 0 && (
-                  <button className="text-gray-400 hover:text-red-500" onClick={onDeselectAllAdd}>
+                  <button className="text-muted-foreground hover:text-red-500" onClick={onDeselectAllAdd}>
                     <X size={12} className="inline mr-0.5" /> Limpiar ({selectedAdd.size})
                   </button>
                 )}
               </div>
             </div>
 
-            <div className="overflow-y-auto flex-1 rounded-lg border border-gray-200 min-h-0">
+            <div className="overflow-y-auto flex-1 rounded-lg border border-border min-h-0">
               {loadingAdd ? (
-                <div className="text-sm text-gray-400 py-8 text-center">Cargando…</div>
+                <div className="text-sm text-muted-foreground py-8 text-center">Cargando…</div>
               ) : addProspects.length === 0 ? (
-                <div className="text-sm text-gray-400 py-8 text-center">Sin resultados</div>
+                <div className="text-sm text-muted-foreground py-8 text-center">Sin resultados</div>
               ) : (
                 <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-gray-50 border-b border-gray-100 text-xs text-gray-500">
+                  <thead className="sticky top-0 bg-background border-b border-border text-xs text-muted-foreground">
                     <tr>
                       <th className="w-8 px-3 py-2" />
                       <th className="px-3 py-2 text-left font-medium">Teléfono</th>
@@ -900,9 +900,9 @@ function DetailView({
                           <td className="px-3 py-2 text-center">
                             <input type="checkbox" readOnly checked={checked} className="accent-blue-600 cursor-pointer" />
                           </td>
-                          <td className="px-3 py-2 font-mono text-[12px] text-gray-700">{p.phone_number}</td>
-                          <td className="px-3 py-2 text-gray-700">
-                            {[p.first_name, p.last_name].filter(Boolean).join(' ') || <span className="text-gray-300">—</span>}
+                          <td className="px-3 py-2 font-mono text-[12px] text-foreground">{p.phone_number}</td>
+                          <td className="px-3 py-2 text-foreground">
+                            {[p.first_name, p.last_name].filter(Boolean).join(' ') || <span className="text-muted-foreground/60">—</span>}
                           </td>
                           <td className="px-3 py-2">
                             <Badge variant={p.opt_in ? 'default' : 'secondary'} className="text-[10px]">
@@ -918,14 +918,14 @@ function DetailView({
             </div>
 
             {addProspectsTotal > 50 && (
-              <div className="flex items-center justify-between text-xs text-gray-500">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
                 <span>{addProspectsTotal.toLocaleString()} prospectos totales</span>
                 <div className="flex items-center gap-2">
                   <button disabled={addPage === 1} onClick={() => setAddPage(addPage - 1)}
-                    className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40">←</button>
+                    className="px-2 py-1 rounded border border-border hover:bg-background disabled:opacity-40">←</button>
                   <span>Pág. {addPage}</span>
                   <button disabled={addPage * 50 >= addProspectsTotal} onClick={() => setAddPage(addPage + 1)}
-                    className="px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 disabled:opacity-40">→</button>
+                    className="px-2 py-1 rounded border border-border hover:bg-background disabled:opacity-40">→</button>
                 </div>
               </div>
             )}
@@ -933,7 +933,7 @@ function DetailView({
             {addError && <p className="text-xs text-red-500">{addError}</p>}
           </div>
           <DialogFooter className="pt-2">
-            <span className="text-xs text-gray-400 mr-auto">{selectedAdd.size} seleccionado{selectedAdd.size !== 1 ? 's' : ''}</span>
+            <span className="text-xs text-muted-foreground mr-auto">{selectedAdd.size} seleccionado{selectedAdd.size !== 1 ? 's' : ''}</span>
             <Button variant="outline" onClick={() => setShowAddToList(false)}>Cancelar</Button>
             <Button onClick={onSubmitAdd} disabled={adding || selectedAdd.size === 0}>
               {adding ? 'Agregando…' : `Agregar ${selectedAdd.size > 0 ? selectedAdd.size : ''}`}

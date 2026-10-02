@@ -27,6 +27,8 @@ export class SendMessageUseCase {
     const correlationId = input.correlationId ?? createCorrelationId()
     const log = createLogger({ correlationId, phoneNumberId, operation: 'send_message' })
 
+    buildMessagePayload(req) // Reject malformed content before any persistence.
+
     // 1. Compliance: opt-out
     const optedOut = await complianceRepository.isOptedOut(to, phoneNumberId)
     if (optedOut) throw new OptOutError(to)
@@ -84,17 +86,18 @@ export class SendMessageUseCase {
     const accessToken = await getTokenForNumber(phoneNumberId)
     const sender      = new MessageSenderService(accessToken, phoneNumberId)
 
+    // Persist before the external send. A storage failure must not send an untracked message.
+    const convId = await conversationRepository.upsertForOutbound(phoneNumberId, to)
+    await messageRepository.insertQueued({
+      id: messageId, conversationId: convId, phoneNumberId,
+      messageType: type, content: req, campaignId: req.campaignId,
+      sentByUserId: req.sentByUserId === 'bootstrap' ? undefined : req.sentByUserId,
+    })
     const timer = Date.now()
     try {
       const { wamid } = await sender.send(req)
-
-      const convId = await conversationRepository.upsertForOutbound(phoneNumberId, to)
-      await messageRepository.insertOutbound({
-        id: messageId, conversationId: convId, phoneNumberId, wamid,
-        messageType: type, content: req,
-        templateName: type === 'template' ? req.template?.name : undefined,
-        campaignId: req.campaignId, sentByUserId: req.sentByUserId,
-      })
+      try { await messageRepository.markSent(messageId, wamid) }
+      catch { log.logWarn('Meta accepted message; local status update needs reconciliation', { messageId, wamid }) }
 
       cloudMetrics.messageSent(phoneNumberId, type, Date.now() - timer)
       log.logInfo('sent', { messageId, wamid, type })

@@ -7,17 +7,6 @@ import { checkPermission } from '@/lib/permissions'
 // Ej: "(carga mucho)Maximo3214z/Maximo3214b G.Sorteo"
 //   → strip: "Maximo3214z/Maximo3214b G.Sorteo"
 //   → tokens: ["maximo3214z", "maximo3214b", "g.sorteo"]
-// Migración 127: username_lower ya no es único global — el mismo username
-// puede existir en más de una plataforma (filas distintas de casino_players).
-// Este matching por tokens de nombre no tiene forma de saber a qué plataforma
-// se refiere el contacto, así que `CASINO_PLAYERS_UNAMBIGUOUS` restringe cp a
-// usernames que resuelven a una única fila — evita joins con abanico (fan-out)
-// que dejarían el UPDATE/INSERT con una fila arbitraria de las dos.
-const CASINO_PLAYERS_UNAMBIGUOUS = `(
-  SELECT * FROM (
-    SELECT *, COUNT(*) OVER (PARTITION BY username_lower) AS name_count FROM casino_players
-  ) x WHERE x.name_count = 1
-)`
 const USERNAME_MATCH = `cp.username_lower = ANY(
   SELECT LOWER(TRIM(tok))
   FROM regexp_split_to_table(
@@ -44,7 +33,7 @@ async function runSyncTags() {
     await run('sync segment', `
       UPDATE contacts c
       SET segment = cp.seg_monto::contact_segment, updated_at = NOW()
-      FROM ${CASINO_PLAYERS_UNAMBIGUOUS} cp
+      FROM casino_players cp
       WHERE ${USERNAME_MATCH}
         AND cp.seg_monto IS NOT NULL
         AND c.segment::text IS DISTINCT FROM cp.seg_monto
@@ -57,7 +46,7 @@ async function runSyncTags() {
         total_withdrawals = cp.cant_retiros,
         last_deposit_at   = am.last_tx_date,
         updated_at        = NOW()
-      FROM ${CASINO_PLAYERS_UNAMBIGUOUS} cp
+      FROM casino_players cp
       LEFT JOIN (
         SELECT
           LOWER(username)         AS username_lower,
@@ -82,7 +71,7 @@ async function runSyncTags() {
         AND ct.contact_id IN (
           SELECT c.id
           FROM contacts c
-          JOIN ${CASINO_PLAYERS_UNAMBIGUOUS} cp ON ${USERNAME_MATCH}
+          JOIN casino_players cp ON ${USERNAME_MATCH}
           WHERE cp.seg_actividad IS NOT NULL
         )
     `)
@@ -113,7 +102,7 @@ async function runSyncTags() {
         ], NULL)),
         'sync_tags', NOW()
       FROM contacts c
-      JOIN ${CASINO_PLAYERS_UNAMBIGUOUS} cp ON ${USERNAME_MATCH}
+      JOIN casino_players cp ON ${USERNAME_MATCH}
       WHERE cp.seg_actividad IS NOT NULL AND cp.seg_monto IS NOT NULL
       ON CONFLICT (contact_id, tag) DO NOTHING
     `)

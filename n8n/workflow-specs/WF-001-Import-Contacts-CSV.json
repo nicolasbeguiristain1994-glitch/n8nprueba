@@ -174,8 +174,8 @@
       "name": "Insert rows in a table",
       "credentials": {
         "postgres": {
-          "id": "xEGqwiZXpd5tMF9C",
-          "name": "Postgres account"
+          "id": "REPLACE_ME_CREDENTIAL_ID",
+          "name": "REPLACE_ME_CREDENTIAL_NAME"
         }
       }
     }

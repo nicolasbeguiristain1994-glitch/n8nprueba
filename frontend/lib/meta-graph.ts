@@ -1,7 +1,8 @@
 // Meta Graph API helper
 // Requiere en .env: META_ACCESS_TOKEN, META_WABA_ID
 
-const META_VERSION = 'v19.0'
+import { META_API_VERSION } from './cloud-api/types/domain'
+const META_VERSION = META_API_VERSION
 const BASE = `https://graph.facebook.com/${META_VERSION}`
 
 function getCredentials() {

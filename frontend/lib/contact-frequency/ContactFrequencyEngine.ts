@@ -45,8 +45,8 @@
  *
  *   Comportamiento en fallos post-COMMIT:
  *   Si Evolution API falla después de que el registro fue insertado, el registro
- *   permanece. Esto es INTENCIONAL: un intento fallido cuenta como "slot usado",
- *   lo que es conservador y protector para anti-spam.
+ *   permanece para auditoría. Los fallos confirmados liberan el cupo;
+ *   los resultados ambiguos o en curso conservan la reserva.
  *
  * ## Arquitectura interna
  *  ContactFrequencyEngine (este archivo)
@@ -57,6 +57,7 @@
  *    → calculateRiskScore()                       (risk-scorer.ts — scoring y decisión)
  */
 
+import { FAILED_RESERVATION_SQL } from '@/lib/campaign-retry'
 import { withTransaction }                      from '@/lib/db'
 import { getAll as getScoringConfigFromDB }     from '@/lib/scoring-config-service'
 import { ContactFrequencyRulesRepository }      from './repositories/ContactFrequencyRulesRepository'
@@ -226,13 +227,22 @@ export class ContactFrequencyEngine {
       // Al hacer COMMIT (que libera el lock), el slot ya está reservado en DB.
       // Otro proceso que intente adquirir el lock verá count+1 en su lectura.
       //
-      // Si Evolution API falla después del COMMIT: el registro permanece.
-      // Comportamiento INTENCIONAL: un intento fallido usa el slot (conservador).
+      // Mantener cada intento fallido para auditoría antes de reservar uno nuevo.
       if (decision !== 'BLOCK') {
+        await client.query(`UPDATE contact_send_history h SET
+          original_campaign_recipient_id=h.campaign_recipient_id,
+          frequency_released_at=COALESCE(h.frequency_released_at,NOW()),
+          failed_message_id=COALESCE(h.failed_message_id,(SELECT wm.id FROM whatsapp_messages wm
+            WHERE wm.campaign_recipient_id=h.campaign_recipient_id AND wm.status='failed'
+              AND wm.evolution_message_id IS NOT NULL LIMIT 1)),
+          campaign_recipient_id=NULL
+          WHERE h.campaign_recipient_id=$1
+            AND (h.frequency_released_at IS NOT NULL OR ${FAILED_RESERVATION_SQL})`,
+          [recordInput.campaignRecipientId ?? null])
         await client.query(
           `INSERT INTO contact_send_history
              (contact_id, campaign_id, operator_id, phone_number, campaign_recipient_id, sent_at)
-           VALUES ($1, $2, $3, $4, $5, NOW())
+           VALUES ($1, $2, $3, $4, $5, clock_timestamp())
            ON CONFLICT (campaign_recipient_id)
              WHERE campaign_recipient_id IS NOT NULL
            DO NOTHING`,

@@ -1,3 +1,5 @@
+import { buildMessagePayload } from '@/lib/cloud-api/infrastructure/message-sender.service'
+import { cloudNumberAccess } from '@/lib/cloud-api/access'
 import { NextRequest, NextResponse }  from 'next/server'
 import { checkPermissionWithUser }    from '@/lib/permissions'
 import { sendMessageUseCase }         from '@/lib/cloud-api/use-cases/send-message.use-case'
@@ -15,7 +17,7 @@ import {
 // La ruta valida la sesión HTTP y delega toda la lógica al SendMessageUseCase.
 
 export async function POST(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'send', 'create')
+  const auth = await checkPermissionWithUser(req, 'send', 'send')
   if (!auth.ok) return auth.response
 
   let body: Partial<SendMessageRequest> & { enqueue?: boolean }
@@ -25,7 +27,7 @@ export async function POST(req: NextRequest) {
 
   const { phoneNumberId, to, type, enqueue } = body
 
-  if (!phoneNumberId || !to || !type) {
+  if (typeof phoneNumberId !== 'string' || !/^\d{5,30}$/.test(phoneNumberId) || typeof to !== 'string' || typeof type !== 'string') {
     return NextResponse.json({ error: 'Se requieren: phoneNumberId, to, type' }, { status: 400 })
   }
 
@@ -35,6 +37,11 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     )
   }
+
+  try { buildMessagePayload(body as SendMessageRequest) } catch { return NextResponse.json({ error: 'Contenido del mensaje inválido' }, { status: 400 }) }
+  const denied = await cloudNumberAccess(auth.user, phoneNumberId)
+  if (denied) return denied
+  if (enqueue && process.env.CLOUD_MESSAGE_WORKER_ENABLED !== 'true') return NextResponse.json({ error: 'La cola requiere un worker habilitado. Usá envío directo.' }, { status: 503 })
 
   try {
     const result = await sendMessageUseCase.execute({

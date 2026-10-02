@@ -2,16 +2,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 export function useDesktopNotifications() {
-  const [permission, setPermission] = useState<NotificationPermission>(() => {
-    if (typeof window === 'undefined' || !('Notification' in window)) return 'denied'
-    return Notification.permission
-  })
+  // Match the server's initial render; browser permission is read after hydration.
+  const [permission, setPermission] = useState<NotificationPermission>('default')
 
   // Grace period: ignore SSE events during first 3s to avoid spam on page load
   const mountedAt = useRef(Date.now())
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !('Notification' in window)) return
+    if (!('Notification' in window)) { setPermission('denied'); return }
     // Sync in case permission changed externally (e.g. browser settings)
     setPermission(Notification.permission)
   }, [])

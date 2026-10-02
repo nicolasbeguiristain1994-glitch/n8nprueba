@@ -2,133 +2,118 @@
 'use strict'
 
 /**
- * Casino players sync — CLI entry point.
+ * Casino players sync — CLI.
  *
- * This file is a thin wrapper around scripts/lib/casino-sync-orchestrator.js:
- * it parses argv, opens the real DB pool, resolves the agent list (from
- * src/config/platforms.config.json via getConfigAgents() — the SOLE runtime
- * source, same as scripts/pipeline-diario.js; --agentes overrides it but
- * every name must already be one of that platform's configured agents, it
- * is never a way to sync an unvetted agent), calls runOrchestrator(), and
- * maps its result to a process exit code. All actual sync logic (lock,
- * per-agent incremental window, casino_sync_runs bookkeeping, chunking/
- * concurrency for historical backfills) lives in the orchestrator module so
- * it can be unit-tested without a subprocess and reused in-process by
- * scripts/pipeline-diario.js.
+ * La lógica vive en src/casino-connectors/sync/runner.js (testeable). Este
+ * archivo solo parsea argumentos, arma el pool y fija el código de salida.
  *
- * Nothing below `if (require.main === module)` runs on require() — no .env
- * reading, no DB connection — so this file is safe to require() from tests
- * or from pipeline-diario.js without side effects.
+ * Por cada agente y tramo de fechas, en UNA transacción:
+ *   casino_transactions  ← movimientos del casino, con plataforma (dedup por plataforma+ID)
+ *   casino_players       ← recalculado desde casino_transactions (asignación, no suma)
+ *   casino_sync_cursors  ← avanza solo sobre días cerrados y contiguos
+ * y registra la corrida en casino_sync_runs / casino_sync_agent_ranges.
  *
  * Usage:
  *   node scripts/sync-casino-players-live.js --platform=zeus --auto
- *   node scripts/sync-casino-players-live.js --platform=bet30 --desde=2025-01-01 --hasta=2026-05-14 --chunk-days=30 --concurrency=3
- *   node scripts/sync-casino-players-live.js --platform=zeus --agentes=betcoin,bigwin,ofizeus
+ *   node scripts/sync-casino-players-live.js --platform=zeus --auto --bootstrap-desde=2026-08-01
+ *   node scripts/sync-casino-players-live.js --platform=zeus --desde=2026-05-01 --hasta=2026-05-12
+ *   node scripts/sync-casino-players-live.js --platform=bet30 --agentes=btcuno,btcdos --desde=2026-09-01
+ *   node scripts/sync-casino-players-live.js --platform=bet30 --desde=2025-01-01 --chunk-days=30 --concurrency=2
+ *
+ * Modo --auto: por cada agente, desde el último día cerrado cubierto de su cursor
+ *   (--overlap-days, default 1) hasta hoy en hora Argentina. Un agente sin cursor
+ *   falla con CURSOR_MISSING salvo que se pase --bootstrap-desde.
+ * Modo rango (sin --auto): --desde (default 2020-01-01) a --hasta (default hoy ART).
+ *
+ * Preview (sin escrituras, corridas ni segmentación; válido durante mantenimiento):
+ *   node scripts/sync-casino-players-live.js --preview --platform=zeus --agentes=betcoin --desde=2026-09-12 --hasta=2026-09-12
+ * Requiere un único día YA cerrado y todas esas opciones explícitas. El reporte
+ * calcula A/B/C; nunca autoriza ni ejecuta una importación. Ver sync/preview.js.
+ *
+ * Otros flags: --run-id=<uuid> (lo usa la API), --trigger=cli|api|pipeline.
+ *
+ * Códigos de salida: 0 éxito · 1 fallo o parcial · 2 argumentos inválidos ·
+ *                    3 omitida (otra corrida de la plataforma en curso).
  *
  * Required env vars (per platform — see src/config/platforms.config.json):
- *   DATABASE_URL, and the platform's own credentials (ZEUS_API_KEY, etc).
+ *   DATABASE_URL   conexión directa o pooler en modo sesión (usa advisory locks de sesión)
+ *   ZEUS_API_KEY + ZEUS_ADMIN_USER/ZEUS_ADMIN_PASSWORD (o ZEUS_PLAYER_TOKEN)
+ *   ZEUS_API_BASE  (optional — overrides config baseUrl)
  */
 
-const { Pool } = require('pg')
+const { Pool }                               = require('pg')
+const { createConnector, getDefaultPlatform } = require('../src/casino-connectors/index')
+const { createLogger }                        = require('../src/lib/logger')
+const { parseSyncArgs }                       = require('../src/casino-connectors/sync/cli-args')
+const { runSync, EXIT }                       = require('../src/casino-connectors/sync/runner')
 
-function parseArgs(argv) {
-  return Object.fromEntries(
-    argv
-      .filter((a) => a.startsWith('--'))
-      .map((a) => { const [k, v] = a.slice(2).split('='); return [k, v ?? 'true'] }),
-  )
+const parsed = parseSyncArgs(process.argv.slice(2), { defaultPlatform: getDefaultPlatform() })
+if (!parsed.ok) {
+  process.stderr.write(`${JSON.stringify({ level: 50, msg: 'Argumentos inválidos', errors: parsed.errors, component: 'sync' })}\n`)
+  process.exit(EXIT.USAGE)
 }
 
-/**
- * Resolves the CLI invocation into a `runOrchestrator()` call. Exported so
- * tests can exercise the argv → options mapping without spawning a process.
- */
-async function runCli(argv, { pool, createConnector, clock, log } = {}) {
-  const { runOrchestrator }              = require('./lib/casino-sync-orchestrator')
-  const { getDefaultPlatform, getConfigAgents } = require('../src/casino-connectors/index')
+if (!process.env.DATABASE_URL) {
+  // Logger not yet available — plain stderr before process.exit
+  process.stderr.write('{"level":50,"msg":"DATABASE_URL is required","component":"sync"}\n')
+  process.exit(EXIT.FAILED)
+}
 
-  const args = parseArgs(argv)
-
-  const platform     = args.platform || getDefaultPlatform()
-  const auto          = args.auto === 'true'
-  const desde         = args.desde || null
-  const hasta          = args.hasta || null
-  const chunkDays      = Math.max(1, parseInt(args['chunk-days'] ?? '30', 10) || 30)
-  const concurrency    = Math.max(1, parseInt(args.concurrency ?? '1', 10) || 1)
-  const agentesArg     = args.agentes
-    ? args.agentes.split(',').map((a) => a.trim()).filter(Boolean)
-    : null
-
-  const configAgentes = getConfigAgents(platform)
-
-  let agentes
-  if (agentesArg !== null) {
-    const unknown = agentesArg.filter((a) => !configAgentes.includes(a))
-    if (unknown.length) {
-      return {
-        platform, locked: false, ok: false, results: [],
-        error: `--agentes contains name(s) not configured for "${platform}": ${unknown.join(', ')} ` +
-               `(allowed: ${configAgentes.join(', ')})`,
-      }
+if (parsed.value.preview) {
+  // Separate read-only path: runSync and its write/pause controls are untouched.
+  const { runPreview, previewPoolOptions } = require('../src/casino-connectors/sync/preview')
+  ;(async () => {
+    let previewPool
+    try {
+      previewPool = new Pool(previewPoolOptions(process.env))
+      previewPool.on('error', () => {}) // runPreview emits only sanitized failures
+      const abort = new AbortController()
+      for (const sig of ['SIGTERM', 'SIGINT']) process.once(sig, () => abort.abort())
+      const result = await runPreview({ ...parsed.value, signal: abort.signal }, { pool: previewPool, createConnector })
+      process.stdout.write(`${JSON.stringify(result)}\n`)
+      process.exitCode = result.exitCode
+    } catch {
+      process.stderr.write('{"mode":"preview","read_only":true,"status":"failed","error_code":"PREVIEW_SETUP_FAILED"}\n')
+      process.exitCode = EXIT.FAILED
+    } finally {
+      if (previewPool) await previewPool.end().catch(() => {})
     }
-    agentes = agentesArg
-  } else {
-    agentes = configAgentes
-  }
-
-  return runOrchestrator({
-    platform,
-    pool,
-    createConnector,
-    clock,
-    log,
-    auto,
-    desde: auto ? null : (desde || '2020-01-01'),
-    hasta,
-    agentes,
-    chunkDays,
-    concurrency,
-  })
-}
-
-async function main() {
-  if (!process.env.DATABASE_URL) {
-    process.stderr.write('{"level":50,"msg":"DATABASE_URL is required","component":"sync"}\n')
-    process.exit(1)
-  }
-
-  const { createLogger } = require('../src/lib/logger')
-  const log = createLogger({ component: 'sync' })
+  })()
+} else {
+  const log = createLogger({ component: 'sync', platform: parsed.value.platform })
 
   const pool = new Pool({
-    connectionString:            process.env.DATABASE_URL,
-    max:                          5, // must be >1 — the platform lock holds one connection for the whole run
+    connectionString:             process.env.DATABASE_URL,
     keepAlive:                    true,
     keepAliveInitialDelayMillis:  10_000,
     connectionTimeoutMillis:      30_000,
-    idleTimeoutMillis:            600_000,
-  })
-  pool.on('error', (err) => {
-    log.error({ err: err.message, code: err.code }, 'Idle DB connection error — el run continúa')
+    idleTimeoutMillis:            600_000,  // longer than the slowest Zeus API call
   })
 
-  let result
-  try {
-    result = await runCli(process.argv.slice(2), { pool, log })
-  } catch (err) {
-    log.error({ err: err.message, stack: err.stack }, 'Fatal error')
-    await pool.end()
-    process.exit(1)
+  // Sin este listener, un corte de red en una conexión ociosa emite un 'error' sin
+  // manejar en el pool y Node mata el proceso en el acto. Con el handler, la query
+  // en curso falla, ese tramo queda registrado como fallido y el resto sigue.
+  pool.on('error', err => {
+    log.error({ code: err.code }, 'Idle DB connection error — el run continúa')
+  })
+
+  // SIGTERM/SIGINT: dejar de tomar tramos nuevos y cerrar la corrida como parcial.
+  const abort = new AbortController()
+  for (const sig of ['SIGTERM', 'SIGINT']) {
+    process.once(sig, () => {
+      log.warn({ signal: sig }, 'Señal recibida — terminando después del tramo en curso')
+      abort.abort()
+    })
   }
 
-  await pool.end()
-
-  log.info(result, result.ok ? 'Sync run complete' : 'Sync run finished with errors')
-  process.exit(result.ok ? 0 : 1)
+  runSync({ ...parsed.value, signal: abort.signal }, { pool, createConnector, log })
+    .then(result => {
+      process.stdout.write(`${JSON.stringify({ runId: result.runId, status: result.status, exitCode: result.exitCode })}\n`)
+      process.exitCode = result.exitCode
+    })
+    .catch(err => {
+      log.error({ code: err?.code }, 'Fatal error')
+      process.exitCode = EXIT.FAILED
+    })
+    .finally(() => pool.end().catch(() => {}))
 }
-
-if (require.main === module) {
-  main()
-}
-
-module.exports = { runCli, parseArgs }

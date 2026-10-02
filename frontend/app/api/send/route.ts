@@ -4,8 +4,10 @@ import { isE164 } from '@/lib/validate'
 import { checkPermissionWithUser, isOwnerOrAdmin } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { parseBody, handleValidationError, SendSchema } from '@/lib/schema'
-import { getEligibleLines, selectLine, sendViaEvolution, type EligibleLine } from '@/lib/campaign-distributor'
+import { getEligibleLines, selectLine, sendViaEvolution, sendViaCloud, type EligibleLine } from '@/lib/campaign-distributor'
 import { sseEmitter } from '@/lib/sse-events'
+import { getAccessibleLineIds } from '@/lib/line-visibility'
+import { findConversationReplyLine } from '@/lib/conversation-reply-line'
 
 type LogEntry = {
   phone_number:         string
@@ -78,8 +80,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  // Fetch eligible lines once — reuse across all phones in this request
-  const eligibleLines = await getEligibleLines()
+  // Visibility includes temporarily unavailable lines: a reply must not silently
+  // move to another business number when its original sender has no capacity.
+  const [eligibleLines, accessibleLineIds] = await Promise.all([
+    getEligibleLines(session.is_super_admin ? undefined : session.user_id),
+    getAccessibleLineIds(session),
+  ])
   if (eligibleLines.length === 0) {
     return NextResponse.json({ error: 'No hay líneas de WhatsApp disponibles' }, { status: 503 })
   }
@@ -89,10 +95,12 @@ export async function POST(req: NextRequest) {
 
   // Send sequentially (antiblock) — collect results in memory
   for (const phone of uniquePhones) {
-    // Línea fija por número: si el contacto tiene una línea asignada, usar esa siempre
-    const line = await getOrAssignLine(phone, eligibleLines)
     try {
-      const { messageId } = await sendViaEvolution(line, phone, messageStr, media_url || null)
+      const line = await findConversationReplyLine(phone, accessibleLineIds, eligibleLines)
+        ?? await getOrAssignLine(phone, eligibleLines)
+      const { messageId } = await (line.line_type === 'cloud'
+        ? sendViaCloud(line, phone, { kind: 'text', body: messageStr, mediaUrl: media_url || null }, campaign_id ?? undefined)
+        : sendViaEvolution(line, phone, messageStr, media_url || null))
 
       logs.push({
         phone_number:         phone,

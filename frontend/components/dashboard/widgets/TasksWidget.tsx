@@ -14,8 +14,8 @@ interface Props {
 
 const PRIORITY_STYLE: Record<string, string> = {
   alta:  'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400',
-  media: 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400',
-  baja:  'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
+  media: 'bg-warning/15 text-warning dark:bg-amber-950/40 dark:text-amber-400',
+  baja:  'bg-muted text-slate-600 dark:bg-slate-800 dark:text-slate-400',
 }
 
 const PRIORITY_DOT: Record<string, string> = {
@@ -33,17 +33,22 @@ function fmtDate(due: string | null) {
 }
 
 export const TasksWidget = memo(function TasksWidget({ tasks, loading, onCompleted }: Props) {
+  const [error, setError] = useState<string | null>(null)
   const [completing, setCompleting] = useState<Set<string>>(new Set())
 
   const complete = useCallback(async (id: string) => {
+    setError(null)
     setCompleting(prev => new Set(prev).add(id))
     try {
-      await fetch(`/api/tasks/${id}/status`, {
+      const response = await fetch(`/api/tasks/${id}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'completada' }),
       })
+      if (!response.ok) throw new Error('No se pudo completar la tarea')
       onCompleted?.(id)
+    } catch {
+      setError('No se pudo completar la tarea. Intentá nuevamente.')
     } finally {
       setCompleting(prev => { const s = new Set(prev); s.delete(id); return s })
     }
@@ -58,6 +63,7 @@ export const TasksWidget = memo(function TasksWidget({ tasks, loading, onComplet
         </CardTitle>
       </CardHeader>
       <CardContent>
+        {error && <p role="alert" className="mb-3 text-xs text-destructive">{error}</p>}
         {loading ? (
           <div className="space-y-2.5">
             {Array.from({ length: 5 }).map((_, i) => (

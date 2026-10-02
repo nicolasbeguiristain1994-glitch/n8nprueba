@@ -1,4 +1,6 @@
 #!/usr/bin/env tsx
+import { complianceRepository } from '../../frontend/lib/cloud-api/repositories/compliance.repository'
+import { conversationRepository } from '../../frontend/lib/cloud-api/repositories/conversation.repository'
 // Worker de BullMQ para procesar la cola de mensajes de Cloud API.
 // Ejecutar como proceso separado: npx tsx scripts/workers/cloud-message-worker.ts
 //
@@ -6,9 +8,9 @@
 // En producción: usar PM2 o un servicio systemd separado.
 
 import 'dotenv/config'
-import { Worker, type Job }          from 'bullmq'
+import { Worker, UnrecoverableError, type Job }          from 'bullmq'
 import { getTokenForNumber }         from '../../frontend/lib/cloud-api/token-store'
-import { moveToDeadLetter }          from '../../frontend/lib/cloud-api/message-queue'
+import { moveToDeadLetter, getConnection }          from '../../frontend/lib/cloud-api/message-queue'
 import { isRetryable }               from '../../frontend/lib/cloud-api/errors'
 import { waitForRateLimit }          from '../../frontend/lib/cloud-api/rate-limiter'
 import { MetaHttpGateway }           from '../../frontend/lib/cloud-api/infrastructure/meta-http.gateway'
@@ -23,11 +25,7 @@ const CONCURRENCY = 5
 
 const lifecycleLog = createLogger({ correlationId: 'system', operation: 'worker_lifecycle' })
 
-const connection = {
-  host:     new URL(process.env.REDIS_URL ?? 'redis://localhost:6379').hostname,
-  port:     parseInt(new URL(process.env.REDIS_URL ?? 'redis://localhost:6379').port || '6379', 10),
-  password: new URL(process.env.REDIS_URL ?? 'redis://localhost:6379').password || undefined,
-}
+const connection = getConnection()
 
 const worker = new Worker<QueuedMessage>(
   QUEUE_NAME,
@@ -38,6 +36,11 @@ const worker = new Worker<QueuedMessage>(
 
     log.logInfo('job started', { jobId: job.id, to: msg.to })
 
+    if (await complianceRepository.isOptedOut(msg.to, msg.phoneNumberId)) throw new UnrecoverableError('Contacto dado de baja')
+    if (msg.payload.type !== 'template') {
+      const window = await conversationRepository.findWindow(msg.phoneNumberId, msg.to)
+      if (!window?.windowExpiresAt || window.windowExpiresAt <= new Date()) throw new UnrecoverableError('Ventana de servicio cerrada')
+    }
     await waitForRateLimit(msg.phoneNumberId, 3000)
 
     const accessToken = await getTokenForNumber(msg.phoneNumberId)
@@ -56,7 +59,7 @@ const worker = new Worker<QueuedMessage>(
     let responseData: { messages?: Array<{ id: string }> }
     try {
       responseData = await gateway.post<{ messages: Array<{ id: string }> }>(
-        `/${META_API_VERSION}/${msg.phoneNumberId}/messages`,
+        `/${msg.phoneNumberId}/messages`,
         payload,
       )
     } catch (err) {
@@ -67,6 +70,7 @@ const worker = new Worker<QueuedMessage>(
         String((err as { type?: string }).type ?? ''),
         String(err),
       )
+      if (!isRetryable(err)) throw new UnrecoverableError('Envío rechazado; requiere revisión')
       throw err
     }
 
@@ -94,7 +98,7 @@ worker.on('completed', (job) => {
 worker.on('failed', async (job, err) => {
   if (!job) return
   const msg       = job.data
-  const maxFailed = (job.opts.attempts ?? 3) - 1
+  const maxFailed = job.opts.attempts ?? 3
 
   lifecycleLog.logError('job failed', err, {
     jobId: job.id, attempt: job.attemptsMade, maxAttempts: job.opts.attempts,
@@ -125,5 +129,5 @@ process.on('SIGINT',  shutdown)
 
 lifecycleLog.logInfo('started', {
   concurrency: CONCURRENCY,
-  redis: process.env.REDIS_URL ?? 'redis://localhost:6379',
+  redisConfigured: !!process.env.REDIS_URL,
 })

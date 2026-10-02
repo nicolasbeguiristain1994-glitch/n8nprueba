@@ -338,13 +338,10 @@ describe('getContactEligibilityBreakdown', () => {
     expect(result.blacklisted).toBe(5)
   })
 
-  it('devuelve ceros cuando la DB falla (graceful degradation)', async () => {
+  it('propaga el error DB sin fabricar una lista vacía', async () => {
     const { getContactEligibilityBreakdown } = await import('@/lib/campaign-distributor')
     vi.mocked(db.query).mockRejectedValueOnce(new Error('connection lost'))
-    const result = await getContactEligibilityBreakdown('list-uuid')
-    expect(result.total_in_list).toBe(0)
-    expect(result.eligible).toBe(0)
-    expect(result.opted_out).toBe(0)
+    await expect(getContactEligibilityBreakdown('list-uuid')).rejects.toThrow('connection lost')
   })
 
   it('devuelve ceros cuando la lista no existe (query retorna vacío)', async () => {

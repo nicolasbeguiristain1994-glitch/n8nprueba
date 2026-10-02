@@ -1,11 +1,18 @@
 // @vitest-environment node
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
+import { verifyWebhookSignature, verifyWebhookChallenge } from '../cloud-api/webhook-verifier'
+import { createHmac } from 'crypto'
+import { classifyMetaError, fromHttpResponse, CloudApiError, TokenExpiredError, OptOutError, RateLimitError } from '../cloud-api/errors'
+import { withCircuitBreaker, resetBreaker, CircuitBreakerOpenError } from '../cloud-api/infrastructure/circuit-breaker'
+import { buildMessagePayload } from '../cloud-api/infrastructure/message-sender.service'
+
+const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }))
+vi.mock('@/lib/db', () => ({ query: mockQuery }))
+
 // ─── Webhook Verifier ─────────────────────────────────────────────────────────
 
 describe('webhook-verifier', () => {
-  const { verifyWebhookSignature, verifyWebhookChallenge } = await import('../cloud-api/webhook-verifier')
-  const { createHmac } = await import('crypto')
   const SECRET = 'test_secret_abc123xyz'
 
   describe('verifyWebhookSignature', () => {
@@ -60,10 +67,6 @@ describe('webhook-verifier', () => {
 // ─── Error Classification ─────────────────────────────────────────────────────
 
 describe('errors', () => {
-  const {
-    classifyMetaError, fromHttpResponse,
-    CloudApiError, TokenExpiredError, OptOutError, RateLimitError,
-  } = await import('../cloud-api/errors')
 
   it('190 → TokenExpiredError, no reintentable', () => {
     const err = fromHttpResponse(401, { error: { code: 190, message: 'token expired', type: 'OAuthException' } })
@@ -75,10 +78,10 @@ describe('errors', () => {
     expect(classifyMetaError(130429).retryable).toBe(true)
   })
 
-  it('131026 → no reintentable (opt-out)', () => {
+  it('131026 → entrega fallida, no prueba una baja', () => {
     const { retryable, userMessage } = classifyMetaError(131026)
     expect(retryable).toBe(false)
-    expect(userMessage).toContain('optado')
+    expect(userMessage).toContain('entregar')
   })
 
   it('131047 → no reintentable (ventana cerrada)', () => {
@@ -99,7 +102,6 @@ describe('errors', () => {
 // ─── Circuit Breaker ──────────────────────────────────────────────────────────
 
 describe('circuit-breaker', () => {
-  const { withCircuitBreaker, resetBreaker, CircuitBreakerOpenError } = await import('../cloud-api/infrastructure/circuit-breaker')
 
   beforeEach(() => resetBreaker('test-key'))
   afterEach(()  => resetBreaker('test-key'))
@@ -140,7 +142,6 @@ describe('circuit-breaker', () => {
 // ─── Message Payload Builder ──────────────────────────────────────────────────
 
 describe('buildMessagePayload', () => {
-  const { buildMessagePayload } = await import('../cloud-api/infrastructure/message-sender.service')
 
   it('construye payload de texto correctamente', () => {
     const p = buildMessagePayload({
@@ -180,8 +181,6 @@ describe('buildMessagePayload', () => {
 // ─── Compliance Repository (con mock de DB) ───────────────────────────────────
 
 describe('compliance repository', () => {
-  const mockQuery = vi.fn()
-  vi.doMock('@/lib/db', () => ({ query: mockQuery }))
 
   beforeEach(() => mockQuery.mockReset())
 
@@ -213,8 +212,6 @@ describe('compliance repository', () => {
 // ─── Send Message Use Case (integración con mocks) ───────────────────────────
 
 describe('SendMessageUseCase', () => {
-  const mockQuery = vi.fn()
-  vi.doMock('@/lib/db', () => ({ query: mockQuery }))
 
   beforeEach(() => mockQuery.mockReset())
 

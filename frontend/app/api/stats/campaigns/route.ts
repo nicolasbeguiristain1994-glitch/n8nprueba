@@ -1,84 +1,54 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
+import { isUUID } from '@/lib/validate'
+import { campaignStatistics, statisticsRange, STATS_TIMEZONE } from '@/lib/statistics'
+import { CAMPAIGN_STATS_SQL, CAMPAIGN_OUTCOME_SQL } from '@/lib/campaign-stats'
+import { CAMPAIGN_REPLIES_SQL } from '@/lib/campaign-replies'
 
 export async function GET(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'dashboard', 'read')
+  const auth=await checkPermissionWithUser(req,'estadisticas','read')
   if (!auth.ok) return auth.response
-
-  const from     = req.nextUrl.searchParams.get('from') || new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10)
-  const to       = req.nextUrl.searchParams.get('to')   || new Date().toISOString().slice(0, 10)
-  const status   = req.nextUrl.searchParams.get('status') || ''
-  const q        = req.nextUrl.searchParams.get('q') || ''
-  const detailId = req.nextUrl.searchParams.get('id') || ''
-
-  const isAdmin = auth.user.role === 'admin'
-  const ownerFilter = isAdmin ? '' : `AND c.owned_by = '${auth.user.user_id}'`
-
+  const range=statisticsRange(req.nextUrl.searchParams)
+  const id=req.nextUrl.searchParams.get('id') || ''
+  if (!range || (id && !isUUID(id))) return NextResponse.json({error:'Período o ID inválido'},{status:400})
+  const owner=auth.user.role==='admin'?null:auth.user.user_id
   try {
-    // Detalle de una campaña específica
-    if (detailId) {
-      const [kpisRows, seriesRows] = await Promise.all([
-        query(`
-          SELECT
-            COUNT(*) FILTER (WHERE direction = 'outbound')::int AS enviados,
-            COUNT(*) FILTER (WHERE status = 'delivered')::int   AS entregados,
-            COUNT(*) FILTER (WHERE status = 'read')::int        AS leidos,
-            COUNT(*) FILTER (WHERE status = 'failed')::int      AS fallidos,
-            COUNT(*) FILTER (WHERE direction = 'inbound')::int  AS respuestas,
-            ROUND(100.0 * COUNT(*) FILTER (WHERE status IN ('delivered','read') AND direction='outbound')
-              / NULLIF(COUNT(*) FILTER (WHERE direction='outbound'), 0), 1) AS tasa_entrega,
-            ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'read' AND direction='outbound')
-              / NULLIF(COUNT(*) FILTER (WHERE direction='outbound'), 0), 1) AS tasa_lectura
-          FROM whatsapp_messages
-          WHERE campaign_id = $1
-        `, [detailId]),
-        query(`
-          SELECT
-            DATE(created_at)::text AS dia,
-            COUNT(*) FILTER (WHERE direction='outbound')::int AS enviados,
-            COUNT(*) FILTER (WHERE status='delivered')::int   AS entregados,
-            COUNT(*) FILTER (WHERE status='read')::int        AS leidos
-          FROM whatsapp_messages
-          WHERE campaign_id = $1
-          GROUP BY DATE(created_at)
-          ORDER BY dia ASC
-        `, [detailId]),
-      ])
-      return NextResponse.json({ kpis: kpisRows[0] ?? {}, series: seriesRows })
+    if (id) {
+      const rows=await query<Record<string, unknown>>(`SELECT c.created_at,
+        s.sent AS enviados,s.delivered AS entregados,s.read AS leidos,s.failed AS fallidos,s.skipped AS omitidos,
+        (SELECT count(*)::int FROM (${CAMPAIGN_REPLIES_SQL}) replies) AS respuestas,
+        round(100.0*s.delivered/NULLIF(s.sent,0),1) AS tasa_entrega,
+        round(100.0*s.read/NULLIF(s.sent,0),1) AS tasa_lectura
+        FROM campaigns c CROSS JOIN LATERAL (${CAMPAIGN_STATS_SQL}) s
+        WHERE c.id=$1 AND ($2::uuid IS NULL OR c.owned_by=$2)`,[id,owner])
+      if (!rows.length) return NextResponse.json({error:'Campaña no encontrada'},{status:404})
+      // Daily series uses the same recipient outcome rule as the campaign totals.
+      const series=await query(`WITH outbound_days AS (
+        SELECT (COALESCE(m.created_at,c.created_at) AT TIME ZONE '${STATS_TIMEZONE}')::date::text AS dia,
+        COUNT(*) FILTER (WHERE ${CAMPAIGN_OUTCOME_SQL} IN ('sent','delivered','read'))::int AS enviados,
+        COUNT(*) FILTER (WHERE ${CAMPAIGN_OUTCOME_SQL} IN ('delivered','read'))::int AS entregados,
+        COUNT(*) FILTER (WHERE ${CAMPAIGN_OUTCOME_SQL}='read')::int AS leidos
+        FROM campaigns c JOIN campaign_recipients cr ON cr.campaign_id=c.id
+        LEFT JOIN LATERAL (SELECT wm.status,wm.created_at FROM whatsapp_messages wm
+          WHERE wm.campaign_id=c.id AND wm.direction='outbound'
+            AND regexp_replace(wm.phone_number,'[^0-9]','','g')=regexp_replace(cr.phone_number,'[^0-9]','','g')
+          ORDER BY wm.created_at DESC,wm.id DESC LIMIT 1) m ON true
+        WHERE c.id=$1 GROUP BY dia
+      ), reply_days AS (
+        SELECT (replies.created_at AT TIME ZONE '${STATS_TIMEZONE}')::date::text AS dia,
+          COUNT(*)::int AS respuestas
+        FROM campaigns c CROSS JOIN LATERAL (${CAMPAIGN_REPLIES_SQL}) replies
+        WHERE c.id=$1 GROUP BY dia
+      ) SELECT COALESCE(outbound_days.dia,reply_days.dia) AS dia,
+        COALESCE(enviados,0) AS enviados,COALESCE(entregados,0) AS entregados,
+        COALESCE(leidos,0) AS leidos,COALESCE(respuestas,0) AS respuestas
+        FROM outbound_days FULL JOIN reply_days USING (dia) ORDER BY dia`,[id])
+      return NextResponse.json({kpis:rows[0],series,timezone:STATS_TIMEZONE,metricScope:'campaign_recipients'})
     }
-
-    // Lista de campañas con métricas
-    const rows = await query(`
-      SELECT
-        c.id, c.name, c.type, c.status,
-        c.created_at, c.completed_at,
-        COUNT(wm.id) FILTER (WHERE wm.direction = 'outbound')::int          AS enviados,
-        COUNT(wm.id) FILTER (WHERE wm.status = 'delivered')::int             AS entregados,
-        COUNT(wm.id) FILTER (WHERE wm.status = 'read')::int                  AS leidos,
-        COUNT(wm.id) FILTER (WHERE wm.status = 'failed')::int                AS fallidos,
-        COUNT(wm.id) FILTER (WHERE wm.direction = 'inbound')::int            AS respuestas,
-        ROUND(100.0 * COUNT(wm.id) FILTER (WHERE wm.status IN ('delivered','read') AND wm.direction='outbound')
-          / NULLIF(COUNT(wm.id) FILTER (WHERE wm.direction='outbound'), 0), 1) AS tasa_entrega,
-        ROUND(100.0 * COUNT(wm.id) FILTER (WHERE wm.status = 'read' AND wm.direction='outbound')
-          / NULLIF(COUNT(wm.id) FILTER (WHERE wm.direction='outbound'), 0), 1) AS tasa_lectura
-      FROM campaigns c
-      LEFT JOIN whatsapp_messages wm ON wm.campaign_id = c.id
-        AND wm.created_at >= $1::date
-        AND wm.created_at <  ($2::date + INTERVAL '1 day')
-      WHERE c.created_at >= $1::date
-        AND c.created_at <  ($2::date + INTERVAL '1 day')
-        AND ($3 = '' OR c.status = $3)
-        AND ($4 = '' OR c.name ILIKE $5)
-        ${ownerFilter}
-      GROUP BY c.id, c.name, c.type, c.status, c.created_at, c.completed_at
-      ORDER BY enviados DESC NULLS LAST, c.created_at DESC
-      LIMIT 100
-    `, [from, to, status, q, q ? `%${q}%` : ''])
-
-    return NextResponse.json({ campaigns: rows })
-  } catch (e) {
-    console.error('[/api/stats/campaigns]', e instanceof Error ? e.message : e)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    const campaigns=await campaignStatistics(range.from,range.to,owner,req.nextUrl.searchParams.get('status')||'',req.nextUrl.searchParams.get('q')||'')
+    return NextResponse.json({campaigns,timezone:STATS_TIMEZONE,metricScope:'campaign_recipients'})
+  } catch {
+    return NextResponse.json({error:'No se pudieron cargar las estadísticas de campañas'},{status:500})
   }
 }

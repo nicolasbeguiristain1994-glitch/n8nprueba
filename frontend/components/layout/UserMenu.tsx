@@ -27,6 +27,7 @@ import { LogOut, Sun, Moon, ChevronDown, User, Loader2 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useRouter } from 'next/navigation'
 import { useCurrentUser } from '@/lib/useCurrentUser'
+import { useMenuKeyboard } from '@/hooks/useMenuKeyboard'
 import { cn } from '@/lib/utils'
 import {
   Dialog,
@@ -169,6 +170,8 @@ export function UserMenu() {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
+  const closeDropdown = useCallback(() => setDropdownOpen(false), [])
+  useMenuKeyboard(dropdownOpen, wrapperRef, closeDropdown)
 
   const { user } = useCurrentUser()
   const { resolvedTheme, setTheme } = useTheme()

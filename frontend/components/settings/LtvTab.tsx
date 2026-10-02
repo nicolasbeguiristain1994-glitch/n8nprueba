@@ -32,11 +32,11 @@ const TIER_LABEL: Record<string, string> = {
 
 const TIER_STYLE: Record<string, string> = {
   super_vip: 'bg-purple-100 text-purple-700',
-  vip_alto:  'bg-amber-100 text-amber-700',
-  vip_medio: 'bg-amber-50 text-amber-600',
+  vip_alto:  'bg-warning/15 text-warning',
+  vip_medio: 'bg-warning/10 text-amber-600',
   vip:       'bg-yellow-100 text-yellow-700',
   medio:     'bg-blue-100 text-blue-700',
-  bajo:      'bg-gray-100 text-gray-500',
+  bajo:      'bg-muted text-muted-foreground',
 }
 
 const TIER_ORDER = ['super_vip', 'vip_alto', 'vip_medio', 'vip', 'medio', 'bajo']
@@ -83,6 +83,7 @@ function formatDate(iso: string | null): string {
 
 export function LtvTab({ isAdmin }: { isAdmin: boolean }) {
   const [distribution, setDistribution] = useState<DistributionRow[] | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [lastSuccessAt, setLastSuccessAt] = useState<string | null>(null)
   const [loading, setLoading]             = useState(true)
   const [recomputing, setRecomputing]     = useState(false)
@@ -90,6 +91,7 @@ export function LtvTab({ isAdmin }: { isAdmin: boolean }) {
 
   const load = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const [distResult, tsResult] = await Promise.all([
         fetchJson<{ data: DistributionRow[] }>('/api/contacts/ltv/distribution'),
@@ -98,7 +100,8 @@ export function LtvTab({ isAdmin }: { isAdmin: boolean }) {
       setDistribution(distResult.data)
       setLastSuccessAt(tsResult.lastSuccessAt)
     } catch {
-      setDistribution([])
+      setDistribution(null)
+      setLoadError('No se pudo cargar LTV. Reintentá; si el error continúa, revisá la instalación del módulo.')
     } finally {
       setLoading(false)
     }
@@ -132,15 +135,15 @@ export function LtvTab({ isAdmin }: { isAdmin: boolean }) {
       {/* Header con botón de recompute */}
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-base font-semibold text-gray-900 flex items-center gap-2">
-            <TrendingUp size={16} className="text-green-600" />
+          <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
+            <TrendingUp size={16} className="text-success" />
             LTV (Lifetime Value)
           </h2>
-          <p className="text-xs text-gray-500 mt-0.5">
-            Score dinámico 0–60 basado en percentil de NGR por agente. Reemplaza el value_score plano en el recompute de prioridades.
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Score dinámico 0–60 basado en percentil de NGR por plataforma y agente. Reemplaza el value_score plano en el recompute de prioridades.
           </p>
           {lastSuccessAt && (
-            <p className="text-xs text-gray-400 mt-1">
+            <p className="text-xs text-muted-foreground mt-1">
               Último cálculo: {formatDate(lastSuccessAt)}
             </p>
           )}
@@ -148,7 +151,7 @@ export function LtvTab({ isAdmin }: { isAdmin: boolean }) {
         {isAdmin && (
           <Button
             onClick={handleRecompute}
-            disabled={recomputing}
+            disabled={recomputing || loading || Boolean(loadError)}
             size="sm"
             variant="outline"
             className="gap-2 shrink-0"
@@ -162,7 +165,7 @@ export function LtvTab({ isAdmin }: { isAdmin: boolean }) {
       {/* Mensaje de resultado */}
       {msg && (
         <div className={`flex items-center gap-2 text-sm px-3 py-2 rounded-lg ${
-          msg.type === 'ok' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
+          msg.type === 'ok' ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'
         }`}>
           {msg.type === 'ok'
             ? <CheckCircle2 size={14} />
@@ -173,16 +176,16 @@ export function LtvTab({ isAdmin }: { isAdmin: boolean }) {
       )}
 
       {/* Referencia de tiers */}
-      <div className="bg-gray-50 rounded-lg p-4">
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-3">Mapeo de percentil → LTV Score</p>
+      <div className="bg-background rounded-lg p-4">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Mapeo de percentil → LTV Score</p>
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
           {TIER_ORDER.map(tier => (
             <div key={tier} className="text-center">
               <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${TIER_STYLE[tier]}`}>
                 {TIER_LABEL[tier]}
               </span>
-              <p className="text-xs text-gray-500 mt-1">{PERCENTIL_MAP[tier]}</p>
-              <p className="text-xs font-semibold text-gray-700">{SCORE_MAP[tier]} pts</p>
+              <p className="text-xs text-muted-foreground mt-1">{PERCENTIL_MAP[tier]}</p>
+              <p className="text-xs font-semibold text-foreground">{SCORE_MAP[tier]} pts</p>
             </div>
           ))}
         </div>
@@ -190,24 +193,29 @@ export function LtvTab({ isAdmin }: { isAdmin: boolean }) {
 
       {/* Distribución por agente */}
       {loading ? (
-        <div className="flex items-center justify-center py-12 text-gray-400 text-sm">
+        <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
           <RefreshCw size={15} className="animate-spin mr-2" /> Cargando distribución…
         </div>
+      ) : loadError ? (
+        <div role="alert" className="text-center py-8 text-sm text-destructive">
+          <p>{loadError}</p>
+          <Button variant="outline" className="mt-3" onClick={load}>Reintentar</Button>
+        </div>
       ) : agents.length === 0 ? (
-        <div className="text-center py-12 text-gray-400 text-sm">
+        <div className="text-center py-12 text-muted-foreground text-sm">
           Sin datos de LTV — ejecutá el recálculo para poblar la tabla.
         </div>
       ) : (
         <div className="space-y-4">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Distribución por agente</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Distribución por agente</p>
           {agents.map(agent => {
             const tiers = grouped[agent]
             const total = Object.values(tiers).reduce((a, b) => a + b, 0)
             return (
-              <div key={agent} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-700 capitalize">{agent}</span>
-                  <span className="text-xs text-gray-400">{total.toLocaleString()} jugadores</span>
+              <div key={agent} className="bg-card border border-border rounded-lg overflow-hidden">
+                <div className="px-4 py-2 bg-background border-b border-border flex items-center justify-between">
+                  <span className="text-sm font-medium text-foreground capitalize">{agent}</span>
+                  <span className="text-xs text-muted-foreground">{total.toLocaleString()} jugadores</span>
                 </div>
                 <div className="px-4 py-3 flex flex-wrap gap-3">
                   {TIER_ORDER.map(tier => {
@@ -219,10 +227,10 @@ export function LtvTab({ isAdmin }: { isAdmin: boolean }) {
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${TIER_STYLE[tier]}`}>
                           {TIER_LABEL[tier]}
                         </span>
-                        <span className="text-sm font-semibold text-gray-700 tabular-nums">
+                        <span className="text-sm font-semibold text-foreground tabular-nums">
                           {count.toLocaleString()}
                         </span>
-                        <span className="text-xs text-gray-400 tabular-nums">({pct}%)</span>
+                        <span className="text-xs text-muted-foreground tabular-nums">({pct}%)</span>
                       </div>
                     )
                   })}

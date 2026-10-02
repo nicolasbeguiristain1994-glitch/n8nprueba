@@ -2,49 +2,38 @@
 'use strict'
 
 /**
- * Pipeline diario de sincronización — fase 4.
+ * Pipeline diario de sincronización.
  *
  * Orden de ejecución:
- *   1-4. Sync incremental (--auto) de las 4 plataformas (zeus, bet30, ganamos,
- *        argenbet), leyendo la lista de agentes de cada una desde
- *        src/config/platforms.config.json (getConfigAgents) — nunca
- *        hardcodeada acá ni inferida de la DB.
- *   5. Segmentar (contacts.last_deposit_at, segment, tags)
- *   6. Recompute prioridades (contact_priority_scores)
+ *   1. Sync Zeus  (casino_transactions + casino_players)
+ *   2. Sync Bet30 (casino_transactions + casino_players)
+ *   3. Segmentar  (contacts.last_deposit_at, segment, tags)
+ *   4. Recompute prioridades (contact_priority_scores)
  *
- * Cada plataforma usa runOrchestrator() (scripts/lib/casino-sync-orchestrator.js)
- * IN-PROCESS, no un subproceso — el mismo advisory lock que protege al botón
- * manual y al endpoint /api/cron/casino-sync protege también esta corrida, y
- * el resultado es un objeto estructurado (no texto de stdout a parsear).
- *
- * Si una plataforma (o la segmentación, o el recompute de prioridades) falla,
- * las demás siguen — pero el proceso SIEMPRE termina con exit code != 0 si
- * CUALQUIERA falló. Un pipeline "verde" en los logs mientras algo realmente
- * falló es exactamente el bug que dejó el sync caído en silencio meses (ver
- * cabecera de la migración 123) — no se repite acá ni para el sync ni para
- * los pasos 5/6.
+ * Un sync que no termina con éxito (código ≠ 0: fallo, parcial u omitido) ya no
+ * se trata como "continuar": las dos plataformas se intentan igual, pero si
+ * alguna falló NO se segmenta ni se recalculan prioridades sobre datos
+ * incompletos, y el pipeline sale con código 1. El detalle queda en
+ * casino_sync_runs (Centro de Monitoreo, /monitoreo).
  *
  * Variables de entorno requeridas (Railway):
  *   DATABASE_URL
- *   Credenciales por plataforma — ver src/casino-connectors/README.md
+ *   ZEUS_ADMIN_USER / ZEUS_ADMIN_PASSWORD / ZEUS_API_KEY
+ *   BET30_ADMIN_USER / BET30_ADMIN_PASSWORD / BET30_API_KEY
  *   CRON_APP_URL   — URL pública de la app (ej: https://xxx.up.railway.app)
- *   CRON_SECRET    — Secret compartido con /api/contacts/recompute-priorities
- *                    y con /api/cron/casino-sync
+ *   CRON_SECRET    — Secret compartido con el endpoint /api/contacts/recompute-priorities
  *
  * Uso manual:
  *   node scripts/pipeline-diario.js
- *
- * Nada de lo de abajo de `if (require.main === module)` corre al hacer
- * require() de este archivo — ni lectura de .env ni conexión a DB — así que
- * es seguro importarlo desde tests o desde el endpoint de cron.
  */
 
+const { execFileSync } = require('child_process')
 const path = require('path')
 const fs   = require('fs')
 
-function loadDotEnvOnce() {
-  const envPath = path.resolve(__dirname, '..', '.env')
-  if (!fs.existsSync(envPath)) return
+// ── .env (solo para ejecución local) ─────────────────────────────────────────
+const envPath = path.resolve(__dirname, '..', '.env')
+if (fs.existsSync(envPath)) {
   for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
     const t = line.trim()
     if (!t || t.startsWith('#')) continue
@@ -56,6 +45,8 @@ function loadDotEnvOnce() {
   }
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 const SEP = '═'.repeat(56)
 
 function log(msg) {
@@ -63,214 +54,106 @@ function log(msg) {
 }
 
 /**
- * Runs the incremental sync for all 4 configured platforms, in-process,
- * sequentially (platforms don't share an advisory lock key with each other,
- * so they COULD run concurrently, but sequential keeps DB load predictable
- * for a cron-driven pipeline and keeps this function trivial to reason
- * about/test).
- *
- * @param {object} deps injectable for tests
- * @returns {Promise<{platform: string, status: 'ok'|'error'|'skip', txInserted: number, lastTimestamp: string|null, error: string|null}[]>}
+ * Corre un script con argv explícito (sin shell). Devuelve true solo si salió
+ * con código 0. El mensaje de error no se loguea: puede traer la línea de
+ * comando o salida del hijo; el hijo ya logueó su propio detalle sanitizado.
  */
-async function runAllPlatformSyncs({ pool, log: logger = console, createConnector, clock } = {}) {
-  const { runOrchestrator, recordPlatformFailure } = require('./lib/casino-sync-orchestrator')
-  const { getConfigAgents }         = require('../src/casino-connectors/index')
-  const { platforms }               = require('../src/config/platforms.config.json')
-
-  const summaries = []
-
-  for (const { name: platform } of platforms) {
-    let agentes
-    try {
-      agentes = getConfigAgents(platform)
-    } catch (err) {
-      // getConfigAgents() throws BEFORE runOrchestrator() is ever called —
-      // still needs to be visible in casino_sync_runs, not just in this
-      // summary object, or a config typo fails silently from the DB's POV.
-      let sanitized = err.message
-      try {
-        sanitized = await recordPlatformFailure(pool, platform, err, clock)
-      } catch (bookkeepingErr) {
-        logger.error?.({ platform, err: bookkeepingErr.message }, 'Could not record config-resolution failure either')
-      }
-      summaries.push({ platform, status: 'error', txInserted: 0, lastTimestamp: null, error: sanitized })
-      continue
-    }
-
-    try {
-      const result = await runOrchestrator({ platform, pool, agentes, auto: true, createConnector, clock, log: logger })
-
-      if (result.skipped) {
-        summaries.push({ platform, status: 'skip', txInserted: 0, lastTimestamp: null, error: null })
-        continue
-      }
-      if (!result.ok && result.error) {
-        // Platform-level failure (connector construction / authenticate())
-        summaries.push({ platform, status: 'error', txInserted: 0, lastTimestamp: null, error: result.error })
-        continue
-      }
-
-      const txInserted  = result.results.reduce((sum, r) => sum + (r.txInserted ?? 0), 0)
-      const failedAgents = result.results.filter((r) => r.status === 'error')
-
-      // `lastTimestamp` must reflect the newest transaction ACTUALLY
-      // PERSISTED for this platform, not the requested `hasta` boundary of
-      // any given agent's window — a window with zero new rows (or an
-      // outright failed agent) would otherwise report "caught up to now"
-      // even though nothing new landed in the database.
-      const lastTimestamp = await _queryLastTimestamp(pool, platform)
-
-      summaries.push({
-        platform,
-        status: result.ok ? 'ok' : 'error',
-        txInserted,
-        lastTimestamp,
-        error: failedAgents.length
-          ? failedAgents.map((r) => `${r.agente}: ${r.error}`).join(' | ')
-          : null,
-      })
-    } catch (err) {
-      summaries.push({ platform, status: 'error', txInserted: 0, lastTimestamp: null, error: err.message })
-    }
+function runScript(label, scriptName, args = []) {
+  log(`\n${SEP}`)
+  log(`  ${label}`)
+  log(SEP)
+  try {
+    execFileSync(process.execPath, [path.join(__dirname, scriptName), ...args], {
+      stdio: 'inherit',
+      env:   process.env,
+    })
+    log(`✓  ${label} completado`)
+    return true
+  } catch (err) {
+    log(`✗  ${label} falló (código ${err.status ?? 'desconocido'})`)
+    return false
   }
-
-  return summaries
 }
 
-async function _queryLastTimestamp(pool, platform) {
-  const { rows } = await pool.query(
-    `SELECT MAX(fecha_hora_utc) AS last FROM casino_transactions WHERE platform = $1`,
-    [platform],
-  )
-  const last = rows[0]?.last ?? null
-  if (!last) return null
-  return last instanceof Date ? last.toISOString() : String(last)
-}
+async function recomputePriorities() {
+  log(`\n${SEP}`)
+  log('  Paso 4: Recompute prioridades')
+  log(SEP)
 
-async function runSegmentacion() {
-  const { execFileSync } = require('child_process')
-  execFileSync(process.execPath, [path.join(__dirname, 'segmentar-casino-players.js')], { stdio: 'inherit', env: process.env })
-}
-
-async function runRecomputePrioridades() {
   const appUrl = process.env.CRON_APP_URL?.trim()
   const secret = process.env.CRON_SECRET?.trim()
 
   if (!appUrl || !secret) {
-    log('⚠  CRON_APP_URL o CRON_SECRET no configurados — omitiendo recompute automático (paso opcional)')
-    return { skipped: true }
+    log('⚠  CRON_APP_URL o CRON_SECRET no configurados — omitiendo recompute automático')
+    log('   Recomputá manualmente desde la UI: botón "Recomputar" en Prioridades')
+    return
   }
 
-  const res  = await fetch(`${appUrl}/api/contacts/recompute-priorities`, {
+  const res = await fetch(`${appUrl}/api/contacts/recompute-priorities`, {
     method:  'POST',
     headers: { 'x-cron-secret': secret, 'Content-Type': 'application/json' },
   })
+
   const body = await res.json()
-  if (!res.ok) throw new Error(`Recompute HTTP ${res.status}: ${JSON.stringify(body)}`)
-  return body
+  if (!res.ok) {
+    // Solo el status: el cuerpo no se loguea.
+    throw new Error(`Recompute HTTP ${res.status}`)
+  }
+
+  log(`✓  Recompute completado — ${body.eligible} elegibles de ${body.processed} contactos (${body.durationMs}ms)`)
 }
 
-/**
- * Full pipeline: 4 platform syncs + segmentación + recompute prioridades.
- * `deps.runSegmentacion`/`deps.runRecomputePrioridades` are injectable so
- * tests can exercise "step 5/6 failed" without actually spawning
- * segmentar-casino-players.js or hitting a real HTTP endpoint — defaults to
- * the real implementations above for production use.
- *
- * Returns `{ ok, platformSummaries, segmentacionError, prioridadesError }` —
- * `ok` is false if ANY step failed, including segmentación/prioridades
- * (previously these ran with `failOk: true` and their failure never
- * affected the exit code — fixed here per fase 4 brief).
- */
-async function runPipeline(deps = {}) {
-  const {
-    runSegmentacion:        segmentacionFn = runSegmentacion,
-    runRecomputePrioridades: prioridadesFn = runRecomputePrioridades,
-    ...syncDeps
-  } = deps
+// ── Main ──────────────────────────────────────────────────────────────────────
 
+async function main() {
   const startMs = Date.now()
+
   log(`\n${SEP}`)
-  log('  Pipeline Diario (fase 4 — 4 plataformas)')
+  log('  Pipeline Diario')
   log(`  ${new Date().toISOString()}`)
   log(SEP)
 
-  log('\nPasos 1-4: Sync incremental — zeus, bet30, ganamos, argenbet')
-  const platformSummaries = await runAllPlatformSyncs(syncDeps)
-  for (const s of platformSummaries) {
-    log(`  ${s.platform.padEnd(10)} ${s.status.toUpperCase().padEnd(6)} tx=${s.txInserted} last=${s.lastTimestamp ?? '-'}${s.error ? ` error="${s.error}"` : ''}`)
+  // Pasos 1 y 2: sync de transacciones del casino. Se intentan las dos
+  // plataformas aunque una falle (cada una tiene su lock y su cursor), pero el
+  // resultado se acumula: cualquier fallo corta los pasos 3 y 4.
+  const zeusOk  = runScript('Paso 1: Sync Zeus',  'sync-casino-players-live.js', ['--platform=zeus',  '--auto', '--trigger=pipeline', '--agentes=betcoin,bigwin,farabet,ofizeus,royal'])
+  const bet30Ok = runScript('Paso 2: Sync Bet30', 'sync-casino-players-live.js', ['--platform=bet30', '--auto', '--trigger=pipeline', '--agentes=btcuno,btcdos,zeus,zeusroyal,bigwin'])
+
+  const mins = () => ((Date.now() - startMs) / 60_000).toFixed(1)
+
+  if (!zeusOk || !bet30Ok) {
+    log(`\n${SEP}`)
+    log('  ✗  Sync incompleto — NO se segmenta ni se recalculan prioridades')
+    log('     Revisar el detalle en /monitoreo (casino_sync_runs)')
+    log(`  Pipeline terminado con errores en ${mins()} min`)
+    log(`${SEP}\n`)
+    process.exitCode = 1
+    return
   }
 
-  let segmentacionError = null
+  // Paso 3: calcular segmentos y sincronizar contacts.last_deposit_at
+  if (!runScript('Paso 3: Segmentar jugadores', 'segmentar-casino-players.js', [])) {
+    log('  ✗  Segmentación falló — no se recalculan prioridades')
+    process.exitCode = 1
+    return
+  }
+
+  // Paso 4: recalcular scores de prioridad
   try {
-    log('\nPaso 5: Segmentar jugadores')
-    await segmentacionFn()
-    log('✓  Segmentación completada')
+    await recomputePriorities()
   } catch (err) {
-    segmentacionError = err.message
-    log(`⚠  Segmentación falló: ${err.message}`)
+    // Mensajes propios ("Recompute HTTP n") o solo el tipo de error de red.
+    log(`✗  Paso 4: Recompute falló: ${/^Recompute HTTP \d{3}$/.test(err.message) ? err.message : (err.name ?? 'error')}`)
+    process.exitCode = 1
+    return
   }
 
-  let prioridadesError = null
-  try {
-    log('\nPaso 6: Recompute prioridades')
-    const result = await prioridadesFn()
-    if (!result.skipped) {
-      log(`✓  Recompute completado — ${result.eligible} elegibles de ${result.processed} contactos (${result.durationMs}ms)`)
-    }
-  } catch (err) {
-    prioridadesError = err.message
-    log(`⚠  Recompute de prioridades falló: ${err.message}`)
-  }
-
-  const platformsFailed = platformSummaries.some((s) => s.status === 'error')
-  const ok = !platformsFailed && !segmentacionError && !prioridadesError
-
-  const mins = ((Date.now() - startMs) / 60_000).toFixed(1)
   log(`\n${SEP}`)
-  log(`  ${ok ? '✓' : '✗'}  Pipeline ${ok ? 'completado' : 'con errores'} en ${mins} min`)
+  log(`  ✓  Pipeline completado en ${mins()} min`)
   log(`${SEP}\n`)
-
-  return { ok, platformSummaries, segmentacionError, prioridadesError }
 }
 
-async function main() {
-  loadDotEnvOnce()
-
-  if (!process.env.DATABASE_URL) {
-    log('FATAL: DATABASE_URL is required')
-    process.exit(1)
-  }
-
-  const { Pool }          = require('pg')
-  const { createLogger }  = require('../src/lib/logger')
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 })
-  const pinoLog = createLogger({ component: 'pipeline-diario' })
-
-  let result
-  try {
-    result = await runPipeline({ pool, log: pinoLog })
-  } finally {
-    await pool.end()
-  }
-
-  // --json: emits the final structured summary as one marker line, so a
-  // caller that only has the child's stdout (frontend/app/api/cron/casino-sync/route.ts,
-  // which spawns this script rather than requiring it into the Next.js
-  // server process) can recover the real per-platform result instead of
-  // just the exit code.
-  if (process.argv.includes('--json')) {
-    process.stdout.write(`PIPELINE_RESULT_JSON:${JSON.stringify(result)}\n`)
-  }
-
-  process.exit(result.ok ? 0 : 1)
-}
-
-if (require.main === module) {
-  main().catch((err) => {
-    log(`\nFATAL: ${err.message}`)
-    process.exit(1)
-  })
-}
-
-module.exports = { runPipeline, runAllPlatformSyncs }
+main().catch(err => {
+  log(`\nFATAL: error inesperado en el pipeline (${err?.name ?? 'error'})`)
+  process.exit(1)
+})

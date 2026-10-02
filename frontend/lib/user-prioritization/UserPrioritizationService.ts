@@ -1,7 +1,8 @@
+import type { PriorityAccess } from './access'
 import { randomUUID } from 'crypto'
 import { checkEligibility } from './prioritization-rules'
 import { computeScore } from './scoring'
-import { REACTIVATION_SEGMENT_RULES } from './config'
+import { REACTIVATION_SEGMENT_RULES, VALUE_SCORES, INACTIVITY_WINDOWS, RECONTACT_COOLDOWN_DAYS } from './config'
 import { UserPrioritizationRepository } from './UserPrioritizationRepository'
 import { getAllTiers } from '@/lib/segmentation-config-service'
 import type { SegmentationTier } from '@/lib/segmentation-config-service'
@@ -33,9 +34,9 @@ interface TierRuntimeConfigs {
 }
 
 function buildTierRuntimeConfigs(tiers: SegmentationTier[]): TierRuntimeConfigs {
-  const valueScores       = {} as Record<ValueTier, number>
-  const inactivityWindows = {} as Record<ValueTier, { minDays: number; maxDays: number }>
-  const recontactCooldown = {} as Record<ValueTier, number>
+  const valueScores       = { ...VALUE_SCORES }
+  const inactivityWindows = { ...INACTIVITY_WINDOWS }
+  const recontactCooldown = { ...RECONTACT_COOLDOWN_DAYS }
   const depositAmountTiers: Array<{ minAmount: number; tier: ValueTier }> = []
 
   for (const t of tiers) {
@@ -58,6 +59,7 @@ function buildTierRuntimeConfigs(tiers: SegmentationTier[]): TierRuntimeConfigs 
     eligibility: {
       inactivityWindows,
       recontactCooldownDays: recontactCooldown,
+      enabledTiers: tiers.map(t => t.tier),
       depositAmountTiers,
     },
   }
@@ -84,6 +86,10 @@ export class UserPrioritizationService {
   async recomputeAll(
     options: { batchSize?: number; heartbeatIntervalMs?: number } = {},
   ): Promise<RecomputeResult> {
+    return this.repo.withRecomputeSession(repo => new UserPrioritizationService(repo).recomputeInSession(options))
+  }
+
+  private async recomputeInSession(options: { batchSize?: number; heartbeatIntervalMs?: number }): Promise<RecomputeResult> {
     const lockToken = randomUUID()
     const acquired  = await this.repo.acquireRecomputeLock(INSTANCE_ID, lockToken)
     if (!acquired) {
@@ -121,6 +127,7 @@ export class UserPrioritizationService {
     }, heartbeatIntervalMs)
 
     try {
+      await this.repo.prepareMetrics()
       while (true) {
         const contacts = await this.repo.fetchContactMetrics(batchSize, lastId)
         if (heartbeatRevoked) throw new LockRevokedError()
@@ -181,7 +188,7 @@ export class UserPrioritizationService {
 
       logRecomputeEnd({ run_id: lockToken, status: 'success', processed, eligible, skipped, duration_ms: durationMs })
 
-      this.repo.insertRecomputeRun({
+      await this.repo.insertRecomputeRun({
         runId:             lockToken,
         startedAt,
         finishedAt:        new Date(),
@@ -211,7 +218,7 @@ export class UserPrioritizationService {
           .catch(releaseErr => logRecomputeError({ run_id: lockToken, status: 'failed', error: `releaseRecomputeLock failed: ${String(releaseErr)}` }))
       }
 
-      this.repo.insertRecomputeRun({
+      await this.repo.insertRecomputeRun({
         runId:             lockToken,
         startedAt,
         finishedAt:        new Date(),
@@ -275,12 +282,12 @@ export class UserPrioritizationService {
     return this.repo.getPrioritizedContacts(filters)
   }
 
-  async markBroadcasted(contactId: string, userName: string): Promise<boolean> {
-    return this.repo.markBroadcasted(contactId, userName)
+  async markBroadcasted(contactId: string, userName: string, access?: PriorityAccess): Promise<boolean> {
+    return this.repo.markBroadcasted(contactId, userName, access)
   }
 
-  async unmarkBroadcasted(contactId: string): Promise<boolean> {
-    return this.repo.unmarkBroadcasted(contactId)
+  async unmarkBroadcasted(contactId: string, access?: PriorityAccess): Promise<boolean> {
+    return this.repo.unmarkBroadcasted(contactId, access)
   }
 
   // ── Lógica de scoring por contacto ───────────────────────────────────────────
@@ -295,6 +302,7 @@ export class UserPrioritizationService {
       : null
 
     const { eligible, skipReasons, valueTier } = checkEligibility({
+      ltvTier:             contact.ltvTier,
       status:              contact.status,
       doNotContact:        contact.doNotContact,
       optInMarketing:      contact.optInMarketing,

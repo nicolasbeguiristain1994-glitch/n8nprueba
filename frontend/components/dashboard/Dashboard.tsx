@@ -1,24 +1,28 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
+import { queryDateRange } from '@/lib/dashboard-date-range'
 import { useDashboard } from './useDashboard'
 import { useToast } from './useToast'
 import { DashboardHeader } from './DashboardHeader'
+import { DepositCharts } from './DepositCharts'
+import { PlatformOverview } from './PlatformOverview'
 import { WidgetGrid } from './WidgetGrid'
 import { AddWidgetModal } from './widgets/AddWidgetModal'
 import { Toast } from './Toast'
-import { CasinoSyncStatusBar } from './CasinoSyncStatusBar'
-import { SYNC_PLATFORMS } from '@/lib/casino-agents'
 
 export function Dashboard() {
   const {
     layout,
     data,
     loading,
+    activityLoading,
+    depositsLoading,
     softLoading,
     error,
     lastUpdated,
     softSuccessCount,
+    revision,
     visibleWidgets,
     dateRange,
     autoRefreshEnabled,
@@ -33,6 +37,7 @@ export function Dashboard() {
     refresh,
   } = useDashboard()
 
+  const includedDays = queryDateRange(dateRange)
   const { toast, showToast } = useToast()
   const [customizeOpen, setCustomizeOpen] = useState(false)
   const [syncStatus, setSyncStatus] = useState<'idle' | 'loading'>('idle')
@@ -40,16 +45,14 @@ export function Dashboard() {
   const handleSyncCasino = useCallback(async () => {
     setSyncStatus('loading')
     try {
-      // H5 fix: consolidado ahora dispara sync de las 4 plataformas (antes solo
-      // zeus/bet30, dos listas hardcodeadas distintas que podían divergir —
-      // ver casino-agents.ts SYNC_PLATFORMS, única fuente de verdad).
-      const platforms = platform === 'consolidado' ? [...SYNC_PLATFORMS] : [platform]
+      const platforms = platform === 'consolidado' ? ['zeus', 'bet30'] : [platform]
       const results = await Promise.all(
         platforms.map(p => fetch(`/api/dashboard/casino/sync?platform=${p}`, { method: 'POST' })),
       )
       const allOk = results.every(r => r.ok)
       if (allOk) {
-        showToast('Sync iniciado. Los datos se actualizarán en ~5 min.')
+        // La API solo confirma el arranque del proceso.
+        showToast('Sincronización iniciada. Los datos se actualizarán cuando termine.')
       } else {
         const failed = results.find(r => !r.ok)
         const json = failed ? await failed.json() : {}
@@ -72,7 +75,7 @@ export function Dashboard() {
   }, [refresh])
 
   return (
-    <div className="p-4 md:p-6 max-w-[1400px] mx-auto">
+    <div className="min-w-0 mx-auto">
       <DashboardHeader
         loading={loading}
         softLoading={softLoading}
@@ -91,27 +94,30 @@ export function Dashboard() {
         onSyncCasino={handleSyncCasino}
       />
 
-      <CasinoSyncStatusBar />
-
       {error && (
-        <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm flex items-center gap-2">
+        <div role="alert" className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm flex items-center gap-2">
           <span>⚠</span>
           {error}
           <button
             onClick={refresh}
-            className="ml-auto underline text-xs hover:no-underline focus-visible:outline-none"
+            className="ml-auto underline text-xs hover:no-underline focus-visible:ring-2 focus-visible:ring-ring"
           >
             Reintentar
           </button>
         </div>
       )}
 
+      {/* PlatformOverview labels "from al to" inclusively: give it the days actually queried. */}
+      <PlatformOverview activity={data?.activity ?? null} platform={platform} agent={agent} from={includedDays.from} to={includedDays.to} loading={activityLoading} />
+
+      <DepositCharts data={data?.deposits ?? null} loading={depositsLoading} />
+
       {visibleWidgets.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-64 text-muted-foreground gap-3">
           <p className="text-sm">No hay widgets visibles.</p>
           <button
             onClick={() => setCustomizeOpen(true)}
-            className="text-sm underline text-primary hover:no-underline focus-visible:outline-none"
+            className="text-sm underline text-primary hover:no-underline focus-visible:ring-2 focus-visible:ring-ring"
           >
             Personalizar dashboard
           </button>
@@ -123,6 +129,8 @@ export function Dashboard() {
           loading={loading}
           platform={platform}
           agent={agent}
+          dateRange={dateRange}
+          revision={revision}
           onReorder={reorderByIds}
           onTaskCompleted={handleTaskCompleted}
         />

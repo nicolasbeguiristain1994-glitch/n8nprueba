@@ -3,8 +3,9 @@ import { query, withTransaction } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { parseBody, handleValidationError, PatchLineSchema, CreateLineSchema, DeleteLineSchema } from '@/lib/schema'
-import { lineEligibleExpr } from '@/lib/line-eligibility'
+import { campaignLineEligibleExpr } from '@/lib/line-eligibility'
 import { getAccessibleLineIds, lineVisibilityClause } from '@/lib/line-visibility'
+import { isChatwootConfigured } from '@/lib/cloud-api/chatwoot-config'
 
 export async function GET(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'lines', 'read')
@@ -23,7 +24,7 @@ export async function GET(req: NextRequest) {
              l.msgs_sent_today, l.msgs_sent_hour,
              l.msg_per_day, l.msg_per_hour, l.total_sent, l.total_failed,
              l.priority, l.last_seen_at, l.owner_user_id,
-             ${lineEligibleExpr('l')} AS eligible,
+             ${campaignLineEligibleExpr('l')} AS eligible,
              cn.phone_number_id       AS cloud_phone_number_id,
              cn.waba_id               AS cloud_waba_id,
              cn.quality_rating        AS cloud_quality_rating,
@@ -43,7 +44,8 @@ export async function GET(req: NextRequest) {
     const metaConfigId   = process.env.NEXT_PUBLIC_META_CONFIG_ID ?? ''
     const metaAppId      = process.env.NEXT_PUBLIC_META_APP_ID ?? process.env.META_APP_ID ?? ''
     const metaConfigured = !!metaConfigId
-    return NextResponse.json({ lines, metaConfigured, metaAppId, metaConfigId })
+    const chatwootConfigured = isChatwootConfigured()
+    return NextResponse.json({ lines, metaConfigured, metaAppId, metaConfigId, chatwootConfigured })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[/api/lines GET]', msg)

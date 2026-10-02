@@ -17,14 +17,21 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { parseInstancesResponse } from '@/lib/evolution-utils'
+
+vi.hoisted(() => {
+  process.env.EVOLUTION_URL = 'http://evolution.test'
+  process.env.EVOLUTION_API_KEY = 'test-key'
+  delete process.env.EVOLUTION_GLOBAL_API_KEY
+  delete process.env.EVOLUTION_WEBHOOK_SECRET
+})
 
 // ── Mocks top-level (hoistados por vitest) ────────────────────────────────────
 
 const mockQuery = vi.fn().mockResolvedValue([])
 vi.mock('@/lib/db',          () => ({ query: mockQuery }))
-vi.mock('@/lib/permissions', () => ({ checkPermission: vi.fn().mockResolvedValue(null) }))
+vi.mock('@/lib/permissions', () => ({ checkPermission: vi.fn().mockResolvedValue(null), checkPermissionWithUser: vi.fn().mockResolvedValue({ ok: true, user: { id: 'test-admin', role: 'admin' } }) }))
 vi.mock('@/lib/audit',       () => ({ audit: vi.fn() }))
 
 const mockFetch = vi.fn()
@@ -209,7 +216,7 @@ describe('GET /api/lines/qr', () => {
   })
 
   it('devuelve base64 cuando la instancia está desconectada', async () => {
-    mockFetch.mockResolvedValueOnce(
+    mockFetch.mockResolvedValueOnce(evoRes([{ instance: { state: 'close' } }])).mockResolvedValueOnce(
       evoRes({ base64: 'data:image/png;base64,AAAA', instance: { state: 'close' } }),
     )
     const { GET } = await import('@/app/api/lines/qr/route')
@@ -269,6 +276,7 @@ describe('GET /api/lines/qr', () => {
       .mockResolvedValueOnce(evoRes([{ instance: { state: 'connecting' } }]))  // getCurrentState
       .mockResolvedValueOnce(evoRes({}, 200))                                   // logout
       .mockResolvedValueOnce(evoRes({}, 200))                                   // restart
+      .mockResolvedValueOnce(evoRes([{ instance: { state: 'close' } }])) // fetchInstances after restart
       .mockResolvedValueOnce(evoRes({ base64: 'data:image/png;base64,BBBB' })) // /connect
 
     const { GET } = await import('@/app/api/lines/qr/route')
@@ -283,11 +291,28 @@ describe('GET /api/lines/qr', () => {
   })
 
   it('qrcode.base64 también es extraído correctamente', async () => {
-    mockFetch.mockResolvedValueOnce(evoRes({ qrcode: { base64: 'data:image/png;base64,QRQR' } }))
+    mockFetch.mockResolvedValueOnce(evoRes([{ instance: { state: 'close' } }])).mockResolvedValueOnce(evoRes({ qrcode: { base64: 'data:image/png;base64,QRQR' } }))
     const { GET } = await import('@/app/api/lines/qr/route')
     const promise = GET(makeReq('/api/lines/qr', { instance: 'my-instance' }))
     await vi.runAllTimersAsync()
     const body = await (await promise).json()
     expect(body.base64).toBe('data:image/png;base64,QRQR')
+  })
+})
+
+
+describe('QR access after warmup retirement', () => {
+  it.each(['GET', 'POST'] as const)('requires line permissions for %s without a warmup fallback', async method => {
+    const permissions = await import('@/lib/permissions')
+    const check = vi.mocked(permissions.checkPermissionWithUser)
+    check.mockClear()
+    check.mockResolvedValueOnce({ ok: false, response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) })
+    mockFetch.mockClear()
+    const routes = await import('@/app/api/lines/qr/route')
+    const response = await routes[method](new NextRequest('http://localhost/api/lines/qr?instance=test', { method }))
+    expect(response.status).toBe(403)
+    expect(check).toHaveBeenCalledTimes(1)
+    expect(check).toHaveBeenCalledWith(expect.anything(), 'lines', method === 'GET' ? 'update' : 'manage')
+    expect(mockFetch).not.toHaveBeenCalled()
   })
 })

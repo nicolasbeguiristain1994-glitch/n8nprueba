@@ -1,107 +1,49 @@
-import { NextResponse }                    from 'next/server'
-import { query }                           from '@/lib/db'
-import { isUUID }                          from '@/lib/validate'
+import { NextResponse } from 'next/server'
+import { withTransaction } from '@/lib/db'
+import { isUUID } from '@/lib/validate'
 import { checkPermissionWithUser, isCampaignOwnerOrAdmin } from '@/lib/permissions'
-import { audit }                           from '@/lib/audit'
+import { audit } from '@/lib/audit'
+import { prepareCampaignRetry } from '@/lib/campaign-retry'
 
-// POST /api/campaigns/[id]/retry-failed
-//
-// Resetea SOLO los recipients con status='failed' a 'pending' para reintento.
-// Los recipients con status='sent' NO se tocan — no se re-envía a nadie que ya recibió.
-// Cambia el estado de la campaña a 'paused' para que sea reanudable.
-//
-// Acceso: dueño de la campaña o admin.
-
-export async function POST(
-  req: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
+// Only definite failures may be retried. Ambiguous provider outcomes require
+// reconciliation, even when a recipient has already been labelled "failed".
+export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await checkPermissionWithUser(req, 'send', 'send')
   if (!auth.ok) return auth.response
-
   const { id } = await params
   if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
-
-  const [campaign] = await query<{ id: string; name: string; status: string; owned_by: string | null }>(
-    'SELECT id, name, status, owned_by FROM campaigns WHERE id = $1', [id]
-  )
-  if (!campaign) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
-
-  if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by)) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
-
-  const RETRYABLE = ['completed', 'paused', 'running', 'cancelled']
-  if (!RETRYABLE.includes(campaign.status)) {
-    return NextResponse.json(
-      { error: `La campaña está en estado "${campaign.status}" y no se puede reintentar` },
-      { status: 409 }
-    )
-  }
-
   try {
-    // 1. Contar fallidos antes de resetear
-    const [countRow] = await query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM campaign_recipients WHERE campaign_id = $1 AND status = 'failed'`,
-      [id]
-    )
-    const failedCount = Number(countRow?.count || 0)
+    const result = await withTransaction(async client => {
+      const { rows: [campaign] } = await client.query<{
+        owned_by: string | null; status: string; has_lock: boolean
+      }>(`SELECT owned_by, status,
+            (processor_locked_at IS NOT NULL OR processor_lock_token IS NOT NULL) AS has_lock
+          FROM campaigns WHERE id = $1 FOR UPDATE`, [id])
+      if (!campaign) return { status: 404, body: { error: 'Campaign not found' } }
+      if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by))
+        return { status: 403, body: { error: 'Forbidden' } }
+      if (!['completed', 'paused'].includes(campaign.status) || campaign.has_lock)
+        return { status: 409, body: { error: 'Pausá la campaña y esperá a que termine el procesador antes de reintentar' } }
 
-    if (failedCount === 0) {
-      return NextResponse.json({ error: 'No hay contactos fallidos para reintentar' }, { status: 400 })
-    }
-
-    // 2. Resetear SOLO los failed → pending (sent/skipped no se tocan)
-    await query(
-      `UPDATE campaign_recipients
-       SET status       = 'pending',
-           locked_at    = NULL,
-           line_id      = NULL,
-           error_detail = NULL,
-           failed_at    = NULL,
-           attempts     = 0,
-           updated_at   = NOW()
-       WHERE campaign_id = $1
-         AND status = 'failed'`,
-      [id]
-    )
-
-    // 3. Pasar la campaña a 'paused' para que sea reanudable.
-    //    Solo limpiar el lock si ya está vencido (sin proceso activo);
-    //    si hay un proceso corriendo, detectará 'paused' en su status gate
-    //    y soltará el lock limpiamente en su bloque finally.
-    await query(
-      `UPDATE campaigns
-       SET status                = 'paused',
-           processor_locked_at  = CASE
-             WHEN processor_locked_at IS NULL
-               OR processor_locked_at < NOW() - INTERVAL '30 minutes'
-             THEN NULL
-             ELSE processor_locked_at
-           END,
-           processor_lock_token = CASE
-             WHEN processor_locked_at IS NULL
-               OR processor_locked_at < NOW() - INTERVAL '30 minutes'
-             THEN NULL
-             ELSE processor_lock_token
-           END,
-           updated_at           = NOW()
-       WHERE id = $1
-         AND status NOT IN ('draft', 'scheduled')`,
-      [id]
-    )
-
-    void audit({
-      req,
-      action:      'send',
-      resource:    'campaigns',
-      resource_id: id,
-      metadata:    { action: 'retry_failed', reset_count: failedCount },
+      const resetCount = await prepareCampaignRetry(client, id)
+      if (!resetCount) return { status: 409, body: {
+        error: 'No hay fallos confirmados ni omitidos por frecuencia para reintentar. Los mensajes entregados o pendientes de confirmación se conservan.',
+      } }
+      await client.query(
+        `UPDATE campaigns SET status = 'paused', pause_reason = 'manual', completed_at = NULL,
+           total_sent = (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = $1 AND status = 'sent'),
+           total_failed = (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = $1 AND status = 'failed'),
+           total_skipped = (SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = $1 AND status = 'skipped'),
+           updated_at = NOW(), updated_by = $2
+         WHERE id = $1`, [id, auth.user.user_id]
+      )
+      return { status: 200, body: { ok: true, reset_count: resetCount } }
     })
-
-    return NextResponse.json({ ok: true, reset_count: failedCount })
-  } catch (e) {
-    console.error('[POST /campaigns/[id]/retry-failed]', e instanceof Error ? e.message : e)
+    if (result.status === 200) void audit({ req, action: 'send', resource: 'campaigns', resource_id: id,
+      metadata: { action: 'retry_failed', reset_count: result.body.reset_count } })
+    return NextResponse.json(result.body, { status: result.status })
+  } catch (error) {
+    console.error('[POST /campaigns/[id]/retry-failed]', error instanceof Error ? error.message : error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }

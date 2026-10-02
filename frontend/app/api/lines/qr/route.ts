@@ -112,12 +112,8 @@ async function getCurrentState(
 //   DELETE + CREATE garantiza una sesión Baileys nueva con WebSocket fresco.
 // ─────────────────────────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
-  // Allow lines:update (admin/líneas) OR warmup:update (operadores de calentamiento)
   const auth = await checkPermissionWithUser(req, 'lines', 'update')
-  if (!auth.ok) {
-    const auth2 = await checkPermissionWithUser(req, 'warmup', 'update')
-    if (!auth2.ok) return auth.response
-  }
+  if (!auth.ok) return auth.response
 
   const instance = req.nextUrl.searchParams.get('instance')
   if (!instance) return NextResponse.json({ error: 'instance required' }, { status: 400 })
@@ -340,12 +336,8 @@ export async function DELETE(req: NextRequest) {
 // POST /api/lines/qr — crea instancia con EVOLUTION_GLOBAL_API_KEY
 // ─────────────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
-  // Allow lines:manage (admin) OR warmup:create (operadores de calentamiento)
   const authPost = await checkPermissionWithUser(req, 'lines', 'manage')
-  if (!authPost.ok) {
-    const authPost2 = await checkPermissionWithUser(req, 'warmup', 'create')
-    if (!authPost2.ok) return authPost.response
-  }
+  if (!authPost.ok) return authPost.response
 
   const EVO_GLOBAL = process.env.EVOLUTION_GLOBAL_API_KEY
   if (!EVO_GLOBAL) {

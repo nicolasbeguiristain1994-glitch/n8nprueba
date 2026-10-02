@@ -19,8 +19,8 @@ const path = require('path');
 
 const CONFIG = {
   frontendUrl: 'https://agentes.zeuscasino.fun/',
-  username: 'adminbet',
-  password: 'Allblacks23!',
+  username: 'REPLACE_ME_USERNAME',
+  password: 'REPLACE_ME_PASSWORD',
   outputDir: path.join(__dirname, '../exports'),
   profileDir: path.join(__dirname, '../exports/.browser-profile'),
 };

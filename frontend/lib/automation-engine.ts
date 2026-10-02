@@ -1,364 +1,151 @@
-/**
- * automation-engine.ts
- *
- * Motor de evaluación y ejecución de automatizaciones.
- * Se invoca desde el webhook de Evolution al recibir un mensaje inbound.
- *
- * Flujo:
- *   1. Cargar automatizaciones activas (ordenadas por prioridad)
- *   2. Verificar anti-loop: si el mismo message_id ya tiene un log → skip
- *   3. Si la conversación está escalada → skip automations
- *   4. Evaluar triggers en orden de prioridad
- *   5. Ejecutar la primera que coincida
- *   6. Registrar log
- *
- * Prevención de loops:
- *   - Solo procesa mensajes inbound
- *   - Idempotencia por message_id en automation_logs
- *   - Cooldown de 10 segundos entre ejecuciones por phone
- *   - No auto-responde si ya hay un outbound reciente de automation
- */
+import { query, withTransaction } from '@/lib/db'
+import { sendMessageUseCase } from '@/lib/cloud-api/use-cases/send-message.use-case'
+import { sseEmitter } from '@/lib/sse-events'
 
-import { query } from '@/lib/db'
-
-// ── Tipos internos ────────────────────────────────────────────────────────────
-
-type AutomationType    = 'reply' | 'flow' | 'handoff'
-type TriggerType       = 'keyword' | 'contains' | 'any_inbound'
-
-interface TriggerConfig {
-  keywords?: string[]
+export type AutomationSource = { provider: 'cloud'; phoneNumberId: string } | { provider: 'evolution'; instance: string }
+type Rule = { id: string; name: string; type: 'reply'|'flow'|'handoff'; trigger_type: string;
+  trigger_config: { keywords?: string[] }; action_config: { message?: string; steps?: { message: string; delay_sec?: number }[] } }
+type Job = { id: string; event_key: string; automation_id: string; automation_name: string; phone: string;
+  provider: 'cloud'|'evolution'; source_id: string; body: string; step: number; handoff: boolean; legacy_message_id: string|null }
+const digits = (phone: string) => phone.replace(/\D/g,'')
+const normalize = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,'').replace(/\s+/g,' ').trim()
+export function automationMatches(rule: Pick<Rule,'trigger_type'|'trigger_config'>, text: string): boolean {
+  if (rule.trigger_type==='any_inbound') return true
+  const keys=(rule.trigger_config.keywords??[]).filter(k=>typeof k==='string').map(normalize).filter(Boolean), value=normalize(text)
+  return keys.some(k=>rule.trigger_type==='keyword'?value===k:rule.trigger_type==='contains'&&value.includes(k))
 }
-
-interface ReplyActionConfig {
-  message: string
-}
-
-interface FlowActionConfig {
-  steps: Array<{ message: string; delay_sec?: number }>
-}
-
-interface HandoffActionConfig {
-  message?: string
-}
-
-type ActionConfig = ReplyActionConfig | FlowActionConfig | HandoffActionConfig
-
-interface Automation {
-  id: string
-  name: string
-  type: AutomationType
-  trigger_type: TriggerType
-  trigger_config: TriggerConfig
-  action_config: ActionConfig
-  priority: number
-}
-
-interface ContactInfo {
-  first_name: string | null
-  panel: string | null
-}
-
-// ── Normalización de texto para matching ─────────────────────────────────────
-
-function normalizeForMatch(text: string): string {
-  return text
-    .toLowerCase()
-    .trim()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // quitar acentos
-    .replace(/[^a-z0-9 ]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-// ── Evaluación de trigger ─────────────────────────────────────────────────────
-
-function matchesTrigger(
-  automation: Automation,
-  messageText: string,
-): boolean {
-  const { trigger_type, trigger_config } = automation
-  const normalized = normalizeForMatch(messageText)
-
-  if (trigger_type === 'any_inbound') {
-    return true
-  }
-
-  const keywords = (trigger_config.keywords ?? []).map(k => normalizeForMatch(k)).filter(Boolean)
-  if (keywords.length === 0) return false
-
-  if (trigger_type === 'keyword') {
-    // Coincidencia exacta con alguna keyword
-    return keywords.some(kw => normalized === kw)
-  }
-
-  if (trigger_type === 'contains') {
-    // El mensaje contiene alguna keyword
-    return keywords.some(kw => normalized.includes(kw))
-  }
-
-  return false
-}
-
-// ── Sustitución de variables ──────────────────────────────────────────────────
-
-function resolveVariables(template: string, contact: ContactInfo | null): string {
-  const nombre = contact?.first_name?.trim() || 'Cliente'
-  const empresa = contact?.panel?.trim() || ''
-  const fecha = new Date().toLocaleDateString('es-AR', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
+export function automationSteps(rule: Pick<Rule,'type'|'action_config'>): { message:string; delay_sec:number }[] {
+  const raw=rule.type==='flow'?rule.action_config.steps:[{message:rule.action_config.message??''}]
+  if (rule.type==='handoff' && !rule.action_config.message?.trim()) return []
+  if (!Array.isArray(raw)||!raw.length||raw.length>20) throw Error('Configurá entre 1 y 20 pasos')
+  return raw.map(s=>{
+    if (!s || typeof s.message!=='string' || !s.message.trim() || s.message.length>4096) throw Error('Cada paso requiere un mensaje de hasta 4096 caracteres')
+    const delay=s.delay_sec??0
+    if (!Number.isInteger(delay)||delay<0||delay>3600) throw Error('La espera debe estar entre 0 y 3600 segundos')
+    return {message:s.message.trim(),delay_sec:delay}
   })
-
-  return template
-    .replace(/\{\{nombre\}\}/gi, nombre)
-    .replace(/\{\{empresa\}\}/gi, empresa)
-    .replace(/\{\{fecha\}\}/gi, fecha)
 }
 
-// ── Envío de mensaje de automatización ───────────────────────────────────────
-
-async function sendAutoMessage(
-  phone: string,
-  message: string,
-  automationId: string,
-): Promise<boolean> {
-  // Elegir línea Evolution activa aleatoria para distribuir carga.
-  // Cloud lines (line_type = 'cloud') se excluyen porque no tienen
-  // evolution_instance / evolution_url y no pueden usar el send path de Evolution.
-  const lines = await query<{ id: string; evolution_url: string; evolution_instance: string }>(
-    `SELECT id, evolution_url, evolution_instance
-     FROM whatsapp_lines
-     WHERE line_type = 'evolution'
-       AND is_connected = true
-       AND status = 'active'
-       AND sending_enabled = true
-     ORDER BY RANDOM()
-     LIMIT 1`,
-  )
-
-  if (lines.length === 0) {
-    console.warn('[automation-engine] No hay líneas conectadas para enviar auto-respuesta')
-    return false
-  }
-
-  const line = lines[0]
-  const apiKey = process.env.EVOLUTION_API_KEY ?? ''
-
-  try {
-    const res = await fetch(
-      `${line.evolution_url}/message/sendText/${line.evolution_instance}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: apiKey },
-        body: JSON.stringify({ number: phone, text: message }),
-      },
-    )
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '')
-      console.error('[automation-engine] Evolution API error:', res.status, errText.slice(0, 200))
-      return false
+// Durable unique receipt + all steps are committed together, before any provider
+// call. Webhook retries can finish a queued event but cannot create another flow.
+export async function evaluateAutomations(phone: string, messageText: string, messageId: string|null, source?: AutomationSource): Promise<void> {
+  if (!messageId || !source || !digits(phone)) return
+  const provider=source.provider, sourceId=provider==='cloud'?(source as {phoneNumberId:string}).phoneNumberId:(source as {instance:string}).instance
+  if (!sourceId) return
+  const eventKey=`${provider}:${sourceId}:${messageId}`, number=digits(phone)
+  await withTransaction(async db=>{
+    await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`automation:${provider}:${sourceId}:${number}`])
+    const claimed=await db.query(`INSERT INTO automation_inbound_receipts(event_key,phone,provider,source_id)
+      VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING event_key`,[eventKey,number,provider,sourceId])
+    if (!claimed.rows.length) return
+    const blocked=await db.query(`SELECT 1 FROM conversation_state WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND resolved_at IS NULL AND is_escalated=true
+      UNION ALL SELECT 1 FROM blacklist WHERE phone_number_normalized=$1 AND removed_at IS NULL LIMIT 1`,[number])
+    if (blocked.rows.length) return
+    const recent=await db.query(`SELECT 1 FROM automation_message_jobs WHERE phone=$1 AND provider=$2 AND source_id=$3
+      AND created_at>NOW()-interval '10 seconds' AND status IN ('queued','processing','sent') LIMIT 1`,[number,provider,sourceId])
+    if (recent.rows.length) return
+    const rules=await db.query<Rule>(`SELECT a.id,a.name,a.type,a.trigger_type,a.trigger_config,a.action_config
+      FROM automations a JOIN users u ON u.id=a.created_by
+      WHERE a.is_active=true AND u.is_active=true AND u.role='admin' ORDER BY a.priority,a.created_at,a.id`)
+    const rule=rules.rows.find(r=>automationMatches(r,messageText))
+    if (!rule) return
+    const contact=await db.query<{first_name:string|null;panel:string|null}>(`SELECT first_name,panel FROM contacts WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 LIMIT 1`,[number])
+    const resolve=(message:string)=>message.replace(/\{\{nombre\}\}/gi,contact.rows[0]?.first_name?.trim()||'Cliente')
+      .replace(/\{\{empresa\}\}/gi,contact.rows[0]?.panel?.trim()||'')
+      .replace(/\{\{fecha\}\}/gi,new Date().toLocaleDateString('es-AR',{timeZone:'America/Argentina/Buenos_Aires'}))
+    let steps: ReturnType<typeof automationSteps>
+    try { steps=automationSteps(rule) } catch {
+      await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details) VALUES($1,$2,$3,'error','Configuración de pasos inválida')`,[rule.id,rule.name,number]);return
     }
-
-    const data = await res.json().catch(() => ({})) as Record<string, unknown>
-    const key = data?.key as Record<string, unknown> | undefined
-    const msgId = (key?.id as string) || (data?.id as string) || null
-
-    // Registrar mensaje saliente en whatsapp_messages
-    const phoneFormatted = phone.startsWith('+') ? phone : `+${phone}`
-    await query(
-      `INSERT INTO whatsapp_messages
-         (phone_number, message_body, direction, status, evolution_message_id, metadata)
-       VALUES ($1, $2, 'outbound', 'sent', $3, $4::jsonb)`,
-      [
-        phoneFormatted,
-        message,
-        msgId,
-        JSON.stringify({ source: 'automation', automation_id: automationId }),
-      ],
-    )
-
-    return true
-  } catch (e) {
-    console.error('[automation-engine] sendAutoMessage error:', e instanceof Error ? e.message : e)
-    return false
-  }
-}
-
-// ── Ejecutar acción de handoff ────────────────────────────────────────────────
-
-async function executeHandoff(
-  phone: string,
-  automation: Automation,
-  contact: ContactInfo | null,
-): Promise<void> {
-  const config = automation.action_config as HandoffActionConfig
-
-  // Enviar mensaje previo si está configurado
-  if (config.message?.trim()) {
-    const resolved = resolveVariables(config.message, contact)
-    await sendAutoMessage(phone, resolved, automation.id)
-  }
-
-  // Marcar conversación como escalada en conversation_state
-  await query(
-    `INSERT INTO conversation_state
-       (phone_number, is_escalated, escalated_at, escalation_reason)
-     VALUES ($1, true, NOW(), $2)
-     ON CONFLICT (phone_number) WHERE resolved_at IS NULL
-     DO UPDATE SET
-       is_escalated      = true,
-       escalated_at      = NOW(),
-       escalation_reason = EXCLUDED.escalation_reason,
-       updated_at        = NOW()`,
-    [phone, `Automatización: ${automation.name}`],
-  )
-}
-
-// ── Log de ejecución ──────────────────────────────────────────────────────────
-
-async function logExecution(
-  automationId: string,
-  automationName: string,
-  phone: string,
-  messageId: string | null,
-  result: 'executed' | 'skipped' | 'error',
-  details?: string,
-): Promise<void> {
-  try {
-    await query(
-      `INSERT INTO automation_logs
-         (automation_id, automation_name, conversation_phone, message_id, result, details)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [automationId, automationName, phone, messageId, result, details ?? null],
-    )
-  } catch (e) {
-    console.error('[automation-engine] error al registrar log:', e instanceof Error ? e.message : e)
-  }
-}
-
-// ── Entry point público ───────────────────────────────────────────────────────
-
-/**
- * Evalúa y ejecuta automatizaciones activas para un mensaje inbound.
- * Nunca lanza excepciones — todos los errores se capturan internamente.
- *
- * @param phone        Número de teléfono del remitente (sin '+', ej: "5491155551234")
- * @param messageText  Texto del mensaje inbound
- * @param messageId    UUID del mensaje en whatsapp_messages (para idempotencia)
- */
-export async function evaluateAutomations(
-  phone: string,
-  messageText: string,
-  messageId: string | null,
-): Promise<void> {
-  try {
-    // ── 1. Idempotencia por message_id ────────────────────────────────────────
-    if (messageId) {
-      const existing = await query<{ id: string }>(
-        `SELECT id FROM automation_logs WHERE message_id = $1 LIMIT 1`,
-        [messageId],
-      )
-      if (existing.length > 0) {
-        // Ya fue procesado (reentrega del webhook o doble disparo)
-        return
-      }
+    if (rule.type==='handoff') {
+      await db.query(`INSERT INTO conversation_state(phone_number,is_escalated,escalated_at,escalation_reason)
+        VALUES($1,true,NOW(),$2) ON CONFLICT(phone_number) WHERE resolved_at IS NULL
+        DO UPDATE SET is_escalated=true,escalated_at=NOW(),escalation_reason=EXCLUDED.escalation_reason,updated_at=NOW()`,[number,`Automatización: ${rule.name}`])
+      await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details) VALUES($1,$2,$3,'executed','Conversación derivada a un operador')`,[rule.id,rule.name,number])
     }
+    let delay=0
+    for (let i=0;i<steps.length;i++) {
+      delay+=steps[i].delay_sec
+      await db.query(`INSERT INTO automation_message_jobs(event_key,automation_id,automation_name,phone,provider,source_id,body,step,handoff,legacy_message_id,run_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW()+($11*interval '1 second'))`,
+        [eventKey,rule.id,rule.name,number,provider,sourceId,resolve(steps[i].message),i,rule.type==='handoff',provider==='evolution'?messageId:null,delay])
+    }
+  })
+  await processAutomationJobs(eventKey)
+}
 
-    // ── 2. Verificar si la conversación ya está escalada ──────────────────────
-    const convState = await query<{ is_escalated: boolean }>(
-      `SELECT is_escalated FROM conversation_state
-       WHERE phone_number = $1 AND resolved_at IS NULL
-       LIMIT 1`,
-      [phone],
-    )
-    if (convState[0]?.is_escalated === true) {
-      // Conversación en manos de humano — no intervenir
+async function complete(job:Job,status:'sent'|'failed'|'skipped'|'uncertain',details:string) {
+  await withTransaction(async db=>{
+    const updated=await db.query(`UPDATE automation_message_jobs SET status=$2,finished_at=NOW(),details=$3 WHERE id=$1 AND status='processing' RETURNING id`,[job.id,status,details])
+    if (!updated.rows.length) return
+    await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,message_id,result,details)
+      VALUES($1,$2,$3,$4,$5,$6)`,[job.automation_id,job.automation_name,job.phone,job.legacy_message_id,status==='sent'?'executed':status==='skipped'?'skipped':'error',`Paso ${job.step+1}: ${details}`])
+  })
+}
+
+async function sendJob(job:Job):Promise<void> {
+  // Recheck operator handoff, opt-out and active rule/creator at send time,
+  // including delayed flow steps. Each reply stays on its inbound line.
+  const active=await query(`SELECT 1 FROM automations a JOIN users u ON u.id=a.created_by WHERE a.id=$1 AND a.is_active=true AND u.is_active=true AND u.role='admin'`,[job.automation_id])
+  const blocked=await query(`SELECT 1 FROM blacklist WHERE phone_number_normalized=$1 AND removed_at IS NULL
+    UNION ALL SELECT 1 FROM conversation_state WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND resolved_at IS NULL AND is_escalated=true AND NOT $2 LIMIT 1`,[job.phone,job.handoff])
+  if (!active.length||blocked.length) { await complete(job,'skipped','Regla pausada, baja solicitada o conversación atendida por un operador');return }
+  if (job.provider==='cloud') {
+    const ready=await query(`SELECT 1 FROM cloud_numbers cn JOIN whatsapp_lines wl ON wl.id=cn.whatsapp_line_id
+      WHERE cn.phone_number_id=$1 AND cn.status='active' AND wl.status='active' AND wl.is_connected=true AND wl.sending_enabled=true`,[job.source_id])
+    if (!ready.length) {await complete(job,'skipped','La línea Cloud de origen no está habilitada');return}
+    // This use case enforces opt-out, 24-hour window and rate limits, and stores
+    // the outbound before making the request. Never choose another phone number.
+    try {
+      await sendMessageUseCase.execute({request:{phoneNumberId:job.source_id,to:'+'+job.phone,type:'text',text:{body:job.body}}})
+    } catch (err) {
+      const name=err instanceof Error?err.name:''
+      await complete(job,['OptOutError','ConversationWindowError','TokenExpiredError'].includes(name)?'skipped':'uncertain',
+        ['OptOutError','ConversationWindowError','TokenExpiredError'].includes(name)?'Baja, ventana cerrada o credencial no disponible':'Envío no confirmado; revisar el historial antes de reintentar')
       return
     }
-
-    // ── 3. Anti-loop: cooldown de 10 segundos por phone ───────────────────────
-    const recentLog = await query<{ id: string }>(
-      `SELECT id FROM automation_logs
-       WHERE conversation_phone = $1
-         AND result = 'executed'
-         AND created_at > NOW() - INTERVAL '10 seconds'
-       LIMIT 1`,
-      [phone],
-    )
-    if (recentLog.length > 0) {
-      // Otra automatización ejecutó hace menos de 10s — evitar loop
-      return
+  } else {
+    const [line]=await query<{id:string;evolution_url:string;evolution_instance:string}>(`SELECT id,evolution_url,evolution_instance FROM whatsapp_lines
+      WHERE evolution_instance=$1 AND line_type='evolution' AND status='active' AND is_connected=true AND sending_enabled=true LIMIT 1`,[job.source_id])
+    if (!line) {await complete(job,'skipped','La línea Evolution de origen no está habilitada');return}
+    const [stored]=await query<{id:string}>(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,metadata)
+      VALUES($1,$2,'outbound','queued',$3::jsonb) RETURNING id`,['+'+job.phone,job.body,JSON.stringify({line_id:line.id,source:'automation',automation_id:job.automation_id,automation_job_id:job.id})])
+    let response:Response
+    try {
+      response=await fetch(`${line.evolution_url}/message/sendText/${line.evolution_instance}`,{method:'POST',headers:{'Content-Type':'application/json',apikey:process.env.EVOLUTION_API_KEY??''},body:JSON.stringify({number:job.phone,text:job.body}),signal:AbortSignal.timeout(20000)})
+    } catch {await complete(job,'uncertain','Sin confirmación del proveedor; no se reenvía automáticamente');return}
+    if (!response.ok) {
+      await query(`UPDATE whatsapp_messages SET status='failed' WHERE id=$1`,[stored.id])
+      await complete(job,'failed',`Proveedor rechazó el envío (HTTP ${response.status})`);return
     }
-
-    // ── 4. Cargar automatizaciones activas ────────────────────────────────────
-    const automations = await query<Automation>(
-      `SELECT id, name, type, trigger_type, trigger_config, action_config, priority
-       FROM automations
-       WHERE is_active = true
-       ORDER BY priority ASC, created_at ASC`,
-    )
-
-    if (automations.length === 0) return
-
-    // ── 5. Buscar contacto para variables ─────────────────────────────────────
-    const phoneFormatted = phone.startsWith('+') ? phone : `+${phone}`
-    const contacts = await query<ContactInfo>(
-      `SELECT first_name, panel FROM contacts WHERE phone_number = $1 LIMIT 1`,
-      [phoneFormatted],
-    )
-    const contact = contacts[0] ?? null
-
-    // ── 6. Evaluar automaciones en orden ──────────────────────────────────────
-    for (const automation of automations) {
-      if (!matchesTrigger(automation, messageText)) continue
-
-      // ── 7. Ejecutar acción ────────────────────────────────────────────────
-      try {
-        if (automation.type === 'handoff') {
-          await executeHandoff(phone, automation, contact)
-          await logExecution(automation.id, automation.name, phone, messageId, 'executed', 'handoff ejecutado')
-
-        } else if (automation.type === 'reply') {
-          const config = automation.action_config as ReplyActionConfig
-          const resolved = resolveVariables(config.message ?? '', contact)
-          const sent = await sendAutoMessage(phone, resolved, automation.id)
-          await logExecution(
-            automation.id, automation.name, phone, messageId,
-            sent ? 'executed' : 'error',
-            sent ? undefined : 'Fallo al enviar auto-respuesta (sin líneas o error Evolution)',
-          )
-
-        } else if (automation.type === 'flow') {
-          const config = automation.action_config as FlowActionConfig
-          const steps = config.steps ?? []
-          // Para MVP: enviar solo el primer paso inmediatamente
-          // Los pasos posteriores con delay requieren un worker/scheduler externo
-          if (steps.length > 0) {
-            const resolved = resolveVariables(steps[0].message ?? '', contact)
-            const sent = await sendAutoMessage(phone, resolved, automation.id)
-            await logExecution(
-              automation.id, automation.name, phone, messageId,
-              sent ? 'executed' : 'error',
-              sent ? `Flujo iniciado (paso 1 de ${steps.length})` : 'Fallo al enviar primer paso',
-            )
-          }
-        }
-
-        // Solo se ejecuta la PRIMERA automatización que coincide
-        break
-
-      } catch (execErr) {
-        console.error('[automation-engine] error ejecutando automatización', automation.id, execErr instanceof Error ? execErr.message : execErr)
-        await logExecution(automation.id, automation.name, phone, messageId, 'error',
-          execErr instanceof Error ? execErr.message : 'Error desconocido')
-        break
-      }
-    }
-
-  } catch (e) {
-    // El engine nunca debe romper el flujo del webhook
-    console.error('[automation-engine] error general:', e instanceof Error ? e.message : e)
+    const data=await response.json().catch(()=>null)
+    await query(`UPDATE whatsapp_messages SET status='sent',evolution_message_id=$2 WHERE id=$1`,[stored.id,data?.key?.id??data?.id??null])
   }
+  await complete(job,'sent','Mensaje aceptado por el proveedor')
+  sseEmitter.emit('update',{source:'message'})
+}
+
+export async function processAutomationJobs(eventKey:string|null=null):Promise<number> {
+  // An interrupted send is ambiguous; replaying it could duplicate a customer
+  // message. Surface it for review instead of automatically reclaiming it.
+  await query(`WITH stale AS (
+    UPDATE automation_message_jobs SET status='uncertain',finished_at=NOW(),details='Procesamiento interrumpido; revisar antes de reintentar'
+    WHERE status='processing' AND started_at<NOW()-interval '5 minutes' RETURNING *)
+    INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details)
+    SELECT automation_id,automation_name,phone,'error',details FROM stale`)
+  let count=0
+  for(let i=0;i<20;i++) {
+    const [job]=await query<Job>(`WITH next AS (
+      SELECT j.id FROM automation_message_jobs j WHERE j.status='queued' AND j.run_at<=NOW()
+        AND ($1::text IS NULL OR j.event_key=$1)
+        AND NOT EXISTS(SELECT 1 FROM automation_message_jobs prev WHERE prev.event_key=j.event_key AND prev.step<j.step AND prev.status IN ('queued','processing'))
+      ORDER BY j.run_at,j.step,j.id FOR UPDATE SKIP LOCKED LIMIT 1)
+      UPDATE automation_message_jobs j SET status='processing',started_at=NOW() FROM next WHERE j.id=next.id RETURNING j.*`,[eventKey])
+    if (!job) break
+    const failed=await query(`SELECT 1 FROM automation_message_jobs WHERE event_key=$1 AND step<$2 AND status<>'sent' LIMIT 1`,[job.event_key,job.step])
+    if (failed.length) {await complete(job,'skipped','Un paso anterior no se completó');continue}
+    try {await sendJob(job)} catch {await complete(job,'uncertain','Error de procesamiento; revisar antes de reintentar').catch(()=>{})}
+    count++
+  }
+  return count
 }

@@ -25,6 +25,13 @@ vi.mock('@/lib/db', () => ({
 }))
 import * as db from '@/lib/db'
 
+vi.mock('@/lib/campaign-routing', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/campaign-routing')>(),
+  prepareCampaignRouting: vi.fn(),
+  getCampaignAssignedLine: vi.fn(),
+}))
+import { prepareCampaignRouting, getCampaignAssignedLine } from '@/lib/campaign-routing'
+
 // ── Mock ContactFrequencyEngine ───────────────────────────────────────────────
 vi.mock('@/lib/contact-frequency/ContactFrequencyEngine', () => ({
   ContactFrequencyEngine: {
@@ -38,8 +45,21 @@ import { ContactFrequencyEngine } from '@/lib/contact-frequency/ContactFrequency
 vi.mock('@/lib/campaign-distributor', () => ({
   getEligibleLines: vi.fn(),
   sendViaEvolution: vi.fn(),
+  sendViaCloud: vi.fn(),
+  buildTemplatePayload: vi.fn(),
+  CampaignLineUnavailableError: class extends Error {},
+  CloudSendOutcomeUnknownError: class extends Error {},
 }))
 import { getEligibleLines, sendViaEvolution } from '@/lib/campaign-distributor'
+
+it('does not replace a customer sender with another eligible line', async () => {
+  vi.mocked(getEligibleLines).mockResolvedValue([makeEligibleLine()] as never)
+  vi.mocked(getCampaignAssignedLine).mockResolvedValue('unavailable-original-line')
+  vi.mocked(db.query).mockResolvedValue([])
+  vi.mocked(sendViaEvolution).mockClear()
+  expect(await sendOne('campaign-uuid', makeCampaign(), makeRecipient())).toBe('deferred')
+  expect(sendViaEvolution).not.toHaveBeenCalled()
+})
 
 // ── Factories ─────────────────────────────────────────────────────────────────
 
@@ -100,7 +120,12 @@ function blockDecision(reason = 'max_per_day exceeded') {
 // ── syncCounters ──────────────────────────────────────────────────────────────
 
 describe('syncCounters', () => {
-  beforeEach(() => { vi.resetAllMocks() })
+  beforeEach(() => {
+    vi.resetAllMocks()
+    vi.mocked(prepareCampaignRouting).mockResolvedValue(undefined)
+    vi.mocked(getCampaignAssignedLine).mockResolvedValue('line-uuid-1')
+    vi.mocked(getEligibleLines).mockResolvedValue([makeEligibleLine()] as never)
+  })
 
   it('maps sent/failed/skipped/pending from DB strings to numbers', async () => {
     vi.mocked(db.query)
@@ -136,7 +161,12 @@ describe('syncCounters', () => {
 // ── Frequency gate — BLOCK → skipped ─────────────────────────────────────────
 
 describe('frequency gate in processInBackground', () => {
-  beforeEach(() => { vi.resetAllMocks() })
+  beforeEach(() => {
+    vi.resetAllMocks()
+    vi.mocked(prepareCampaignRouting).mockResolvedValue(undefined)
+    vi.mocked(getCampaignAssignedLine).mockResolvedValue('line-uuid-1')
+    vi.mocked(getEligibleLines).mockResolvedValue([makeEligibleLine()] as never)
+  })
 
   it('marks recipient as skipped when frequency engine returns BLOCK', async () => {
     const campaign = makeCampaign()
@@ -185,35 +215,23 @@ describe('frequency gate in processInBackground', () => {
     vi.mocked(getEligibleLines).mockResolvedValue([makeEligibleLine()] as never)
     vi.mocked(sendViaEvolution).mockResolvedValue({ messageId: 'evo-msg-id' })
 
-    vi.mocked(db.query)
-      // recoverStaleRows
-      .mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([])
-      // status gate
-      .mockResolvedValueOnce([{ status: 'running' }])
-      // claimOne
-      .mockResolvedValueOnce([recipient])
-      // sendOne: pre-insert queued
-      .mockResolvedValueOnce([])
-      // sendOne: UPDATE line counters
-      .mockResolvedValueOnce([])
-      // sendOne: UPDATE whatsapp_messages → sent
-      .mockResolvedValueOnce([])
-      // sendOne: UPDATE campaign_recipients → sent
-      .mockResolvedValueOnce([])
-      // syncCounters SELECT
-      .mockResolvedValueOnce([{ sent: '1', failed: '0', skipped: '0', pending: '0' }])
-      // syncCounters UPDATE
-      .mockResolvedValueOnce([])
-      // final syncCounters SELECT
-      .mockResolvedValueOnce([{ sent: '1', failed: '0', skipped: '0', pending: '0' }])
-      // final syncCounters UPDATE
-      .mockResolvedValueOnce([])
-      // SELECT status
-      .mockResolvedValueOnce([{ status: 'running' }])
-      // UPDATE completed
-      .mockResolvedValueOnce([])
-      // release lock
-      .mockResolvedValueOnce([])
+    let claimed = false
+    vi.mocked(db.query).mockImplementation(async sql => {
+      const statement = String(sql)
+      if (statement.includes('SELECT status FROM campaigns')) return [{ status: 'running' }]
+      if (statement.includes('FOR UPDATE SKIP LOCKED')) {
+        if (claimed) return []
+        claimed = true
+        return [recipient]
+      }
+      if (statement.includes('INSERT INTO whatsapp_messages') && statement.includes('RETURNING id')) {
+        return [{ id: 'message-fence' }]
+      }
+      if (statement.includes('COUNT(*) FILTER')) {
+        return [{ sent: '1', failed: '0', skipped: '0', pending: '0' }]
+      }
+      return []
+    })
 
     await processInBackground(campaign, 'lock-token')
 
@@ -226,7 +244,12 @@ describe('frequency gate in processInBackground', () => {
 // ── Evolution error handling ──────────────────────────────────────────────────
 
 describe('sendOne — Evolution error handling', () => {
-  beforeEach(() => { vi.resetAllMocks() })
+  beforeEach(() => {
+    vi.resetAllMocks()
+    vi.mocked(prepareCampaignRouting).mockResolvedValue(undefined)
+    vi.mocked(getCampaignAssignedLine).mockResolvedValue('line-uuid-1')
+    vi.mocked(getEligibleLines).mockResolvedValue([makeEligibleLine()] as never)
+  })
 
   it('returns failed and records error when Evolution throws', async () => {
     const campaign = makeCampaign()
@@ -235,7 +258,9 @@ describe('sendOne — Evolution error handling', () => {
     vi.mocked(getEligibleLines).mockResolvedValue([makeEligibleLine()] as never)
     vi.mocked(sendViaEvolution).mockRejectedValue(new Error('Evolution 500: Internal Server Error'))
 
-    vi.mocked(db.query).mockResolvedValue([])
+    vi.mocked(db.query).mockImplementation(async sql =>
+      String(sql).includes('RETURNING id') ? [{ id: 'message-fence' }] : []
+    )
 
     const result = await sendOne('campaign-uuid', campaign, recipient)
     expect(result).toBe('failed')
@@ -247,15 +272,17 @@ describe('sendOne — Evolution error handling', () => {
     expect(failedUpdate).toBeDefined()
   })
 
-  it('returns failed when no eligible lines', async () => {
+  it('defers without consuming a recipient when no eligible lines', async () => {
     const campaign = makeCampaign()
     const recipient = makeRecipient()
 
     vi.mocked(getEligibleLines).mockResolvedValue([] as never)
-    vi.mocked(db.query).mockResolvedValue([])
+    vi.mocked(db.query).mockImplementation(async sql =>
+      String(sql).includes('RETURNING id') ? [{ id: 'message-fence' }] : []
+    )
 
     const result = await sendOne('campaign-uuid', campaign, recipient)
-    expect(result).toBe('failed')
+    expect(result).toBe('deferred')
   })
 
   it('returns sent and records messageId on Evolution success', async () => {
@@ -265,7 +292,9 @@ describe('sendOne — Evolution error handling', () => {
     vi.mocked(getEligibleLines).mockResolvedValue([makeEligibleLine()] as never)
     vi.mocked(sendViaEvolution).mockResolvedValue({ messageId: 'evo-msg-id-123' })
 
-    vi.mocked(db.query).mockResolvedValue([])
+    vi.mocked(db.query).mockImplementation(async sql =>
+      String(sql).includes('RETURNING id') ? [{ id: 'message-fence' }] : []
+    )
 
     const result = await sendOne('campaign-uuid', campaign, recipient)
     expect(result).toBe('sent')
@@ -282,7 +311,12 @@ describe('sendOne — Evolution error handling', () => {
 // ── All-skipped → campaign completes ─────────────────────────────────────────
 
 describe('all-skipped campaign completion', () => {
-  beforeEach(() => { vi.resetAllMocks() })
+  beforeEach(() => {
+    vi.resetAllMocks()
+    vi.mocked(prepareCampaignRouting).mockResolvedValue(undefined)
+    vi.mocked(getCampaignAssignedLine).mockResolvedValue('line-uuid-1')
+    vi.mocked(getEligibleLines).mockResolvedValue([makeEligibleLine()] as never)
+  })
 
   it('marks campaign as completed when all recipients are blocked by frequency', async () => {
     const campaign = makeCampaign()

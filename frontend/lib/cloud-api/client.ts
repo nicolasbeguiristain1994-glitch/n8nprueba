@@ -40,7 +40,7 @@ export class MetaCloudApiClient {
     return this.numbers.verifyOTP(phoneNumberId, code)
   }
 
-  async registerNumber(phoneNumberId: string, pin?: string) {
+  async registerNumber(phoneNumberId: string, pin: string) {
     return this.numbers.register(phoneNumberId, pin)
   }
 

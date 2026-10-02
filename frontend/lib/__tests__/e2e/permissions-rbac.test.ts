@@ -76,7 +76,7 @@ function mockPermissionCheck(override: Partial<DbUserRow> = {}): void {
 
 /** Mock the templates SELECT that follows a successful permission check. */
 function mockEmptyTemplates(): void {
-  vi.mocked(db.query).mockResolvedValueOnce([] as never)
+  vi.mocked(db.query).mockResolvedValue([] as never)
 }
 
 // ── Setup ─────────────────────────────────────────────────────────────────────

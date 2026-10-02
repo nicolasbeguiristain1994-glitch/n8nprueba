@@ -1,30 +1,11 @@
 'use client'
 
-/**
- * AppShell — raíz del layout de la app autenticada.
- *
- * Estructura visual:
- *   ┌──────────┬──────────────────────────────────────┐
- *   │ Sidebar  │ Topbar (56px fija)                   │
- *   │ (desktop)│──────────────────────────────────────│
- *   │          │ <children> (scroll independiente)    │
- *   └──────────┴──────────────────────────────────────┘
- *   [MobileNav bottom bar — solo en mobile]
- *   [CommandPalette — overlay global Cmd+K]
- *
- * Optimización de re-renders:
- *   - SidebarContext.value está memoizado con useMemo.
- *     Cambios en `cmdOpen` NO re-renderizan Sidebar ni MobileNav.
- *   - `collapsed` y `toggle` viven en useLocalStorage (sin useEffect).
- *   - `mobileOpen` es estado local de AppShell (bajo impacto).
- *
- * Sin skeleton:
- *   useLocalStorage lee localStorage síncronamente en el primer render del
- *   cliente. El <aside> del Sidebar tiene suppressHydrationWarning para el
- *   caso en que el valor de SSR (false) difiera del de localStorage.
- */
+// Shared workspace frame. Preferences remain in localStorage; the hydration
+// snapshot keeps server and client markup consistent before applying them.
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useSyncExternalStore } from 'react'
+import { usePathname } from 'next/navigation'
+import { CurrentUserProvider } from '@/lib/useCurrentUser'
 import { SidebarContext } from './sidebar-context'
 import { Sidebar, MobileSidebar } from './Sidebar'
 import { Topbar } from './Topbar'
@@ -37,9 +18,16 @@ interface AppShellProps {
   children: React.ReactNode
 }
 
+const subscribeHydration = () => () => {}
+const clientSnapshot = () => true
+const serverSnapshot = () => false
+
 export function AppShell({ children }: AppShellProps) {
-  // Estado del sidebar — síncrono en cliente, sin flash
-  const [collapsed, setCollapsed] = useLocalStorage('sidebar:collapsed', false)
+  const pathname = usePathname()
+  // Apply the saved width after hydration without discarding the preference.
+  const [savedCollapsed, setCollapsed] = useLocalStorage('sidebar:collapsed', false)
+  const hydrated = useSyncExternalStore(subscribeHydration, clientSnapshot, serverSnapshot)
+  const collapsed = hydrated && savedCollapsed
   const toggle = useCallback(() => setCollapsed(v => !v), [setCollapsed])
 
   // Estado del sheet mobile — solo local, no necesita persistencia
@@ -56,8 +44,10 @@ export function AppShell({ children }: AppShellProps) {
   )
 
   return (
+    <CurrentUserProvider refreshKey={pathname}>
     <SidebarContext.Provider value={sidebarContext}>
-      <div className="flex h-screen w-full bg-background overflow-hidden">
+      <a href="#main-content" className="skip-link">Ir al contenido principal</a>
+      <div className="flex h-dvh w-full bg-background overflow-hidden">
         {/* Sidebar desktop — hidden en mobile */}
         <Sidebar />
 
@@ -70,8 +60,8 @@ export function AppShell({ children }: AppShellProps) {
           <Topbar onSearchClick={() => setCmdOpen(true)} />
 
           {/* pb-16 md:pb-0 → reserva espacio para MobileNav en mobile */}
-          <main className="flex-1 overflow-y-auto pb-16 md:pb-0 flex flex-col">
-            <div className="flex-1">{children}</div>
+          <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0 flex flex-col outline-none">
+            <div className="flex-1 min-w-0">{children}</div>
             <Footer />
           </main>
         </div>
@@ -86,5 +76,6 @@ export function AppShell({ children }: AppShellProps) {
       {/* Command palette global — se monta siempre para registrar Cmd+K */}
       <CommandPalette open={cmdOpen} onOpenChange={setCmdOpen} />
     </SidebarContext.Provider>
+    </CurrentUserProvider>
   )
 }

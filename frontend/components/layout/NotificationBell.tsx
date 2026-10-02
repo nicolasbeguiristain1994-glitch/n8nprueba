@@ -44,7 +44,7 @@ function NotifItem({
   onNavigate: () => void
 }) {
   const router  = useRouter()
-  const meta    = TYPE_META[notif.type] ?? { icon: Info, color: 'text-gray-400', label: 'Sistema' }
+  const meta    = TYPE_META[notif.type] ?? { icon: Info, color: 'text-muted-foreground', label: 'Sistema' }
   const Icon    = meta.icon
 
   function handleClick() {
@@ -176,7 +176,7 @@ function PreferencesPanel({ onClose }: { onClose: () => void }) {
                 )}
               >
                 <span className={cn(
-                  'absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform',
+                  'absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-card shadow transition-transform',
                   prefs[key] && 'translate-x-4'
                 )} />
               </button>
@@ -258,7 +258,7 @@ export function NotificationBell() {
         <div
           ref={panelRef}
           className={cn(
-            'absolute right-0 top-full mt-2 w-80 z-50',
+            'fixed left-3 right-3 top-16 z-50 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80',
             'bg-background border border-border rounded-xl shadow-xl',
             'overflow-hidden',
           )}

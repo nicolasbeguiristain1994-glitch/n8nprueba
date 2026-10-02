@@ -1,92 +1,27 @@
 'use client'
 
-/**
- * Topbar — barra superior fija de la app.
- *
- * Secciones:
- *   LEFT:   hamburger (mobile) + logo (mobile)
- *   CENTER: botón de búsqueda global con hint Cmd+K (desktop)
- *   RIGHT:  búsqueda mobile | NotificationBell | UserMenu
- *
- * El toggle de tema y el logout viven en <UserMenu> para mantener el Topbar
- * limpio. Esta separación es la misma que usan Attio y Linear.
- *
- * Props:
- *   onSearchClick — callback que dispara el CommandPalette desde AppShell.
- *                   El shortcut Cmd+K también lo maneja el CommandPalette
- *                   internamente, pero este botón es el punto de entrada visual.
- */
-
-import { Menu, Search } from 'lucide-react'
+import { Menu, Search, ChevronRight } from 'lucide-react'
+import { usePathname } from 'next/navigation'
 import { useSidebar } from './sidebar-context'
 import { NotificationBell } from './NotificationBell'
 import { UserMenu } from './UserMenu'
+import { routeLabel } from './navigation'
 
-interface TopbarProps {
-  onSearchClick?: () => void
-}
-
-export function Topbar({ onSearchClick }: TopbarProps) {
+export function Topbar({ onSearchClick }: { onSearchClick?: () => void }) {
   const { setMobileOpen } = useSidebar()
-
-  return (
-    <header className="h-14 shrink-0 z-30 sticky top-0 flex items-center gap-3 px-4 bg-background/95 backdrop-blur-sm border-b border-border">
-
-      {/* ── Mobile: hamburger ── */}
-      <button
-        onClick={() => setMobileOpen(true)}
-        className="md:hidden flex items-center justify-center w-8 h-8 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-        aria-label="Abrir menú"
-      >
-        <Menu size={18} />
-      </button>
-
-      {/* ── Mobile: logo inline ── */}
-      <div className="md:hidden flex items-center gap-2">
-        <div className="w-6 h-6 bg-green-500 rounded-md flex items-center justify-center shrink-0">
-          <span className="text-white text-[10px] font-bold select-none">WA</span>
-        </div>
-        <span className="font-semibold text-sm">WA Platform</span>
-      </div>
-
-      {/* ── Desktop: botón de búsqueda global ── */}
-      <div className="hidden md:flex flex-1 max-w-xs">
-        <button
-          onClick={onSearchClick}
-          className="flex items-center gap-2 w-full h-8 px-3 rounded-md border border-input bg-muted/40 text-sm text-muted-foreground hover:bg-muted transition-colors"
-          aria-label="Abrir búsqueda global"
-        >
-          <Search size={14} className="shrink-0" />
-          <span className="flex-1 text-left">Buscar…</span>
-          <kbd className="hidden sm:flex items-center gap-0.5 text-[10px] bg-background border border-border rounded px-1.5 py-0.5 font-mono text-muted-foreground/70">
-            <span>⌘</span><span>K</span>
-          </kbd>
-        </button>
-      </div>
-
-      {/* Espaciador — empuja las acciones a la derecha en mobile */}
-      <div className="flex-1" />
-
-      {/* ── Right actions ── */}
-      <div className="flex items-center gap-0.5">
-
-        {/* Búsqueda mobile (ícono solo) */}
-        <button
-          onClick={onSearchClick}
-          className="md:hidden flex items-center justify-center w-8 h-8 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-          aria-label="Buscar"
-        >
-          <Search size={16} />
-        </button>
-
-        {/* Notificaciones — componente completo con dropdown */}
-        <NotificationBell />
-
-        {/* Usuario — avatar + dropdown (theme toggle + logout) */}
-        <div className="ml-0.5">
-          <UserMenu />
-        </div>
-      </div>
-    </header>
-  )
+  const pathname = usePathname()
+  return <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-card px-4 sm:px-6 lg:px-8">
+    <button onClick={() => setMobileOpen(true)} className="flex size-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted md:hidden" aria-label="Abrir menú"><Menu size={18} /></button>
+    <div className="flex min-w-0 items-center gap-2 text-xs">
+      <span className="hidden text-muted-foreground lg:inline">Workspace</span>
+      <ChevronRight size={13} className="hidden text-muted-foreground/60 lg:block" aria-hidden="true" />
+      <span className="truncate font-medium text-foreground">{routeLabel(pathname)}</span>
+    </div>
+    <div className="flex-1" />
+    <button onClick={onSearchClick} className="hidden h-8 w-56 items-center gap-2 rounded-md border border-border bg-background px-2.5 text-xs text-muted-foreground transition-colors hover:border-input hover:bg-muted md:flex" aria-label="Abrir búsqueda global">
+      <Search size={14} /><span className="flex-1 text-left">Buscar o ir a…</span><kbd className="rounded border bg-card px-1 py-0.5 text-[10px]">⌘ K</kbd>
+    </button>
+    <button onClick={onSearchClick} className="flex size-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted md:hidden" aria-label="Buscar"><Search size={17} /></button>
+    <div className="flex shrink-0 items-center gap-2 sm:border-l sm:pl-3"><NotificationBell /><UserMenu /></div>
+  </header>
 }

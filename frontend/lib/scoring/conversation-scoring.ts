@@ -2,7 +2,26 @@
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-export type Segment = 'bajo' | 'medio' | 'vip' | 'super_vip' | null
+export type Segment = 'bajo' | 'medio' | 'vip' | 'vip_medio' | 'vip_alto' | 'super_vip' | 'casual' | 'regular' | 'whale' | null
+export type LevelFilter = 'all' | 'none' | NonNullable<Segment>
+export const LEVEL_DEFS: { key: NonNullable<Segment>; label: string; badge: string; avatar: string }[] = [
+  { key: 'super_vip', label: 'Super VIP', badge: 'bg-purple-50 text-purple-800 border-purple-300', avatar: 'bg-purple-100 text-purple-700' },
+  { key: 'vip_alto', label: 'VIP alto', badge: 'bg-red-50 text-red-800 border-red-300', avatar: 'bg-red-100 text-red-700' },
+  { key: 'vip_medio', label: 'VIP medio', badge: 'bg-orange-50 text-orange-800 border-orange-300', avatar: 'bg-orange-100 text-orange-700' },
+  { key: 'vip', label: 'VIP bajo', badge: 'bg-yellow-50 text-yellow-800 border-yellow-300', avatar: 'bg-yellow-100 text-yellow-700' },
+  { key: 'medio', label: 'Medio', badge: 'bg-blue-50 text-blue-800 border-blue-200', avatar: 'bg-blue-100 text-blue-700' },
+  { key: 'bajo', label: 'Bajo', badge: 'bg-slate-50 text-slate-700 border-slate-200', avatar: 'bg-slate-100 text-slate-600' },
+  // Kept in the database for older contacts; do not relabel them as unclassified.
+  { key: 'casual', label: 'Casual', badge: 'bg-slate-50 text-slate-700 border-slate-200', avatar: 'bg-slate-100 text-slate-600' },
+  { key: 'regular', label: 'Regular', badge: 'bg-slate-50 text-slate-700 border-slate-200', avatar: 'bg-slate-100 text-slate-600' },
+  { key: 'whale', label: 'Whale', badge: 'bg-slate-50 text-slate-700 border-slate-200', avatar: 'bg-slate-100 text-slate-600' },
+]
+export function segmentLabel(segment: Segment | undefined): string {
+  return LEVEL_DEFS.find(level => level.key === segment)?.label ?? 'Sin nivel'
+}
+
+export interface ConversationCampaign { id: string; name: string; last_sent_at: string }
+export interface CampaignOption { id: string; name: string; count: number }
 export type Intent  = 'urgent' | 'complaint' | 'reactivation' | null
 export type Filter  = 'all' | 'super_vip' | 'vip' | 'urgent' | 'complaint' | 'escalated' | 'unread'
 
@@ -23,6 +42,7 @@ export interface Conv {
   conv_flow?:         string | null
   is_blacklisted?:    boolean
   has_follow_up?:     boolean
+  campaigns?:         ConversationCampaign[]
 }
 
 export interface Message {
@@ -42,7 +62,7 @@ export interface ConvFilterDef {
 // ── Scoring weights (single source of truth — adjust here to reprioritize) ────
 
 export const SCORING_WEIGHTS = {
-  segment:  { vip: 100, alto: 70 } as const,
+  segment:  { super_vip: 100, vip_alto: 90, vip_medio: 80, vip: 70, medio: 0, bajo: 0, casual: 0, regular: 0, whale: 0 } as const,
   intent:   { urgent: 60, complaint: 40, reactivation: 20 } as const,
   escalated: 40,
 } as const
@@ -75,8 +95,7 @@ export function detectIntent(message: string, direction: string): Intent {
 export function priorityScore(c: Conv): number {
   const w = SCORING_WEIGHTS
   let score = 0
-  if (c.segment === 'super_vip') score += w.segment.vip
-  if (c.segment === 'vip')      score += w.segment.alto
+  if (c.segment) score += w.segment[c.segment] ?? 0
   const i = detectIntent(c.last_message, c.last_direction)
   if (i === 'urgent')       score += w.intent.urgent
   if (i === 'complaint')    score += w.intent.complaint
@@ -89,8 +108,6 @@ export function priorityScore(c: Conv): number {
 
 export const FILTER_DEFS: ConvFilterDef[] = [
   { key: 'all',       label: 'Todos' },
-  { key: 'super_vip', label: 'Super Vip' },
-  { key: 'vip',       label: 'Vip' },
   { key: 'urgent',    label: 'Urgentes' },
   { key: 'complaint', label: 'Quejas' },
   { key: 'escalated', label: 'Escalados' },
@@ -141,7 +158,5 @@ export function initials(c: Conv): string {
 }
 
 export function avatarCls(segment: Segment | undefined): string {
-  if (segment === 'super_vip') return 'bg-purple-100 text-purple-700'
-  if (segment === 'vip')       return 'bg-yellow-100 text-yellow-700'
-  return 'bg-gray-200 text-gray-600'
+  return LEVEL_DEFS.find(level => level.key === segment)?.avatar ?? 'bg-gray-200 text-gray-600'
 }

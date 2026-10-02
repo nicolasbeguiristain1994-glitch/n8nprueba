@@ -15,7 +15,7 @@ function ActionButton({
     <button
       onClick={onClick}
       disabled={loading || disabled}
-      className="flex items-center gap-2 w-full text-xs px-2.5 py-1.5 rounded border border-gray-100 text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+      className="flex items-center gap-2 w-full text-xs px-2.5 py-1.5 rounded border border-border text-muted-foreground hover:bg-background hover:text-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
     >
       {loading
         ? <Loader2 size={13} className="animate-spin shrink-0" />
@@ -100,8 +100,8 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
   const isBlacklisted  = conv?.is_blacklisted === true
 
   return (
-    <div className="px-3 py-2.5 border-b border-gray-100">
-      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
+    <div className="px-3 py-2.5 border-b border-border">
+      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-2">
         Acciones rápidas
       </p>
       <div className="space-y-1">
@@ -117,7 +117,7 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
         {inProcess ? (
           <ActionButton
             label="Resolver (quitar En Proceso)"
-            icon={<CheckCircle2 size={13} className="text-gray-500 shrink-0" />}
+            icon={<CheckCircle2 size={13} className="text-muted-foreground shrink-0" />}
             onClick={resolveProcess}
             loading={loading === 'resolve'} done={done === 'resolve'}
           />
@@ -132,25 +132,25 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
 
         <ActionButton
           label="Programar seguimiento"
-          icon={<Clock size={13} className="text-indigo-600 shrink-0" />}
+          icon={<Clock size={13} className="text-primary shrink-0" />}
           onClick={() => setShowFU(v => !v)}
           loading={loading === 'schedule'} done={done === 'schedule'}
         />
 
         {showFU && (
-          <div className="p-2 bg-indigo-50 border border-indigo-100 rounded space-y-1.5">
+          <div className="p-2 bg-accent border border-indigo-100 rounded space-y-1.5">
             <input
               type="date"
               value={fuDate}
               onChange={e => setFuDate(e.target.value)}
-              className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:border-indigo-300"
+              className="w-full text-xs border border-border rounded px-2 py-1 focus:outline-none focus:border-indigo-300"
             />
             <input
               type="text"
               value={fuNote}
               onChange={e => setFuNote(e.target.value)}
               placeholder="Nota (opcional)"
-              className="w-full text-xs border border-gray-200 rounded px-2 py-1 focus:outline-none focus:border-indigo-300 placeholder:text-gray-300"
+              className="w-full text-xs border border-border rounded px-2 py-1 focus:outline-none focus:border-indigo-300 placeholder:text-muted-foreground/60"
             />
             <button
               onClick={saveFollowUp}
@@ -165,7 +165,7 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
         {isBlacklisted ? (
           <ActionButton
             label="Remover de blacklist"
-            icon={<ShieldOff size={13} className="text-gray-500 shrink-0" />}
+            icon={<ShieldOff size={13} className="text-muted-foreground shrink-0" />}
             onClick={removeFromBlacklist}
             loading={loading === 'unblacklist'} done={done === 'unblacklist'}
           />

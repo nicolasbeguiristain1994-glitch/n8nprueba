@@ -52,8 +52,8 @@ export function QuickTemplates({ contactName, onSelect }: Props) {
         onClick={() => setOpen(v => !v)}
         className={`flex items-center gap-1 text-xs border rounded px-2 py-1.5 transition-colors ${
           open
-            ? 'border-indigo-400 text-indigo-600 bg-indigo-50'
-            : 'border-gray-200 text-gray-500 hover:border-gray-400 hover:text-gray-700'
+            ? 'border-indigo-400 text-primary bg-accent'
+            : 'border-border text-muted-foreground hover:border-gray-400 hover:text-foreground'
         }`}
       >
         <FileText size={12} />
@@ -65,18 +65,18 @@ export function QuickTemplates({ contactName, onSelect }: Props) {
         <>
           {/* Backdrop */}
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full mb-1.5 left-0 w-72 bg-white border border-gray-200 rounded-lg shadow-xl z-50 overflow-hidden">
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide px-3 pt-2.5 pb-1">
+          <div className="absolute bottom-full mb-1.5 left-0 w-72 bg-card border border-border rounded-lg shadow-xl z-50 overflow-hidden">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-3 pt-2.5 pb-1">
               Plantillas rápidas
             </p>
             {TEMPLATES.map(t => (
               <button
                 key={t.id}
                 onClick={() => { onSelect(applyVars(t.text, contactName)); setOpen(false) }}
-                className="w-full text-left px-3 py-2.5 hover:bg-gray-50 border-t border-gray-50 transition-colors"
+                className="w-full text-left px-3 py-2.5 hover:bg-background border-t border-gray-50 transition-colors"
               >
-                <p className="text-xs font-medium text-gray-700">{t.label}</p>
-                <p className="text-[10px] text-gray-400 truncate mt-0.5">
+                <p className="text-xs font-medium text-foreground">{t.label}</p>
+                <p className="text-[10px] text-muted-foreground truncate mt-0.5">
                   {applyVars(t.text, contactName).slice(0, 65)}…
                 </p>
               </button>

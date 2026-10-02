@@ -7,7 +7,13 @@ import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { RefreshCw, Wifi, WifiOff, QrCode, CheckCircle, Check, Loader2, AlertCircle, ExternalLink, ShieldCheck, ShieldOff, LogOut, Plus, RotateCcw, Pencil, Cloud, MessageSquare, Zap, Info, Trash2 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
+import { runSignupSession } from '@/lib/cloud-api/signup-session'
 import { useCurrentUser } from '@/lib/useCurrentUser'
+import Link from 'next/link'
+
+// La bandeja nativa funciona para toda línea Cloud con phone ID, con o sin Chatwoot.
+const cloudInboxHref = (phoneNumberId: string) =>
+  `/lines/cloud-inbox?phoneNumberId=${encodeURIComponent(phoneNumberId)}`
 
 // ─── Tipos para Embedded Signup (Cloud API) ───────────────────────────────────
 interface SignupResult {
@@ -168,7 +174,7 @@ export default function Lines() {
   useEffect(() => {
     if (addStep !== 'cloud-signup') return
     if (!metaAppId) { setCloudError('NEXT_PUBLIC_META_APP_ID no está configurado'); return }
-    if (document.getElementById('fb-sdk')) { setSdkReady(true); return }
+    if (window.FB) { setSdkReady(true); return }
     window.fbAsyncInit = function () {
       window.FB.init({ appId: metaAppId, autoLogAppEvents: true, xfbml: true, version: 'v21.0' })
       setSdkReady(true)
@@ -176,48 +182,23 @@ export default function Lines() {
     const script = document.createElement('script')
     script.id = 'fb-sdk'; script.src = 'https://connect.facebook.net/es_LA/sdk.js'
     script.async = true; script.defer = true
-    document.head.appendChild(script)
-  }, [addStep])
+    script.nonce = document.querySelector('script[nonce]')?.getAttribute('nonce') || (document.querySelector('script[nonce]') as HTMLScriptElement | null)?.nonce || ''
+    script.onerror = () => setCloudError('No se pudo cargar el registro de Meta. Podés usar la conexión directa con token.')
+    if (!document.getElementById('fb-sdk')) document.head.appendChild(script)
+  }, [addStep, metaAppId])
 
-  const startEmbeddedSignup = useCallback(() => {
-    if (!sdkReady) return
+  const startEmbeddedSignup = useCallback(async () => {
+    if (!sdkReady || !metaConfigId) return
     setCloudError(null); setCloudLoading(true)
-    window.FB.login(
-      async (response: SignupResult) => {
-        if (response.status !== 'connected' || !response.authResponse?.code) {
-          setCloudError('El usuario canceló el proceso o hubo un error de autorización')
-          setCloudLoading(false); return
-        }
-        const { code, waba_id, phone_number_id } = response.authResponse
-        try {
-          const res  = await fetch('/api/cloud/onboard', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              code, wabaId: waba_id, phoneNumberId: phone_number_id,
-              whatsappLineId:      cloudLineId || undefined,
-              coexistenceEnabled:  cloudMode === 'coexistence',
-            }),
-          })
-          const data: OnboardResult & { error?: string } = await res.json()
-          if (!res.ok || data.error) setCloudError(data.error ?? 'Error al procesar el onboarding')
-          else setCloudResult(data)
-        } catch (err) {
-          setCloudError(err instanceof Error ? err.message : 'Error de red')
-        } finally {
-          setCloudLoading(false)
-        }
-      },
-      {
-        config_id: metaConfigId,
-        response_type: 'code', override_default_response_type: true,
-        extras: {
-          feature: 'whatsapp_embedded_signup',
-          featureType: 'whatsapp_business_app_onboarding',
-          setup: {}, sessionInfoVersion: 3,
-        },
-      },
-    )
-  }, [sdkReady, cloudLineId, cloudMode])
+    try {
+      const signup = await runSignupSession(metaConfigId, cloudMode === 'coexistence')
+      const res = await fetch('/api/cloud/onboard', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ ...signup, whatsappLineId:cloudLineId || undefined, coexistenceEnabled:cloudMode === 'coexistence' }) })
+      const data = await res.json()
+      if(!res.ok) throw new Error(data.error || 'No se pudo completar la conexión')
+      setCloudResult(data)
+    } catch(e) { setCloudError(e instanceof Error ? e.message : 'Error de conexión') }
+    finally { setCloudLoading(false) }
+  }, [sdkReady, metaConfigId, cloudLineId, cloudMode])
 
   const closeAddFlow = () => {
     setAddStep(null); setCloudMode(null)
@@ -230,11 +211,17 @@ export default function Lines() {
     load()
   }
 
-  // Chatwoot inbox creation
+  // Chatwoot inbox creation (integración externa opcional; la bandeja nativa no depende de ella)
+  const [chatwootConfigured, setChatwootConfigured] = useState(false)
   const [chatwootTarget, setChatwootTarget]     = useState<Line | null>(null)
   const [chatwootLoading, setChatwootLoading]   = useState(false)
   const [chatwootError, setChatwootError]       = useState<string | null>(null)
   const [chatwootSuccess, setChatwootSuccess]   = useState<string | null>(null)
+
+  const chatwootBlockReason = (line: Line): string | null =>
+    !chatwootConfigured            ? 'La integración con Chatwoot no está disponible. Podés usar la bandeja nativa.'
+    : line.cloud_status !== 'active' ? 'La línea debe estar activa en WhatsApp API para vincular Chatwoot.'
+    : null
 
   const createChatwootInbox = async (line: Line) => {
     if (!line.cloud_phone_number_id) return
@@ -244,8 +231,11 @@ export default function Lines() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phoneNumberId: line.cloud_phone_number_id }),
       })
-      const data = await res.json()
-      if (!res.ok) { setChatwootError(data.error || 'Error al crear inbox'); return }
+      const data = await res.json().catch(() => null) as { error?: string; inboxId?: string; inboxName?: string } | null
+      if (!res.ok || !data) {
+        setChatwootError(data?.error || `No se pudo crear el inbox en Chatwoot (HTTP ${res.status})`)
+        return
+      }
       setChatwootSuccess(`Inbox "${data.inboxName}" creado (ID: ${data.inboxId})`)
       load()
     } catch {
@@ -267,11 +257,12 @@ export default function Lines() {
 
   const load = useCallback(() => {
     setLoading(true)
-    fetchJson<{ lines: Line[], metaConfigured?: boolean, metaAppId?: string, metaConfigId?: string }>('/api/lines')
+    fetchJson<{ lines: Line[], metaConfigured?: boolean, metaAppId?: string, metaConfigId?: string, chatwootConfigured?: boolean }>('/api/lines')
       .then(d => {
         setLines(d.lines || [])
         setLoadError(null)
         setMetaConfigured(d.metaConfigured ?? false)
+        setChatwootConfigured(d.chatwootConfigured === true)
         setMetaAppId(d.metaAppId ?? '')
         setMetaConfigId(d.metaConfigId ?? '')
       })
@@ -614,21 +605,21 @@ export default function Lines() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">Líneas WhatsApp</h1>
-          <p className="text-sm text-gray-500">
+          <h1 className="page-title">Líneas WhatsApp</h1>
+          <p className="text-sm text-muted-foreground">
             {connected} conectadas · {active} activas · {eligible} elegibles · {lines.length} total
           </p>
         </div>
         <div className="flex gap-2">
           {isAdmin && (
-            <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white"
+            <Button size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground"
               onClick={() => setAddStep('choose-type')}>
               <Plus size={14} className="mr-1" /> Agregar línea
             </Button>
           )}
-          <Button variant="outline" size="sm" onClick={load}>
+          <Button variant="outline" size="sm" onClick={load} aria-label="Actualizar líneas">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </Button>
         </div>
@@ -636,46 +627,46 @@ export default function Lines() {
 
       {/* Error al cargar */}
       {loadError && (
-        <div className="flex items-center gap-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+        <div className="flex items-center gap-3 p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-sm text-destructive">
           <AlertCircle size={16} className="shrink-0" />
           <span className="flex-1">Error al cargar las líneas: <span className="font-mono">{loadError}</span></span>
-          <Button size="sm" variant="outline" className="text-red-700 border-red-300 hover:bg-red-100" onClick={load}>
+          <Button size="sm" variant="outline" className="text-destructive border-red-300 hover:bg-destructive/15" onClick={load}>
             Reintentar
           </Button>
         </div>
       )}
 
       {/* Resumen */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <Card><CardContent className="pt-4">
-          <p className="text-xs text-gray-500 mb-1">Conectadas</p>
-          <p className="text-2xl font-bold text-green-600">{connected}</p>
+          <p className="text-xs text-muted-foreground mb-1">Conectadas</p>
+          <p className="text-2xl font-bold text-success">{connected}</p>
         </CardContent></Card>
         <Card><CardContent className="pt-4">
-          <p className="text-xs text-gray-500 mb-1">Elegibles campañas</p>
-          <p className="text-2xl font-bold text-indigo-600">{eligible}</p>
+          <p className="text-xs text-muted-foreground mb-1">Elegibles campañas</p>
+          <p className="text-2xl font-bold text-primary">{eligible}</p>
         </CardContent></Card>
         <Card><CardContent className="pt-4">
-          <p className="text-xs text-gray-500 mb-1">Total enviados hoy</p>
+          <p className="text-xs text-muted-foreground mb-1">Total enviados hoy</p>
           <p className="text-2xl font-bold">{lines.reduce((a, l) => a + l.msgs_sent_today, 0).toLocaleString()}</p>
         </CardContent></Card>
         <Card><CardContent className="pt-4">
-          <p className="text-xs text-gray-500 mb-2">Por proveedor</p>
-          <div className="flex items-center gap-3">
+          <p className="text-xs text-muted-foreground mb-2">Por proveedor</p>
+          <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-1.5">
               <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-blue-100">
                 <Cloud size={10} className="text-blue-600" />
               </span>
               <span className="text-xl font-bold text-blue-600">{cloudLines}</span>
-              <span className="text-xs text-gray-400">Cloud</span>
+              <span className="text-xs text-muted-foreground">Cloud</span>
             </div>
-            <div className="w-px h-6 bg-gray-200" />
+            <div className="w-px h-6 bg-border" />
             <div className="flex items-center gap-1.5">
-              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-100">
+              <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-muted">
                 <Zap size={10} className="text-slate-500" />
               </span>
               <span className="text-xl font-bold text-slate-500">{evolutionLines}</span>
-              <span className="text-xs text-gray-400">Evo</span>
+              <span className="text-xs text-muted-foreground">Evo</span>
             </div>
           </div>
         </CardContent></Card>
@@ -686,22 +677,22 @@ export default function Lines() {
         <CardContent className="p-0">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Línea</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Proveedor</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Estado</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Elegible</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Hoy</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Esta hora</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Total enviados</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Envíos</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Acción</th>
+              <tr className="border-b border-border bg-background">
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Línea</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Proveedor</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Estado</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Elegible</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Hoy</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Esta hora</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Total enviados</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Envíos</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Acción</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody>
               {lines.length === 0
-                ? <tr><td colSpan={10} className="text-center py-10 text-gray-400">
+                ? <tr><td colSpan={10} className="text-center py-10 text-muted-foreground">
                     {loading ? 'Cargando…' : 'Sin líneas configuradas'}
                   </td></tr>
                 : lines.map(l => {
@@ -709,25 +700,25 @@ export default function Lines() {
                     const pctHour     = l.msg_per_hour ? (l.msgs_sent_hour  / l.msg_per_hour) * 100 : 0
                     const ineligReason = !l.eligible ? (ineligibilityReason(l) ?? 'No elegible') : null
                     return (
-                      <tr key={l.id} className={`border-b border-gray-100 transition-colors ${
-                        l.line_type === 'cloud' ? 'hover:bg-blue-50/40' : 'hover:bg-gray-50'
+                      <tr key={l.id} className={`border-b border-border transition-colors ${
+                        l.line_type === 'cloud' ? 'hover:bg-blue-50/40' : 'hover:bg-background'
                       }`}>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
                             {l.is_connected
                               ? <Wifi size={14} className="text-green-500 flex-shrink-0" />
-                              : <WifiOff size={14} className="text-gray-300 flex-shrink-0" />
+                              : <WifiOff size={14} className="text-muted-foreground/60 flex-shrink-0" />
                             }
                             <div>
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 {isAdmin
                                   ? <button
                                       onClick={() => openEdit(l)}
-                                      className="font-medium hover:text-indigo-600 flex items-center gap-1 group"
+                                      className="font-medium hover:text-primary flex items-center gap-1 group"
                                       title="Editar línea"
                                     >
                                       {l.display_name || l.line_key}
-                                      <Pencil size={11} className="text-gray-300 group-hover:text-indigo-400 transition-colors" />
+                                      <Pencil size={11} className="text-muted-foreground/60 group-hover:text-indigo-400 transition-colors" />
                                     </button>
                                   : <span className="font-medium">{l.display_name || l.line_key}</span>
                                 }
@@ -735,13 +726,13 @@ export default function Lines() {
                                   ? <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-600 border border-blue-100">
                                       <Cloud size={8} /> Cloud
                                     </span>
-                                  : <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+                                  : <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-muted text-slate-500 border border-border">
                                       <Zap size={8} /> Evolution
                                     </span>
                                 }
                               </div>
                               {l.phone_number && (
-                                <div className="text-[10px] text-gray-400 mt-0.5">{l.phone_number}</div>
+                                <div className="text-[10px] text-muted-foreground mt-0.5">{l.phone_number}</div>
                               )}
                             </div>
                           </div>
@@ -751,9 +742,9 @@ export default function Lines() {
                             ? <div className="flex flex-col gap-1">
                                 {l.cloud_quality_rating
                                   ? <span className={`flex items-center gap-1.5 font-medium ${
-                                      l.cloud_quality_rating === 'GREEN'  ? 'text-green-700' :
+                                      l.cloud_quality_rating === 'GREEN'  ? 'text-success' :
                                       l.cloud_quality_rating === 'YELLOW' ? 'text-yellow-700' :
-                                      'text-red-700'
+                                      'text-destructive'
                                     }`}>
                                       <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
                                         l.cloud_quality_rating === 'GREEN'  ? 'bg-green-500' :
@@ -764,7 +755,7 @@ export default function Lines() {
                                        l.cloud_quality_rating === 'YELLOW' ? 'Calidad media' :
                                        'Calidad baja'}
                                     </span>
-                                  : <span className="text-gray-400">Sin rating</span>
+                                  : <span className="text-muted-foreground">Sin rating</span>
                                 }
                                 {l.cloud_coexistence_enabled && (
                                   <span className="flex items-center gap-1 text-violet-700 font-medium">
@@ -779,29 +770,29 @@ export default function Lines() {
                                         {l.chatwoot_inbox_name || `Inbox #${l.chatwoot_inbox_id}`}
                                       </span>
                                     </span>
-                                  : <span className="text-gray-400">Sin inbox</span>
+                                  : <span className="text-muted-foreground">Bandeja del panel disponible</span>
                                 }
                                 <span className={`self-start inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${
-                                  l.cloud_messaging_limit_tier === 'UNLIMITED' ? 'bg-indigo-100 text-indigo-700' :
-                                  l.cloud_messaging_limit_tier               ? 'bg-slate-100 text-slate-600' :
-                                                                               'bg-gray-50  text-gray-400'
+                                  l.cloud_messaging_limit_tier === 'UNLIMITED' ? 'bg-accent text-primary' :
+                                  l.cloud_messaging_limit_tier               ? 'bg-muted text-slate-600' :
+                                                                               'bg-background  text-muted-foreground'
                                 }`}>
                                   {formatTier(l.cloud_messaging_limit_tier)}
                                 </span>
                               </div>
-                            : <span className="font-mono text-[11px] text-gray-500">{l.evolution_instance}</span>
+                            : <span className="font-mono text-[11px] text-muted-foreground">{l.evolution_instance}</span>
                           }
                         </td>
                         <td className="px-4 py-3">
                           <Badge
                             variant={l.status === 'active' && l.is_connected ? 'default' : 'secondary'}
-                            className={`text-xs ${l.status === 'active' && l.is_connected ? 'bg-green-100 text-green-700' : ''}`}>
+                            className={`text-xs ${l.status === 'active' && l.is_connected ? 'bg-success/15 text-success' : ''}`}>
                             {l.is_connected ? l.status : 'desconectada'}
                           </Badge>
                         </td>
                         <td className="px-4 py-3">
                           {l.eligible
-                            ? <span className="flex items-center gap-1 text-xs text-green-600"><ShieldCheck size={13}/> Sí</span>
+                            ? <span className="flex items-center gap-1 text-xs text-success"><ShieldCheck size={13}/> Sí</span>
                             : <span className="flex items-center gap-1 text-xs text-red-400" title={ineligReason ?? undefined}>
                                 <ShieldOff size={13}/> No
                               </span>
@@ -809,21 +800,21 @@ export default function Lines() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            <div className="w-20 bg-gray-100 rounded-full h-1.5">
+                            <div className="w-20 bg-muted rounded-full h-1.5">
                               <div className="bg-green-500 h-1.5 rounded-full" style={{ width: `${Math.min(pctDay,100)}%` }} />
                             </div>
-                            <span className="text-xs text-gray-500">{l.msgs_sent_today}/{l.msg_per_day}</span>
+                            <span className="text-xs text-muted-foreground">{l.msgs_sent_today}/{l.msg_per_day}</span>
                           </div>
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
-                            <div className="w-16 bg-gray-100 rounded-full h-1.5">
+                            <div className="w-16 bg-muted rounded-full h-1.5">
                               <div className="bg-blue-400 h-1.5 rounded-full" style={{ width: `${Math.min(pctHour,100)}%` }} />
                             </div>
-                            <span className="text-xs text-gray-500">{l.msgs_sent_hour}/{l.msg_per_hour}</span>
+                            <span className="text-xs text-muted-foreground">{l.msgs_sent_hour}/{l.msg_per_hour}</span>
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-gray-500">{l.total_sent.toLocaleString()}</td>
+                        <td className="px-4 py-3 text-muted-foreground">{l.total_sent.toLocaleString()}</td>
                         <td className="px-4 py-3">
                           {isAdmin
                             ? <button
@@ -834,23 +825,36 @@ export default function Lines() {
                                   l.sending_enabled ? 'bg-green-500' : 'bg-gray-300'
                                 } ${toggling === l.id ? 'opacity-50' : ''}`}
                               >
-                                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${l.sending_enabled ? 'translate-x-4' : ''}`} />
+                                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-card shadow transition-transform ${l.sending_enabled ? 'translate-x-4' : ''}`} />
                               </button>
-                            : <span className={`inline-block w-9 h-5 rounded-full ${l.sending_enabled ? 'bg-green-400' : 'bg-gray-200'}`} />
+                            : <span className={`inline-block w-9 h-5 rounded-full ${l.sending_enabled ? 'bg-green-400' : 'bg-border'}`} />
                           }
                         </td>
                         <td className="px-4 py-3">
                           {l.line_type === 'cloud'
-                            ? <div className="flex items-center gap-1.5">
-                                {isAdmin && !l.chatwoot_inbox_id && l.cloud_phone_number_id && (
-                                  <Button size="sm" variant="outline"
-                                    className="text-xs border-violet-200 text-violet-700 hover:bg-violet-50 h-7 px-2"
-                                    onClick={() => { setChatwootTarget(l); setChatwootError(null); setChatwootSuccess(null) }}>
-                                    <MessageSquare size={11} className="mr-1" /> Crear Inbox
-                                  </Button>
+                            ? <div className="flex flex-wrap items-center gap-1.5">
+                                {l.cloud_phone_number_id && (
+                                  <Link href={cloudInboxHref(l.cloud_phone_number_id)}
+                                    className="inline-flex items-center h-7 px-2 rounded-md bg-blue-600 text-white text-xs font-medium hover:bg-blue-700">
+                                    <MessageSquare size={11} className="mr-1" /> Abrir bandeja
+                                  </Link>
                                 )}
+                                {isAdmin && !l.chatwoot_inbox_id && l.cloud_phone_number_id && (() => {
+                                  const reason = chatwootBlockReason(l)
+                                  return (
+                                    <span className="flex flex-col gap-0.5">
+                                      <Button size="sm" variant="ghost"
+                                        className="text-xs text-violet-700 hover:bg-violet-50 h-7 px-2"
+                                        disabled={!!reason} title={reason ?? undefined}
+                                        onClick={() => { setChatwootTarget(l); setChatwootError(null); setChatwootSuccess(null) }}>
+                                        Crear inbox en Chatwoot
+                                      </Button>
+                                      {reason && <span className="text-[10px] text-muted-foreground max-w-[180px]">{reason}</span>}
+                                    </span>
+                                  )
+                                })()}
                                 {l.chatwoot_inbox_id && (
-                                  <span className="text-xs text-green-600 flex items-center gap-1">
+                                  <span className="text-xs text-success flex items-center gap-1">
                                     <CheckCircle size={12}/> Conectada
                                   </span>
                                 )}
@@ -861,7 +865,7 @@ export default function Lines() {
                                 )}
                               </div>
                             : l.is_connected
-                              ? <span className="text-xs text-green-600 flex items-center gap-1">
+                              ? <span className="text-xs text-success flex items-center gap-1">
                                   <CheckCircle size={12}/> Conectada
                                 </span>
                               : <div className="flex items-center gap-1.5">
@@ -874,7 +878,7 @@ export default function Lines() {
                                     onClick={() => syncStatus(l)}
                                     disabled={syncing === l.id}
                                     title="Verificar estado de conexión en Evolution"
-                                    className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors disabled:opacity-50"
+                                    className="p-1.5 rounded text-muted-foreground hover:text-primary hover:bg-accent transition-colors disabled:opacity-50"
                                   >
                                     <RotateCcw size={13} className={syncing === l.id ? 'animate-spin' : ''} />
                                   </button>
@@ -886,7 +890,7 @@ export default function Lines() {
                             <button
                               onClick={() => setDetailLine(l)}
                               title="Ver detalle"
-                              className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 transition-colors"
+                              className="p-1.5 rounded text-muted-foreground hover:text-primary hover:bg-accent transition-colors"
                             >
                               <Info size={14} />
                             </button>
@@ -894,7 +898,7 @@ export default function Lines() {
                               <button
                                 onClick={() => { setUnlinkTarget(l); setUnlinkError(null) }}
                                 title="Desvincular línea"
-                                className="p-1.5 rounded text-gray-400 hover:text-orange-600 hover:bg-orange-50 transition-colors"
+                                className="p-1.5 rounded text-muted-foreground hover:text-orange-600 hover:bg-orange-50 transition-colors"
                               >
                                 <LogOut size={14} />
                               </button>
@@ -903,7 +907,7 @@ export default function Lines() {
                               <button
                                 onClick={() => { setDeleteTarget(l); setDeleteError(null) }}
                                 title="Eliminar línea"
-                                className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                                className="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                               >
                                 <Trash2 size={14} />
                               </button>
@@ -926,12 +930,12 @@ export default function Lines() {
             <DialogTitle className="flex items-center gap-2.5">
               {detailLine?.line_type === 'cloud'
                 ? <span className="p-1.5 rounded-lg bg-blue-50"><Cloud size={15} className="text-blue-500" /></span>
-                : <span className="p-1.5 rounded-lg bg-slate-100"><Zap  size={15} className="text-slate-500" /></span>
+                : <span className="p-1.5 rounded-lg bg-muted"><Zap  size={15} className="text-slate-500" /></span>
               }
               <div>
                 <span className="text-base font-semibold">{detailLine?.display_name || detailLine?.line_key}</span>
                 {detailLine?.phone_number && (
-                  <p className="text-xs font-normal text-gray-400 mt-0.5">{detailLine.phone_number}</p>
+                  <p className="text-xs font-normal text-muted-foreground mt-0.5">{detailLine.phone_number}</p>
                 )}
               </div>
             </DialogTitle>
@@ -946,17 +950,17 @@ export default function Lines() {
                   ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-600 border border-blue-100">
                       <Cloud size={9} /> Cloud API
                     </span>
-                  : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-500 border border-slate-200">
+                  : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-muted text-slate-500 border border-border">
                       <Zap size={9} /> Evolution
                     </span>
                 }
                 <Badge
                   variant={detailLine.status === 'active' && detailLine.is_connected ? 'default' : 'secondary'}
-                  className={`text-xs ${detailLine.status === 'active' && detailLine.is_connected ? 'bg-green-100 text-green-700' : ''}`}>
+                  className={`text-xs ${detailLine.status === 'active' && detailLine.is_connected ? 'bg-success/15 text-success' : ''}`}>
                   {detailLine.is_connected ? detailLine.status : 'desconectada'}
                 </Badge>
                 {detailLine.eligible
-                  ? <span className="flex items-center gap-1 text-xs text-green-600"><ShieldCheck size={12}/> Elegible</span>
+                  ? <span className="flex items-center gap-1 text-xs text-success"><ShieldCheck size={12}/> Elegible</span>
                   : <span className="flex items-center gap-1 text-xs text-red-400" title={ineligibilityReason(detailLine) ?? ''}>
                       <ShieldOff size={12}/> {ineligibilityReason(detailLine) ?? 'No elegible'}
                     </span>
@@ -966,15 +970,15 @@ export default function Lines() {
               {/* ── Sección Cloud ── */}
               {detailLine.line_type === 'cloud' && (
                 <>
-                  <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-4 space-y-3">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Calidad y límites</p>
+                  <div className="rounded-xl border border-border bg-background/80 p-4 space-y-3">
+                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Calidad y límites</p>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <p className="text-[10px] text-gray-400">Quality Rating</p>
+                        <p className="text-[10px] text-muted-foreground">Quality Rating</p>
                         {detailLine.cloud_quality_rating
                           ? <span className={`flex items-center gap-1.5 text-sm font-semibold ${
-                              detailLine.cloud_quality_rating === 'GREEN'  ? 'text-green-700' :
-                              detailLine.cloud_quality_rating === 'YELLOW' ? 'text-yellow-700' : 'text-red-700'
+                              detailLine.cloud_quality_rating === 'GREEN'  ? 'text-success' :
+                              detailLine.cloud_quality_rating === 'YELLOW' ? 'text-yellow-700' : 'text-destructive'
                             }`}>
                               <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
                                 detailLine.cloud_quality_rating === 'GREEN'  ? 'bg-green-500' :
@@ -984,22 +988,22 @@ export default function Lines() {
                                detailLine.cloud_quality_rating === 'YELLOW' ? 'Media — monitorear' :
                                'Baja — envíos limitados'}
                             </span>
-                          : <span className="text-sm text-gray-400">Sin datos</span>
+                          : <span className="text-sm text-muted-foreground">Sin datos</span>
                         }
                       </div>
                       <div className="space-y-1">
-                        <p className="text-[10px] text-gray-400">Tier de envíos</p>
+                        <p className="text-[10px] text-muted-foreground">Tier de envíos</p>
                         <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${
-                          detailLine.cloud_messaging_limit_tier === 'UNLIMITED' ? 'bg-indigo-100 text-indigo-700' :
-                          detailLine.cloud_messaging_limit_tier                 ? 'bg-slate-100 text-slate-700' :
-                                                                                  'bg-gray-100  text-gray-400'
+                          detailLine.cloud_messaging_limit_tier === 'UNLIMITED' ? 'bg-accent text-primary' :
+                          detailLine.cloud_messaging_limit_tier                 ? 'bg-muted text-slate-700' :
+                                                                                  'bg-muted  text-muted-foreground'
                         }`}>
                           {formatTier(detailLine.cloud_messaging_limit_tier)}
                         </span>
                       </div>
                     </div>
-                    <div className="space-y-1 pt-1 border-t border-gray-100">
-                      <p className="text-[10px] text-gray-400">Modo de conexión</p>
+                    <div className="space-y-1 pt-1 border-t border-border">
+                      <p className="text-[10px] text-muted-foreground">Modo de conexión</p>
                       {detailLine.cloud_coexistence_enabled
                         ? <span className="flex items-center gap-1.5 text-sm font-semibold text-violet-700">
                             <Zap size={13} /> Coexistencia — WhatsApp App + API simultáneamente
@@ -1011,8 +1015,14 @@ export default function Lines() {
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-4 space-y-2.5">
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Chatwoot</p>
+                  <div className="rounded-xl border border-border bg-background/80 p-4 space-y-2.5">
+                    {detailLine.cloud_phone_number_id && (
+                      <Link href={cloudInboxHref(detailLine.cloud_phone_number_id)}
+                        className="flex items-center justify-center gap-1.5 w-full h-9 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">
+                        <MessageSquare size={14} /> Abrir bandeja
+                      </Link>
+                    )}
+                    <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Chatwoot (opcional)</p>
                     {detailLine.chatwoot_inbox_id
                       ? <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
@@ -1021,25 +1031,31 @@ export default function Lines() {
                               <p className="text-sm font-medium text-violet-700">
                                 {detailLine.chatwoot_inbox_name || `Inbox #${detailLine.chatwoot_inbox_id}`}
                               </p>
-                              <p className="text-[10px] text-gray-400">ID: {detailLine.chatwoot_inbox_id}</p>
+                              <p className="text-[10px] text-muted-foreground">ID: {detailLine.chatwoot_inbox_id}</p>
                             </div>
                           </div>
-                          <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
+                          <span className="flex items-center gap-1 text-xs text-success font-medium">
                             <CheckCircle size={12} /> Conectado
                           </span>
                         </div>
-                      : <div className="flex items-center justify-between">
-                          <span className="text-sm text-gray-400">Sin inbox vinculado</span>
-                          {isAdmin && detailLine.cloud_phone_number_id && (
-                            <Button size="sm" variant="outline"
-                              className="text-xs border-violet-200 text-violet-700 hover:bg-violet-50 h-7 px-2.5"
-                              onClick={() => {
-                                setDetailLine(null)
-                                setChatwootTarget(detailLine)
-                                setChatwootError(null); setChatwootSuccess(null)
-                              }}>
-                              <MessageSquare size={11} className="mr-1" /> Crear Inbox
-                            </Button>
+                      : <div className="space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm text-muted-foreground">Bandeja del panel disponible</span>
+                            {isAdmin && detailLine.cloud_phone_number_id && (
+                              <Button size="sm" variant="ghost"
+                                className="text-xs text-violet-700 hover:bg-violet-50 h-7 px-2.5"
+                                disabled={!!chatwootBlockReason(detailLine)}
+                                onClick={() => {
+                                  setDetailLine(null)
+                                  setChatwootTarget(detailLine)
+                                  setChatwootError(null); setChatwootSuccess(null)
+                                }}>
+                                Crear inbox en Chatwoot
+                              </Button>
+                            )}
+                          </div>
+                          {isAdmin && detailLine.cloud_phone_number_id && chatwootBlockReason(detailLine) && (
+                            <p className="text-[11px] text-muted-foreground">{chatwootBlockReason(detailLine)}</p>
                           )}
                         </div>
                     }
@@ -1049,11 +1065,11 @@ export default function Lines() {
 
               {/* ── Sección Evolution ── */}
               {detailLine.line_type === 'evolution' && (
-                <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-4 space-y-2">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Instancia Evolution</p>
-                  <p className="font-mono text-sm text-gray-700 select-all">{detailLine.evolution_instance}</p>
+                <div className="rounded-xl border border-border bg-background/80 p-4 space-y-2">
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Instancia Evolution</p>
+                  <p className="font-mono text-sm text-foreground select-all">{detailLine.evolution_instance}</p>
                   {detailLine.last_seen_at && (
-                    <p className="text-[10px] text-gray-400">
+                    <p className="text-[10px] text-muted-foreground">
                       Último contacto: {new Date(detailLine.last_seen_at).toLocaleString('es-AR')}
                     </p>
                   )}
@@ -1061,54 +1077,54 @@ export default function Lines() {
               )}
 
               {/* ── Estadísticas ── */}
-              <div className="rounded-xl border border-gray-100 bg-gray-50/80 p-4 space-y-3">
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Estadísticas de uso</p>
+              <div className="rounded-xl border border-border bg-background/80 p-4 space-y-3">
+                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Estadísticas de uso</p>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <p className="text-[10px] text-gray-400">Hoy</p>
+                    <p className="text-[10px] text-muted-foreground">Hoy</p>
                     <div className="flex items-center gap-2">
-                      <div className="flex-1 bg-gray-200 rounded-full h-1.5">
+                      <div className="flex-1 bg-border rounded-full h-1.5">
                         <div className="bg-green-500 h-1.5 rounded-full transition-all" style={{
                           width: `${Math.min(detailLine.msg_per_day ? (detailLine.msgs_sent_today / detailLine.msg_per_day) * 100 : 0, 100)}%`
                         }} />
                       </div>
-                      <span className="text-xs text-gray-600 font-medium whitespace-nowrap tabular-nums">
+                      <span className="text-xs text-muted-foreground font-medium whitespace-nowrap tabular-nums">
                         {detailLine.msgs_sent_today.toLocaleString()} / {detailLine.msg_per_day.toLocaleString()}
                       </span>
                     </div>
                   </div>
                   <div className="space-y-1.5">
-                    <p className="text-[10px] text-gray-400">Esta hora</p>
+                    <p className="text-[10px] text-muted-foreground">Esta hora</p>
                     <div className="flex items-center gap-2">
-                      <div className="flex-1 bg-gray-200 rounded-full h-1.5">
+                      <div className="flex-1 bg-border rounded-full h-1.5">
                         <div className="bg-blue-400 h-1.5 rounded-full transition-all" style={{
                           width: `${Math.min(detailLine.msg_per_hour ? (detailLine.msgs_sent_hour / detailLine.msg_per_hour) * 100 : 0, 100)}%`
                         }} />
                       </div>
-                      <span className="text-xs text-gray-600 font-medium whitespace-nowrap tabular-nums">
+                      <span className="text-xs text-muted-foreground font-medium whitespace-nowrap tabular-nums">
                         {detailLine.msgs_sent_hour} / {detailLine.msg_per_hour}
                       </span>
                     </div>
                   </div>
                   <div>
-                    <p className="text-[10px] text-gray-400 mb-0.5">Total enviados</p>
-                    <p className="text-2xl font-bold text-gray-800 tabular-nums">{detailLine.total_sent.toLocaleString()}</p>
+                    <p className="text-[10px] text-muted-foreground mb-0.5">Total enviados</p>
+                    <p className="text-2xl font-bold text-foreground tabular-nums">{detailLine.total_sent.toLocaleString()}</p>
                   </div>
                   <div>
-                    <p className="text-[10px] text-gray-400 mb-0.5">Total fallidos</p>
-                    <p className={`text-2xl font-bold tabular-nums ${detailLine.total_failed > 0 ? 'text-red-500' : 'text-gray-300'}`}>
+                    <p className="text-[10px] text-muted-foreground mb-0.5">Total fallidos</p>
+                    <p className={`text-2xl font-bold tabular-nums ${detailLine.total_failed > 0 ? 'text-red-500' : 'text-muted-foreground/60'}`}>
                       {detailLine.total_failed.toLocaleString()}
                     </p>
                   </div>
                 </div>
-                <div className="pt-1 border-t border-gray-100 text-[10px] text-gray-400">
+                <div className="pt-1 border-t border-border text-[10px] text-muted-foreground">
                   Prioridad de despacho: {detailLine.priority} · Envíos: {detailLine.sending_enabled ? 'habilitados' : 'deshabilitados'}
                 </div>
               </div>
 
               {/* ── Acciones ── */}
               {isAdmin && (
-                <div className="flex gap-2 pt-1 flex-wrap border-t border-gray-100">
+                <div className="flex gap-2 pt-1 flex-wrap border-t border-border">
                   <Button size="sm" variant="outline" className="text-xs h-8"
                     onClick={() => { setDetailLine(null); openEdit(detailLine) }}>
                     <Pencil size={12} className="mr-1" /> Editar límites
@@ -1144,7 +1160,7 @@ export default function Lines() {
           </DialogHeader>
           <div className="space-y-3 py-2">
             <div className="space-y-1">
-              <label className="text-xs font-medium text-gray-700">Nombre para mostrar</label>
+              <label className="text-xs font-medium text-foreground">Nombre para mostrar</label>
               <Input
                 value={editForm.display_name}
                 onChange={e => setEditForm(f => ({ ...f, display_name: e.target.value }))}
@@ -1154,7 +1170,7 @@ export default function Lines() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-700">Límite diario</label>
+                <label className="text-xs font-medium text-foreground">Límite diario</label>
                 <Input
                   type="number" min={1}
                   value={editForm.msg_per_day}
@@ -1162,7 +1178,7 @@ export default function Lines() {
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-700">Límite por hora</label>
+                <label className="text-xs font-medium text-foreground">Límite por hora</label>
                 <Input
                   type="number" min={1}
                   value={editForm.msg_per_hour}
@@ -1171,7 +1187,7 @@ export default function Lines() {
               </div>
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-medium text-gray-700">Prioridad <span className="text-gray-400 font-normal">(menor número = mayor prioridad)</span></label>
+              <label className="text-xs font-medium text-foreground">Prioridad <span className="text-muted-foreground font-normal">(menor número = mayor prioridad)</span></label>
               <Input
                 type="number"
                 value={editForm.priority}
@@ -1179,14 +1195,14 @@ export default function Lines() {
               />
             </div>
             {editError && (
-              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{editError}</p>
+              <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded p-2">{editError}</p>
             )}
             <div className="flex gap-2 pt-1">
               <Button variant="outline" className="flex-1" disabled={editLoading}
                 onClick={() => { setEditTarget(null); setEditError(null) }}>
                 Cancelar
               </Button>
-              <Button className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white" disabled={editLoading || !editForm.display_name.trim()}
+              <Button className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground" disabled={editLoading || !editForm.display_name.trim()}
                 onClick={saveEdit}>
                 {editLoading ? <Loader2 size={14} className="animate-spin mr-1" /> : null}
                 Guardar
@@ -1201,22 +1217,30 @@ export default function Lines() {
         <DialogContent className="max-w-sm">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-violet-700">
-              <MessageSquare size={16} /> Crear Inbox en Chatwoot
+              <MessageSquare size={16} /> Crear inbox en Chatwoot
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            {chatwootTarget?.cloud_phone_number_id && (
+              <p className="text-xs text-muted-foreground bg-blue-50 border border-blue-100 rounded p-2">
+                Chatwoot es opcional. Podés recibir y responder mensajes en la{' '}
+                <Link href={cloudInboxHref(chatwootTarget.cloud_phone_number_id)} className="font-semibold text-blue-700 underline">
+                  bandeja nativa
+                </Link>{' '}sin vincularlo.
+              </p>
+            )}
             {chatwootSuccess
               ? <div className="space-y-3">
-                  <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded p-3">{chatwootSuccess}</p>
+                  <p className="text-sm text-success bg-success/10 border border-success/20 rounded p-3">{chatwootSuccess}</p>
                   <Button className="w-full" onClick={closeChatwootModal}>Cerrar</Button>
                 </div>
               : <>
-                  <p className="text-sm text-gray-700">
+                  <p className="text-sm text-foreground">
                     Se creará un inbox de <span className="font-semibold">WhatsApp Cloud</span> en Chatwoot para{' '}
                     <span className="font-semibold">{chatwootTarget?.display_name || chatwootTarget?.phone_number}</span>.
                   </p>
                   {chatwootError && (
-                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{chatwootError}</p>
+                    <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded p-2">{chatwootError}</p>
                   )}
                   <div className="flex gap-2">
                     <Button variant="outline" className="flex-1" disabled={chatwootLoading} onClick={closeChatwootModal}>
@@ -1224,10 +1248,10 @@ export default function Lines() {
                     </Button>
                     <Button
                       className="flex-1 bg-violet-600 hover:bg-violet-700 text-white"
-                      disabled={chatwootLoading}
+                      disabled={chatwootLoading || !chatwootTarget || !!chatwootBlockReason(chatwootTarget)}
                       onClick={() => chatwootTarget && createChatwootInbox(chatwootTarget)}>
                       {chatwootLoading ? <Loader2 size={14} className="animate-spin mr-1" /> : <MessageSquare size={14} className="mr-1" />}
-                      Crear Inbox
+                      Crear inbox en Chatwoot
                     </Button>
                   </div>
                 </>
@@ -1245,12 +1269,12 @@ export default function Lines() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <p className="text-sm text-gray-700">
+            <p className="text-sm text-foreground">
               ¿Desvincular <span className="font-semibold">{unlinkTarget?.display_name || unlinkTarget?.line_key}</span>?
               Esto cierra la sesión de WhatsApp pero <span className="font-medium">mantiene</span> la línea en el sistema. Podés volver a vincularla con QR.
             </p>
             {unlinkError && (
-              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{unlinkError}</p>
+              <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded p-2">{unlinkError}</p>
             )}
             <div className="flex gap-2">
               <Button variant="outline" className="flex-1" disabled={unlinkLoading}
@@ -1271,17 +1295,17 @@ export default function Lines() {
       <Dialog open={!!deleteTarget} onOpenChange={open => { if (!open) { setDeleteTarget(null); setDeleteError(null) } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-600">
+            <DialogTitle className="flex items-center gap-2 text-destructive">
               <Trash2 size={16} /> Eliminar línea
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <p className="text-sm text-gray-700">
+            <p className="text-sm text-foreground">
               ¿Eliminar permanentemente <span className="font-semibold">{deleteTarget?.display_name || deleteTarget?.line_key}</span>?
               Esta acción <span className="font-medium">no se puede deshacer</span> y borrará la línea del sistema.
             </p>
             {deleteError && (
-              <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{deleteError}</p>
+              <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded p-2">{deleteError}</p>
             )}
             <div className="flex gap-2">
               <Button variant="outline" className="flex-1" disabled={deleteLoading}
@@ -1313,7 +1337,7 @@ export default function Lines() {
 
           {/* ── Stepper — visible desde el paso 2 (una vez elegido el tipo) ── */}
           {addStep !== null && addStep !== 'choose-type' && (
-            <div className="flex items-start justify-center pb-3 border-b border-gray-100">
+            <div className="flex items-start justify-center pb-3 border-b border-border">
               {stepperSteps.map((label, i) => {
                 const done     = i < stepperIndex
                 const current  = i === stepperIndex
@@ -1331,21 +1355,21 @@ export default function Lines() {
                       <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold transition-all ${
                         done    ? 'bg-green-500 text-white' :
                         current ? 'bg-indigo-600 text-white ring-4 ring-indigo-100' :
-                                  'bg-gray-100 text-gray-400'
+                                  'bg-muted text-muted-foreground'
                       }`}>
                         {done ? <Check size={11} /> : i + 1}
                       </span>
                       <span className={`text-[10px] font-medium text-center leading-tight ${
-                        current ? 'text-indigo-600' :
-                        done    ? 'text-gray-500'   :
-                                  'text-gray-400'
+                        current ? 'text-primary' :
+                        done    ? 'text-muted-foreground'   :
+                                  'text-muted-foreground'
                       }`}>
                         {label}
                       </span>
                     </button>
                     {i < stepperSteps.length - 1 && (
                       <div className={`h-px w-8 flex-shrink-0 mb-5 ${
-                        i < stepperIndex ? 'bg-green-400' : 'bg-gray-200'
+                        i < stepperIndex ? 'bg-green-400' : 'bg-border'
                       }`} />
                     )}
                   </div>
@@ -1357,27 +1381,27 @@ export default function Lines() {
           {/* ── Paso 1: Elegir tipo ───────────────────────────────────────── */}
           {addStep === 'choose-type' && (
             <div className="space-y-4 py-1">
-              <p className="text-sm text-gray-500">Elegí el tipo de línea que querés agregar a la plataforma.</p>
+              <p className="text-sm text-muted-foreground">Elegí el tipo de línea que querés agregar a la plataforma.</p>
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => setAddStep('evolution')}
-                  className="flex flex-col gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-indigo-400 hover:bg-indigo-50/40 text-left transition-all group"
+                  className="flex flex-col gap-3 p-4 rounded-xl border-2 border-border hover:border-indigo-400 hover:bg-indigo-50/40 text-left transition-all group"
                 >
                   <div className="flex items-center gap-2.5">
-                    <span className="p-2 rounded-lg bg-slate-100 group-hover:bg-indigo-100 transition-colors">
-                      <Zap size={16} className="text-slate-500 group-hover:text-indigo-600 transition-colors" />
+                    <span className="p-2 rounded-lg bg-muted group-hover:bg-accent transition-colors">
+                      <Zap size={16} className="text-slate-500 group-hover:text-primary transition-colors" />
                     </span>
                     <span className="font-semibold text-sm">Evolution</span>
                   </div>
                   <div className="space-y-1.5">
-                    <p className="text-xs font-medium text-gray-600">WhatsApp via código QR</p>
-                    <p className="text-xs text-gray-400 leading-relaxed">Ideal para números de empresa o personales ya activos. Configuración en minutos.</p>
+                    <p className="text-xs font-medium text-muted-foreground">WhatsApp via código QR</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">Ideal para números de empresa o personales ya activos. Configuración en minutos.</p>
                   </div>
                 </button>
 
                 <button
                   onClick={() => setAddStep('cloud-mode')}
-                  className="flex flex-col gap-3 p-4 rounded-xl border-2 border-gray-200 hover:border-blue-400 hover:bg-blue-50/40 text-left transition-all group"
+                  className="flex flex-col gap-3 p-4 rounded-xl border-2 border-border hover:border-blue-400 hover:bg-blue-50/40 text-left transition-all group"
                 >
                   <div className="flex items-center gap-2.5">
                     <span className="p-2 rounded-lg bg-blue-50 group-hover:bg-blue-100 transition-colors">
@@ -1385,12 +1409,12 @@ export default function Lines() {
                     </span>
                     <div>
                       <p className="font-semibold text-sm leading-tight">WhatsApp Cloud</p>
-                      <span className="text-[10px] font-semibold text-green-600">Recomendado</span>
+                      <span className="text-[10px] font-semibold text-success">Recomendado</span>
                     </div>
                   </div>
                   <div className="space-y-1.5">
-                    <p className="text-xs font-medium text-gray-600">API oficial de Meta</p>
-                    <p className="text-xs text-gray-400 leading-relaxed">Mayor confiabilidad para campañas masivas, plantillas y automatización.</p>
+                    <p className="text-xs font-medium text-muted-foreground">API oficial de Meta</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">Mayor confiabilidad para campañas masivas, plantillas y automatización.</p>
                   </div>
                 </button>
               </div>
@@ -1400,30 +1424,30 @@ export default function Lines() {
           {/* ── Paso 2a: Línea Evolution ──────────────────────────────────── */}
           {addStep === 'evolution' && (
             <div className="space-y-3 py-1">
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-muted-foreground">
                 Registrá una instancia de Evolution que ya existe como línea de producción.
               </p>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-700">Nombre de instancia <span className="text-red-500">*</span></label>
+                <label className="text-xs font-medium text-foreground">Nombre de instancia <span className="text-red-500">*</span></label>
                 <Input placeholder="ej: wa-instance-01" value={addInstance}
                   onChange={e => setAddInstance(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && addLine()} />
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-700">Nombre para mostrar</label>
+                <label className="text-xs font-medium text-foreground">Nombre para mostrar</label>
                 <Input placeholder="ej: Línea 01" value={addDisplayName}
                   onChange={e => setAddDisplayName(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && addLine()} />
               </div>
               {addError && (
-                <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{addError}</p>
+                <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded p-2">{addError}</p>
               )}
               <div className="flex gap-2 pt-1">
                 <Button variant="outline" className="flex-1" disabled={addLoading}
                   onClick={() => { setAddStep('choose-type'); setAddError(null) }}>
                   ← Atrás
                 </Button>
-                <Button className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white"
+                <Button className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground"
                   disabled={addLoading || !addInstance.trim()} onClick={addLine}>
                   {addLoading ? <Loader2 size={14} className="animate-spin mr-1" /> : <Plus size={14} className="mr-1" />}
                   Agregar
@@ -1438,8 +1462,8 @@ export default function Lines() {
 
               {(qrState === 'loading' || qrState === 'creating') && (
                 <div className="flex flex-col items-center gap-3 py-8">
-                  <Loader2 size={32} className="animate-spin text-gray-400" />
-                  <p className="text-sm text-gray-500">
+                  <Loader2 size={32} className="animate-spin text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">
                     {qrState === 'creating' ? 'Creando instancia en Evolution…' : 'Preparando instancia Evolution…'}
                   </p>
                 </div>
@@ -1454,10 +1478,10 @@ export default function Lines() {
                     </p>
                   </div>
                   {qrError && (
-                    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-3">{qrError}</p>
+                    <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded p-3">{qrError}</p>
                   )}
                   {canCreate && (
-                    <Button className="w-full bg-green-600 hover:bg-green-700 text-sm"
+                    <Button className="w-full bg-primary hover:bg-primary/90 text-sm"
                       onClick={() => createInstance(addInstance)}>
                       Crear instancia y obtener QR
                     </Button>
@@ -1480,7 +1504,7 @@ export default function Lines() {
 
               {qrState === 'qr' && qrBase64 && (
                 <>
-                  <div className="border-4 border-gray-200 rounded-xl p-2 bg-white">
+                  <div className="border-4 border-border rounded-xl p-2 bg-card">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={qrBase64.startsWith('data:') ? qrBase64 : `data:image/png;base64,${qrBase64}`}
@@ -1490,7 +1514,7 @@ export default function Lines() {
                   </div>
                   <div className="text-center space-y-1">
                     <p className="text-sm font-medium">Escaneá con WhatsApp</p>
-                    <p className="text-xs text-gray-400">WhatsApp → Dispositivos vinculados → Vincular un dispositivo</p>
+                    <p className="text-xs text-muted-foreground">WhatsApp → Dispositivos vinculados → Vincular un dispositivo</p>
                     {timeLeft > 10
                       ? <p className="text-xs text-orange-500 flex items-center justify-center gap-1 mt-1">
                           <Loader2 size={11} className="animate-spin" />Escaneá ahora · expira en {timeLeft}s
@@ -1515,12 +1539,12 @@ export default function Lines() {
                 <div className="flex flex-col items-center gap-3 py-8">
                   <Loader2 size={36} className="animate-spin text-blue-500" />
                   <p className="text-sm font-semibold text-blue-700">Vinculando dispositivo…</p>
-                  <p className="text-xs text-gray-500 text-center">
+                  <p className="text-xs text-muted-foreground text-center">
                     Confirmá en tu teléfono si WhatsApp lo solicita.<br />
                     No cierres esta ventana ni regeneres el QR.
                   </p>
                   <button onClick={() => handleRegenerate(addInstance)}
-                    className="mt-2 text-xs text-gray-400 underline hover:text-gray-600">
+                    className="mt-2 text-xs text-muted-foreground underline hover:text-muted-foreground">
                     ¿Sigue cargando? Forzar nuevo QR
                   </button>
                 </div>
@@ -1529,18 +1553,18 @@ export default function Lines() {
               {qrState === 'connected' && (
                 <div className="flex flex-col items-center gap-3 py-6">
                   <CheckCircle size={48} className="text-green-500" />
-                  <p className="text-base font-semibold text-green-700">¡Línea conectada!</p>
-                  <p className="text-sm text-gray-500 text-center">
+                  <p className="text-base font-semibold text-success">¡Línea conectada!</p>
+                  <p className="text-sm text-muted-foreground text-center">
                     {addDisplayName || addInstance} está lista para enviar mensajes.
                   </p>
-                  <Button className="w-full bg-green-600 hover:bg-green-700" onClick={closeAddFlow}>Cerrar</Button>
+                  <Button className="w-full bg-primary hover:bg-primary/90" onClick={closeAddFlow}>Cerrar</Button>
                 </div>
               )}
 
               {qrState === 'error' && (
                 <div className="flex flex-col items-center gap-3 py-6">
                   <AlertCircle size={40} className="text-red-400" />
-                  <p className="text-sm text-red-600 text-center">{qrError}</p>
+                  <p className="text-sm text-destructive text-center">{qrError}</p>
                   <Button variant="outline" size="sm"
                     onClick={() => { setQrState('loading'); fetchQr(addInstance, false).then(done => { if (!done) { stopPoll(); pollRef.current = setInterval(() => pollStatus(addInstance), STATUS_INTERVAL_MS) } }) }}>
                     Reintentar
@@ -1554,15 +1578,17 @@ export default function Lines() {
           {/* ── Paso 2b: Elegir modo Cloud ────────────────────────────────── */}
           {addStep === 'cloud-mode' && (
             <div className="space-y-4 py-1">
+              <a href="/lines/cloud-onboard" className="block rounded-xl border border-blue-300 bg-blue-50 p-4 text-sm font-semibold text-blue-800">Conectar con WABA ID y token de usuario de sistema →</a>
+              <a href="/lines/cloud-inbox" className="block text-sm text-blue-700">Bandeja de WhatsApp API →</a>
               {/* Advertencia: NEXT_PUBLIC_META_CONFIG_ID no configurada */}
               {!metaConfigured && (
-                <div className="flex gap-2.5 items-start p-3 rounded-lg bg-amber-50 border border-amber-200">
+                <div className="flex gap-2.5 items-start p-3 rounded-lg bg-warning/10 border border-warning/20">
                   <AlertCircle size={15} className="flex-shrink-0 mt-0.5 text-amber-500" />
                   <div className="space-y-1">
-                    <p className="text-xs font-semibold text-amber-800">Configuración requerida</p>
-                    <p className="text-xs text-amber-700 leading-relaxed">
+                    <p className="text-xs font-semibold text-warning">Configuración requerida</p>
+                    <p className="text-xs text-warning leading-relaxed">
                       La variable de entorno{' '}
-                      <code className="bg-amber-100 px-1 py-0.5 rounded font-mono text-[11px]">
+                      <code className="bg-warning/15 px-1 py-0.5 rounded font-mono text-[11px]">
                         NEXT_PUBLIC_META_CONFIG_ID
                       </code>{' '}
                       no está configurada. Sin ella, el Embedded Signup de Meta no puede iniciarse.
@@ -1574,15 +1600,15 @@ export default function Lines() {
                 </div>
               )}
 
-              <p className="text-sm text-gray-500">¿Cómo querés usar este número de WhatsApp?</p>
+              <p className="text-sm text-muted-foreground">¿Cómo querés usar este número de WhatsApp?</p>
               <div className="grid grid-cols-2 gap-3">
                 <button
                   disabled={!metaConfigured}
                   onClick={() => { setCloudMode('official'); setAddStep('cloud-signup') }}
                   className={`flex flex-col gap-3 p-4 rounded-xl border-2 text-left transition-all ${
                     metaConfigured
-                      ? 'border-gray-200 hover:border-blue-400 hover:bg-blue-50/40 cursor-pointer'
-                      : 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
+                      ? 'border-border hover:border-blue-400 hover:bg-blue-50/40 cursor-pointer'
+                      : 'border-border bg-background opacity-50 cursor-not-allowed'
                   }`}
                 >
                   <div className="flex items-center gap-2">
@@ -1594,10 +1620,10 @@ export default function Lines() {
                       <span className="text-[10px] font-semibold text-blue-600">Recomendado</span>
                     </div>
                   </div>
-                  <p className="text-xs text-gray-400 leading-relaxed">Solo Cloud API. Máxima velocidad para campañas, bots y automatización sin límites de app.</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">Solo Cloud API. Máxima velocidad para campañas, bots y automatización sin límites de app.</p>
                   <div className="space-y-0.5">
-                    <p className="text-[11px] text-green-600">✓ Plantillas Meta aprobadas</p>
-                    <p className="text-[11px] text-green-600">✓ Tiers de hasta 100K/día</p>
+                    <p className="text-[11px] text-success">✓ Plantillas Meta aprobadas</p>
+                    <p className="text-[11px] text-success">✓ Tiers de hasta 100K/día</p>
                   </div>
                 </button>
 
@@ -1606,8 +1632,8 @@ export default function Lines() {
                   onClick={() => { setCloudMode('coexistence'); setAddStep('cloud-signup') }}
                   className={`flex flex-col gap-3 p-4 rounded-xl border-2 text-left transition-all ${
                     metaConfigured
-                      ? 'border-gray-200 hover:border-violet-400 hover:bg-violet-50/40 cursor-pointer'
-                      : 'border-gray-100 bg-gray-50 opacity-50 cursor-not-allowed'
+                      ? 'border-border hover:border-violet-400 hover:bg-violet-50/40 cursor-pointer'
+                      : 'border-border bg-background opacity-50 cursor-not-allowed'
                   }`}
                 >
                   <div className="flex items-center gap-2">
@@ -1616,15 +1642,15 @@ export default function Lines() {
                     </span>
                     <p className="font-semibold text-sm">Coexistencia</p>
                   </div>
-                  <p className="text-xs text-gray-400 leading-relaxed">API + WhatsApp Business App al mismo tiempo. Ideal si el cliente sigue usando la app.</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">API + WhatsApp Business App al mismo tiempo. Ideal si el cliente sigue usando la app.</p>
                   <div className="space-y-0.5">
-                    <p className="text-[11px] text-green-600">✓ Seguís usando la app</p>
-                    <p className="text-[11px] text-green-600">✓ Historial hasta 180 días</p>
+                    <p className="text-[11px] text-success">✓ Seguís usando la app</p>
+                    <p className="text-[11px] text-success">✓ Historial hasta 180 días</p>
                   </div>
                 </button>
               </div>
               <button onClick={() => setAddStep('choose-type')}
-                className="text-xs text-gray-400 hover:text-gray-600 underline underline-offset-2 transition-colors">
+                className="text-xs text-muted-foreground hover:text-muted-foreground underline underline-offset-2 transition-colors">
                 ← Volver a elegir tipo
               </button>
             </div>
@@ -1647,15 +1673,15 @@ export default function Lines() {
                 </div>
               )}
 
-              <p className="text-sm text-gray-500">
+              <p className="text-sm text-muted-foreground">
                 Autorizá tu cuenta de Meta Business para conectar el número a la plataforma.
               </p>
 
               {/* Línea existente a vincular */}
               {!cloudResult && (
                 <div className="space-y-1">
-                  <label className="text-xs font-medium text-gray-700">
-                    Línea existente a vincular <span className="text-gray-400 font-normal">(opcional)</span>
+                  <label className="text-xs font-medium text-foreground">
+                    Línea existente a vincular <span className="text-muted-foreground font-normal">(opcional)</span>
                   </label>
                   <Input
                     placeholder="UUID de la línea en la plataforma"
@@ -1686,7 +1712,7 @@ export default function Lines() {
 
               {/* Error */}
               {cloudError && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">
                   <strong>Error:</strong> {cloudError}
                 </div>
               )}
@@ -1694,19 +1720,19 @@ export default function Lines() {
               {/* Éxito */}
               {cloudResult && (
                 <div className="space-y-3">
-                  <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-                    <h3 className="font-semibold text-green-800 mb-2">Número registrado</h3>
+                  <div className="p-4 bg-success/10 border border-success/20 rounded-lg">
+                    <h3 className="font-semibold text-success mb-2">Número registrado</h3>
                     <dl className="text-sm space-y-1">
                       <div className="flex gap-2">
-                        <dt className="text-gray-500 w-24">Número:</dt>
+                        <dt className="text-muted-foreground w-24">Número:</dt>
                         <dd className="font-mono font-medium">{cloudResult.displayPhone}</dd>
                       </div>
                       <div className="flex gap-2">
-                        <dt className="text-gray-500 w-24">Estado:</dt>
+                        <dt className="text-muted-foreground w-24">Estado:</dt>
                         <dd>
                           <span className={`px-2 py-0.5 rounded text-xs font-medium ${
                             cloudResult.status === 'active'
-                              ? 'bg-green-100 text-green-800'
+                              ? 'bg-success/15 text-success'
                               : 'bg-yellow-100 text-yellow-800'
                           }`}>
                             {cloudResult.status}
@@ -1714,7 +1740,7 @@ export default function Lines() {
                         </dd>
                       </div>
                     </dl>
-                    <p className="mt-2 text-sm text-gray-600">{cloudResult.message}</p>
+                    <p className="mt-2 text-sm text-muted-foreground">{cloudResult.message}</p>
                   </div>
 
                   {cloudResult.status === 'code_sent' && (
@@ -1729,7 +1755,7 @@ export default function Lines() {
                       onClick={() => { setCloudResult(null); setCloudError(null) }}>
                       Conectar otro número
                     </Button>
-                    <Button className="flex-1 bg-green-600 hover:bg-green-700 text-white text-sm"
+                    <Button className="flex-1 bg-primary hover:bg-primary/90 text-primary-foreground text-sm"
                       onClick={closeAddFlow}>
                       Cerrar
                     </Button>
@@ -1740,7 +1766,7 @@ export default function Lines() {
               {/* Volver atrás */}
               {!cloudResult && (
                 <button onClick={() => { setAddStep('cloud-mode'); setCloudError(null) }}
-                  className="text-xs text-gray-400 hover:text-gray-600 underline underline-offset-2 transition-colors">
+                  className="text-xs text-muted-foreground hover:text-muted-foreground underline underline-offset-2 transition-colors">
                   ← Volver a elegir modo
                 </button>
               )}
@@ -1763,8 +1789,8 @@ export default function Lines() {
             {/* Cargando */}
             {(qrState === 'loading' || qrState === 'creating') && (
               <div className="flex flex-col items-center gap-3 py-8">
-                <Loader2 size={32} className="animate-spin text-gray-400" />
-                <p className="text-sm text-gray-500">
+                <Loader2 size={32} className="animate-spin text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">
                   {qrState === 'creating' ? 'Creando instancia en Evolution…' : 'Verificando instancia…'}
                 </p>
               </div>
@@ -1780,21 +1806,21 @@ export default function Lines() {
                   </p>
                 </div>
                 {qrError && (
-                  <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-3">{qrError}</p>
+                  <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded p-3">{qrError}</p>
                 )}
                 {canCreate && (
                   <div className="border rounded-lg p-4 space-y-3">
-                    <p className="text-xs font-medium text-gray-700">Crear instancia automáticamente</p>
-                    <Button className="w-full bg-green-600 hover:bg-green-700 text-sm" onClick={() => createInstance()}>
+                    <p className="text-xs font-medium text-foreground">Crear instancia automáticamente</p>
+                    <Button className="w-full bg-primary hover:bg-primary/90 text-sm" onClick={() => createInstance()}>
                       Crear instancia y obtener QR
                     </Button>
                   </div>
                 )}
                 <div className="border rounded-lg p-4 space-y-2">
-                  <p className="text-xs font-medium text-gray-700">O creala manualmente en Evolution</p>
-                  <ol className="text-xs text-gray-500 space-y-1 list-decimal list-inside">
+                  <p className="text-xs font-medium text-foreground">O creala manualmente en Evolution</p>
+                  <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside">
                     <li>Abrí el panel de Evolution Manager</li>
-                    <li>Creá una nueva instancia con el nombre <code className="bg-gray-100 px-1 rounded font-mono">{qrLine?.evolution_instance}</code></li>
+                    <li>Creá una nueva instancia con el nombre <code className="bg-muted px-1 rounded font-mono">{qrLine?.evolution_instance}</code></li>
                     <li>Volvé aquí y hacé click en "Obtener QR"</li>
                   </ol>
                   <div className="flex gap-2 mt-2">
@@ -1817,7 +1843,7 @@ export default function Lines() {
             {/* QR listo para escanear */}
             {qrState === 'qr' && qrBase64 && (
               <>
-                <div className="border-4 border-gray-200 rounded-xl p-2 bg-white">
+                <div className="border-4 border-border rounded-xl p-2 bg-card">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={qrBase64.startsWith('data:') ? qrBase64 : `data:image/png;base64,${qrBase64}`}
@@ -1827,7 +1853,7 @@ export default function Lines() {
                 </div>
                 <div className="text-center space-y-1">
                   <p className="text-sm font-medium">Escaneá con WhatsApp</p>
-                  <p className="text-xs text-gray-400">WhatsApp → Dispositivos vinculados → Vincular un dispositivo</p>
+                  <p className="text-xs text-muted-foreground">WhatsApp → Dispositivos vinculados → Vincular un dispositivo</p>
                   {timeLeft > 10
                     ? <p className="text-xs text-orange-500 flex items-center justify-center gap-1 mt-1">
                         <Loader2 size={11} className="animate-spin" />
@@ -1859,13 +1885,13 @@ export default function Lines() {
               <div className="flex flex-col items-center gap-3 py-8">
                 <Loader2 size={36} className="animate-spin text-blue-500" />
                 <p className="text-sm font-semibold text-blue-700">Vinculando dispositivo…</p>
-                <p className="text-xs text-gray-500 text-center">
+                <p className="text-xs text-muted-foreground text-center">
                   Confirmá en tu teléfono si WhatsApp lo solicita.<br />
                   No cierres esta ventana ni regeneres el QR.
                 </p>
                 <button
                   onClick={() => handleRegenerate()}
-                  className="mt-2 text-xs text-gray-400 underline hover:text-gray-600"
+                  className="mt-2 text-xs text-muted-foreground underline hover:text-muted-foreground"
                 >
                   ¿Sigue cargando? Forzar nuevo QR
                 </button>
@@ -1876,11 +1902,11 @@ export default function Lines() {
             {qrState === 'connected' && (
               <div className="flex flex-col items-center gap-3 py-6">
                 <CheckCircle size={48} className="text-green-500" />
-                <p className="text-base font-semibold text-green-700">¡Línea conectada!</p>
-                <p className="text-sm text-gray-500 text-center">
+                <p className="text-base font-semibold text-success">¡Línea conectada!</p>
+                <p className="text-sm text-muted-foreground text-center">
                   {qrLine?.display_name} está lista para enviar mensajes.
                 </p>
-                <Button className="w-full bg-green-600 hover:bg-green-700" onClick={closeQr}>Cerrar</Button>
+                <Button className="w-full bg-primary hover:bg-primary/90" onClick={closeQr}>Cerrar</Button>
               </div>
             )}
 
@@ -1888,7 +1914,7 @@ export default function Lines() {
             {qrState === 'error' && (
               <div className="flex flex-col items-center gap-3 py-6">
                 <AlertCircle size={40} className="text-red-400" />
-                <p className="text-sm text-red-600 text-center">{qrError}</p>
+                <p className="text-sm text-destructive text-center">{qrError}</p>
                 <Button variant="outline" size="sm"
                   onClick={() => { setQrState('loading'); fetchQr(qrLine!.evolution_instance) }}>
                   Reintentar

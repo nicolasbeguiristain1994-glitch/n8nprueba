@@ -16,6 +16,7 @@ export async function POST(req: NextRequest) {
   if (!isCronCall) {
     const auth = await checkPermissionWithUser(req, 'contacts', 'manage')
     if (!auth.ok) return auth.response
+    if (auth.user.role !== 'admin') return NextResponse.json({ error: 'Sólo administradores pueden recalcular prioridades' }, { status: 403 })
   }
 
   try {
@@ -34,6 +35,7 @@ export async function POST(req: NextRequest) {
     if (err instanceof RecomputeAlreadyRunningError) {
       return NextResponse.json({ error: err.message }, { status: 409 })
     }
-    throw err
+    console.error('[priorities] recompute failed', err instanceof Error ? err.name : 'unknown')
+    return NextResponse.json({ error: 'No se pudo completar el cálculo. La última lista completa se conserva.' }, { status: 500 })
   }
 }

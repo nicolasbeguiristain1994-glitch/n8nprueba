@@ -1,0 +1,50 @@
+{
+  "dry_run": true,
+  "linked": 24876,
+  "changed_levels": 978,
+  "estimated_levels": 21052,
+  "partial_histories": 27,
+  "unknown_activity": 0
+}
+┌─────────┬─────────────┬─────────────┬──────────┐
+│ (index) │ segment     │ activity    │ contacts │
+├─────────┼─────────────┼─────────────┼──────────┤
+│ 0       │ 'bajo'      │ 'en_riesgo' │ 1107     │
+│ 1       │ 'bajo'      │ 'frecuente' │ 307      │
+│ 2       │ 'bajo'      │ 'inactivo'  │ 3989     │
+│ 3       │ 'bajo'      │ 'nuevo'     │ 126      │
+│ 4       │ 'bajo'      │ 'ocasional' │ 1376     │
+│ 5       │ 'bajo'      │ 'perdido'   │ 13732    │
+│ 6       │ 'bajo'      │ 'regular'   │ 975      │
+│ 7       │ 'medio'     │ 'en_riesgo' │ 134      │
+│ 8       │ 'medio'     │ 'frecuente' │ 1027     │
+│ 9       │ 'medio'     │ 'inactivo'  │ 330      │
+│ 10      │ 'medio'     │ 'nuevo'     │ 14       │
+│ 11      │ 'medio'     │ 'ocasional' │ 61       │
+│ 12      │ 'medio'     │ 'perdido'   │ 742      │
+│ 13      │ 'medio'     │ 'regular'   │ 285      │
+│ 14      │ 'super_vip' │ 'frecuente' │ 11       │
+│ 15      │ 'super_vip' │ 'inactivo'  │ 3        │
+│ 16      │ 'super_vip' │ 'nuevo'     │ 1        │
+│ 17      │ 'super_vip' │ 'perdido'   │ 3        │
+│ 18      │ 'vip'       │ 'en_riesgo' │ 17       │
+│ 19      │ 'vip'       │ 'frecuente' │ 266      │
+│ 20      │ 'vip'       │ 'inactivo'  │ 57       │
+│ 21      │ 'vip'       │ 'ocasional' │ 6        │
+│ 22      │ 'vip'       │ 'perdido'   │ 80       │
+│ 23      │ 'vip'       │ 'regular'   │ 26       │
+│ 24      │ 'vip_alto'  │ 'en_riesgo' │ 3        │
+│ 25      │ 'vip_alto'  │ 'frecuente' │ 57       │
+│ 26      │ 'vip_alto'  │ 'inactivo'  │ 7        │
+│ 27      │ 'vip_alto'  │ 'ocasional' │ 1        │
+│ 28      │ 'vip_alto'  │ 'perdido'   │ 19       │
+│ 29      │ 'vip_alto'  │ 'regular'   │ 2        │
+│ 30      │ 'vip_medio' │ 'en_riesgo' │ 6        │
+│ 31      │ 'vip_medio' │ 'frecuente' │ 56       │
+│ 32      │ 'vip_medio' │ 'inactivo'  │ 9        │
+│ 33      │ 'vip_medio' │ 'perdido'   │ 36       │
+│ 34      │ 'vip_medio' │ 'regular'   │ 5        │
+└─────────┴─────────────┴─────────────┴──────────┘
+DRY RUN: no se modificaron contactos ni jugadores.
+
+Elapsed seconds: 31.9

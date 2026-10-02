@@ -244,7 +244,7 @@ export async function POST(req: NextRequest) {
         const messageId = insertedMsg[0]?.id ?? null
 
         // Fire-and-forget: no bloquea la respuesta al webhook
-        void evaluateAutomations(phone, body_text, messageId)
+        await evaluateAutomations(phone, body_text, messageId, { provider: 'evolution', instance: typeof body.instance === 'string' ? body.instance : '' })
       }
 
       return NextResponse.json({ ok: true })

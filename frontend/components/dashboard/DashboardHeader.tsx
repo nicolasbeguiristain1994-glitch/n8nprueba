@@ -1,23 +1,24 @@
 'use client'
 
-import { memo, useCallback, useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
+import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import {
-  LayoutDashboard, RefreshCw, SlidersHorizontal, Clock, CalendarRange, Database, User, CloudDownload,
+  RefreshCw, SlidersHorizontal, Clock, Database, User, CloudDownload,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
   DATE_RANGE_LABELS,
-  computeDateRange,
-  formatCustomRange,
   type DateRange,
-  type DateRangePreset,
 } from './types'
-import { PLATFORMS, getAgentsForPlatform, type Platform } from '@/lib/casino-agents'
+import { PLATFORMS, type Platform } from '@/lib/casino-agents'
+import { describeDateRange } from '@/lib/dashboard-date-range'
+
+import { DashboardDateRangePicker } from './DashboardDateRangePicker'
+import { dashboardAgents, agentScopeLabel } from '@/lib/dashboard-scope'
 
 // ── "X min ago" ticker ────────────────────────────────────────────────────────
 
@@ -42,74 +43,6 @@ function useMinutesAgo(date: Date | null): string | null {
   return label
 }
 
-// ── Date range picker ─────────────────────────────────────────────────────────
-
-interface DateRangePickerProps {
-  value: DateRange
-  onChange: (range: DateRange) => void
-}
-
-function DateRangePicker({ value, onChange }: DateRangePickerProps) {
-  const handlePreset = useCallback((preset: DateRangePreset) => {
-    if (preset === 'custom') {
-      onChange({ preset: 'custom', from: value.from, to: value.to })
-    } else {
-      onChange({ preset, ...computeDateRange(preset) })
-    }
-  }, [onChange, value.from, value.to])
-
-  const handleCustomFrom = useCallback((from: string) => {
-    onChange({ ...value, preset: 'custom', from })
-  }, [onChange, value])
-
-  const handleCustomTo = useCallback((to: string) => {
-    onChange({ ...value, preset: 'custom', to })
-  }, [onChange, value])
-
-  return (
-    <div className="flex items-center gap-1.5 flex-wrap">
-      <CalendarRange className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-      <Select value={value.preset} onValueChange={v => handlePreset(v as DateRangePreset)}>
-        <SelectTrigger size="sm" className="h-7 w-auto min-w-[130px] text-xs">
-          {value.preset === 'custom'
-            ? <span className="flex flex-1 text-left truncate">{formatCustomRange(value.from, value.to)}</span>
-            : <SelectValue />
-          }
-        </SelectTrigger>
-        <SelectContent align="end">
-          {(Object.keys(DATE_RANGE_LABELS) as DateRangePreset[]).map(preset => (
-            <SelectItem key={preset} value={preset} className="text-xs">
-              {DATE_RANGE_LABELS[preset]}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
-      {value.preset === 'custom' && (
-        <div className="flex items-center gap-1">
-          <Input
-            type="date"
-            value={value.from}
-            max={value.to}
-            onChange={e => handleCustomFrom(e.target.value)}
-            className="h-7 w-[120px] text-xs px-2"
-            aria-label="Desde"
-          />
-          <span className="text-muted-foreground text-xs">→</span>
-          <Input
-            type="date"
-            value={value.to}
-            min={value.from}
-            onChange={e => handleCustomTo(e.target.value)}
-            className="h-7 w-[120px] text-xs px-2"
-            aria-label="Hasta"
-          />
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── Auto-refresh toggle ───────────────────────────────────────────────────────
 
 interface AutoRefreshToggleProps {
@@ -123,9 +56,9 @@ function AutoRefreshToggle({ enabled, softLoading, onToggle }: AutoRefreshToggle
     <button
       onClick={onToggle}
       aria-pressed={enabled}
-      aria-label={enabled ? 'Desactivar actualización automática' : 'Activar actualización automática'}
+      aria-label={enabled ? 'Desactivar refresco automático de la vista' : 'Activar refresco automático de la vista'}
       className={cn(
-        'flex items-center gap-1.5 h-7 px-2.5 rounded-lg border text-xs font-medium transition-all',
+        'flex items-center gap-1.5 h-9 px-2.5 rounded-lg border text-xs font-medium transition-all',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
         enabled
           ? 'border-primary/30 bg-primary/8 text-primary'
@@ -158,8 +91,8 @@ function PlatformSelector({ value, onChange }: PlatformSelectorProps) {
     <div className="flex items-center gap-1.5">
       <Database className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
       <Select value={value} onValueChange={v => onChange(v as Platform)}>
-        <SelectTrigger size="sm" className="h-7 w-auto min-w-[80px] text-xs">
-          <SelectValue />
+        <SelectTrigger aria-label="Plataforma del dashboard" size="sm" className="h-9 w-auto min-w-[80px] text-xs">
+          <SelectValue>{PLATFORM_LABELS[value]}</SelectValue>
         </SelectTrigger>
         <SelectContent align="end">
           {PLATFORMS.map(p => (
@@ -182,13 +115,13 @@ interface AgentSelectorProps {
 }
 
 function AgentSelector({ value, platform, onChange }: AgentSelectorProps) {
-  const agents = getAgentsForPlatform(platform)
+  const agents = dashboardAgents(platform)
   return (
     <div className="flex items-center gap-1.5">
       <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
       <Select value={value || '_all'} onValueChange={(v: string | null) => onChange(!v || v === '_all' ? '' : v)}>
-        <SelectTrigger size="sm" className="h-7 w-auto min-w-[90px] text-xs">
-          <SelectValue />
+        <SelectTrigger aria-label="Agente del dashboard" size="sm" className="h-9 w-auto min-w-[90px] text-xs">
+          <SelectValue>{value || 'Todos los agentes'}</SelectValue>
         </SelectTrigger>
         <SelectContent align="end">
           <SelectItem value="_all" className="text-xs">Todos</SelectItem>
@@ -241,84 +174,30 @@ export const DashboardHeader = memo(function DashboardHeader({
   const minutesAgo = useMinutesAgo(lastUpdated)
 
   return (
-    <div className="mb-6 space-y-3">
-      {/* Row 1: title + last-updated */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <LayoutDashboard className="w-5 h-5 text-primary shrink-0" />
-          <h1 className="text-xl font-semibold text-foreground leading-tight tracking-tight">Dashboard</h1>
+    <div className="mb-5 space-y-4">
+      <PageHeader title="Dashboard" description="Una mirada a tu operación, tus clientes y tu equipo." className="mb-0"
+        actions={<>
+          <Button variant="outline" size="sm" onClick={onCustomize} aria-label="Personalizar dashboard"><SlidersHorizontal size={14} /> Personalizar</Button>
+          <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading} aria-label="Refrescar vista"><RefreshCw size={14} className={cn((loading || softLoading) && 'animate-spin')} /> Actualizar</Button>
+          <Button size="sm" onClick={onSyncCasino} disabled={syncStatus === 'loading'} title={platform === 'consolidado' ? 'Sincronizar Zeus y Bet30' : `Sincronizar casino (${platform})`}><CloudDownload size={14} className={cn(syncStatus === 'loading' && 'animate-pulse')} />{syncStatus === 'loading' ? 'Sincronizando…' : 'Sync casino'}</Button>
+        </>} />
+      <div className="surface">
+        <div className="flex flex-wrap items-center gap-3 p-3">
+          <DashboardDateRangePicker value={dateRange} onChange={onDateRangeChange} />
+          <div className="hidden h-5 border-l sm:block" aria-hidden="true" />
+          <PlatformSelector value={platform} onChange={onPlatformChange} />
+          <AgentSelector value={agent} platform={platform} onChange={onAgentChange} />
+          <div className="ml-auto flex items-center gap-3">
+            {minutesAgo && <span className="hidden text-xs text-muted-foreground xl:inline">Vista consultada {minutesAgo}</span>}
+            <AutoRefreshToggle enabled={autoRefreshEnabled} softLoading={softLoading} onToggle={onAutoRefreshToggle} />
+          </div>
         </div>
-        {minutesAgo && (
-          <span className="text-xs text-muted-foreground shrink-0 hidden sm:block">
-            Actualizado {minutesAgo}
-          </span>
-        )}
-      </div>
-
-      {/* Row 2: controls */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {/* Date range picker */}
-        <DateRangePicker value={dateRange} onChange={onDateRangeChange} />
-
-        {/* Platform selector */}
-        <PlatformSelector value={platform} onChange={onPlatformChange} />
-
-        {/* Agent selector */}
-        <AgentSelector value={agent} platform={platform} onChange={onAgentChange} />
-
-        <div className="flex items-center gap-1.5 ml-auto">
-          {/* Soft-loading indicator */}
-          {softLoading && (
-            <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <RefreshCw className="w-3 h-3 animate-spin" />
-              <span className="hidden sm:inline">Actualizando…</span>
-            </span>
-          )}
-
-          {/* Casino sync button */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onSyncCasino}
-            disabled={syncStatus === 'loading'}
-            title={platform === 'consolidado' ? 'Sincronizar casino (Zeus + Bet30)' : `Sincronizar casino (${platform})`}
-            className="h-7 text-xs gap-1.5 px-2.5"
-          >
-            <CloudDownload className={cn('w-3.5 h-3.5', syncStatus === 'loading' && 'animate-pulse')} />
-            <span className="hidden sm:inline">
-              {syncStatus === 'loading' ? 'Sincronizando…' : 'Sync casino'}
-            </span>
-          </Button>
-
-          {/* Auto-refresh toggle */}
-          <AutoRefreshToggle
-            enabled={autoRefreshEnabled}
-            softLoading={softLoading}
-            onToggle={onAutoRefreshToggle}
-          />
-
-          {/* Manual refresh */}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={onRefresh}
-            disabled={loading}
-            aria-label="Refrescar datos"
-          >
-            <RefreshCw className={cn('w-4 h-4', loading && 'animate-spin')} />
-          </Button>
-
-          {/* Customize */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={onCustomize}
-            className="gap-2"
-            aria-label="Personalizar dashboard"
-          >
-            <SlidersHorizontal className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Personalizar</span>
-          </Button>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t bg-muted/25 px-3 py-2 text-[11px] text-muted-foreground" aria-label="Filtros activos del dashboard">
+          <span className="font-medium text-foreground">Filtro activo: {PLATFORM_LABELS[platform]} · {agent || 'Todos los agentes'}</span>
+          <span>{DATE_RANGE_LABELS[dateRange.preset]} · {describeDateRange(dateRange)} · hora Argentina</span>
+          {agent && <button className="text-primary hover:underline" onClick={() => onAgentChange('')}>Ver todos los agentes</button>}
+          {agent && platform === 'consolidado' && <span>Equivalencias: {agentScopeLabel(platform, agent)}</span>}
+          <span className="ml-auto" title="Estos filtros se guardan en este navegador. Otra computadora puede tener una selección distinta.">Preferencias guardadas en este navegador</span>
         </div>
       </div>
     </div>

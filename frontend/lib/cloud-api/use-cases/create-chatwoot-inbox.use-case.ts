@@ -3,21 +3,29 @@
 import { cloudNumberRepository } from '../repositories/cloud-number.repository'
 import { CloudApiError }         from '../errors'
 import { getTokenForNumber }      from '../token-store'
+import { isChatwootConfigured }   from '../chatwoot-config'
 
 export interface CreateChatwootInboxResult {
   inboxId:   string
   inboxName: string
 }
 
+// Chatwoot es opcional: sin configuración no se hace ninguna llamada externa.
+export class ChatwootNotConfiguredError extends Error {
+  readonly code = 'CHATWOOT_NOT_CONFIGURED' as const
+  constructor() {
+    super('Chatwoot no está configurado')
+    this.name = 'ChatwootNotConfiguredError'
+  }
+}
+
 export class CreateChatwootInboxUseCase {
   async execute(phoneNumberId: string): Promise<CreateChatwootInboxResult> {
-    const apiUrl    = process.env.CHATWOOT_API_URL
-    const apiKey    = process.env.CHATWOOT_API_KEY
-    const accountId = process.env.CHATWOOT_ACCOUNT_ID
+    if (!isChatwootConfigured()) throw new ChatwootNotConfiguredError()
 
-    if (!apiUrl || !apiKey || !accountId) {
-      throw new CloudApiError('CHATWOOT_API_URL, CHATWOOT_API_KEY y CHATWOOT_ACCOUNT_ID son obligatorios')
-    }
+    const apiUrl    = process.env.CHATWOOT_API_URL!.trim()
+    const apiKey    = process.env.CHATWOOT_API_KEY!.trim()
+    const accountId = process.env.CHATWOOT_ACCOUNT_ID!.trim()
 
     const number = await cloudNumberRepository.findByPhoneNumberId(phoneNumberId)
     if (!number) throw new CloudApiError(`Número ${phoneNumberId} no encontrado`)
@@ -31,6 +39,7 @@ export class CreateChatwootInboxUseCase {
 
     const res = await fetch(`${apiUrl}/api/v1/accounts/${accountId}/inboxes`, {
       method: 'POST',
+      signal: AbortSignal.timeout(15000),
       headers: {
         'Content-Type': 'application/json',
         'api_access_token': apiKey,
@@ -51,8 +60,7 @@ export class CreateChatwootInboxUseCase {
     })
 
     if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new CloudApiError(`Chatwoot respondió ${res.status}: ${body}`)
+      throw new CloudApiError(`Chatwoot respondió ${res.status}`)
     }
 
     const data = await res.json() as { id: number | string; name: string }

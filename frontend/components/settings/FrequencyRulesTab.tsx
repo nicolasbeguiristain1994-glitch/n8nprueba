@@ -44,12 +44,12 @@ export function FrequencyRulesTab() {
 
   if (loading) return (
     <div className="flex items-center justify-center h-32">
-      <Loader2 size={20} className="animate-spin text-gray-400" />
+      <Loader2 size={20} className="animate-spin text-muted-foreground" />
     </div>
   )
 
   if (fetchError) return (
-    <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+    <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3">
       <AlertCircle size={16} className="shrink-0" /> {fetchError}
     </div>
   )
@@ -73,18 +73,18 @@ export function FrequencyRulesTab() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="text-left py-2 pr-4 font-medium text-gray-500 text-xs uppercase tracking-wide">Alcance</th>
-                  <th className="text-right py-2 px-3 font-medium text-gray-500 text-xs uppercase tracking-wide">Esp.</th>
-                  <th className="text-right py-2 px-3 font-medium text-gray-500 text-xs uppercase tracking-wide">Máx/día</th>
-                  <th className="text-right py-2 px-3 font-medium text-gray-500 text-xs uppercase tracking-wide">Máx/semana</th>
-                  <th className="text-right py-2 px-3 font-medium text-gray-500 text-xs uppercase tracking-wide">Min horas</th>
+                <tr className="border-b border-border">
+                  <th className="text-left py-2 pr-4 font-medium text-muted-foreground text-xs uppercase tracking-wide">Alcance</th>
+                  <th className="text-right py-2 px-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Esp.</th>
+                  <th className="text-right py-2 px-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Máx/día</th>
+                  <th className="text-right py-2 px-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Máx/semana</th>
+                  <th className="text-right py-2 px-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Min horas</th>
                 </tr>
               </thead>
               <tbody>
                 {rules.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="py-6 text-center text-gray-400 text-sm">
+                    <td colSpan={5} className="py-6 text-center text-muted-foreground text-sm">
                       No hay reglas configuradas
                     </td>
                   </tr>
@@ -94,10 +94,10 @@ export function FrequencyRulesTab() {
                     return (
                       <tr
                         key={rule.id}
-                        className={`border-b border-gray-50 last:border-0 ${isGlobal ? 'bg-blue-50/40' : 'hover:bg-gray-50/50'}`}
+                        className={`border-b border-gray-50 last:border-0 ${isGlobal ? 'bg-blue-50/40' : 'hover:bg-background/50'}`}
                       >
                         <td className="py-2.5 pr-4">
-                          <span className="text-sm text-gray-700">
+                          <span className="text-sm text-foreground">
                             {scopeLabel(rule)}
                           </span>
                           {isGlobal && (
@@ -106,7 +106,7 @@ export function FrequencyRulesTab() {
                             </span>
                           )}
                         </td>
-                        <td className="py-2.5 px-3 text-right text-gray-500 text-xs">{rule.specificity}</td>
+                        <td className="py-2.5 px-3 text-right text-muted-foreground text-xs">{rule.specificity}</td>
                         <td className="py-2.5 px-3 text-right font-medium">{rule.max_per_day}</td>
                         <td className="py-2.5 px-3 text-right font-medium">{rule.max_per_week}</td>
                         <td className="py-2.5 px-3 text-right font-medium">{rule.min_hours_between_sends}h</td>
@@ -117,7 +117,7 @@ export function FrequencyRulesTab() {
               </tbody>
             </table>
           </div>
-          <p className="text-xs text-gray-400 mt-3">
+          <p className="text-xs text-muted-foreground mt-3">
             Especificidad: 0 = global, 7 = máximo (operador + seg. monto + seg. actividad).
             La regla más específica que aplica al contexto tiene precedencia.
           </p>

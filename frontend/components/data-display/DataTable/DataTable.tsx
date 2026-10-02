@@ -147,7 +147,7 @@ export function DataTable<TData>({
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col rounded-xl border border-border bg-card overflow-hidden">
+    <div className="flex min-w-0 flex-col rounded-xl border border-border bg-card shadow-xs">
 
       {/* ── Toolbar interno (density + col visibility + slot externo) ── */}
       <DataTableToolbar
@@ -173,16 +173,17 @@ export function DataTable<TData>({
           className="w-full text-sm"
         >
           {/* Sticky header */}
-          <thead className="sticky top-0 z-10 bg-muted/50 backdrop-blur-sm border-b border-border">
+          <thead className="sticky top-0 z-10 bg-muted border-b border-border">
             {table.getHeaderGroups().map(hg => (
               <tr key={hg.id}>
                 {hg.headers.map(header => (
                   <th
                     key={header.id}
                     scope="col"
+                    aria-sort={header.column.getIsSorted() === 'asc' ? 'ascending' : header.column.getIsSorted() === 'desc' ? 'descending' : undefined}
                     colSpan={header.colSpan}
                     style={{ width: header.getSize() !== 150 ? header.getSize() : undefined }}
-                    className="px-4 py-2.5 text-left font-medium whitespace-nowrap"
+                    className="px-4 py-2.5 text-left text-xs text-muted-foreground font-medium whitespace-nowrap"
                   >
                     {header.isPlaceholder
                       ? null
@@ -204,15 +205,6 @@ export function DataTable<TData>({
               />
             )}
 
-            {/* Sin datos */}
-            {!loading && rows.length === 0 && (
-              <tr>
-                <td colSpan={table.getVisibleLeafColumns().length}>
-                  {emptyState ?? <DataTableEmptyState />}
-                </td>
-              </tr>
-            )}
-
             {/* Filas normales (paginated) */}
             {!loading && !virtual && rows.map(row => (
               <tr
@@ -221,6 +213,13 @@ export function DataTable<TData>({
                 aria-selected={row.getIsSelected()}
                 data-state={row.getIsSelected() ? 'selected' : undefined}
                 onClick={() => onRowClick?.(row.original)}
+                tabIndex={onRowClick ? 0 : undefined}
+                onKeyDown={event => {
+                  if (onRowClick && event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                    event.preventDefault()
+                    onRowClick(row.original)
+                  }
+                }}
                 className={cn(
                   'group/row border-b border-border last:border-0',
                   'transition-colors duration-100',
@@ -288,6 +287,11 @@ export function DataTable<TData>({
       </div>
 
       {/* ── Mobile cards ── */}
+      {loading && <div role="status" className="space-y-3 p-4 md:hidden">
+        <span className="sr-only">Cargando registros…</span>
+        {[0, 1, 2].map(i => <div key={i} className="h-24 animate-pulse rounded-lg bg-muted" />)}
+      </div>}
+      {!loading && rows.length === 0 && <div>{emptyState ?? <DataTableEmptyState />}</div>}
       {!loading && (
         <DataTableMobileCardList
           table={table}

@@ -173,13 +173,13 @@ describe('distributorVisibilityClause — pure function', () => {
     const { clause, params } = distributorVisibilityClause('operator-uuid', 1)
 
     // Verify the filter is delegated inline to the SQL function (no pre-fetch)
-    expect(clause).toBe('AND id = ANY(get_accessible_line_ids($1::uuid))')
+    expect(clause).toBe('AND id IN (SELECT id FROM get_accessible_line_ids($1::uuid) AS visible_lines(id))')
     expect(params).toEqual(['operator-uuid'])
   })
 
   it('shifts the bind parameter index via startAt', () => {
     const { clause } = distributorVisibilityClause('operator-uuid', 2)
-    expect(clause).toBe('AND id = ANY(get_accessible_line_ids($2::uuid))')
+    expect(clause).toBe('AND id IN (SELECT id FROM get_accessible_line_ids($2::uuid) AS visible_lines(id))')
   })
 })
 

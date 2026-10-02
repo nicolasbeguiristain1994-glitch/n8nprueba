@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkPermission } from '@/lib/permissions'
+import { isCasinoSyncPaused, casinoSyncPausedResponse } from '@/lib/casino-maintenance'
 import { spawn } from 'child_process'
 import path from 'path'
 
@@ -22,6 +23,9 @@ export async function POST(req: NextRequest) {
   if (!session || session.role !== 'admin') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
+
+  // Pausa operativa: la re-segmentación escribe casino_players/contacts.
+  if (isCasinoSyncPaused()) return casinoSyncPausedResponse()
 
   const scriptsDir = path.resolve(process.cwd(), '..', 'scripts')
   const segScript  = path.join(scriptsDir, 'segmentar-casino-players.js')

@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
 
   // JSON (dashboards internos)
   const [queueStats, breakerStatuses] = await Promise.all([
-    getQueueStats().catch(() => ({ waiting: 0, active: 0, completed: 0, failed: 0, dlq: 0 })),
+    process.env.CLOUD_MESSAGE_WORKER_ENABLED === 'true' ? getQueueStats().catch(() => ({ unavailable: true })) : Promise.resolve({ enabled: false }),
     Promise.resolve(getAllBreakerStatuses()),
   ])
 

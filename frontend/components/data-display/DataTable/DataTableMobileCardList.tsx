@@ -51,8 +51,15 @@ export function DataTableMobileCardList<TData>({
             key={row.id}
             role="listitem"
             onClick={() => onRowClick?.(row.original)}
+            tabIndex={onRowClick ? 0 : undefined}
+            onKeyDown={event => {
+              if (onRowClick && event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+                event.preventDefault()
+                onRowClick(row.original)
+              }
+            }}
             className={cn(
-              'relative flex gap-3 p-3 rounded-xl border border-border bg-card',
+              'relative flex flex-wrap gap-3 p-3 rounded-xl border border-border bg-card',
               'transition-colors duration-100',
               isSelected ? 'border-primary/40 bg-primary/5' : 'hover:bg-muted/40',
               onRowClick && 'cursor-pointer',
@@ -88,7 +95,7 @@ export function DataTableMobileCardList<TData>({
                         {label}:
                       </span>
                     )}
-                    <span className={cn('flex-1 min-w-0', i === 0 && 'truncate')}>
+                    <span className={cn('flex-1 min-w-0 break-words', i === 0 && 'truncate')}>
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </span>
                   </div>
@@ -99,7 +106,7 @@ export function DataTableMobileCardList<TData>({
             {/* Row actions — visibles directamente en mobile */}
             {actionCells.length > 0 && (
               <div
-                className="flex flex-col items-end gap-1 shrink-0"
+                className="flex w-full flex-wrap justify-end gap-1 border-t pt-2"
                 onClick={(e) => e.stopPropagation()}
               >
                 {actionCells.map(cell => (

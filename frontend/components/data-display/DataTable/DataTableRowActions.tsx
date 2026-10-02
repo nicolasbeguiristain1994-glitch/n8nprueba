@@ -23,10 +23,10 @@ export function DataTableRowActions({ children, className }: DataTableRowActions
   return (
     <div
       className={cn(
-        'flex items-center gap-1 justify-end',
+        'flex flex-wrap md:flex-nowrap items-center gap-1 justify-end',
         // Ocultar por defecto, visible en hover del <tr> padre.
         // El <tr> padre debe tener el grupo "group/row" para que funcione.
-        'opacity-0 group-hover/row:opacity-100 transition-opacity duration-100',
+        'opacity-100 md:opacity-0 group-hover/row:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity duration-100',
         className,
       )}
     >

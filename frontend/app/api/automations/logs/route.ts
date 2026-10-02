@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
+import { isUUID } from '@/lib/validate'
 
 type LogRow = {
   id: string
@@ -16,13 +17,16 @@ type LogRow = {
 // ── GET /api/automations/logs ─────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'automations' as never, 'read')
+  const auth = await checkPermissionWithUser(req, 'automations', 'read')
   if (!auth.ok) return auth.response
 
   const { searchParams } = new URL(req.url)
   const automationId = searchParams.get('automation_id') ?? ''
   const result       = searchParams.get('result') ?? ''
-  const page         = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10))
+  const page         = Number(searchParams.get('page') ?? '1')
+  if (!Number.isSafeInteger(page) || page < 1 || page > 100000 || (automationId && !isUUID(automationId)) || (result && !['executed', 'skipped', 'error'].includes(result))) {
+    return NextResponse.json({ error: 'Filtros o página inválidos' }, { status: 400 })
+  }
   const limit        = 50
 
   const conditions: string[] = []
@@ -47,7 +51,7 @@ export async function GET(req: NextRequest) {
                 l.message_id, l.result, l.details, l.created_at
          FROM automation_logs l
          ${where}
-         ORDER BY l.created_at DESC
+         ORDER BY l.created_at DESC, l.id DESC
          LIMIT ${limit} OFFSET ${(page - 1) * limit}`,
         params,
       ),

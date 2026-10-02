@@ -1,5 +1,6 @@
+import { cloudNumberAccess } from '@/lib/cloud-api/access'
 import { NextRequest, NextResponse } from 'next/server'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser } from '@/lib/permissions'
 import { triggerSmbSync, getSyncStatus } from '@/lib/cloud-api/coexistence-sync'
 import { getTokenForNumber } from '@/lib/cloud-api/token-store'
 import { query } from '@/lib/db'
@@ -11,19 +12,21 @@ import { parseBody, handleValidationError, CloudSyncSchema } from '@/lib/schema'
 // GET  /api/cloud/sync?phoneNumberId=xxx — estado de la sincronización
 
 export async function GET(req: NextRequest) {
-  const err = await checkPermission(req, 'lines', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'lines', 'read')
+  if (!auth.ok) return auth.response
 
   const phoneNumberId = req.nextUrl.searchParams.get('phoneNumberId')
   if (!phoneNumberId) return NextResponse.json({ error: 'phoneNumberId requerido' }, { status: 400 })
 
+  const denied = await cloudNumberAccess(auth.user, phoneNumberId)
+  if (denied) return denied
   const status = await getSyncStatus(phoneNumberId)
   return NextResponse.json(status)
 }
 
 export async function POST(req: NextRequest) {
-  const err = await checkPermission(req, 'lines', 'manage')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'lines', 'manage')
+  if (!auth.ok) return auth.response
 
   const rawBody = await req.json().catch(() => null)
   const parsed  = parseBody(CloudSyncSchema, rawBody)
@@ -31,8 +34,10 @@ export async function POST(req: NextRequest) {
 
   const { phoneNumberId, syncType, historyDays } = parsed.data
 
+  const denied = await cloudNumberAccess(auth.user, phoneNumberId)
+  if (denied) return denied
   const numberResult = await query<{ waba_id: string }>(
-    `SELECT waba_id FROM cloud_numbers WHERE phone_number_id = $1 AND status = 'active'`,
+    `SELECT waba_id FROM cloud_numbers WHERE phone_number_id = $1 AND status = 'active' AND coexistence_enabled = true`,
     [phoneNumberId],
   )
   const row = numberResult[0]

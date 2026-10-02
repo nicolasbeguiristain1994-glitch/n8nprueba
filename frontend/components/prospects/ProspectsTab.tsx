@@ -1,6 +1,5 @@
 'use client'
 import { useEffect, useState, useCallback, useRef } from 'react'
-import * as XLSX from 'xlsx'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -87,10 +86,10 @@ function detectPhoneColumnByContent(rows: string[][]): number {
 // ── Stage badge ───────────────────────────────────────────────────────────────
 
 const STAGE_CLASSES: Record<ProspectStage, string> = {
-  nuevo:      'bg-gray-100 text-gray-600 border-gray-200',
+  nuevo:      'bg-muted text-muted-foreground border-border',
   contactado: 'bg-blue-100 text-blue-700 border-blue-200',
-  interesado: 'bg-amber-100 text-amber-700 border-amber-200',
-  descartado: 'bg-red-100 text-red-600 border-red-200',
+  interesado: 'bg-warning/15 text-warning border-warning/20',
+  descartado: 'bg-destructive/15 text-destructive border-destructive/20',
 }
 
 function StageBadge({ stage }: { stage: ProspectStage | undefined }) {
@@ -427,6 +426,8 @@ export function ProspectsTab() {
         })
       }
     } else if (ext === 'xlsx' || ext === 'xls') {
+      try {
+      const XLSX = await import('xlsx')
       const buffer = await file.arrayBuffer()
       const wb = XLSX.read(buffer, { type: 'array' })
       const ws = wb.Sheets[wb.SheetNames[0]]
@@ -461,6 +462,10 @@ export function ProspectsTab() {
           email:      null,
           raw:        r.join(','),
         }))
+      }
+      } catch {
+        showInfo({ title: 'Error', message: 'No se pudo leer el archivo. Volvé a seleccionarlo e intentá nuevamente.', variant: 'error' })
+        return
       }
     } else if (ext === 'vcf') {
       const text = await file.text()
@@ -942,22 +947,22 @@ export function ProspectsTab() {
                 : <ChevronDown className="ml-1 h-3 w-3 opacity-60" />}
             </Button>
             {filterPartsOpen && (
-              <div className="absolute left-0 top-full mt-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg z-30 w-48 py-1">
-                <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-800">
-                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Filtrar por parte</span>
+              <div className="absolute left-0 top-full mt-1 bg-card dark:bg-gray-900 border border-border dark:border-gray-700 rounded-xl shadow-lg z-30 w-48 py-1">
+                <div className="px-3 py-2 border-b border-border dark:border-gray-800">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Filtrar por parte</span>
                 </div>
                 {knownParts.map(n => {
                   const active = filterParts.includes(n)
                   return (
                     <div
                       key={n}
-                      className={`flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer ${active ? 'bg-violet-50 dark:bg-violet-950/30' : ''}`}
+                      className={`flex items-center gap-2 px-3 py-2.5 hover:bg-background dark:hover:bg-gray-800 cursor-pointer ${active ? 'bg-violet-50 dark:bg-violet-950/30' : ''}`}
                       onClick={() => { setFilterParts(prev => prev.includes(n) ? prev.filter(p => p !== n) : [...prev, n]); setPage(1) }}
                     >
-                      <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${active ? 'bg-violet-500 border-violet-500' : 'border-gray-300 dark:border-gray-600'}`}>
+                      <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${active ? 'bg-violet-500 border-violet-500' : 'border-input dark:border-gray-600'}`}>
                         {active && <span className="text-white text-[10px] leading-none font-bold">✓</span>}
                       </div>
-                      <span className={`text-sm ${active ? 'font-semibold text-violet-700 dark:text-violet-400' : 'text-gray-700 dark:text-gray-200'}`}>
+                      <span className={`text-sm ${active ? 'font-semibold text-violet-700 dark:text-violet-400' : 'text-foreground dark:text-gray-200'}`}>
                         Parte {n}
                       </span>
                     </div>
@@ -997,7 +1002,7 @@ export function ProspectsTab() {
             <Button
               size="sm" variant="outline"
               onClick={() => setShowBatchMenu(v => !v)}
-              className={`max-w-[180px] justify-between ${filterBatch ? 'border-indigo-400 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-700 dark:text-indigo-400' : ''}`}
+              className={`max-w-[180px] justify-between ${filterBatch ? 'border-indigo-400 bg-accent dark:bg-indigo-950/30 text-primary dark:text-indigo-400' : ''}`}
             >
               <span className="truncate text-left flex-1">
                 {filterBatch ? (batches.find(b => b.id === filterBatch)?.filename ?? 'Batch') : 'Todos los batches'}
@@ -1008,28 +1013,28 @@ export function ProspectsTab() {
               }
             </Button>
             {showBatchMenu && (
-              <div className="absolute left-0 top-full mt-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg z-30 w-72 py-1 max-h-80 overflow-y-auto">
+              <div className="absolute left-0 top-full mt-1 bg-card dark:bg-gray-900 border border-border dark:border-gray-700 rounded-xl shadow-lg z-30 w-72 py-1 max-h-80 overflow-y-auto">
                 <div
-                  className={`flex items-center px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer text-sm ${!filterBatch ? 'font-semibold text-indigo-700 dark:text-indigo-400' : 'text-gray-700 dark:text-gray-200'}`}
+                  className={`flex items-center px-3 py-2.5 hover:bg-background dark:hover:bg-gray-800 cursor-pointer text-sm ${!filterBatch ? 'font-semibold text-primary dark:text-indigo-400' : 'text-foreground dark:text-gray-200'}`}
                   onClick={() => { setFilterBatch(''); setPage(1); setShowBatchMenu(false) }}
                 >
                   Todos los batches
                 </div>
-                <div className="border-t border-gray-100 dark:border-gray-800" />
+                <div className="border-t border-border dark:border-gray-800" />
                 {batches.map(b => (
                   <div
                     key={b.id}
-                    className={`flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer group ${filterBatch === b.id ? 'bg-indigo-50 dark:bg-indigo-950/30' : ''}`}
+                    className={`flex items-center gap-2 px-3 py-2.5 hover:bg-background dark:hover:bg-gray-800 cursor-pointer group ${filterBatch === b.id ? 'bg-accent dark:bg-indigo-950/30' : ''}`}
                     onClick={() => { setFilterBatch(b.id); setPage(1); setShowBatchMenu(false) }}
                   >
                     <div className="flex-1 min-w-0">
-                      <p className={`text-sm truncate ${filterBatch === b.id ? 'font-semibold text-indigo-700 dark:text-indigo-400' : 'text-gray-700 dark:text-gray-200'}`}>
+                      <p className={`text-sm truncate ${filterBatch === b.id ? 'font-semibold text-primary dark:text-indigo-400' : 'text-foreground dark:text-gray-200'}`}>
                         {b.filename ?? 'Sin nombre'}
                       </p>
-                      <p className="text-[11px] text-gray-400">{b.imported.toLocaleString()} importados</p>
+                      <p className="text-[11px] text-muted-foreground">{b.imported.toLocaleString()} importados</p>
                     </div>
                     <button
-                      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-red-500 p-0.5 rounded disabled:opacity-30"
+                      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground/60 hover:text-red-500 p-0.5 rounded disabled:opacity-30"
                       title="Eliminar del historial"
                       disabled={deletingBatchId === b.id}
                       onClick={e => {
@@ -1097,7 +1102,7 @@ export function ProspectsTab() {
           <Button
             size="sm" variant="outline"
             onClick={() => setShowListsMenu(v => !v)}
-            className={`border-indigo-200 text-indigo-700 hover:bg-indigo-50 ${filterList ? 'bg-indigo-50 border-indigo-400' : ''}`}
+            className={`border-primary/20 text-primary hover:bg-accent ${filterList ? 'bg-accent border-indigo-400' : ''}`}
           >
             <List className="h-4 w-4 mr-1" />
             {filterList ? (prospectLists.find(l => l.id === filterList)?.name ?? 'Lista') : 'Listas'}
@@ -1110,23 +1115,23 @@ export function ProspectsTab() {
             {!filterList && <ChevronDown className="ml-1 h-3 w-3 opacity-60" />}
           </Button>
           {showListsMenu && (
-            <div className="absolute left-0 top-full mt-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg z-30 w-72 py-1 max-h-80 overflow-y-auto">
-              <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-800">
-                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Listas de difusión</span>
+            <div className="absolute left-0 top-full mt-1 bg-card dark:bg-gray-900 border border-border dark:border-gray-700 rounded-xl shadow-lg z-30 w-72 py-1 max-h-80 overflow-y-auto">
+              <div className="px-3 py-2 border-b border-border dark:border-gray-800">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Listas de difusión</span>
               </div>
               {prospectLists.length === 0 && (
-                <p className="text-xs text-gray-400 px-3 py-4 text-center">No hay listas creadas</p>
+                <p className="text-xs text-muted-foreground px-3 py-4 text-center">No hay listas creadas</p>
               )}
               {prospectLists.map(l => (
                 <div
                   key={l.id}
-                  className={`flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-800 cursor-pointer ${filterList === l.id ? 'bg-indigo-50 dark:bg-indigo-950/30' : ''}`}
+                  className={`flex items-center gap-2 px-3 py-2.5 hover:bg-background dark:hover:bg-gray-800 cursor-pointer ${filterList === l.id ? 'bg-accent dark:bg-indigo-950/30' : ''}`}
                   onClick={() => { setFilterList(l.id); setPage(1); setShowListsMenu(false) }}
                 >
-                  <Users className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                  <Users className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className={`text-sm truncate ${filterList === l.id ? 'font-semibold text-indigo-700 dark:text-indigo-400' : 'text-gray-700 dark:text-gray-200'}`}>{l.name}</p>
-                    <p className="text-[11px] text-gray-400">{l.member_count.toLocaleString()} prospectos</p>
+                    <p className={`text-sm truncate ${filterList === l.id ? 'font-semibold text-primary dark:text-indigo-400' : 'text-foreground dark:text-gray-200'}`}>{l.name}</p>
+                    <p className="text-[11px] text-muted-foreground">{l.member_count.toLocaleString()} prospectos</p>
                   </div>
                   {filterList === l.id && <Filter className="h-3 w-3 text-indigo-500 shrink-0" />}
                 </div>
@@ -1211,8 +1216,8 @@ export function ProspectsTab() {
         </div>
       )}
       {selectAllMode && (
-        <div className="flex items-center gap-2 rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 px-3 py-2 text-sm">
-          <span className="text-amber-700 dark:text-amber-300">
+        <div className="flex items-center gap-2 rounded-md bg-warning/10 dark:bg-amber-950/30 border border-warning/20 dark:border-amber-800 px-3 py-2 text-sm">
+          <span className="text-warning dark:text-amber-300">
             Todos los <strong>{total.toLocaleString()}</strong> prospectos de esta búsqueda están seleccionados.
           </span>
           <button
@@ -1306,7 +1311,7 @@ export function ProspectsTab() {
                             key={t}
                             type="button"
                             onClick={() => { setFilterTag(t); setPage(1) }}
-                            className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium border transition-colors cursor-pointer hover:bg-indigo-100 ${filterTag === t ? 'bg-indigo-200 border-indigo-400 text-indigo-800' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}
+                            className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium border transition-colors cursor-pointer hover:bg-accent ${filterTag === t ? 'bg-indigo-200 border-indigo-400 text-accent-foreground' : 'bg-accent text-primary border-primary/20'}`}
                           >
                             {t}
                           </button>
@@ -1406,7 +1411,7 @@ export function ProspectsTab() {
                               </td>
                               <td className="px-3 py-1.5">
                                 {(hasRepeat || hasManual)
-                                  ? <span className="text-indigo-600 font-medium">{displayName}</span>
+                                  ? <span className="text-primary font-medium">{displayName}</span>
                                   : [displayName, r.last_name].filter(Boolean).join(' ') || '—'}
                               </td>
                               <td className="px-3 py-1.5 text-muted-foreground">{r.email || '—'}</td>
@@ -1434,7 +1439,7 @@ export function ProspectsTab() {
                     <div className={`rounded-md border px-4 py-3 text-sm space-y-2 ${
                       autoPrefix
                         ? 'bg-emerald-50 border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800'
-                        : 'bg-amber-50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800'
+                        : 'bg-warning/10 border-warning/20 dark:bg-amber-950/20 dark:border-amber-800'
                     }`}>
                       {autoPrefix ? (
                         <div className="flex items-center justify-between gap-2">
@@ -1455,7 +1460,7 @@ export function ProspectsTab() {
                         </div>
                       ) : (
                         <>
-                          <div className="flex items-center gap-1.5 text-amber-700 dark:text-amber-300">
+                          <div className="flex items-center gap-1.5 text-warning dark:text-amber-300">
                             <AlertTriangle className="h-4 w-4 shrink-0" />
                             <span>
                               <strong>{needsCount.toLocaleString()}</strong> números no tienen código de Argentina (+54)
@@ -1472,7 +1477,7 @@ export function ProspectsTab() {
                             type="button"
                             size="sm"
                             variant="outline"
-                            className="h-7 text-xs border-amber-300 text-amber-700 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950/40"
+                            className="h-7 text-xs border-amber-300 text-warning hover:bg-warning/15 dark:border-amber-700 dark:text-amber-400 dark:hover:bg-amber-950/40"
                             onClick={() => setAutoPrefix('+549')}
                           >
                             Agregar característica +549 automáticamente
@@ -1485,8 +1490,8 @@ export function ProspectsTab() {
 
                 {/* ── Nombre base cuando la mayoría no tiene nombre ── */}
                 {mostlyNoNames && !repeatName && (
-                  <div className="rounded-md border border-indigo-200 bg-indigo-50 dark:bg-indigo-950/20 dark:border-indigo-800 px-4 py-3 text-sm space-y-2">
-                    <div className="flex items-center gap-1.5 text-indigo-700 dark:text-indigo-300">
+                  <div className="rounded-md border border-primary/20 bg-accent dark:bg-indigo-950/20 dark:border-indigo-800 px-4 py-3 text-sm space-y-2">
+                    <div className="flex items-center gap-1.5 text-primary dark:text-indigo-300">
                       <UserPlus className="h-4 w-4 shrink-0" />
                       <span>La mayoría de contactos no tiene nombre. Podés asignar un nombre base para numerarlos.</span>
                     </div>
@@ -1508,7 +1513,7 @@ export function ProspectsTab() {
                       )}
                     </div>
                     {manualPrefix.trim() && (
-                      <p className="text-xs text-indigo-600 dark:text-indigo-400">
+                      <p className="text-xs text-primary dark:text-indigo-400">
                         Se importarán como{' '}
                         <span className="font-mono">{manualPrefix.trim()} 1</span>,{' '}
                         <span className="font-mono">{manualPrefix.trim()} 2</span>,{' '}
@@ -1522,11 +1527,11 @@ export function ProspectsTab() {
                 {repeatName && (
                   <div className={`rounded-md border px-4 py-3 text-sm space-y-2 ${
                     autoNumber
-                      ? 'bg-indigo-50 border-indigo-200 dark:bg-indigo-950/20 dark:border-indigo-800'
-                      : 'bg-gray-50 border-gray-200 dark:bg-gray-800/30 dark:border-gray-700'
+                      ? 'bg-accent border-primary/20 dark:bg-indigo-950/20 dark:border-indigo-800'
+                      : 'bg-background border-border dark:bg-gray-800/30 dark:border-gray-700'
                   }`}>
                     <div className="flex items-center justify-between gap-2">
-                      <div className={`flex items-center gap-1.5 ${autoNumber ? 'text-indigo-700 dark:text-indigo-300' : 'text-gray-600 dark:text-gray-400'}`}>
+                      <div className={`flex items-center gap-1.5 ${autoNumber ? 'text-primary dark:text-indigo-300' : 'text-muted-foreground dark:text-muted-foreground'}`}>
                         {autoNumber
                           ? <CheckCircle className="h-4 w-4 shrink-0" />
                           : <AlertTriangle className="h-4 w-4 shrink-0" />}
@@ -1537,14 +1542,14 @@ export function ProspectsTab() {
                       </div>
                       <button
                         type="button"
-                        className={`text-xs underline hover:no-underline shrink-0 ${autoNumber ? 'text-muted-foreground' : 'text-indigo-600 dark:text-indigo-400 font-medium'}`}
+                        className={`text-xs underline hover:no-underline shrink-0 ${autoNumber ? 'text-muted-foreground' : 'text-primary dark:text-indigo-400 font-medium'}`}
                         onClick={() => setAutoNumber(v => !v)}
                       >
                         {autoNumber ? 'Quitar numeración' : 'Numerar'}
                       </button>
                     </div>
                     {autoNumber && (
-                      <p className="text-xs text-indigo-600 dark:text-indigo-400">
+                      <p className="text-xs text-primary dark:text-indigo-400">
                         Se importarán como{' '}
                         <span className="font-mono">{repeatName} 1</span>,{' '}
                         <span className="font-mono">{repeatName} 2</span>,{' '}
@@ -1556,11 +1561,11 @@ export function ProspectsTab() {
                 {/* ── Reemplazar existentes ── */}
                 <div className={`rounded-md border px-4 py-3 text-sm ${
                   replaceExisting
-                    ? 'bg-amber-50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800'
-                    : 'bg-gray-50 border-gray-200 dark:bg-gray-800/30 dark:border-gray-700'
+                    ? 'bg-warning/10 border-warning/20 dark:bg-amber-950/20 dark:border-amber-800'
+                    : 'bg-background border-border dark:bg-gray-800/30 dark:border-gray-700'
                 }`}>
                   <div className="flex items-center justify-between gap-2">
-                    <div className={`flex items-center gap-1.5 ${replaceExisting ? 'text-amber-700 dark:text-amber-300' : 'text-gray-600 dark:text-gray-400'}`}>
+                    <div className={`flex items-center gap-1.5 ${replaceExisting ? 'text-warning dark:text-amber-300' : 'text-muted-foreground dark:text-muted-foreground'}`}>
                       <RefreshCw className="h-4 w-4 shrink-0" />
                       <span>Reemplazar datos de contactos ya cargados</span>
                     </div>
@@ -1583,10 +1588,10 @@ export function ProspectsTab() {
                 <div className={`rounded-md border px-4 py-3 text-sm space-y-2 ${
                   splitParts > 1
                     ? 'bg-violet-50 border-violet-200 dark:bg-violet-950/20 dark:border-violet-800'
-                    : 'bg-gray-50 border-gray-200 dark:bg-gray-800/30 dark:border-gray-700'
+                    : 'bg-background border-border dark:bg-gray-800/30 dark:border-gray-700'
                 }`}>
                   <div className="flex items-center justify-between gap-2">
-                    <div className={`flex items-center gap-1.5 ${splitParts > 1 ? 'text-violet-700 dark:text-violet-300' : 'text-gray-600 dark:text-gray-400'}`}>
+                    <div className={`flex items-center gap-1.5 ${splitParts > 1 ? 'text-violet-700 dark:text-violet-300' : 'text-muted-foreground dark:text-muted-foreground'}`}>
                       <Tag className="h-4 w-4 shrink-0" />
                       <span>Dividir en partes para crear listas separadas</span>
                     </div>
@@ -1676,14 +1681,14 @@ export function ProspectsTab() {
                 </div>
 
                 {importResult.skipped_duplicates > 0 && !replaceExisting && (
-                  <div className="flex items-center gap-2 rounded-md bg-amber-50 border border-amber-200 px-4 py-2.5">
+                  <div className="flex items-center gap-2 rounded-md bg-warning/10 border border-warning/20 px-4 py-2.5">
                     <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
-                    <span className="text-sm text-amber-800 flex-1">
+                    <span className="text-sm text-warning flex-1">
                       {importResult.skipped_duplicates} ya existían y fueron omitidos.
                     </span>
                     <button
                       type="button"
-                      className="text-xs font-medium text-amber-700 underline hover:no-underline shrink-0"
+                      className="text-xs font-medium text-warning underline hover:no-underline shrink-0"
                       onClick={() => { setImportResult(null); setReplaceExisting(true) }}
                     >
                       Reimportar reemplazando
@@ -1692,9 +1697,9 @@ export function ProspectsTab() {
                 )}
 
                 {importResult.warned_existing_contacts > 0 && (
-                  <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-4 py-3">
+                  <div className="flex items-start gap-2 rounded-lg bg-warning/10 border border-warning/20 px-4 py-3">
                     <AlertTriangle className="h-4 w-4 text-amber-600 mt-0.5 shrink-0" />
-                    <div className="text-sm text-amber-800">
+                    <div className="text-sm text-warning">
                       <strong>{importResult.warned_existing_contacts} teléfono(s)</strong> ya existen como contactos activos.
                       {importResult.warnings.length > 0 && (
                         <div className="mt-1 text-xs font-mono opacity-70">
@@ -1716,7 +1721,7 @@ export function ProspectsTab() {
                         key={n}
                         type="button"
                         onClick={() => { setFilterTag(`parte:${n}`); setPage(1); setImportOpen(false); setImportResult(null); setParsedRows([]) }}
-                        className="inline-flex items-center rounded-full border border-violet-300 bg-white dark:bg-violet-950/40 px-2.5 py-1 text-xs font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors"
+                        className="inline-flex items-center rounded-full border border-violet-300 bg-card dark:bg-violet-950/40 px-2.5 py-1 text-xs font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors"
                       >
                         Parte {n}
                       </button>
@@ -1989,7 +1994,7 @@ export function ProspectsTab() {
                   </span>
                   <div className="flex flex-wrap gap-1.5 min-h-[24px]">
                     {(detailProspect.tags ?? []).map(t => (
-                      <span key={t} className="inline-flex items-center gap-1 text-xs bg-indigo-50 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded-full">
+                      <span key={t} className="inline-flex items-center gap-1 text-xs bg-accent border border-primary/20 text-primary px-2 py-0.5 rounded-full">
                         {t}
                         <button type="button" onClick={() => removeProspectTag(t)} className="hover:text-indigo-900">
                           <X className="h-2.5 w-2.5" />
@@ -2049,7 +2054,7 @@ export function ProspectsTab() {
               </DialogHeader>
 
               <div className="space-y-4 py-2">
-                <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-3 text-sm text-amber-800 flex gap-2">
+                <div className="rounded-md bg-warning/10 border border-warning/20 px-3 py-3 text-sm text-warning flex gap-2">
                   <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                   <span>
                     Esta acción es <strong>irreversible</strong>. El prospecto pasará a estado{' '}
@@ -2104,7 +2109,7 @@ export function ProspectsTab() {
                 </div>
 
                 {convertResult.warning && (
-                  <div className="flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-3 text-amber-800 text-sm">
+                  <div className="flex items-start gap-2 rounded-lg bg-warning/10 border border-warning/20 px-3 py-3 text-warning text-sm">
                     <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
                     {convertResult.warning}
                   </div>
@@ -2123,13 +2128,13 @@ export function ProspectsTab() {
       {confirmDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setConfirmDialog(null)} />
-          <div className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+          <div className="relative bg-card dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
             <div className={`h-1.5 w-full ${confirmDialog.variant === 'danger' ? 'bg-red-500' : 'bg-orange-400'}`} />
             <div className="px-6 py-5 space-y-3">
-              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">{confirmDialog.title}</h2>
-              <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">{confirmDialog.message}</p>
+              <h2 className="text-base font-semibold text-foreground dark:text-gray-100">{confirmDialog.title}</h2>
+              <p className="text-sm text-muted-foreground dark:text-muted-foreground leading-relaxed">{confirmDialog.message}</p>
             </div>
-            <div className="flex items-center justify-end gap-2 px-6 py-4 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-100 dark:border-gray-700">
+            <div className="flex items-center justify-end gap-2 px-6 py-4 bg-background dark:bg-gray-800/50 border-t border-border dark:border-gray-700">
               <Button variant="outline" size="sm" onClick={() => setConfirmDialog(null)}>Cancelar</Button>
               <Button
                 size="sm"
@@ -2147,16 +2152,16 @@ export function ProspectsTab() {
       {infoDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setInfoDialog(null)} />
-          <div className="relative bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+          <div className="relative bg-card dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
             <div className={`h-1.5 w-full ${
               infoDialog.variant === 'success' ? 'bg-emerald-500' :
               infoDialog.variant === 'error'   ? 'bg-red-500' : 'bg-blue-500'
             }`} />
             <div className="px-6 py-5 space-y-2">
-              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">{infoDialog.title}</h2>
-              <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">{infoDialog.message}</p>
+              <h2 className="text-base font-semibold text-foreground dark:text-gray-100">{infoDialog.title}</h2>
+              <p className="text-sm text-muted-foreground dark:text-muted-foreground leading-relaxed">{infoDialog.message}</p>
             </div>
-            <div className="flex justify-end px-6 py-4 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-100 dark:border-gray-700">
+            <div className="flex justify-end px-6 py-4 bg-background dark:bg-gray-800/50 border-t border-border dark:border-gray-700">
               <Button size="sm" onClick={() => setInfoDialog(null)}>Cerrar</Button>
             </div>
           </div>

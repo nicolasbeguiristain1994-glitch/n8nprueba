@@ -18,6 +18,11 @@ import { UserPrioritizationRepository } from '@/lib/user-prioritization/UserPrio
 import type { ContactMetricsRow, ContactPriorityScore } from '@/lib/user-prioritization/types'
 
 vi.mock('@/lib/user-prioritization/UserPrioritizationRepository')
+// La configuración remota es otra frontera de I/O. Los tests de orquestación
+// usan los defaults del dominio sin abrir conexiones ni bloquear fake timers.
+vi.mock('@/lib/segmentation-config-service', () => ({
+  getAllTiers: vi.fn().mockRejectedValue(new Error('Use domain defaults in unit tests')),
+}))
 
 const MockRepo = vi.mocked(UserPrioritizationRepository)
 
@@ -30,7 +35,7 @@ function makeContact(overrides: Partial<ContactMetricsRow> = {}): ContactMetrics
     firstName:          'Ana',
     lastName:           'García',
     status:             'active',
-    segment:            'alto',
+    segment:            'vip',
     lastDepositAt:      daysAgo(15),
     totalDeposits:      10,
     totalDepositAmount: null,
@@ -61,6 +66,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
     service = new UserPrioritizationService()
     repo    = MockRepo.mock.instances[0]
 
+    vi.mocked(repo.withRecomputeSession).mockImplementation(work => work(repo))
     // Lock siempre disponible por defecto en tests
     vi.mocked(repo.acquireRecomputeLock).mockResolvedValue(true)
     vi.mocked(repo.releaseRecomputeLock).mockResolvedValue(true)
@@ -137,7 +143,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
 
   // ── Escenarios de negocio — clasificación y segmentos ─────────────────────
 
-  it('VIP recién inactivo (7 días) → elegible, URGENTE, score máximo', async () => {
+  it('VIP recién inactivo (7 días) → elegible, URGENTE, score=85', async () => {
     const contact = makeContact({
       segment:       'vip',
       lastDepositAt: daysAgo(7),
@@ -156,7 +162,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
     expect(score.isEligible).toBe(true)
     expect(score.reactivationSegment).toBe('REACTIVACION_URGENTE')
     expect(score.valueTier).toBe('vip')
-    expect(score.priorityScore).toBe(100)
+    expect(score.priorityScore).toBe(85)
     expect(score.skipReasons).toEqual([])
   })
 
@@ -195,7 +201,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
     expect(capturedScores[0].isEligible).toBe(true)
   })
 
-  it('VIP inactivo 130 días → elegible, FRIA_ALTO_VALOR (ventana extendida a 180d)', async () => {
+  it('VIP inactivo 130 días → elegible, FRIA_ALTO_VALOR (ventana de 150d)', async () => {
     // Decisión 2: VIP/ALTO de alto valor siguen en lista hasta 6/5 meses.
     const contact = makeContact({ segment: 'vip', lastDepositAt: daysAgo(130) })
 
@@ -214,7 +220,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
     expect(capturedScores[0].priorityScore).toBeGreaterThan(0) // valueScore + urgencyScore pequeño
   })
 
-  it('VIP inactivo 185 días → NO elegible (too_cold, superó ventana de 180d)', async () => {
+  it('VIP inactivo 185 días → NO elegible (too_cold, superó ventana de 150d)', async () => {
     const contact = makeContact({ segment: 'vip', lastDepositAt: daysAgo(185) })
 
     vi.mocked(repo.fetchContactMetrics)
@@ -232,10 +238,10 @@ describe('UserPrioritizationService.recomputeAll', () => {
     expect(capturedScores[0].priorityScore).toBe(0)
   })
 
-  it('VIP al final de ventana (180 días) → elegible con score=60, último segmento', async () => {
+  it('SUPER_VIP al final de ventana (180 días) → elegible con score=60, último segmento', async () => {
     // Decisión 1: urgencyScore=0 NO excluye al contacto — es "última oportunidad".
     // Score = 60 (valor) + 0 (urgencia) = 60, que supera a BAJO inicio de ventana (50).
-    const contact = makeContact({ segment: 'vip', lastDepositAt: daysAgo(180) })
+    const contact = makeContact({ segment: 'super_vip', lastDepositAt: daysAgo(180) })
 
     vi.mocked(repo.fetchContactMetrics)
       .mockResolvedValueOnce([contact])
@@ -253,8 +259,8 @@ describe('UserPrioritizationService.recomputeAll', () => {
     expect(capturedScores[0].reactivationSegment).toBe('REACTIVACION_FRIA_ALTO_VALOR')
   })
 
-  it('ALTO inactivo 140 días → elegible, FRIA_ALTO_VALOR', async () => {
-    const contact = makeContact({ segment: 'alto', lastDepositAt: daysAgo(140) })
+  it('VIP inactivo 140 días → elegible, FRIA_ALTO_VALOR', async () => {
+    const contact = makeContact({ segment: 'vip', lastDepositAt: daysAgo(140) })
 
     vi.mocked(repo.fetchContactMetrics)
       .mockResolvedValueOnce([contact])
@@ -269,8 +275,8 @@ describe('UserPrioritizationService.recomputeAll', () => {
     expect(capturedScores[0].reactivationSegment).toBe('REACTIVACION_FRIA_ALTO_VALOR')
   })
 
-  it('ALTO inactivo 155 días → NO elegible (ventana ALTO termina en 150d)', async () => {
-    const contact = makeContact({ segment: 'alto', lastDepositAt: daysAgo(155) })
+  it('VIP inactivo 155 días → NO elegible (ventana VIP termina en 150d)', async () => {
+    const contact = makeContact({ segment: 'vip', lastDepositAt: daysAgo(155) })
 
     vi.mocked(repo.fetchContactMetrics)
       .mockResolvedValueOnce([contact])
@@ -336,7 +342,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
 
   // ── Cooldown por tier ─────────────────────────────────────────────────────
 
-  it('VIP mensajeado hace 2 días → no elegible (cooldown VIP = 3 días)', async () => {
+  it('VIP mensajeado hace 2 días → no elegible (cooldown VIP = 5 días)', async () => {
     const contact = makeContact({ segment: 'vip', lastDepositAt: daysAgo(15) })
     vi.mocked(repo.getLastMessagedDaysMap).mockResolvedValue(new Map([['c1', 2]]))
 
@@ -352,9 +358,9 @@ describe('UserPrioritizationService.recomputeAll', () => {
     expect(capturedScores[0].skipReasons).toContain('recently_messaged')
   })
 
-  it('VIP mensajeado hace 4 días → elegible (cooldown VIP = 3 días)', async () => {
+  it('VIP mensajeado hace 6 días → elegible (cooldown VIP = 5 días)', async () => {
     const contact = makeContact({ segment: 'vip', lastDepositAt: daysAgo(15) })
-    vi.mocked(repo.getLastMessagedDaysMap).mockResolvedValue(new Map([['c1', 4]]))
+    vi.mocked(repo.getLastMessagedDaysMap).mockResolvedValue(new Map([['c1', 6]]))
 
     vi.mocked(repo.fetchContactMetrics)
       .mockResolvedValueOnce([contact])
@@ -421,7 +427,7 @@ describe('UserPrioritizationService.recomputeAll', () => {
   })
 
   it('status "inactive" → elegible (es exactamente el perfil objetivo de reactivación)', async () => {
-    const contact = makeContact({ status: 'inactive', segment: 'alto', lastDepositAt: daysAgo(20) })
+    const contact = makeContact({ status: 'inactive', segment: 'vip', lastDepositAt: daysAgo(20) })
 
     vi.mocked(repo.fetchContactMetrics)
       .mockResolvedValueOnce([contact])
@@ -455,9 +461,9 @@ describe('UserPrioritizationService.recomputeAll', () => {
 
   it('guarda el segmento y el monto como snapshot en el score', async () => {
     const contact = makeContact({
-      segment:            'alto',
+      segment:            'vip',
       lastDepositAt:      daysAgo(20),
-      totalDepositAmount: 5000,
+      totalDepositAmount: 500000,
     })
 
     vi.mocked(repo.fetchContactMetrics)
@@ -470,10 +476,10 @@ describe('UserPrioritizationService.recomputeAll', () => {
     await service.recomputeAll()
 
     const score = capturedScores[0]
-    expect(score.depositSegment).toBe('alto')
-    expect(score.totalDepositAmount).toBe(5000)
-    // Monto 5000 → tier 'alto' (3000-9999), mismo tier que el segment
-    expect(score.valueTier).toBe('alto')
+    expect(score.depositSegment).toBe('vip')
+    expect(score.totalDepositAmount).toBe(500000)
+    // Monto 500000 → tier 'vip', mismo tier que el segment
+    expect(score.valueTier).toBe('vip')
     expect(score.daysInactive).toBeGreaterThanOrEqual(19)
     expect(score.daysInactive).toBeLessThanOrEqual(21)
   })
@@ -606,6 +612,7 @@ describe('UserPrioritizationService — heartbeat', () => {
     MockRepo.mockClear()
     service = new UserPrioritizationService()
     repo    = MockRepo.mock.instances[0]
+    vi.mocked(repo.withRecomputeSession).mockImplementation(work => work(repo))
 
     vi.mocked(repo.acquireRecomputeLock).mockResolvedValue(true)
     vi.mocked(repo.releaseRecomputeLock).mockResolvedValue(true)
@@ -681,6 +688,7 @@ describe('UserPrioritizationService — getPrioritizedContacts', () => {
     MockRepo.mockClear()
     service = new UserPrioritizationService()
     repo    = MockRepo.mock.instances[0]
+    vi.mocked(repo.withRecomputeSession).mockImplementation(work => work(repo))
 
     vi.mocked(repo.getPrioritizedContacts).mockResolvedValue(emptyPage)
     vi.mocked(repo.getLastCompleteRunId).mockResolvedValue(null)
@@ -727,6 +735,7 @@ describe('UserPrioritizationService — historial de corridas', () => {
     MockRepo.mockClear()
     service = new UserPrioritizationService()
     repo    = MockRepo.mock.instances[0]
+    vi.mocked(repo.withRecomputeSession).mockImplementation(work => work(repo))
 
     vi.mocked(repo.acquireRecomputeLock).mockResolvedValue(true)
     vi.mocked(repo.releaseRecomputeLock).mockResolvedValue(true)
@@ -823,6 +832,7 @@ describe('UserPrioritizationService — logging', () => {
     MockRepo.mockClear()
     service    = new UserPrioritizationService()
     repo       = MockRepo.mock.instances[0]
+    vi.mocked(repo.withRecomputeSession).mockImplementation(work => work(repo))
     stdoutSpy  = vi.spyOn(process.stdout, 'write').mockReturnValue(true)
 
     vi.mocked(repo.acquireRecomputeLock).mockResolvedValue(true)

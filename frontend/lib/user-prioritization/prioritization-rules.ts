@@ -3,6 +3,7 @@ import { resolveValueTier } from './scoring'
 import type { ValueTier, InactivityWindow } from './config'
 
 export interface EligibilityInput {
+  ltvTier?: ValueTier | null
   status:              string
   doNotContact:        boolean
   optInMarketing:      boolean
@@ -26,6 +27,7 @@ export interface EligibilityResult {
  * Cuando se omite, las funciones usan los valores de config.ts.
  */
 export interface EligibilityConfig {
+  enabledTiers?: ValueTier[]
   inactivityWindows:     Record<ValueTier, InactivityWindow>
   recontactCooldownDays: Record<ValueTier, number>
   depositAmountTiers:    Array<{ minAmount: number; tier: ValueTier }>
@@ -63,8 +65,9 @@ export function checkEligibility(
   cfg:   EligibilityConfig = DEFAULT_ELIGIBILITY_CONFIG,
 ): EligibilityResult {
   const reasons: string[] = []
-  const valueTier = resolveValueTier(input.segment, input.totalDepositAmount, cfg.depositAmountTiers)
+  const valueTier = input.ltvTier ?? resolveValueTier(input.segment, input.totalDepositAmount, cfg.depositAmountTiers)
   const window    = cfg.inactivityWindows[valueTier]
+  if (cfg.enabledTiers && !cfg.enabledTiers.includes(valueTier)) reasons.push('tier_disabled')
 
   if (input.deletedAt !== null) {
     reasons.push('deleted')

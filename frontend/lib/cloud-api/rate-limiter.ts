@@ -44,11 +44,16 @@ end
 
 let redisClient: ReturnType<typeof createClient> | null = null
 
-function getRedis() {
+let connecting: Promise<unknown> | null = null
+
+async function getRedis() {
   if (!redisClient) {
-    redisClient = createClient({ url: process.env.REDIS_URL ?? 'redis://localhost:6379' })
-    redisClient.connect().catch(err => rateLimitLog.logError('redis connect error', err))
+    if (!process.env.REDIS_URL) throw new Error('Redis is not configured')
+    redisClient = createClient({ url: process.env.REDIS_URL, disableOfflineQueue: true, socket: { connectTimeout: 3000, reconnectStrategy: false } })
+    redisClient.on('error', () => rateLimitLog.logWarn('Redis connection unavailable'))
   }
+  if (!redisClient.isOpen && !connecting) connecting = redisClient.connect().finally(() => { connecting = null })
+  if (connecting) await connecting
   return redisClient
 }
 
@@ -61,7 +66,8 @@ export async function checkRateLimit(
   const now = Date.now()
 
   try {
-    const redis = getRedis()
+    const redis = await getRedis()
+    if (!redis.isReady) throw new Error('Redis not ready')
     const result = await redis.eval(SCRIPT, {
       keys:      [key],
       arguments: [String(now), String(max)],
@@ -74,9 +80,9 @@ export async function checkRateLimit(
       retryAfterMs: retryAfterMs,
     }
   } catch (err) {
-    // Si Redis no está disponible, permitir el paso (fail-open) con log de warning
-    rateLimitLog.logWarn('redis unavailable, fail-open', { error: String(err) })
-    return { allowed: true, remaining: max - 1, retryAfterMs: 0 }
+    // Do not bypass shared limits when the coordinator is unavailable.
+    rateLimitLog.logWarn('Redis unavailable; sending paused')
+    return { allowed: false, remaining: 0, retryAfterMs: 3000 }
   }
 }
 

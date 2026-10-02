@@ -1,3 +1,4 @@
+import { validateCloudAssets } from '../connection'
 // Caso de uso: onboarding de un número vía Embedded Signup con Coexistence.
 // Único punto de orquestación del flujo completo.
 
@@ -29,7 +30,7 @@ export class OnboardCoexistenceUseCase {
     const appSecret = process.env.META_APP_SECRET
     const encKey    = process.env.TOKEN_ENCRYPTION_KEY
 
-    if (!appId || !appSecret || !encKey) {
+    if (!appId || !appSecret || !encKey || encKey.length < 32) {
       throw new CloudApiError('META_APP_ID, META_APP_SECRET y TOKEN_ENCRYPTION_KEY son obligatorios')
     }
 
@@ -47,6 +48,8 @@ export class OnboardCoexistenceUseCase {
     } catch {
       // Continuar con token corto si el refresh falla (ej: ya es System User token)
     }
+
+    tokenExpiresAt = await validateCloudAssets(finalToken, appId, req.wabaId, req.phoneNumberId)
 
     // 3. Obtener información real del número desde Meta
     const phoneSvc  = new PhoneNumberService(finalToken)
@@ -89,11 +92,11 @@ export class OnboardCoexistenceUseCase {
       const lineName  = phoneInfo.verified_name || phoneInfo.display_phone_number
       const ownerUid  = initiatedByUserId === 'bootstrap' ? null : initiatedByUserId
       // line_key máximo 20 chars hasta que corra migración 092 (VARCHAR(50))
-      const lineKey   = `cld_${req.phoneNumberId}`.slice(0, 20)
+      const lineKey   = `cld_${req.phoneNumberId}`
       const newLines  = await query<{ id: string }>(
         `INSERT INTO whatsapp_lines
-           (line_key, display_name, phone_number, line_type, status, is_connected, owner_user_id)
-         VALUES ($1, $2, $3, 'cloud', 'active', true, $4)
+           (line_key, display_name, phone_number, line_type, status, is_connected, sending_enabled, owner_user_id)
+         VALUES ($1, $2, $3, 'cloud', 'active', false, false, $4)
          RETURNING id`,
         [lineKey, lineName, phoneInfo.display_phone_number, ownerUid],
       )
@@ -103,6 +106,8 @@ export class OnboardCoexistenceUseCase {
       }
     }
 
+    if (resolvedLineId) await cloudNumberRepository.linkToLine(cloudNumberId, resolvedLineId)
+
     // 5. Si el número ya está verificado (re-onboarding), activar directamente
     if (phoneInfo.code_verification_status === 'VERIFIED') {
       await this.completeActivation(req.wabaId, req.phoneNumberId, finalToken, cloudNumberId)
@@ -111,7 +116,7 @@ export class OnboardCoexistenceUseCase {
         cloudNumberId, phoneNumberId: req.phoneNumberId,
         displayPhone: phoneInfo.display_phone_number,
         status: 'active',
-        message: 'Número verificado y activado. Sincronización de historial iniciada.',
+        message: 'Conexión validada. Probá recepción, envío y estados antes de habilitar campañas.',
       }
     }
 
@@ -120,7 +125,7 @@ export class OnboardCoexistenceUseCase {
       await phoneSvc.requestOTP(req.phoneNumberId, 'SMS')
       await cloudNumberRepository.updateStatus(req.phoneNumberId, 'code_sent')
     } catch {
-      // OTP ya puede estar en curso
+      throw new CloudApiError('Meta no confirmó el envío del código. Verificá el número en WhatsApp Manager.')
     }
 
     cloudMetrics.numberOnboarded(req.phoneNumberId, 'otp_pending')
@@ -159,17 +164,18 @@ export class OnboardCoexistenceUseCase {
     accessToken:   string,
     cloudNumberId: string,
   ): Promise<void> {
-    // Suscribir todos los webhooks obligatorios de Coexistence
+    const info = await new PhoneNumberService(accessToken).getInfo(phoneNumberId)
+    if (info.platform_type !== 'CLOUD_API' || info.status !== 'CONNECTED') throw new CloudApiError('El número está verificado, pero falta registrarlo en Cloud API. Usá la conexión directa con su PIN de seis dígitos.')
+    const number = await cloudNumberRepository.findByPhoneNumberId(phoneNumberId)
     const webhookSvc = new WebhookSubscriptionService(accessToken)
-    await webhookSvc.subscribeFields(wabaId, [...COEXISTENCE_WEBHOOK_FIELDS])
-
+    await webhookSvc.subscribeFields(wabaId, number?.coexistenceEnabled ? [...COEXISTENCE_WEBHOOK_FIELDS] : ['messages','message_template_status_update'])
     await cloudNumberRepository.updateStatus(phoneNumberId, 'active')
-    await storeToken(phoneNumberId, accessToken, null)
-
-    // Sync asíncrona: no bloquea la respuesta al usuario
-    runInitialCoexistenceSync(wabaId, phoneNumberId, accessToken, 180)
-      .catch(err => createLogger({ correlationId: createCorrelationId(), phoneNumberId, operation: 'onboard_sync' }).logError('initial sync failed', err))
+    if (number?.whatsappLineId) await query("UPDATE whatsapp_lines SET is_connected=true WHERE id=$1", [number.whatsappLineId])
+    // Token expiry was verified during onboarding; never overwrite it with null here.
+    if (number?.coexistenceEnabled) {
+      await runInitialCoexistenceSync(wabaId, phoneNumberId, accessToken, 180)
+        .catch(() => cloudNumberRepository.recordSyncError(phoneNumberId, 'initial', 'No se pudo iniciar la sincronización; reintentá desde la línea.'))
+    }
   }
 }
-
 export const onboardCoexistenceUseCase = new OnboardCoexistenceUseCase()

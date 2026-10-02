@@ -13,14 +13,11 @@ export async function handleEchoMessage(
 ): Promise<void> {
   const log = createLogger({ correlationId, phoneNumberId, operation: 'echo_message' })
 
-  const contactPhone = `+${msg.from}`
+  if (!msg.to) return
+  const contactPhone = `+${msg.to.replace(/^\+/, '')}`
 
-  await conversationRepository.openWindow(phoneNumberId, contactPhone, 'customer_initiated')
-
-  const preview = msg.type === 'text' ? (msg.text?.body?.slice(0, 100) ?? '') : `[${msg.type}]`
-  const convId  = await conversationRepository.upsertWithMessage({
-    phoneNumberId, contactPhone, lastMessagePreview: preview,
-  })
+  // An outbound echo cannot open the customer's service window.
+  const convId = await conversationRepository.upsertForOutbound(phoneNumberId, contactPhone)
 
   await messageRepository.insertEcho({
     conversationId: convId, phoneNumberId,

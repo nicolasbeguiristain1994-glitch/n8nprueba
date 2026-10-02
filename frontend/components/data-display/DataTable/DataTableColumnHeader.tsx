@@ -29,7 +29,7 @@ export function DataTableColumnHeader<TData, TValue>({
 
   return (
     <button
-      onClick={() => column.toggleSorting(sorted === 'asc')}
+      onClick={() => sorted === 'desc' ? column.clearSorting() : column.toggleSorting(sorted === 'asc')}
       className={cn(
         'flex items-center gap-1.5 text-xs font-medium text-muted-foreground',
         'hover:text-foreground transition-colors group -ml-1 px-1 py-0.5 rounded',

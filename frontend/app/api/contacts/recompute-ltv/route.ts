@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
   const isCronCall = cronSecret && process.env.CRON_SECRET && cronSecret === process.env.CRON_SECRET
 
   if (!isCronCall) {
-    const auth = await checkPermissionWithUser(req, 'contacts', 'manage')
+    const auth = await checkPermissionWithUser(req, 'settings', 'manage')
     if (!auth.ok) return auth.response
   }
 
@@ -30,6 +30,6 @@ export async function POST(req: NextRequest) {
     if (err instanceof LtvRecomputeAlreadyRunningError) {
       return NextResponse.json({ error: err.message }, { status: 409 })
     }
-    throw err
+    return NextResponse.json({ error: 'No se pudo recalcular LTV. Revisá la instalación y volvé a intentarlo.' }, { status: 500 })
   }
 }

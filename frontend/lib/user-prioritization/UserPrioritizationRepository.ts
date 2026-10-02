@@ -1,4 +1,6 @@
-import { query } from '@/lib/db'
+import { Client } from 'pg'
+import { priorityAccess, type PriorityAccess } from './access'
+import { getLongRunningClient, query } from '@/lib/db'
 import type {
   ContactMetricsRow,
   ContactPriorityScore,
@@ -60,6 +62,47 @@ interface CountRow { total: string }
 // ── Repository ────────────────────────────────────────────────────────────────
 
 export class UserPrioritizationRepository {
+  constructor(private readonly client?: Client) {}
+  private prepared = false
+  private query: typeof query = async (sql, params) => this.client
+    ? (await this.client.query(sql, params)).rows
+    : query(sql, params)
+
+  async withRecomputeSession<T>(work: (repo: UserPrioritizationRepository) => Promise<T>): Promise<T> {
+    const client = await getLongRunningClient()
+    try { return await work(new UserPrioritizationRepository(client)) }
+    finally { await client.query('ROLLBACK').catch(() => undefined); await client.end() }
+  }
+
+  async prepareMetrics(): Promise<void> {
+    if (!this.client) throw new Error('Recompute requires a dedicated transaction')
+    await this.client.query('BEGIN')
+    this.prepared = true
+    await this.client.query(`CREATE TEMP TABLE priority_links ON COMMIT DROP AS
+      SELECT DISTINCT contact_id, platform, username_lower FROM casino_contact_account_links`)
+    await this.client.query(`CREATE INDEX ON priority_links(contact_id); ANALYZE priority_links`)
+    await this.client.query(`
+      CREATE TEMP TABLE priority_movements ON COMMIT DROP AS
+      WITH movements AS MATERIALIZED (
+        SELECT platform, lower(username) username_lower, max(fecha) last_movement
+        FROM casino_transactions WHERE tipo IN ('carga','retiro') AND platform IN ('zeus','bet30','ganamos','argenbet') AND fecha <= (CURRENT_TIMESTAMP AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+        GROUP BY platform, lower(username)
+      )
+      SELECT l.contact_id, (max(t.last_movement)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') last_movement
+      FROM priority_links l JOIN movements t USING(platform,username_lower) GROUP BY l.contact_id`)
+    await this.client.query(`      CREATE UNIQUE INDEX ON priority_movements(contact_id); ANALYZE priority_movements;
+      CREATE TEMP TABLE priority_ltv(contact_id uuid, ltv_score int, ltv_tier text) ON COMMIT DROP;
+      CREATE UNIQUE INDEX ON priority_ltv(contact_id)`)
+    const [ltv] = await this.query<{ available: boolean }>("SELECT to_regclass('player_ltv') IS NOT NULL AS available")
+    if (ltv.available) await this.client.query(`INSERT INTO priority_ltv
+      SELECT DISTINCT ON (l.contact_id) l.contact_id, pl.ltv_score, pl.tier_ltv
+      FROM priority_links l JOIN casino_players cp
+        ON cp.username_lower=l.username_lower AND cp.platform IS NOT DISTINCT FROM l.platform
+      JOIN player_ltv pl ON pl.casino_player_id=cp.id
+      ORDER BY l.contact_id, pl.ltv_score DESC NULLS LAST`)
+
+  }
+
   /**
    * Carga métricas crudas de contacts en batches.
    * Incluye columnas monetarias (NULL mientras no estén importadas).
@@ -78,14 +121,15 @@ export class UserPrioritizationRepository {
         c.last_name,
         c.status,
         c.segment,
-        c.last_deposit_at,
+        ${this.prepared ? 'GREATEST(c.last_deposit_at, m.last_movement)' : 'c.last_deposit_at'} AS last_deposit_at,
         c.total_deposits,
         c.total_deposit_amount,
         c.last_deposit_amount,
-        c.do_not_contact,
+        (c.do_not_contact OR EXISTS (SELECT 1 FROM blacklist b WHERE b.phone_number_normalized=c.phone_number AND b.removed_at IS NULL)) AS do_not_contact,
         c.opt_in_marketing,
         c.deleted_at
       FROM contacts c
+      ${this.prepared ? 'LEFT JOIN priority_movements m ON m.contact_id=c.id' : ''}
       WHERE c.phone_number IS NOT NULL
         AND c.phone_number <> ''
         ${afterId ? 'AND c.id > $2' : ''}
@@ -93,7 +137,7 @@ export class UserPrioritizationRepository {
       LIMIT $1
     `
     const params: unknown[] = afterId ? [limit, afterId] : [limit]
-    const rows = await query<MetricsDbRow>(sql, params)
+    const rows = await this.query<MetricsDbRow>(sql, params)
     return rows.map(mapMetrics)
   }
 
@@ -116,7 +160,7 @@ export class UserPrioritizationRepository {
       FROM contacts c
       WHERE c.id = $1
     `
-    const rows = await query<MetricsDbRow>(sql, [contactId])
+    const rows = await this.query<MetricsDbRow>(sql, [contactId])
     return rows[0] ? mapMetrics(rows[0]) : null
   }
 
@@ -135,7 +179,7 @@ export class UserPrioritizationRepository {
       WHERE contact_id = ANY($1)
       GROUP BY contact_id
     `
-    const rows = await query<{ contact_id: string; days_ago: number }>(sql, [contactIds])
+    const rows = await this.query<{ contact_id: string; days_ago: number }>(sql, [contactIds])
     return new Map(rows.map(r => [r.contact_id, r.days_ago]))
   }
 
@@ -230,7 +274,7 @@ export class UserPrioritizationRepository {
         ltv_tier             = EXCLUDED.ltv_tier
     `
 
-    await query(sql, [
+    await this.query(sql, [
       scores.map(s => s.contactId),
       scores.map(s => s.priorityScore),
       scores.map(s => s.reactivationSegment),
@@ -262,6 +306,10 @@ export class UserPrioritizationRepository {
     const broadcasted = filters.broadcasted ?? false
     const conditions: string[] = [
       'cps.is_eligible = true',
+      'c.deleted_at IS NULL',
+      "c.status IN ('active','inactive')",
+      'c.opt_in_marketing = true AND c.do_not_contact = false',
+      'NOT EXISTS (SELECT 1 FROM blacklist b WHERE b.phone_number_normalized=c.phone_number AND b.removed_at IS NULL)',
       `cps.is_broadcasted = ${broadcasted}`,
     ]
     const params: unknown[]    = []
@@ -296,9 +344,11 @@ export class UserPrioritizationRepository {
       params.push(filters.runId)
     }
 
-    const where = `WHERE ${conditions.join(' AND ')}`
+    const scope = priorityAccess(filters.access, params.length)
+    params.push(...scope.params); p = params.length + 1
+    const where = `WHERE ${conditions.join(' AND ')}${scope.sql}`
 
-    const [countRow] = await query<CountRow>(
+    const [countRow] = await this.query<CountRow>(
       `SELECT COUNT(*) AS total
        FROM contact_priority_scores cps
        JOIN contacts c ON c.id = cps.contact_id
@@ -344,12 +394,16 @@ export class UserPrioritizationRepository {
         LIMIT 1
       ) csh ON true
       ${where}
-      ORDER BY cps.priority_score DESC, cps.reactivation_segment
+      ORDER BY cps.priority_score DESC, cps.reactivation_segment, c.id
       LIMIT $${p++} OFFSET $${p++}
     `
-    const rows = await query<PrioritizedDbRow>(dataSql, [...params, pageSize, offset])
+    const rows = await this.query<PrioritizedDbRow>(dataSql, [...params, pageSize, offset])
 
+    const [job] = await this.query<{ computed_at: Date | null; is_running: boolean }>(
+      `SELECT last_success_at AS computed_at, is_running FROM system_jobs WHERE job_name='prioritization_recompute'`)
     return {
+      computedAt: job?.computed_at ? new Date(job.computed_at).toISOString() : null,
+      recomputing: job?.is_running ?? false,
       data:       rows.map(mapPrioritized),
       total,
       page,
@@ -405,6 +459,11 @@ export class UserPrioritizationRepository {
   ): Promise<Map<string, { ltvScore: number; ltvTier: ValueTier }>> {
     if (contactIds.length === 0) return new Map()
 
+    if (this.prepared) {
+      const rows = await this.query<LtvDbRow>('SELECT contact_id, ltv_score, ltv_tier FROM priority_ltv WHERE contact_id=ANY($1::uuid[])', [contactIds])
+      return new Map(rows.map(r => [r.contact_id, { ltvScore: Number(r.ltv_score), ltvTier: r.ltv_tier as ValueTier }]))
+    }
+
     const sql = `
       SELECT DISTINCT ON (l.contact_id)
         l.contact_id AS contact_id,
@@ -419,7 +478,7 @@ export class UserPrioritizationRepository {
       ORDER BY l.contact_id, pl.ltv_score DESC NULLS LAST
     `
     try {
-      const rows = await query<LtvDbRow>(sql, [contactIds])
+      const rows = await this.query<LtvDbRow>(sql, [contactIds])
       const map = new Map<string, { ltvScore: number; ltvTier: ValueTier }>()
       for (const row of rows) {
         map.set(row.contact_id, {
@@ -456,7 +515,7 @@ export class UserPrioritizationRepository {
         AND (is_running = false OR expires_at < NOW())
       RETURNING job_name
     `
-    const rows = await query<{ job_name: string }>(sql, [instanceId, lockToken])
+    const rows = await this.query<{ job_name: string }>(sql, [instanceId, lockToken])
     return rows.length > 0
   }
 
@@ -488,7 +547,7 @@ export class UserPrioritizationRepository {
       FROM system_jobs
       WHERE job_name = 'prioritization_recompute'
     `
-    const rows = await query<{ last_complete_run_id: string | null }>(sql, [])
+    const rows = await this.query<{ last_complete_run_id: string | null }>(sql, [])
     return rows[0]?.last_complete_run_id ?? null
   }
 
@@ -507,6 +566,7 @@ export class UserPrioritizationRepository {
     result: Record<string, unknown>,
     success: boolean,
   ): Promise<boolean> {
+    if (!success && this.prepared) { await this.client!.query('ROLLBACK'); this.prepared = false }
     const sql = success
       ? `
         UPDATE system_jobs
@@ -536,7 +596,11 @@ export class UserPrioritizationRepository {
           AND lock_token = $1
         RETURNING job_name
       `
-    const rows = await query<{ job_name: string }>(sql, [lockToken, JSON.stringify(result)])
+    const rows = await this.query<{ job_name: string }>(sql, [lockToken, JSON.stringify(result)])
+    if (success && this.prepared) {
+      await this.client!.query(rows.length > 0 ? 'COMMIT' : 'ROLLBACK')
+      this.prepared = false
+    }
     return rows.length > 0
   }
 
@@ -544,24 +608,28 @@ export class UserPrioritizationRepository {
    * Persiste el resultado de una corrida en la tabla de historial (append-only).
    * Se llama tanto en éxito como en fallo/revocación para tener trazabilidad completa.
    */
-  async markBroadcasted(contactId: string, userName: string): Promise<boolean> {
-    const rows = await query<{ contact_id: string }>(
-      `UPDATE contact_priority_scores
+  async markBroadcasted(contactId: string, userName: string, access?: PriorityAccess): Promise<boolean> {
+    const scope = priorityAccess(access, 2)
+    const rows = await this.query<{ contact_id: string }>(
+      `UPDATE contact_priority_scores cps
        SET is_broadcasted = true, broadcasted_at = NOW(), broadcasted_by = $2
-       WHERE contact_id = $1 AND is_eligible = true
-       RETURNING contact_id`,
-      [contactId, userName],
+       FROM contacts c
+       WHERE cps.contact_id = $1 AND c.id=cps.contact_id AND cps.is_eligible = true AND c.deleted_at IS NULL${scope.sql}
+       RETURNING cps.contact_id`,
+      [contactId, userName, ...scope.params],
     )
     return rows.length > 0
   }
 
-  async unmarkBroadcasted(contactId: string): Promise<boolean> {
-    const rows = await query<{ contact_id: string }>(
-      `UPDATE contact_priority_scores
+  async unmarkBroadcasted(contactId: string, access?: PriorityAccess): Promise<boolean> {
+    const scope = priorityAccess(access, 1)
+    const rows = await this.query<{ contact_id: string }>(
+      `UPDATE contact_priority_scores cps
        SET is_broadcasted = false, broadcasted_at = NULL, broadcasted_by = NULL
-       WHERE contact_id = $1
-       RETURNING contact_id`,
-      [contactId],
+       FROM contacts c
+       WHERE cps.contact_id = $1 AND c.id=cps.contact_id AND c.deleted_at IS NULL${scope.sql}
+       RETURNING cps.contact_id`,
+      [contactId, ...scope.params],
     )
     return rows.length > 0
   }
@@ -574,7 +642,7 @@ export class UserPrioritizationRepository {
         error_message, instance_id
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
     `
-    await query(sql, [
+    await this.query(sql, [
       run.runId,
       run.startedAt.toISOString(),
       run.finishedAt.toISOString(),
@@ -625,14 +693,14 @@ function mapPrioritized(row: PrioritizedDbRow): PrioritizedContact {
     priorityScore:       parseFloat(row.priority_score),
     reactivationSegment: row.reactivation_segment as ReactivationSegment | null,
     valueTier:           row.value_tier as ValueTier,
-    daysInactive:        row.days_inactive ? parseInt(row.days_inactive, 10) : null,
+    daysInactive:        row.days_inactive != null ? Number(row.days_inactive) : null,
     daysSinceLastMessage: row.days_since_last_message !== null && row.days_since_last_message !== undefined
       ? parseInt(String(row.days_since_last_message), 10)
       : null,
     isBroadcasted:       row.is_broadcasted,
     broadcastedAt:       row.broadcasted_at ? new Date(row.broadcasted_at) : null,
     broadcastedBy:       row.broadcasted_by ?? null,
-    ltvScore:            row.ltv_score ? parseInt(row.ltv_score, 10) : null,
+    ltvScore:            row.ltv_score != null ? Number(row.ltv_score) : null,
     ltvTier:             (row.ltv_tier as ValueTier | null) ?? null,
   }
 }

@@ -10,11 +10,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params
   if (!isUUID(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
 
-  const rows = await query<{ name: string; category: string; language: string; components: unknown; status: string }>(
-    `SELECT name, category, language, components, status FROM whatsapp_templates WHERE id = $1`, [id]
+  const rows = await query<{ name: string; category: string; language: string; components: unknown; status: string; waba_id: string | null }>(
+    `SELECT name, category, language, components, status, waba_id FROM whatsapp_templates WHERE id = $1`, [id]
   )
   if (!rows[0]) return NextResponse.json({ error: 'Plantilla no encontrada' }, { status: 404 })
   const tpl = rows[0]
+  if (tpl.waba_id != null) {
+    return NextResponse.json({
+      error: 'Editá esta plantilla importada en Meta y usá «Sincronizar desde Meta» en Campañas para actualizar el catálogo.',
+    }, { status: 409 })
+  }
 
   try {
     const result = await submitTemplateToMeta({

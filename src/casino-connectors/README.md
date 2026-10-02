@@ -14,8 +14,6 @@ src/casino-connectors/
 │   └── ZeusConnector.js         ← implementación Zeus Casino (backend completo)
 ├── bet30/
 │   └── Bet30Connector.js        ← Bet30 skin de Zeus (hereda ZeusConnector)
-├── argenbet/
-│   └── ArgenBetConnector.js     ← implementación ArgenBet (fase 2, ver sección propia abajo)
 ├── index.js                     ← factory principal
 └── README.md
 src/config/
@@ -24,14 +22,12 @@ src/config/
 
 ## Plataformas registradas
 
-| Plataforma | Tipo       | Clase              | Backend                               | Variables de entorno                       |
-|------------|------------|---------------------|----------------------------------------|---------------------------------------------|
-| `zeus`     | `zeus`     | `ZeusConnector`      | `https://local-admin2.zeuscasino.fun` | `ZEUS_API_KEY`, `ZEUS_PLAYER_TOKEN`         |
-| `bet30`    | `bet30`    | `Bet30Connector`     | `https://local-admin2.bet30.world`    | `BET30_API_KEY`, `BET30_PLAYER_TOKEN`       |
-| `argenbet` | `argenbet` | `ArgenBetConnector`  | `https://admin.argenbet.net`          | `ARGENBET_PLAYER_TOKEN` (Bearer, sin API key) |
-| `ganamos`  | `ganamos`  | `GanamosConnector`   | `https://agents.ganamosnet.org`       | `GANAMOS_<AGENTE>_SESSION_COOKIE` (dev) o `GANAMOS_<AGENTE>_USER`+`_PASSWORD` — una sesión por agente, sin token de plataforma |
+| Plataforma | Tipo    | Clase                | Backend                           | Variables de entorno                     |
+|------------|---------|----------------------|-----------------------------------|------------------------------------------|
+| `zeus`     | `zeus`  | `ZeusConnector`      | `https://local-admin2.zeuscasino.fun` | `ZEUS_API_KEY`, `ZEUS_PLAYER_TOKEN`  |
+| `bet30`    | `bet30` | `Bet30Connector`     | `https://local-admin2.bet30.world`    | `BET30_API_KEY`, `BET30_PLAYER_TOKEN`|
 
-Variables opcionales de override de base URL: `ZEUS_API_BASE`, `BET30_API_BASE`, `ARGENBET_API_BASE`.
+Variables opcionales de override de base URL: `ZEUS_API_BASE`, `BET30_API_BASE`.
 
 ## Cómo agregar una nueva plataforma
 
@@ -139,6 +135,18 @@ El selector de plataforma del dashboard se actualiza automáticamente al agregar
 
 ---
 
+## Bonos como depósitos (decisión del usuario: 2026-09-15)
+
+El usuario aclaró: «solo en zeus deben poner los bonos como deposito. si ves algo similar en otra plataforma, primero consultame». Solo para la plataforma con `config.name === 'zeus'`, una descripción con la palabra completa `bono` o `bonos`, sin distinguir mayúsculas, se normaliza como `tipo: carga` cuando no tenía ya un tipo carga/retiro reconocido. Por lo tanto, los depósitos y sus totales de Zeus incluyen estos bonos. Se conservan ID, monto con su normalización habitual, fecha y descripción original; aplican las mismas validaciones y deduplicación.
+
+Bet30 y cualquier otra plataforma conservan su clasificación anterior aunque compartan con Zeus el conector o el formato de API. Un bono sin carga/retiro reconocido sigue siendo inválido: bloquea el preview y limita la cobertura del sync normal; no se registra automáticamente como depósito. Antes de agregar una regla equivalente en otra plataforma hay que consultar al usuario.
+
+Se mantiene la prioridad existente: `Retiro de bono` sigue siendo retiro, `Carga de bono` sigue siendo carga y los movimientos `indirecto` continúan excluidos. Un fragmento de otro término o identificador (`abono`, `Josébono`, `bono_player`) no alcanza para reconocer un bono. Otros tipos desconocidos siguen contando como inválidos.
+
+Esta regla afecta la normalización de las consultas posteriores, incluido el preview. No es un backfill ni modifica por sí sola filas históricas, agregados o cursores. Una ingesta real sigue sujeta a los controles de pausa y a la aprobación correspondiente.
+
+---
+
 ## NormalizedTransaction — formato estándar
 
 Contrato que todo `normalizeTransactions()` debe cumplir:
@@ -146,11 +154,10 @@ Contrato que todo `normalizeTransactions()` debe cumplir:
 | Campo           | Tipo              | Descripción                                        |
 |-----------------|-------------------|----------------------------------------------------|
 | `id_rec`        | `string \| null`  | ID único del registro en la plataforma (si existe) |
-| `source_id`     | `string \| null`  | ID crudo tal cual lo devuelve la API (opcional — solo lo usan conectores construidos sobre la identidad del importador de Excel, ver Argenbet abajo). `null`/ausente para Zeus/Bet30, que no lo necesitan. |
 | `username`      | `string`          | Username del jugador                               |
 | `agente`        | `string`          | Username del agente responsable (del response API) |
 | `tipo`          | `'carga'|'retiro'`| Tipo de transacción                                |
-| `monto`         | `number \| string`| `Math.abs(rawValue)` — sin redondear (D3: cargar/persistir cargas y retiros preserva centavos). Zeus usa `number`; Argenbet usa un string de 2 decimales fijos (`toFixed(2)`), igual convención que `src/casino-import/excel.js`, para no introducir error de punto flotante antes de llegar a SQL. |
+| `monto`         | `number`          | `Math.round(Math.abs(rawValue))`                   |
 | `fecha`         | `string`          | `YYYY-MM-DD` en timezone local de la plataforma    |
 | `fecha_hora_utc`| `string \| null`  | Timestamp ISO UTC completo si disponible           |
 | `raw_detalles`  | `string`          | Descripción original de la transacción             |
@@ -163,30 +170,39 @@ Los subclases heredan y no necesitan reimplementar:
 
 | Método                                  | Descripción                                                             |
 |-----------------------------------------|-------------------------------------------------------------------------|
-| `recomputePlayers(normalizedTxs)`       | Recompute (no acumula) `casino_players` desde `casino_transactions`, para los usernames tocados en esta corrida — un solo `INSERT...SELECT` con `SUM`/`COUNT`/`MIN`/`MAX` en SQL |
-| `insertTransactions(agente, txs)`       | Batch insert atómico en `casino_transactions` (BEGIN/COMMIT/ROLLBACK), estampa `platform` y, si el conector lo provee, `source_id` |
-| `syncAgent(agente, desde, hasta)`       | Pipeline completo para un agente                                        |
+| `normalizeWithStats(raw)`               | `{rows, invalid, excluded}`. Default conservador: toda fila descartada cuenta como inválida (certeza limitada). Sobrescribir si hay exclusiones esperadas |
+| `prepareTransactions(normalizedTxs)`    | Normaliza `id_rec` (0/negativo/no numérico = sin ID), dedup en el lote, contadores de cobertura |
+| `writeTransactions(client, agente, p)`  | Inserta en `casino_transactions` con `platform = config.name` (dedup por plataforma + ID) |
+| `recomputePlayers(client, usernames)`   | Recalcula `casino_players` desde `casino_transactions` y **asigna** (no suma) |
+| `persistSync(agente, p, hooks)`         | Ingesta + recompute (+ hooks del runner) en UNA transacción             |
+| `syncAgent(agente, desde, hasta, hooks)`| Pipeline completo para un agente y un rango                             |
 | `_validateEnvVars(varNames)`            | Valida env vars en constructor — falla rápido antes de cualquier fetch  |
 | `_fetchWithRetry(url, opts, context)`   | fetch con reintentos y backoff exponencial (ver política abajo)         |
-| `_assertNoIdentityCollisions(platform, chunk, client)` | Fase 2: antes de insertar un batch con `id_rec`, busca filas existentes con el mismo `(platform, id_rec)` y compara `source_id`/`monto`/`username`/`tipo`/`fecha`/`agente`. Si hay discordancia, **lanza** (nunca pisa datos con `ON CONFLICT`) — ver detalle abajo. |
 
-### Atomicidad en insertTransactions
+### Atomicidad e idempotencia (persistSync)
 
-Todos los batches de `casino_transactions` para un agente se ejecutan dentro de una única transacción PostgreSQL. Si cualquier batch falla a mitad de camino, se hace `ROLLBACK` completo — nunca queda un estado parcialmente insertado.
+Por cada agente y tramo de fechas, en una única transacción PostgreSQL:
 
-### Colisiones de identidad (fase 2)
+1. `INSERT` de los movimientos con su plataforma (`ON CONFLICT (platform, id_rec)`; sin ID, clave por día).
+2. `pg_advisory_xact_lock` por jugador (orden de clave, sin deadlocks).
+3. Recompute de los jugadores tocados desde `casino_transactions`, asignando totales.
+4. Hooks del runner: registro del rango y avance del cursor.
 
-`insertTransactions` acepta `tx.source_id` (columna agregada por la migración 126, opcional: Zeus/Bet30 nunca lo traen). Antes de cada `INSERT ... ON CONFLICT (platform, id_rec)`:
+Si cualquier paso falla se hace `ROLLBACK` completo. Repetir el mismo rango N veces
+deja los mismos totales. `casino_players` sigue siendo único por `LOWER(username)`
+(D2 pendiente, ver `docs/PLAN-METRICAS-4-PLATAFORMAS.md`).
 
-1. `_dedupeIntraBatch` colapsa filas idénticas que comparten `(platform, id_rec)` dentro del **mismo** batch (p.ej. dos páginas de fetch solapadas trajeron la misma transacción) — Postgres rechaza un `INSERT` que toque el mismo target de `ON CONFLICT` dos veces, incluso si las filas son iguales. Si dos filas del mismo batch comparten `id_rec` pero **discrepan**, también lanza (no solo contra lo que ya está en la base). Las filas sin `id_rec` (Zeus/Bet30) tienen su propio `_dedupeIntraBatchWithoutId`, con la misma lógica pero clave `(platform, fecha, lower(username), tipo, monto, agente)` — el target de `ON CONFLICT` que usan esas filas.
-2. `_assertNoIdentityCollisions` consulta si ya existe una fila en la base con ese `(platform, id_rec)` y, si existe, exige que coincidan `source_id` (cuando ambos lo tienen), `monto`/`username`/`tipo` **y también `fecha`/`agente`** — dos registros pueden compartir `id_rec`/monto/usuario/tipo y aun así discrepar en la fecha o el agente (p.ej. una corrección de fecha vía Excel), y eso también es una colisión real, no un no-op de re-sync. El `SELECT` trae `fecha::text` explícitamente para comparar siempre strings `YYYY-MM-DD`, nunca el objeto `Date` que node-pg devuelve por defecto para columnas `DATE`; `agente` se compara con `trim().toLowerCase()`.
-3. La comparación de `monto` (`_montoEquals`/`_canonicalMonto`) canoniza el string decimal exacto (signo, ceros de más recortados) **sin pasar nunca por `Number`/`toFixed`** — node-pg devuelve `NUMERIC` como string (`"100.00"`) mientras que un conector puede traer un `number` (Zeus, `100`) o un string ya formateado (Argenbet); comparar con `String(a) !== String(b)` a secas rompería **todo** re-sync de Zeus, y pasar por `Number` perdería precisión en montos por encima de `Number.MAX_SAFE_INTEGER` (p.ej. `9007199254740991.01` vs `.02` se verían "iguales"). Un monto `null`/inválido nunca es igual a nada, ni siquiera a otro inválido.
+La orquestación (lock por plataforma, cursor por agente, registro de corridas) vive en
+`src/casino-connectors/sync/` — ver `docs/runbooks/centro-monitoreo.md`.
 
-Si hay discordancia real, **lanza un error** y el `ROLLBACK` de `insertTransactions` deshace todo el batch — nunca se resuelve la colisión sobreescribiendo en silencio. Esto es lo que garantiza que la misma transacción ingresada por la API y por el importador de Excel (mismo `id_rec` derivado del mismo `source_id`) dedupliquen en una sola fila, mientras que dos transacciones con el mismo monto pero IDs distintos siguen siendo filas independientes.
+### Reglas para conectores nuevos
 
-El `ON CONFLICT DO UPDATE` solo hace backfill de `fecha_hora_utc`/`source_id` cuando la fila existente realmente carece de esos valores (`casino_transactions.X IS NULL AND EXCLUDED.X IS NOT NULL`). **`insertedTxCount` cuenta exclusivamente inserts reales**, nunca ese backfill: ambos `INSERT` usan `RETURNING (xmax = 0) AS inserted` — `xmax = 0` es la señal propia de Postgres de que la fila viene de un `INSERT` genuino, no de la rama `ON CONFLICT DO UPDATE` — y `insertTransactions` suma solo las filas donde `inserted` vino `true`. Antes se sumaba `result.rowCount`, que cuenta cualquier fila tocada por el `UPDATE` de backfill; como Zeus/Bet30 nunca traen `source_id`, cada replay de la misma ventana volvía a "insertar" el mismo dato una y otra vez. Correr el mismo sync 10 veces ahora deja `insertedTxCount = 0` a partir de la segunda corrida.
-
-`insertTransactions` toma el mismo advisory lock nombrado que usa `scripts/import-casino-excel.js` (`pg_advisory_xact_lock(hashtext('casino-excel-import'))`) de forma **incondicional**, para todo batch — no solo cuando trae `source_id`. El importador acepta archivos Movimientos de cualquier plataforma, así que un sync de Zeus/Bet30 (sin `source_id`, camino `_batchInsertWithoutId`) puede competir igual contra una importación Excel concurrente de esa misma plataforma; acotar el lock a `hasSourceId` dejaba esa ruta sin protección contra el mismo TOCTOU (chequeo-de-colisión + insert intercalado con el `INSERT` del importador). El lock sigue acotado a la transacción de Postgres (`xact_lock`, se libera solo en `COMMIT`/`ROLLBACK`) y nunca se retiene durante una llamada HTTP.
+- `fetchTransactions` debe **lanzar** ante un cuerpo con formato desconocido (usar
+  `SyncError('INVALID_RESPONSE', …)`); devolver `[]` solo si la API dijo "cero movimientos".
+  Un `[]` inventado avanza el cursor sobre datos que nunca se leyeron.
+- Los mensajes de error no pueden incluir cuerpos de respuesta, URLs ni mensajes de
+  errores de red: usar status HTTP (`httpStatus`) y códigos. El runner igual persiste solo
+  mensajes genéricos para errores que no sean `SyncError`.
 
 ### Política de reintentos (_fetchWithRetry)
 
@@ -235,7 +251,7 @@ Configurar con `LOG_LEVEL=debug|info|warn|error` en el entorno. En `NODE_ENV=tes
 
 ```bash
 # Desde la raíz del repo
-npm test                  # suite completa
+npm test                  # suite completa (76 tests)
 npm run test:coverage     # con reporte de cobertura
 ```
 
@@ -243,21 +259,31 @@ Archivos de tests en `tests/casino-connectors/`:
 
 | Archivo                          | Tests | Cubre                                          |
 |----------------------------------|-------|------------------------------------------------|
-| `BaseCasinoConnector.test.js`    | 56    | atomicidad, reintentos + re-auth en 401/403, recomputePlayers (estructura SQL), colisiones de identidad `source_id`/`fecha`/`agente` (fase 2), canonicalización exacta de `monto` sin `Number`/`toFixed`, conteo de `insertedTxCount` vía `RETURNING xmax=0` (nunca cuenta backfills), advisory lock incondicional (con y sin `source_id`) |
-| `ZeusConnector.test.js`          | 36    | fetch, normalización, fechas UTC→ART, healthCheck, auto-login + redacción de secretos |
-| `ArgenBetConnector.test.js`      | 46    | paginación, rol INCOME/OUTCOME (H10), timezone AR, precisión decimal, re-auth en 401, identidad compatible con el importador de Excel, colisiones intra/entre-batch, advisory lock compartido |
-| `GanamosConnector.test.js`       | 73    | login por agente (cookie estática/adaptador), cookie jar real (rotación vía `Set-Cookie`, merge/borrado por nombre), ventana de 24h, paginación y corte en 500, `status!==0`, lado jugador/`operation`, validación estricta de `id`/`from_user`/`to_user`/`amount`, `created_at` naive-UTC, identidad compatible con el importador de Excel, aislamiento de cookies entre agentes concurrentes, re-auth scoped en 401, agente sin credenciales no frena a otros, `checkStaleSync` |
+| `BaseCasinoConnector.test.js`    | 38    | atomicidad, reintentos, aggregate, upsert      |
+| `ZeusConnector.test.js`          | 27    | fetch, normalización, fechas UTC→ART, healthCheck |
 | `factory.test.js`                | 11    | resolución de clases, credenciales, plataforma desconocida |
-| `recompute.test.js`              | 6     | idempotencia end-to-end (D1/D2/D3) contra un fake Postgres in-memory |
 
 Todas las llamadas HTTP y los timers de espera de reintentos están mockeados → la suite corre en < 1 segundo.
 
-### Variables OAuth de Zeus y Bet30
+## Preview de una primera sincronización
 
-Para auto-login configurar también `<PLATAFORMA>_LOGIN_CLIENT_ID` y
-`<PLATAFORMA>_LOGIN_CLIENT_SECRET` (`ZEUS` o `BET30`), además de API key y
-usuario/contraseña. La configuración contiene únicamente los nombres de
-esas variables; no se guardan los valores de las credenciales en ella.
-El modo de token estático sigue disponible si no se configura auto-login.
-Ver la guía de instalación y los pendientes de login de Argenbet/Ganamos
-en `docs/runbooks/casino-api-sync-handoff.md`.
+```bash
+node scripts/sync-casino-players-live.js --preview --platform=zeus --agentes=betcoin --desde=2026-09-12 --hasta=2026-09-12
+```
+
+Exige esas opciones explícitas: plataforma `zeus` o `bet30`, exactamente un agente y un único día ya cerrado en Argentina. Cualquier otra opción se rechaza antes de conectar. Utiliza las credenciales configuradas para autenticar y consultar movimientos al proveedor; esos accesos pueden quedar registrados en el proveedor. Antes de un uso real hay que verificar el destino efectivo de PostgreSQL y los endpoints configurados.
+
+La conexión de preview solicita `default_transaction_read_only=on` y comprueba `transaction_read_only` e aislamiento en cada transacción `REPEATABLE READ READ ONLY`. Todas las consultas usan tablas `public.*` y parámetros. No invoca el runner, persistencia, locks de sincronización, secuencias ni segmentación. No crea corridas ni guarda cursores. Puede consultarse durante `CASINO_SYNC_PAUSED=1`; ese control sigue aplicándose a toda escritura normal.
+
+El JSON muestra contadores, fechas y sumas como cadenas de enteros, sin movimientos individuales, identidades de jugadores ni mensajes externos. Para los jugadores que la corrida recalcularía:
+
+- **A_current:** agregados guardados actualmente; cero para jugadores nuevos.
+- **B_existing_source:** suma del historial existente de todas las plataformas, incluidas filas sin plataforma, siguiendo las reglas actuales del writer. Si no hay fuente previa, vale cero como referencia contable; ejecutar un recompute sin fuente por sí solo dejaría la fila actual intacta.
+- **C_projected:** agregados después de aplicar conceptualmente el lote y recalcular.
+- **historical_recompute = B−A**, **new_batch = C−B** y **effective = C−A** separan la diferencia histórica del efecto del lote. Solo `effective` expresa el cambio total previsto de la corrida.
+
+También informa inserciones, timestamps completados, revisiones del proveedor que el writer conservaría sin aplicar, cambios de agente/plataforma/fechas y cursor proyectado. No clasifica histórico ni propone reparación global. Incluye huellas SHA-256 del lote y del snapshot para comparar observaciones.
+
+Bloquea el cálculo exacto (`impact: null`) ante histórico sin plataforma del mismo agente/día, colisiones globales de ID con histórico sin plataforma, filas inválidas o sin ID, conflictos fuera de los jugadores consultados, diferencias de case mapping, desbordes o empates de metadatos que dependan de un ID aún no asignado. Los límites son 5.000 movimientos, 250 jugadores y 50.000 filas históricas; superar uno bloquea el resultado. Las consultas tienen timeout de 20 s y espera de locks de 1 s.
+
+`status: complete` describe el snapshot y el lote observados, sin garantizar que el proveedor haya entregado todo ni que la base siga igual. Nunca autoriza una importación. Una futura ejecución de escritura necesita revisión del impacto y aprobación aplicable; si cambian lote o base, hay que volver a evaluarlo. Código de salida: `0` preview completo, `1` bloqueado/fallo, `2` argumentos inválidos.

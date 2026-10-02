@@ -1,20 +1,23 @@
 // frontend/app/api/marketing-calendar/route.ts
 
 import { NextRequest, NextResponse } from 'next/server'
-import { getSessionFromRequest }     from '@/lib/auth'
+import { checkPermissionWithUser } from '@/lib/permissions'
+import { validDateRange } from '@/lib/dashboard-format'
+import { isUUID } from '@/lib/validate'
 import { query }                     from '@/lib/db'
 
 // ── GET /api/marketing-calendar?start=YYYY-MM-DD&end=YYYY-MM-DD ──────────────
 
 export async function GET(req: NextRequest) {
-  const session = getSessionFromRequest(req)
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = await checkPermissionWithUser(req, 'tasks', 'read')
+  if (!auth.ok) return auth.response
+  const session = auth.user
 
   const { searchParams } = new URL(req.url)
   const start = searchParams.get('start')
   const end   = searchParams.get('end')
 
-  if (!start || !end) {
+  if (!start || !end || !validDateRange(start, end)) {
     return NextResponse.json({ error: 'start y end son requeridos' }, { status: 400 })
   }
 
@@ -41,14 +44,16 @@ export async function GET(req: NextRequest) {
 // ── POST /api/marketing-calendar ─────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const session = getSessionFromRequest(req)
-  if (!session)                  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (session.role === 'viewer') return NextResponse.json({ error: 'Forbidden' },    { status: 403 })
+  const auth = await checkPermissionWithUser(req, 'tasks', 'create')
+  if (!auth.ok) return auth.response
+  const session = auth.user
 
-  const body = await req.json()
+  const body = await req.json().catch(() => null)
+  if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Datos inválidos' }, { status: 400 })
   const { date, hour, title, consigna, image_url } = body
 
-  if (!date || !title?.trim()) {
+  if ((consigna != null && typeof consigna !== 'string') || (image_url != null && typeof image_url !== 'string') || typeof date !== 'string' || !validDateRange(date, date) || typeof title !== 'string' || !title.trim() || title.length > 500
+    || (hour != null && (!Number.isInteger(Number(hour)) || Number(hour) < 0 || Number(hour) > 23))) {
     return NextResponse.json({ error: 'date y title son requeridos' }, { status: 400 })
   }
 

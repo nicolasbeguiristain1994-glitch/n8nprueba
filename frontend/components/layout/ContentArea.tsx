@@ -39,7 +39,8 @@ export function ContentArea({
   return (
     <div
       className={cn(
-        !noPadding && 'px-4 py-6 md:px-6 md:py-6',
+        'page-content mx-auto',
+        !noPadding && 'px-4 py-5 sm:px-6 lg:px-8 lg:py-7',
         maxWidth && 'max-w-7xl mx-auto',
         className,
       )}

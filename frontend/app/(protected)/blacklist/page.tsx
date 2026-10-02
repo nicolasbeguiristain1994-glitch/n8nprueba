@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState, useRef, useCallback } from 'react'
-import * as XLSX from 'xlsx'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -163,9 +162,11 @@ export default function BlacklistPage() {
     const lower = file.name.toLowerCase()
     if (lower.endsWith('.xlsx') || lower.endsWith('.xls') || lower.endsWith('.ods')) {
       const reader = new FileReader()
-      reader.onload = (ev) => {
+      reader.onload = async (ev) => {
+        try {
         const data = ev.target?.result
         if (!data) return
+        const XLSX = await import('xlsx')
         const wb = XLSX.read(data, { type: 'array' })
         const ws = wb.Sheets[wb.SheetNames[0]]
         const rows = XLSX.utils.sheet_to_json<unknown>(ws, { header: 1 }) as unknown[][]
@@ -178,6 +179,10 @@ export default function BlacklistPage() {
           }
         }
         setImportPhones(phones)
+        } catch {
+          setImportPhones([])
+          setImportError('No se pudo leer el archivo. Volvé a seleccionarlo e intentá nuevamente.')
+        }
       }
       reader.readAsArrayBuffer(file)
     } else {
@@ -276,17 +281,17 @@ export default function BlacklistPage() {
   return (
     <div className="p-6 space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-red-100 flex items-center justify-center">
-            <ShieldOff size={18} className="text-red-600" />
+          <div className="w-9 h-9 rounded-lg bg-destructive/15 flex items-center justify-center">
+            <ShieldOff size={18} className="text-destructive" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-gray-900">Blacklist Global</h1>
-            <p className="text-sm text-gray-500">Números excluidos del envío de mensajes</p>
+            <h1 className="page-title text-foreground">Blacklist Global</h1>
+            <p className="text-sm text-muted-foreground">Números excluidos del envío de mensajes</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" onClick={handleExport} className="gap-2">
             <Download size={14} />
             Exportar CSV
@@ -307,7 +312,7 @@ export default function BlacklistPage() {
         <CardContent className="pt-4">
           <div className="flex flex-wrap gap-3 items-center">
             <div className="relative flex-1 min-w-[200px]">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Buscar por número..."
                 className="pl-8 h-8 text-sm"
@@ -348,66 +353,66 @@ export default function BlacklistPage() {
       <Card>
         <CardContent className="p-0">
           {error && (
-            <div className="p-4 text-sm text-red-600 flex items-center gap-2">
+            <div className="p-4 text-sm text-destructive flex items-center gap-2">
               <AlertTriangle size={14} /> {error}
             </div>
           )}
 
           {loading ? (
-            <div className="p-8 text-center text-sm text-gray-500">Cargando...</div>
+            <div className="p-8 text-center text-sm text-muted-foreground">Cargando...</div>
           ) : items.length === 0 ? (
             <div className="p-12 text-center">
-              <ShieldOff size={32} className="mx-auto text-gray-300 mb-3" />
-              <p className="text-sm font-medium text-gray-500">
+              <ShieldOff size={32} className="mx-auto text-muted-foreground/60 mb-3" />
+              <p className="text-sm font-medium text-muted-foreground">
                 {status === 'active' ? 'No hay números en la blacklist actualmente' : 'No se encontraron registros'}
               </p>
-              <p className="text-xs text-gray-400 mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 Los números agregados aquí quedan excluidos automáticamente de todas las campañas.
               </p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-gray-50 border-b border-gray-200">
+                <thead className="bg-background border-b border-border">
                   <tr>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Número</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Motivo</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Origen</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Agregado por</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Estado</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Número</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Motivo</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Origen</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Agregado por</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Fecha</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Estado</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Acciones</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-border">
                   {items.map(item => (
-                    <tr key={item.id} className={item.removed_at ? 'bg-gray-50 opacity-60' : 'hover:bg-gray-50'}>
+                    <tr key={item.id} className={item.removed_at ? 'bg-background opacity-60' : 'hover:bg-background'}>
                       <td className="px-4 py-3">
-                        <div className="font-mono text-sm font-medium text-gray-900">
+                        <div className="font-mono text-sm font-medium text-foreground">
                           {formatPhone(item.phone_number_normalized)}
                         </div>
                         {item.phone_number_raw !== item.phone_number_normalized &&
                          !item.phone_number_raw.startsWith('+') && (
-                          <div className="text-xs text-gray-400">{item.phone_number_raw}</div>
+                          <div className="text-xs text-muted-foreground">{item.phone_number_raw}</div>
                         )}
                       </td>
-                      <td className="px-4 py-3 text-gray-700 max-w-[200px]">
+                      <td className="px-4 py-3 text-foreground max-w-[200px]">
                         <span className="line-clamp-2">{item.reason ?? '—'}</span>
                       </td>
                       <td className="px-4 py-3">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${SOURCE_COLORS[item.source] ?? 'bg-gray-100 text-gray-700'}`}>
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${SOURCE_COLORS[item.source] ?? 'bg-muted text-foreground'}`}>
                           {SOURCE_LABELS[item.source] ?? item.source}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-gray-600 text-xs">{item.added_by_name ?? 'Sistema'}</td>
-                      <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">{formatDate(item.added_at)}</td>
+                      <td className="px-4 py-3 text-muted-foreground text-xs">{item.added_by_name ?? 'Sistema'}</td>
+                      <td className="px-4 py-3 text-muted-foreground text-xs whitespace-nowrap">{formatDate(item.added_at)}</td>
                       <td className="px-4 py-3">
                         {item.removed_at ? (
-                          <Badge variant="outline" className="text-xs text-gray-500 border-gray-300">
+                          <Badge variant="outline" className="text-xs text-muted-foreground border-input">
                             Removido
                           </Badge>
                         ) : (
-                          <Badge className="text-xs bg-red-100 text-red-700 border-0">
+                          <Badge className="text-xs bg-destructive/15 text-destructive border-0">
                             Activo
                           </Badge>
                         )}
@@ -416,7 +421,7 @@ export default function BlacklistPage() {
                         {!item.removed_at && (
                           <button
                             onClick={() => { setDeleteTarget(item); setDeleteError(null) }}
-                            className="p-1.5 rounded hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
+                            className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
                             title="Quitar de blacklist"
                           >
                             <Trash2 size={14} />
@@ -432,15 +437,15 @@ export default function BlacklistPage() {
 
           {/* Paginación */}
           {totalPages > 1 && (
-            <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between">
-              <span className="text-xs text-gray-500">
+            <div className="px-4 py-3 border-t border-border flex flex-wrap items-center justify-between gap-3">
+              <span className="text-xs text-muted-foreground">
                 {total} número(s) en total
               </span>
               <div className="flex items-center gap-1">
                 <Button variant="ghost" size="sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>
                   Anterior
                 </Button>
-                <span className="text-xs text-gray-500 px-2">{page} / {totalPages}</span>
+                <span className="text-xs text-muted-foreground px-2">{page} / {totalPages}</span>
                 <Button variant="ghost" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>
                   Siguiente
                 </Button>
@@ -454,30 +459,30 @@ export default function BlacklistPage() {
       <Dialog open={showAdd} onOpenChange={open => { setShowAdd(open); if (!open) { setAddSuccess(null); setAddError(null); setAddPhones(''); setAddReason('') } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ShieldOff size={16} className="text-red-600" />
+            <DialogTitle className="flex flex-wrap items-center gap-2">
+              <ShieldOff size={16} className="text-destructive" />
               Agregar a Blacklist
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 pt-1">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+              <label className="block text-sm font-medium text-foreground mb-1.5">
                 Número(s) de teléfono
               </label>
               <textarea
-                className="w-full border border-gray-300 rounded-md text-sm px-3 py-2 h-28 resize-none focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                className="w-full border border-input rounded-md text-sm px-3 py-2 h-28 resize-none focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-red-500"
                 placeholder={`Ingresá uno o varios números, uno por línea:\n+5491155551234\n+5491166667890`}
                 value={addPhones}
                 onChange={e => setAddPhones(e.target.value)}
               />
-              <p className="text-xs text-gray-400 mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 Formatos aceptados: +549..., 549..., 011... El sistema normaliza automáticamente.
               </p>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Motivo</label>
+              <label className="block text-sm font-medium text-foreground mb-1.5">Motivo</label>
               <Select value={addReason} onValueChange={v => setAddReason(v ?? '')}>
                 <SelectTrigger className="text-sm">
                   <SelectValue placeholder="Seleccioná un motivo..." />
@@ -493,13 +498,13 @@ export default function BlacklistPage() {
             </div>
 
             {addError && (
-              <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded px-3 py-2">
                 <AlertTriangle size={14} /> {addError}
               </div>
             )}
 
             {addSuccess && (
-              <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2">
+              <div className="text-sm text-success bg-success/10 border border-success/20 rounded px-3 py-2">
                 {addSuccess}
               </div>
             )}
@@ -525,7 +530,7 @@ export default function BlacklistPage() {
       <Dialog open={showImport} onOpenChange={open => { setShowImport(open); if (!open) { setImportPhones([]); setImportFileName(''); setImportPreview(null); setImportSuccess(null); setImportError(null) } }}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle className="flex flex-wrap items-center gap-2">
               <Upload size={16} className="text-purple-600" />
               Importar números a Blacklist
             </DialogTitle>
@@ -533,34 +538,34 @@ export default function BlacklistPage() {
 
           <div className="space-y-4 pt-1">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-foreground mb-2">
                 Archivo (CSV, Excel o TXT)
               </label>
-              <p className="text-xs text-gray-500 mb-2">
+              <p className="text-xs text-muted-foreground mb-2">
                 El archivo debe tener los números en la primera columna, un número por fila.
                 Se aceptan formatos con o sin prefijo internacional.
               </p>
               <div
-                className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-purple-400 transition-colors"
+                className="border-2 border-dashed border-input rounded-lg p-6 text-center cursor-pointer hover:border-purple-400 transition-colors"
                 onClick={() => fileRef.current?.click()}
               >
                 {importFileName ? (
-                  <div className="flex items-center justify-center gap-2 text-sm text-gray-700">
+                  <div className="flex items-center justify-center gap-2 text-sm text-foreground">
                     <Upload size={16} className="text-purple-500" />
                     <span>{importFileName}</span>
-                    <span className="text-gray-400">({importPhones.length} filas leídas)</span>
+                    <span className="text-muted-foreground">({importPhones.length} filas leídas)</span>
                     <button
                       onClick={e => { e.stopPropagation(); setImportPhones([]); setImportFileName(''); setImportPreview(null) }}
-                      className="text-gray-400 hover:text-gray-600"
+                      className="text-muted-foreground hover:text-muted-foreground"
                     >
                       <X size={14} />
                     </button>
                   </div>
                 ) : (
                   <>
-                    <Upload size={24} className="mx-auto text-gray-400 mb-2" />
-                    <p className="text-sm text-gray-600">Hacer clic para seleccionar archivo</p>
-                    <p className="text-xs text-gray-400 mt-1">.csv, .xlsx, .xls, .txt</p>
+                    <Upload size={24} className="mx-auto text-muted-foreground mb-2" />
+                    <p className="text-sm text-muted-foreground">Hacer clic para seleccionar archivo</p>
+                    <p className="text-xs text-muted-foreground mt-1">.csv, .xlsx, .xls, .txt</p>
                   </>
                 )}
               </div>
@@ -574,7 +579,7 @@ export default function BlacklistPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">Motivo de la importación</label>
+              <label className="block text-sm font-medium text-foreground mb-1.5">Motivo de la importación</label>
               <Input
                 value={importReason}
                 onChange={e => setImportReason(e.target.value)}
@@ -596,36 +601,36 @@ export default function BlacklistPage() {
             )}
 
             {importPreview && (
-              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-2">
-                <p className="text-sm font-medium text-gray-700">Resumen de importación</p>
+              <div className="bg-background border border-border rounded-lg p-4 space-y-2">
+                <p className="text-sm font-medium text-foreground">Resumen de importación</p>
                 <div className="grid grid-cols-3 gap-3 text-center">
-                  <div className="bg-green-50 rounded p-2">
-                    <p className="text-lg font-bold text-green-700">{importPreview.inserted}</p>
-                    <p className="text-xs text-green-600">Se agregarán</p>
+                  <div className="bg-success/10 rounded p-2">
+                    <p className="text-lg font-bold text-success">{importPreview.inserted}</p>
+                    <p className="text-xs text-success">Se agregarán</p>
                   </div>
                   <div className="bg-yellow-50 rounded p-2">
                     <p className="text-lg font-bold text-yellow-700">{importPreview.skipped}</p>
                     <p className="text-xs text-yellow-600">Ya existían</p>
                   </div>
-                  <div className="bg-red-50 rounded p-2">
-                    <p className="text-lg font-bold text-red-700">{importPreview.invalid}</p>
-                    <p className="text-xs text-red-600">Inválidos</p>
+                  <div className="bg-destructive/10 rounded p-2">
+                    <p className="text-lg font-bold text-destructive">{importPreview.invalid}</p>
+                    <p className="text-xs text-destructive">Inválidos</p>
                   </div>
                 </div>
                 {importPreview.inserted === 0 && (
-                  <p className="text-xs text-gray-500 text-center">Todos los números ya estaban en blacklist o son inválidos.</p>
+                  <p className="text-xs text-muted-foreground text-center">Todos los números ya estaban en blacklist o son inválidos.</p>
                 )}
               </div>
             )}
 
             {importError && (
-              <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded px-3 py-2">
                 <AlertTriangle size={14} /> {importError}
               </div>
             )}
 
             {importSuccess && (
-              <div className="text-sm text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2">
+              <div className="text-sm text-success bg-success/10 border border-success/20 rounded px-3 py-2">
                 {importSuccess}
               </div>
             )}
@@ -651,26 +656,26 @@ export default function BlacklistPage() {
       <Dialog open={!!deleteTarget} onOpenChange={open => { if (!open) { setDeleteTarget(null); setDeleteError(null) } }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle className="flex flex-wrap items-center gap-2">
               <AlertTriangle size={16} className="text-amber-500" />
               Quitar de Blacklist
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 pt-1">
-            <p className="text-sm text-gray-700">
+            <p className="text-sm text-foreground">
               ¿Estás seguro de que querés quitar{' '}
-              <span className="font-mono font-medium text-gray-900">
+              <span className="font-mono font-medium text-foreground">
                 {deleteTarget ? formatPhone(deleteTarget.phone_number_normalized) : ''}
               </span>{' '}
               de la blacklist?
             </p>
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-muted-foreground">
               Al quitarlo, el número podrá volver a recibir mensajes de campañas.
             </p>
 
             {deleteError && (
-              <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded px-3 py-2">
                 <AlertTriangle size={14} /> {deleteError}
               </div>
             )}

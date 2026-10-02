@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
-import { lineEligibleExpr } from '@/lib/line-eligibility'
+import { campaignLineEligibleExpr } from '@/lib/line-eligibility'
 import { getAccessibleLineIds, lineVisibilityClause } from '@/lib/line-visibility'
 
 type LineHealthRow = {
@@ -85,7 +85,7 @@ export async function GET(req: Request) {
         COALESCE(lu.sent_24h,   0) AS recent_sent,
         COALESCE(lu.failed_24h, 0) AS recent_failed,
         -- Eligible = all conditions met for campaign dispatch
-        ${lineEligibleExpr('l')} AS eligible
+        ${campaignLineEligibleExpr('l')} AS eligible
       FROM whatsapp_lines l
       LEFT JOIN LATERAL (
         SELECT

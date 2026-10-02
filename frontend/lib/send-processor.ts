@@ -1,7 +1,13 @@
 import { query } from '@/lib/db'
+import { prepareCampaignRouting, getCampaignAssignedLine, campaignRoutingCondition } from '@/lib/campaign-routing'
 import { ContactFrequencyEngine } from '@/lib/contact-frequency/ContactFrequencyEngine'
 import { clog } from '@/lib/campaign-logger'
-import { getEligibleLines, sendViaEvolution } from '@/lib/campaign-distributor'
+import {
+  buildTemplatePayload, getEligibleLines, sendViaCloud, sendViaEvolution,
+  CampaignLineUnavailableError, CloudSendOutcomeUnknownError,
+  type CampaignTemplateParams,
+} from '@/lib/campaign-distributor'
+import { CloudApiError } from '@/lib/cloud-api/errors'
 
 // Política de fail-open del motor de frecuencia (ver comentario en el catch del freq gate):
 // Si el motor lanza, el envío continúa. Esta constante controla cuántos fail-opens
@@ -19,6 +25,10 @@ export type CampaignRow = {
   media_url: string; list_id: string | null; prospect_list_id: string | null
   antiblock_delay_min: number; antiblock_delay_max: number
   personalize_name: boolean; status: string; owned_by: string | null
+  message_type?: 'text' | 'template'
+  template_id?: string | null; template_name?: string | null
+  template_language?: string | null; template_params?: CampaignTemplateParams | null
+  template_waba_id?: string | null; template_status?: string | null
 }
 
 export type RecipientRow = {
@@ -97,7 +107,7 @@ export async function recoverStaleRows(campaignId: string): Promise<void> {
 
 // ── Atomic claim ─────────────────────────────────────────────────────────────
 
-export async function claimOne(campaignId: string): Promise<RecipientRow | undefined> {
+export async function claimOne(campaignId: string, eligibleLineIds: string[]): Promise<RecipientRow | undefined> {
   const rows = await query<RecipientRow>(
     `WITH claimed AS (
        UPDATE campaign_recipients
@@ -106,11 +116,12 @@ export async function claimOne(campaignId: string): Promise<RecipientRow | undef
               attempts   = attempts + 1,
               updated_at = NOW()
        WHERE  id = (
-         SELECT id
-         FROM   campaign_recipients
-         WHERE  campaign_id = $1
-           AND  status      = 'pending'
-         ORDER BY created_at
+         SELECT cr.id
+         FROM   campaign_recipients cr
+         WHERE  cr.campaign_id = $1
+           AND  cr.status = 'pending'
+           AND ${campaignRoutingCondition('cr', '$2')}
+         ORDER BY cr.created_at, cr.id
          LIMIT  1
          FOR UPDATE SKIP LOCKED
        )
@@ -125,7 +136,7 @@ export async function claimOne(campaignId: string): Promise<RecipientRow | undef
      FROM   claimed cl
      LEFT JOIN contacts  c ON c.id = cl.contact_id
      LEFT JOIN prospects p ON p.id = cl.prospect_id`,
-    [campaignId]
+    [campaignId, eligibleLineIds]
   )
   return rows[0]
 }
@@ -168,40 +179,43 @@ export async function recordFailure(
   campaignId: string,
   recipient: RecipientRow,
   personalizedMsg: string,
-  errDetail: string
+  errDetail: string,
+  preserveMessage = false,
 ): Promise<void> {
-  await query(
-    `UPDATE whatsapp_messages
-     SET status       = 'failed',
-         failed_at    = NOW(),
-         error_detail = $1,
-         updated_at   = NOW()
-     WHERE campaign_recipient_id = $2
-       AND status = 'queued'`,
-    [errDetail, recipient.id]
-  ).catch(e =>
-    clog.error({
-      event: 'record.failure.update.wm.error', campaignId, mode: 'single-line',
-      recipientId: recipient.id, error: e instanceof Error ? e.message : String(e),
-    })
-  )
-  // Safety net: insert a failed row if the pre-insert never ran (very early crash)
-  await query(
-    `INSERT INTO whatsapp_messages
-       (contact_id, campaign_id, phone_number, message_body, direction, status,
-        failed_at, error_detail, campaign_recipient_id, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, 'outbound', 'failed', NOW(), $5, $6, NOW(), NOW())
-     ON CONFLICT (campaign_recipient_id)
-       WHERE campaign_recipient_id IS NOT NULL
-     DO NOTHING`,
-    [recipient.contact_id, campaignId, recipient.phone_number,
-     personalizedMsg, errDetail, recipient.id]
-  ).catch(e =>
-    clog.error({
-      event: 'record.failure.insert.wm.error', campaignId, mode: 'single-line',
-      recipientId: recipient.id, error: e instanceof Error ? e.message : String(e),
-    })
-  )
+  if (!preserveMessage) {
+    await query(
+      `UPDATE whatsapp_messages
+       SET status       = 'failed',
+           failed_at    = NOW(),
+           error_detail = $1,
+           updated_at   = NOW()
+       WHERE campaign_recipient_id = $2
+         AND status = 'queued'`,
+      [errDetail, recipient.id]
+    ).catch(e =>
+      clog.error({
+        event: 'record.failure.update.wm.error', campaignId, mode: 'single-line',
+        recipientId: recipient.id, error: e instanceof Error ? e.message : String(e),
+      })
+    )
+    // Safety net: insert a failed row if the pre-insert never ran (very early crash)
+    await query(
+      `INSERT INTO whatsapp_messages
+         (contact_id, campaign_id, phone_number, message_body, direction, status,
+          failed_at, error_detail, campaign_recipient_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'outbound', 'failed', NOW(), $5, $6, NOW(), NOW())
+       ON CONFLICT (campaign_recipient_id)
+         WHERE campaign_recipient_id IS NOT NULL
+       DO NOTHING`,
+      [recipient.contact_id, campaignId, recipient.phone_number,
+       personalizedMsg, errDetail, recipient.id]
+    ).catch(e =>
+      clog.error({
+        event: 'record.failure.insert.wm.error', campaignId, mode: 'single-line',
+        recipientId: recipient.id, error: e instanceof Error ? e.message : String(e),
+      })
+    )
+  }
   await query(
     `UPDATE campaign_recipients
      SET status = 'failed', failed_at = NOW(), locked_at = NULL,
@@ -218,146 +232,212 @@ export async function recordFailure(
 
 // ── Send one contact ─────────────────────────────────────────────────────────
 
+async function deferRecipient(recipient: RecipientRow, reason: string): Promise<'deferred'> {
+  await query(
+    `UPDATE campaign_recipients
+     SET status = 'pending', locked_at = NULL, line_id = NULL,
+         attempts = GREATEST(attempts - 1, 0), error_detail = $2,
+         updated_at = NOW() WHERE id = $1`,
+    [recipient.id, reason],
+  )
+  return 'deferred'
+}
+
 export async function sendOne(
   campaignId: string,
   campaign: CampaignRow,
   recipient: RecipientRow,
-): Promise<'sent' | 'failed'> {
-  const personalizedMsg = personalize(pickMessage(campaign), recipient.first_name, campaign)
+): Promise<'sent' | 'failed' | 'skipped' | 'deferred'> {
+  const isTemplate = campaign.message_type === 'template'
+  const personalizedMsg = isTemplate
+    ? `[template:${campaign.template_name ?? ''}]`
+    : personalize(pickMessage(campaign), recipient.first_name, campaign)
 
-  // Pick the best eligible line — same logic as multi-line distributor
+  if (isTemplate && (!campaign.template_id || !campaign.template_name ||
+      !campaign.template_language || !campaign.template_waba_id || campaign.template_status !== 'APROBADA')) {
+    await recordFailure(campaignId, recipient, personalizedMsg, 'template-not-approved-or-incomplete', true)
+    return 'failed'
+  }
+
+  // Scope both providers to the campaign owner's lines, including the kill switch.
   let eligibleLines: Awaited<ReturnType<typeof getEligibleLines>> = []
   try {
-    eligibleLines = await getEligibleLines()
+    eligibleLines = await getEligibleLines(campaign.owned_by)
+    if (isTemplate) {
+      eligibleLines = eligibleLines.filter(line =>
+        line.line_type === 'cloud' && line.waba_id === campaign.template_waba_id)
+    }
   } catch (linesErr) {
     clog.error({
       event: 'eligible.lines.error', campaignId, mode: 'single-line',
       recipientId: recipient.id,
       error: linesErr instanceof Error ? linesErr.message : String(linesErr),
     })
-    await recordFailure(campaignId, recipient, personalizedMsg, 'no-eligible-lines-error')
-    clog.warn({
-      event: 'recipient.failed', campaignId, mode: 'single-line',
-      recipientId: recipient.id, contactId: recipient.contact_id,
-      attempt: recipient.attempts, provider: 'evolution',
-      error: 'no-eligible-lines-error',
-    })
-    return 'failed'
+    return deferRecipient(recipient, 'no-eligible-lines-error')
   }
-  if (eligibleLines.length === 0) {
-    await recordFailure(campaignId, recipient, personalizedMsg, 'no-eligible-lines')
-    clog.warn({
-      event: 'recipient.failed', campaignId, mode: 'single-line',
-      recipientId: recipient.id, contactId: recipient.contact_id,
-      attempt: recipient.attempts, provider: 'evolution',
-      error: 'no-eligible-lines',
-    })
-    return 'failed'
-  }
-  const line = eligibleLines[0]
+  const assignedLineId = await getCampaignAssignedLine(campaignId, recipient.phone_number)
+  const line = eligibleLines.find(candidate => candidate.id === assignedLineId)
+  if (!line) return deferRecipient(recipient, 'assigned-line-unavailable')
 
-  // Pre-insert 'queued' row — stale recovery can detect in-flight messages
-  await query(
-    `INSERT INTO whatsapp_messages
-       (contact_id, campaign_id, phone_number, message_body, direction, status,
-        campaign_recipient_id, created_at, updated_at)
-     VALUES ($1, $2, $3, $4, 'outbound', 'queued', $5, NOW(), NOW())
-     ON CONFLICT (campaign_recipient_id)
-       WHERE campaign_recipient_id IS NOT NULL
-     DO UPDATE SET updated_at = NOW()
-     WHERE whatsapp_messages.status NOT IN ('sent', 'delivered', 'read')`,
-    [recipient.contact_id, campaignId, recipient.phone_number,
-     personalizedMsg, recipient.id]
-  ).catch(e =>
-    clog.warn({
+  // Only an inserted row or a definite previous failure may authorize a send.
+  // In-flight and already accepted rows must survive manual recipient resets.
+  try {
+    const queued = await query<{ id: string }>(
+      `INSERT INTO whatsapp_messages
+         (contact_id, campaign_id, phone_number, message_body, direction, status,
+          campaign_recipient_id, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'outbound', 'queued', $5, NOW(), NOW())
+       ON CONFLICT (campaign_recipient_id)
+         WHERE campaign_recipient_id IS NOT NULL
+       DO UPDATE SET status = 'queued', message_body = EXCLUDED.message_body,
+         error_detail = NULL, failed_at = NULL, updated_at = NOW()
+       WHERE whatsapp_messages.status = 'failed'
+         AND whatsapp_messages.evolution_message_id IS NULL
+         AND COALESCE(whatsapp_messages.error_detail, '') NOT LIKE '[provider-outcome-unknown-no-resend]%'
+       RETURNING id`,
+      [recipient.contact_id, campaignId, recipient.phone_number, personalizedMsg, recipient.id]
+    )
+    if (queued.length === 0) {
+      const [existing] = await query<{ status: string; evolution_message_id: string | null }>(
+        `SELECT status, evolution_message_id FROM whatsapp_messages WHERE campaign_recipient_id = $1`,
+        [recipient.id],
+      )
+      if (existing && ['sent', 'delivered', 'read'].includes(existing.status)) {
+        await query(
+          `UPDATE campaign_recipients
+           SET status = 'sent', sent_at = COALESCE(sent_at, NOW()), locked_at = NULL,
+               evolution_message_id = $1, error_detail = NULL, updated_at = NOW()
+           WHERE id = $2`,
+          [existing.evolution_message_id, recipient.id],
+        )
+        return 'sent'
+      }
+      // Keep the message fence untouched: a queued provider result is unknown.
+      await query(
+        `UPDATE campaign_recipients
+         SET status = 'failed', failed_at = NOW(), locked_at = NULL,
+             error_detail = '[provider-outcome-unknown-no-resend] existing message fence', updated_at = NOW()
+         WHERE id = $1`,
+        [recipient.id],
+      )
+      return 'failed'
+    }
+    await query(
+      `UPDATE campaign_recipients SET line_id = $1, updated_at = NOW() WHERE id = $2`,
+      [line.id, recipient.id],
+    )
+  } catch (e) {
+    clog.error({
       event: 'pre.insert.queued.error', campaignId, mode: 'single-line',
       recipientId: recipient.id, error: e instanceof Error ? e.message : String(e),
     })
-  )
-
-  try {
-    const { messageId } = await sendViaEvolution(
-      line,
-      recipient.phone_number,
-      personalizedMsg,
-      campaign.media_url || null,
-    )
-
-    // Increment line counters (same as multi-line distributor)
-    await query(
-      `UPDATE whatsapp_lines
-       SET msgs_sent_hour  = msgs_sent_hour  + 1,
-           msgs_sent_today = msgs_sent_today + 1,
-           updated_at      = NOW()
-       WHERE id = $1`,
-      [line.id],
-    ).catch(() => {})
-
-    await query(
-      `UPDATE whatsapp_messages
-       SET status               = 'sent',
-           evolution_message_id = $1,
-           sent_at              = NOW(),
-           updated_at           = NOW()
-       WHERE campaign_recipient_id = $2
-         AND status = 'queued'`,
-      [messageId, recipient.id]
-    )
-    // Fallback: ensure a 'sent' row exists if the pre-insert never ran
-    await query(
-      `INSERT INTO whatsapp_messages
-         (contact_id, campaign_id, phone_number, message_body, direction, status,
-          evolution_message_id, sent_at, campaign_recipient_id, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, 'outbound', 'sent', $5, NOW(), $6, NOW(), NOW())
-       ON CONFLICT (campaign_recipient_id)
-         WHERE campaign_recipient_id IS NOT NULL
-       DO UPDATE SET
-         status               = CASE WHEN whatsapp_messages.status IN ('delivered','read') THEN whatsapp_messages.status ELSE 'sent' END,
-         evolution_message_id = COALESCE(whatsapp_messages.evolution_message_id, EXCLUDED.evolution_message_id),
-         updated_at           = NOW()`,
-      [recipient.contact_id, campaignId, recipient.phone_number, personalizedMsg, messageId, recipient.id]
-    ).catch(e =>
-      clog.warn({
-        event: 'sent.fallback.insert.error', campaignId, mode: 'single-line',
-        recipientId: recipient.id, error: e instanceof Error ? e.message : String(e),
-      })
-    )
+    // Do not turn an existing queued message into a retryable failure.
     await query(
       `UPDATE campaign_recipients
-       SET status = 'sent', sent_at = NOW(), locked_at = NULL,
-           message_body = $1, evolution_message_id = $2,
-           updated_at = NOW()
-       WHERE id = $3`,
-      [personalizedMsg, messageId, recipient.id]
-    )
-    clog.info({
-      event:       'recipient.sent',
-      campaignId,
-      mode:        'single-line',
-      recipientId: recipient.id,
-      contactId:   recipient.contact_id,
-      phone:       recipient.phone_number.slice(-4).padStart(recipient.phone_number.length, '*'),
-      attempt:     recipient.attempts,
-      provider:    'evolution',
-      lineInstance: line.evolution_instance,
-    })
-    return 'sent'
-
-  } catch (e) {
-    const errMsg = e instanceof Error ? e.message : 'evolution error'
-    await recordFailure(campaignId, recipient, personalizedMsg, errMsg)
-    clog.warn({
-      event:       'recipient.failed',
-      campaignId,
-      mode:        'single-line',
-      recipientId: recipient.id,
-      contactId:   recipient.contact_id,
-      attempt:     recipient.attempts,
-      provider:    'evolution',
-      error:       errMsg,
-    })
+       SET status = 'failed', failed_at = NOW(), locked_at = NULL,
+           error_detail = 'pre-send-persistence-error', updated_at = NOW()
+       WHERE id = $1`,
+      [recipient.id],
+    ).catch(() => {})
     return 'failed'
   }
+
+  let messageId: string | null
+  try {
+    const result = line.line_type === 'cloud'
+      ? await sendViaCloud(line, recipient.phone_number, isTemplate
+          ? {
+              kind: 'template',
+              content: buildTemplatePayload({
+                template_name: campaign.template_name!,
+                template_language: campaign.template_language ?? null,
+                template_params: campaign.template_params ?? null,
+              }, recipient),
+              wabaId: campaign.template_waba_id!,
+              templateId: campaign.template_id!,
+            }
+          : { kind: 'text', body: personalizedMsg, mediaUrl: campaign.media_url || null }, campaignId)
+      : await sendViaEvolution(line, recipient.phone_number, personalizedMsg, campaign.media_url || null)
+    messageId = result.messageId
+  } catch (e) {
+    if (e instanceof CampaignLineUnavailableError) {
+      // The line was disabled or exhausted after selection; no provider was called.
+      await query(
+        `UPDATE whatsapp_messages
+         SET status = 'failed', failed_at = NOW(),
+             error_detail = 'line-unavailable-before-send', updated_at = NOW()
+         WHERE campaign_recipient_id = $1 AND status = 'queued'`,
+        [recipient.id],
+      )
+      return deferRecipient(recipient, 'line-unavailable-before-send')
+    }
+    const errMsg = e instanceof Error ? e.message : 'provider error'
+    const skip = line.line_type === 'cloud' && e instanceof CloudApiError &&
+      [131021, 131026, 131047].includes(e.code ?? -1)
+    const unknownOutcome = e instanceof CloudSendOutcomeUnknownError
+    const detail = unknownOutcome
+      ? `[provider-outcome-unknown-no-resend] ${errMsg}` : errMsg
+    await recordFailure(campaignId, recipient, personalizedMsg, detail, unknownOutcome)
+    if (skip) {
+      await query(
+        `UPDATE campaign_recipients SET status = 'skipped', locked_at = NULL, updated_at = NOW() WHERE id = $1`,
+        [recipient.id],
+      )
+    }
+    clog.warn({
+      event: skip ? 'recipient.skipped' : 'recipient.failed', campaignId, mode: 'single-line',
+      recipientId: recipient.id, contactId: recipient.contact_id,
+      attempt: recipient.attempts, provider: line.line_type ?? 'evolution', error: detail,
+    })
+    return skip ? 'skipped' : 'failed'
+  }
+
+  // Provider acceptance is final. Persistence failures must never call recordFailure
+  // or remove the queued fence, because doing so would authorize a duplicate send.
+  const logWriteError = (e: unknown) => clog.error({
+    event: 'sent.persistence.error', campaignId, mode: 'single-line',
+    recipientId: recipient.id, error: e instanceof Error ? e.message : String(e),
+  })
+  await query(
+    `UPDATE whatsapp_messages
+     SET status = 'sent', evolution_message_id = $1, sent_at = NOW(), updated_at = NOW()
+     WHERE campaign_recipient_id = $2 AND status = 'queued'`,
+    [messageId, recipient.id],
+  ).catch(logWriteError)
+  await query(
+    `INSERT INTO whatsapp_messages
+       (contact_id, campaign_id, phone_number, message_body, direction, status,
+        evolution_message_id, sent_at, campaign_recipient_id, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, 'outbound', 'sent', $5, NOW(), $6, NOW(), NOW())
+     ON CONFLICT (campaign_recipient_id)
+       WHERE campaign_recipient_id IS NOT NULL
+     DO UPDATE SET
+       status = CASE WHEN whatsapp_messages.status IN ('delivered','read') THEN whatsapp_messages.status ELSE 'sent' END,
+       evolution_message_id = COALESCE(whatsapp_messages.evolution_message_id, EXCLUDED.evolution_message_id),
+       sent_at = COALESCE(whatsapp_messages.sent_at, EXCLUDED.sent_at),
+       error_detail = NULL, failed_at = NULL, updated_at = NOW()`,
+    [recipient.contact_id, campaignId, recipient.phone_number, personalizedMsg, messageId, recipient.id],
+  ).catch(logWriteError)
+  await query(
+    `UPDATE campaign_recipients
+     SET status = 'sent', sent_at = NOW(), locked_at = NULL,
+         message_body = $1, evolution_message_id = $2,
+         error_detail = NULL, failed_at = NULL, line_id = $4, updated_at = NOW()
+     WHERE id = $3`,
+    [personalizedMsg, messageId, recipient.id, line.id],
+  ).catch(logWriteError)
+  await query(
+    `SELECT increment_line_counters($1)`,
+    [line.id],
+  ).catch(logWriteError)
+  clog.info({
+    event: 'recipient.sent', campaignId, mode: 'single-line',
+    recipientId: recipient.id, contactId: recipient.contact_id,
+    phone: recipient.phone_number.slice(-4).padStart(recipient.phone_number.length, '*'),
+    attempt: recipient.attempts, provider: line.line_type ?? 'evolution',
+    lineInstance: line.evolution_instance,
+  })
+  return 'sent'
 }
 
 // ── Background processor ─────────────────────────────────────────────────────
@@ -390,7 +470,7 @@ export async function processInBackground(
         })
         continue
       }
-      if (!current || current.status === 'paused' || current.status === 'cancelled') {
+      if (!current || current.status !== 'running') {
         clog.info({
           event: 'processor.stopped', campaignId: id, mode: 'single-line',
           reason: 'status-gate', status: current?.status ?? 'not-found',
@@ -401,7 +481,12 @@ export async function processInBackground(
       // ── 2. Claim one recipient ──────────────────────────────────────────
       let recipient: Awaited<ReturnType<typeof claimOne>>
       try {
-        recipient = await claimOne(id)
+        let lines = await getEligibleLines(campaign.owned_by)
+        if (campaign.message_type === 'template') {
+          lines = lines.filter(line => line.line_type === 'cloud' && line.waba_id === campaign.template_waba_id)
+        }
+        await prepareCampaignRouting(id, lines.map(line => line.id))
+        recipient = await claimOne(id, lines.map(line => line.id))
       } catch (claimErr) {
         clog.error({
           event: 'claim.one.error', campaignId: id, mode: 'single-line',
@@ -410,6 +495,9 @@ export async function processInBackground(
         continue
       }
       if (!recipient) {
+        const { pending } = await syncCounters(id)
+        if (pending > 0) await query(`UPDATE campaigns SET status='paused', pause_reason='assigned_line_unavailable'
+          WHERE id=$1 AND status='running'`, [id])
         clog.info({ event: 'processor.drained', campaignId: id, mode: 'single-line' })
         break
       }
@@ -497,7 +585,15 @@ export async function processInBackground(
       }
 
       // ── 4. Send ─────────────────────────────────────────────────────────
-      await sendOne(id, campaign, recipient)
+      const outcome = await sendOne(id, campaign, recipient)
+      if (outcome === 'deferred') {
+        await query(
+          `UPDATE campaigns SET status = 'paused', pause_reason='assigned_line_unavailable', updated_at = NOW()
+           WHERE id = $1 AND status = 'running'`,
+          [id],
+        )
+        break
+      }
       sendCount++
 
       // ── 5. Sync counters ────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 import {
-  LayoutDashboard, Users, Megaphone, MessageSquare, Activity, Flame,
+  LayoutDashboard, Users, Megaphone, MessageSquare, Activity,
   ClipboardList, CheckSquare, CalendarDays, BarChart2, Bot, ShieldOff,
   FileText, UserCog, Settings, ChevronRight, ChevronDown,
   Lightbulb, AlertTriangle, Info, Star, ArrowRight,
@@ -255,7 +255,7 @@ const MODULES: ModuleSection[] = [
             icon: FileText,
             label: 'Borrador',
             desc: 'Recién creada. Podés editarla antes de enviar.',
-            color: 'bg-gray-100 text-gray-500',
+            color: 'bg-muted text-muted-foreground',
           },
           {
             icon: CalendarDays,
@@ -267,25 +267,25 @@ const MODULES: ModuleSection[] = [
             icon: Activity,
             label: 'En curso',
             desc: 'Enviando ahora. Podés pausarla en cualquier momento.',
-            color: 'bg-green-100 text-green-600',
+            color: 'bg-success/15 text-success',
           },
           {
             icon: Pause,
             label: 'Pausada',
             desc: 'Detenida. Siempre muestra el motivo. Podés reanudarla cuando quieras.',
-            color: 'bg-amber-100 text-amber-600',
+            color: 'bg-warning/15 text-amber-600',
           },
           {
             icon: CheckSquare,
             label: 'Completada',
             desc: 'Todos los contactos fueron procesados. Solo lectura.',
-            color: 'bg-indigo-100 text-indigo-600',
+            color: 'bg-accent text-primary',
           },
           {
             icon: Trash2,
             label: 'Cancelada',
             desc: 'Terminal. No se puede revertir ni reanudar.',
-            color: 'bg-red-100 text-red-500',
+            color: 'bg-destructive/15 text-red-500',
           },
         ],
       },
@@ -313,10 +313,6 @@ const MODULES: ModuleSection[] = [
       {
         type: 'example',
         text: 'Ejemplo segmentado: Filtrás en Contactos: Nivel = Super VIP o VIP Alto + Actividad = En riesgo. Creás la lista "VIP en riesgo" con esos 80 contactos. Campaña de reactivación con mensaje personalizado y delay conservador 8–15s. Resultado: alta tasa de lectura porque es un mensaje relevante para una audiencia chica y específica.',
-      },
-      {
-        type: 'warning',
-        text: 'No uses una línea en calentamiento para campañas masivas. Puede interrumpir el proceso de warm-up y aumentar el riesgo de bloqueo. Usá solo líneas con score de salud ≥ 80.',
       },
       {
         type: 'tip',
@@ -386,10 +382,10 @@ const MODULES: ModuleSection[] = [
     label: 'Líneas',
     icon: Activity,
     role: 'both',
-    color: 'text-green-600',
+    color: 'text-success',
     subtitle: 'Gestión de números de WhatsApp conectados',
     description:
-      'El módulo de Líneas muestra todos los números de WhatsApp que están conectados a la plataforma. Podés ver el estado de cada línea (conectada, desconectada, en calentamiento), escanear el código QR para conectar nuevos números y monitorear la salud de cada línea.',
+      'El módulo de Líneas muestra todos los números de WhatsApp que están conectados a la plataforma. Podés ver el estado de cada línea (conectada o desconectada), escanear el código QR para conectar nuevos números y monitorear la salud de cada línea.',
     steps: [
       {
         title: 'Ver el estado de las líneas',
@@ -425,114 +421,6 @@ const MODULES: ModuleSection[] = [
   },
 
   {
-    id: 'calentamiento',
-    label: 'Calentamiento',
-    icon: Flame,
-    role: 'both',
-    color: 'text-orange-600',
-    subtitle: 'Sistema inteligente de warm-up progresivo para líneas de WhatsApp',
-    description:
-      'Si enviás muchos mensajes de golpe con un número nuevo, WhatsApp lo detecta como spam y lo banea rápidamente. Con un buen calentamiento podés llegar a enviar cientos de mensajes diarios de forma segura. Nuestro módulo ya no es solo "calentar líneas": es un sistema inteligente que calcula automáticamente la salud de cada línea, distribuye la actividad entre todas, predice problemas antes de que ocurran y te da recomendaciones y simulaciones en tiempo real. Para acceder, hacé clic en "Calentamiento" en el menú lateral.',
-    steps: [
-      {
-        title: 'Vista general del Dashboard',
-        detail:
-          'En la parte superior verás 4 tarjetas: Calentando (líneas activas, color ámbar), En Riesgo (líneas pausadas, naranja), Saludables (calentamiento completo, verde) y Baneadas (fuera de servicio, rojo). Debajo hay una barra de estadísticas con mensajes enviados hoy y promedio de salud. Si el sistema detecta una línea con muchos días sin actividad o salud muy baja, aparece una sugerencia automática con la opción de pausarla o configurarla.',
-      },
-      {
-        title: 'Agregar una nueva línea',
-        detail:
-          'Hacé clic en "+ Agregar línea" (arriba a la derecha). Elegí la estrategia: Conservadora (más segura, más lenta — recomendada para principiantes), Normal (equilibrio, la más usada) o Agresiva (más rápida, mayor riesgo). Opcionalmente hacé clic en "Ajuste fino" para cambiar días objetivo y límite diario. Luego hacé clic en "Generar QR y escanear", escaneá el QR con WhatsApp (Dispositivos vinculados → Vincular un dispositivo) y la línea aparece automáticamente en el dashboard.',
-      },
-      {
-        title: 'Entender el score de salud (0–100)',
-        detail:
-          'Cada línea muestra un score de salud calculado en tiempo real. 80–100: Óptima — puede usarse en campañas. 60–79: Buena — seguir el calentamiento. 40–59: Regular — revisar actividad. 20–39: Crítico — riesgo alto, pausar o revisar. 0–19: Baneada — reemplazar la línea. Si el score aparece con un "~" tenue, es una estimación local; cuando está en color normal proviene de la base de datos (más confiable). Al hacer clic en cualquier línea verás el desglose completo: 6 barras que explican el score (progreso, tendencia, inactividad, fallos, etc.) y una recomendación personalizada.',
-      },
-      {
-        title: 'Plan de distribución del día',
-        detail:
-          'La sección "Plan de distribución del día" muestra cómo el sistema distribuye la actividad entre todas tus líneas activas. Cada línea tiene un peso: mientras más saludable esté, más mensajes se le asignan. Verás cuántos mensajes le corresponden hoy a cada una y cuántos ya se enviaron. Esto evita que todas las líneas envíen al mismo ritmo, un patrón que WhatsApp detecta fácilmente. Hacé clic en "Recalcular" para actualizar el plan en cualquier momento.',
-      },
-      {
-        title: 'Centro de Inteligencia — Pestaña Alertas',
-        detail:
-          'Hacé clic en la sección colapsable "Inteligencia" del dashboard. En la pestaña Alertas el sistema te avisa automáticamente cuando detecta: Riesgo alto de ban (score < 35 con tendencia negativa), Inactividad prolongada (más de 4 días sin actividad en una línea activa), Caída brusca de salud (más de 25 puntos en 48 horas) y Tasa de fallos elevada (más del 30% de mensajes fallidos). Cada alerta muestra su severidad (Crítica, Alta, Media, Baja) y podés resolverla manualmente con el botón X. También podés ver estas alertas en la pestaña "Alertas" dentro del detalle de cada línea.',
-      },
-      {
-        title: 'Centro de Inteligencia — Efectividad y Simulador',
-        detail:
-          'En la pestaña Efectividad verás métricas reales del rendimiento: tasa de éxito (% de líneas que completan el calentamiento), ratio de completación, tasa de ban general y qué estrategia está funcionando mejor. En la pestaña Simulador podés simular escenarios what-if antes de tomar decisiones: "¿Qué pasa si agrego 5 líneas nuevas con estrategia Normal?", "¿Qué pasa si cambio todas mis líneas a Agresiva?" o "¿Cómo estará la salud de mis líneas en 14 días?". El sistema te da una proyección con nivel de riesgo y recomendación.',
-      },
-      {
-        title: 'Detalle de una línea (clic en cualquier fila)',
-        detail: '',
-        actions: [
-          {
-            icon: Activity,
-            label: 'Resumen',
-            desc: 'Score de salud, progreso, tasa de éxito, riesgo de ban, desglose de componentes, historial de 14 días y gráfico de mensajes por día.',
-            color: 'bg-amber-100 text-amber-600',
-          },
-          {
-            icon: AlertTriangle,
-            label: 'Alertas',
-            desc: 'Todas las alertas predictivas de esa línea (activas y resueltas). Podés resolver cada alerta individualmente.',
-            color: 'bg-red-100 text-red-500',
-          },
-          {
-            icon: Settings,
-            label: 'Configuración',
-            desc: 'Cambiar estrategia, días objetivo, límite diario y ajustes de protección anti-ban. También podés pausar o reiniciar el calentamiento.',
-            color: 'bg-blue-100 text-blue-600',
-          },
-          {
-            icon: TrendingUp,
-            label: 'Actividad',
-            desc: 'Historial completo de mensajes enviados con filtros por estado (enviados / fallidos). Permite cargar más registros.',
-            color: 'bg-green-100 text-green-600',
-          },
-        ],
-      },
-      {
-        title: 'Automatización con n8n (recomendado)',
-        detail:
-          'Para que el sistema actualice scores, distribuya cuotas y genere alertas automáticamente cada día, configurá en n8n un workflow que se ejecute todos los días a las 00:05. Agregá un nodo HTTP Request con método POST, URL: https://tu-dominio.com/api/warmup/orchestrator/run y el header x-warmup-secret con el valor de tu variable de entorno WARMUP_PROCESS_SECRET. Sin este paso el sistema funciona igual pero los scores y alertas solo se actualizan cuando alguien abre el dashboard.',
-      },
-    ],
-    tips: [
-      {
-        type: 'warning',
-        text: 'No uses una línea en calentamiento para campañas masivas. Hacerlo puede terminar el proceso antes de tiempo y aumentar el riesgo de bloqueo.',
-      },
-      {
-        type: 'tip',
-        text: 'Revisá las alertas todos los días: te permiten actuar antes de que ocurra un ban. Con el Simulador podés ver el impacto de agregar muchas líneas antes de hacerlo.',
-      },
-      {
-        type: 'tip',
-        text: 'Mantené al menos una línea con estrategia Conservadora. Sirve como backup seguro y no cambies de estrategia muy seguido: el sistema necesita consistencia para calcular tendencias precisas.',
-      },
-      {
-        type: 'info',
-        text: 'Si la sesión de WhatsApp se desconecta durante el calentamiento, usá el botón QR de esa línea para volver a vincularla sin perder el progreso.',
-      },
-      {
-        type: 'warning',
-        text: 'Pausar una línea no reinicia el contador de días. Al reanudar, el calentamiento continúa desde donde quedó. Si la pausa es muy larga, el historial de actividad se interrumpe y WhatsApp puede "enfriar" la línea.',
-      },
-      {
-        type: 'info',
-        text: '¿Puedo pausar manualmente? Sí, con el botón ⏸ en la fila. ¿Qué pasa si se banea? Aparece en rojo como "Baneada" — reemplazala. ¿El sistema envía mensajes solo? No: el calentamiento calcula cuántos enviar; el envío real lo hacés vos o mediante campañas.',
-      },
-      {
-        type: 'example',
-        text: 'Ejemplo: Comprás un chip nuevo el lunes. Lo conectás a la plataforma, esperás 24hs y arrancás el calentamiento de 21 días con estrategia Normal. El sistema calcula el score diariamente, te avisa si algo falla y te muestra el plan de distribución. A partir del día 22, la línea tiene un historial sólido y está lista para campañas.',
-      },
-    ],
-  },
-
-  {
     id: 'tareas',
     label: 'Tareas (Admin)',
     icon: ClipboardList,
@@ -550,7 +438,7 @@ const MODULES: ModuleSection[] = [
       {
         title: 'Tipos de tarea disponibles',
         detail:
-          'Difusión (para que el operador gestione una campaña), Envío manual (envíos específicos a contactos), Calentamiento (warm-up de líneas), Atención (responder conversaciones escaladas), Seguimiento (contactar un cliente específico), Revisión (auditar campañas o listas) y Otro (tarea libre).',
+          'Difusión (para que el operador gestione una campaña), Envío manual (envíos específicos a contactos), Atención (responder conversaciones escaladas), Seguimiento (contactar un cliente específico), Revisión (auditar campañas o listas) y Otro (tarea libre).',
       },
       {
         title: 'Monitorear el estado',
@@ -685,7 +573,7 @@ const MODULES: ModuleSection[] = [
     label: 'Estadísticas',
     icon: BarChart2,
     role: 'both',
-    color: 'text-indigo-600',
+    color: 'text-primary',
     subtitle: 'Métricas y reportes de rendimiento',
     description:
       'El módulo de Estadísticas ofrece gráficos e indicadores de rendimiento para analizar el desempeño de las campañas, la actividad de las líneas y la productividad del equipo. Los datos se pueden exportar a CSV para análisis externos.',
@@ -776,7 +664,7 @@ const MODULES: ModuleSection[] = [
     label: 'Blacklist Global',
     icon: ShieldOff,
     role: 'both',
-    color: 'text-red-600',
+    color: 'text-destructive',
     subtitle: 'Números excluidos de todos los envíos',
     description:
       'La Blacklist Global es la lista de números que nunca recibirán mensajes de la plataforma, independientemente de la campaña o lista en la que estén. Incluye automáticamente a los contactos que respondieron "STOP" o "No quiero más mensajes", y permite agregar números manualmente.',
@@ -884,7 +772,7 @@ const MODULES: ModuleSection[] = [
       {
         title: 'Asignar sectores a un operador',
         detail:
-          'Al editar un operador, verás una lista de sectores: Dashboard, Contactos, Campañas, Conversaciones, Líneas, Calentamiento, Tareas, Estadísticas, Automatizaciones, Blacklist, Plantillas. Activá solo los que ese operador necesita. El operador solo verá esos módulos en su sidebar.',
+          'Al editar un operador, verás una lista de sectores: Dashboard, Contactos, Campañas, Conversaciones, Líneas, Tareas, Estadísticas, Automatizaciones, Blacklist, Plantillas. Activá solo los que ese operador necesita. El operador solo verá esos módulos en su sidebar.',
       },
       {
         title: 'Editar o desactivar una cuenta',
@@ -918,7 +806,7 @@ const MODULES: ModuleSection[] = [
     label: 'Ajustes',
     icon: Settings,
     role: 'admin',
-    color: 'text-gray-600',
+    color: 'text-muted-foreground',
     subtitle: 'Configuración general de la plataforma',
     description:
       'El módulo de Ajustes centraliza la configuración global del sistema: integraciones con servicios externos, configuración de notificaciones, parámetros de las líneas de WhatsApp y personalización de la plataforma para tu empresa.',
@@ -952,9 +840,9 @@ const MODULES: ModuleSection[] = [
 
 const TIP_CONFIG = {
   tip:     { icon: Lightbulb,     bg: 'bg-blue-50 border-blue-200',   text: 'text-blue-800',   label: 'Consejo' },
-  warning: { icon: AlertTriangle, bg: 'bg-amber-50 border-amber-200', text: 'text-amber-800',  label: 'Atención' },
-  info:    { icon: Info,          bg: 'bg-slate-50 border-slate-200', text: 'text-slate-700',  label: 'Info' },
-  example: { icon: Star,          bg: 'bg-green-50 border-green-200', text: 'text-green-800',  label: 'Ejemplo' },
+  warning: { icon: AlertTriangle, bg: 'bg-warning/10 border-warning/20', text: 'text-warning',  label: 'Atención' },
+  info:    { icon: Info,          bg: 'bg-background border-border', text: 'text-slate-700',  label: 'Info' },
+  example: { icon: Star,          bg: 'bg-success/10 border-success/20', text: 'text-success',  label: 'Ejemplo' },
 }
 
 function TipBox({ tip }: { tip: Tip }) {
@@ -993,36 +881,36 @@ function ModuleSection({ mod, defaultOpen }: { mod: ModuleSection; defaultOpen: 
   const Icon = mod.icon
 
   return (
-    <div id={mod.id} className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm scroll-mt-4">
+    <div id={mod.id} className="bg-card border border-border rounded-xl overflow-hidden shadow-sm scroll-mt-4">
       {/* Header */}
       <button
         onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-gray-50 transition-colors"
+        className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-background transition-colors"
       >
-        <div className={`p-2 rounded-lg bg-gray-100 ${mod.color}`}>
+        <div className={`p-2 rounded-lg bg-muted ${mod.color}`}>
           <Icon size={18} />
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-semibold text-gray-900 text-sm">{mod.label}</span>
+            <span className="font-semibold text-foreground text-sm">{mod.label}</span>
             <RoleBadge role={mod.role} />
           </div>
-          <p className="text-xs text-gray-500 mt-0.5">{mod.subtitle}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{mod.subtitle}</p>
         </div>
         {open
-          ? <ChevronDown size={16} className="text-gray-400 shrink-0" />
-          : <ChevronRight size={16} className="text-gray-400 shrink-0" />
+          ? <ChevronDown size={16} className="text-muted-foreground shrink-0" />
+          : <ChevronRight size={16} className="text-muted-foreground shrink-0" />
         }
       </button>
 
       {/* Body */}
       {open && (
-        <div className="px-5 pb-5 border-t border-gray-100">
+        <div className="px-5 pb-5 border-t border-border">
           {/* Description */}
-          <p className="text-sm text-gray-700 leading-relaxed mt-4 mb-5">{mod.description}</p>
+          <p className="text-sm text-foreground leading-relaxed mt-4 mb-5">{mod.description}</p>
 
           {/* Steps */}
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
             Cómo usar este módulo
           </h3>
           <ol className="space-y-3 mb-5">
@@ -1032,26 +920,26 @@ function ModuleSection({ mod, defaultOpen }: { mod: ModuleSection; defaultOpen: 
                   {i + 1}
                 </span>
                 <div className="flex-1">
-                  <p className="text-sm font-semibold text-gray-800">{step.title}</p>
+                  <p className="text-sm font-semibold text-foreground">{step.title}</p>
                   {step.actions ? (
                     <div className="grid grid-cols-2 gap-2 mt-2">
                       {step.actions.map((a, j) => {
                         const Icon = a.icon
                         return (
-                          <div key={j} className="flex items-start gap-2.5 bg-gray-50 border border-gray-100 rounded-lg px-3 py-2.5">
-                            <div className={`shrink-0 w-7 h-7 rounded-md flex items-center justify-center ${a.color ?? 'bg-gray-200 text-gray-600'}`}>
+                          <div key={j} className="flex items-start gap-2.5 bg-background border border-border rounded-lg px-3 py-2.5">
+                            <div className={`shrink-0 w-7 h-7 rounded-md flex items-center justify-center ${a.color ?? 'bg-border text-muted-foreground'}`}>
                               <Icon size={14} />
                             </div>
                             <div>
-                              <p className="text-xs font-semibold text-gray-700 leading-tight">{a.label}</p>
-                              <p className="text-[11px] text-gray-500 leading-relaxed mt-0.5">{a.desc}</p>
+                              <p className="text-xs font-semibold text-foreground leading-tight">{a.label}</p>
+                              <p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5">{a.desc}</p>
                             </div>
                           </div>
                         )
                       })}
                     </div>
                   ) : (
-                    <p className="text-sm text-gray-600 mt-0.5 leading-relaxed">{step.detail}</p>
+                    <p className="text-sm text-muted-foreground mt-0.5 leading-relaxed">{step.detail}</p>
                   )}
                 </div>
               </li>
@@ -1061,7 +949,7 @@ function ModuleSection({ mod, defaultOpen }: { mod: ModuleSection; defaultOpen: 
           {/* Tips */}
           {mod.tips.length > 0 && (
             <>
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
                 Consejos y ejemplos
               </h3>
               <div className="space-y-2">
@@ -1086,7 +974,7 @@ function TocLink({ mod, active }: { mod: ModuleSection; active: boolean }) {
         'flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-colors',
         active
           ? 'bg-blue-50 text-blue-700'
-          : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100',
+          : 'text-muted-foreground hover:text-foreground hover:bg-muted',
       )}
     >
       <Icon size={13} className={`shrink-0 ${active ? 'text-blue-600' : mod.color}`} />
@@ -1146,8 +1034,8 @@ export default function AyudaPage() {
         description="Documentación completa de todos los módulos de la plataforma"
         actions={
           <div className="flex items-center gap-2">
-            <BookOpen size={14} className="text-gray-400" />
-            <span className="text-xs text-gray-500">
+            <BookOpen size={14} className="text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">
               {visibleModules.length} módulos disponibles para tu rol
             </span>
           </div>
@@ -1179,8 +1067,8 @@ export default function AyudaPage() {
       <div className="flex gap-6 items-start">
 
         {/* ── Left TOC (sticky, desktop only) ──────────────────────────────── */}
-        <nav className="hidden lg:flex flex-col gap-0.5 w-48 shrink-0 sticky top-4 self-start bg-white border border-gray-200 rounded-xl p-3 shadow-sm">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 px-2 mb-1">
+        <nav className="hidden lg:flex flex-col gap-0.5 w-48 shrink-0 sticky top-4 self-start bg-card border border-border rounded-xl p-3 shadow-sm">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-2 mb-1">
             Módulos
           </p>
 
@@ -1190,7 +1078,7 @@ export default function AyudaPage() {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Buscar..."
-            className="w-full text-xs px-2 py-1.5 border border-gray-200 rounded-md mb-1 outline-none focus:border-blue-300"
+            className="w-full text-xs px-2 py-1.5 border border-border rounded-md mb-1 outline-none focus:border-blue-300"
           />
 
           {visibleModules.map(mod => (
@@ -1198,7 +1086,7 @@ export default function AyudaPage() {
           ))}
 
           {search && visibleModules.length === 0 && (
-            <p className="text-xs text-gray-400 px-2 py-2">Sin resultados</p>
+            <p className="text-xs text-muted-foreground px-2 py-2">Sin resultados</p>
           )}
         </nav>
 
@@ -1212,14 +1100,14 @@ export default function AyudaPage() {
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Buscar en la guía..."
-              className="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg outline-none focus:border-blue-300"
+              className="w-full text-sm px-3 py-2 border border-border rounded-lg outline-none focus:border-blue-300"
             />
           </div>
 
           {visibleModules.length === 0 ? (
             <div className="py-16 text-center">
               <HelpCircle size={40} className="mx-auto mb-3 text-gray-200" />
-              <p className="text-gray-400 text-sm">No se encontraron módulos para "{search}"</p>
+              <p className="text-muted-foreground text-sm">No se encontraron módulos para "{search}"</p>
             </div>
           ) : (
             visibleModules.map((mod, idx) => (
@@ -1232,7 +1120,7 @@ export default function AyudaPage() {
           )}
 
           {/* Footer */}
-          <div className="text-center py-8 text-xs text-gray-400">
+          <div className="text-center py-8 text-xs text-muted-foreground">
             <p>¿Tenés alguna duda que no está cubierta en esta guía?</p>
             <p className="mt-1">
               {isAdmin

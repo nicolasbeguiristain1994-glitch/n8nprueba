@@ -15,12 +15,12 @@ const ACT_STYLE: Record<string, string> = {
   perdido:   'bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400',
   inactivo:  'bg-orange-100 text-orange-700 dark:bg-orange-950/40 dark:text-orange-400',
   en_riesgo: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-400',
-  ocasional: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400',
+  ocasional: 'bg-muted text-slate-600 dark:bg-slate-800 dark:text-slate-400',
 }
 
 const MONTO_STYLE: Record<string, string> = {
   super_vip: 'bg-purple-100 text-purple-700 border border-purple-300',
-  vip_alto:  'bg-red-100 text-red-700 border border-red-300',
+  vip_alto:  'bg-destructive/15 text-destructive border border-red-300',
   vip_medio: 'bg-orange-100 text-orange-700 border border-orange-300',
   vip:       'bg-vip/15 text-vip border border-vip/30',
 }
@@ -49,9 +49,10 @@ export const VipsEnRiesgoWidget = memo(function VipsEnRiesgoWidget({ vips, loadi
           <Crown className="w-4 h-4 text-vip" />
           VIPs en riesgo
           {!loading && vips.length > 0 && (
-            <span className="ml-auto text-xs font-normal text-muted-foreground">{vips.length} jugadores</span>
+            <span className="ml-auto text-xs font-normal text-muted-foreground">{Math.min(vips.length, 20)} cuentas prioritarias</span>
           )}
         </CardTitle>
+        <p className="text-xs text-muted-foreground">Estado actual · Hasta 20 cuentas con mayor urgencia según el historial disponible.</p>
       </CardHeader>
       <CardContent className="flex-1 overflow-y-auto max-h-80">
         {loading ? (
@@ -65,21 +66,21 @@ export const VipsEnRiesgoWidget = memo(function VipsEnRiesgoWidget({ vips, loadi
           <div className="space-y-1">
             {vips.slice(0, 20).map(v => (
               <div
-                key={v.username}
+                key={`${v.platform}:${v.username}`}
                 className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-muted/50 transition-colors duration-200"
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="text-xs font-semibold truncate">{v.username}</span>
-                    <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full font-medium', MONTO_STYLE[v.seg_monto] ?? 'bg-slate-100 text-slate-600')}>
-                      {v.seg_monto.toUpperCase()}
+                    <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full font-medium', MONTO_STYLE[v.seg_monto] ?? 'bg-muted text-slate-600')}>
+                      {v.seg_monto.replaceAll('_', ' ').toUpperCase()}
                     </span>
-                    <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full', ACT_STYLE[v.seg_actividad] ?? 'bg-slate-100 text-slate-600')}>
+                    <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full', ACT_STYLE[v.seg_actividad] ?? 'bg-muted text-slate-600')}>
                       {v.seg_actividad.replace('_', ' ')}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[10px] text-muted-foreground">{v.agente}</span>
+                    <span className="text-[10px] text-muted-foreground">{v.platform} · {v.agente}</span>
                     <span className="text-[10px] text-muted-foreground">·</span>
                     <span className="text-[10px] text-muted-foreground tabular-nums">{fmt(v.total_cargas)}</span>
                   </div>

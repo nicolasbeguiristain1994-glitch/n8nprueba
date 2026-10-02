@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
+import { visibilityClause } from '@/lib/contact-visibility'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -64,40 +65,59 @@ export type TopContact = {
 export async function GET(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'dashboard', 'read')
   if (!auth.ok) return auth.response
+  const { user } = auth
+  const isAdmin = user.role === 'admin'
+  const canReadContacts = isAdmin || user.sectors?.includes('contacts')
+  const canReadTasks = isAdmin || user.sectors?.includes('tasks')
+  const visibility = visibilityClause(user.role, user.user_id, 0, 'c')
+  const contactParams: unknown[] = [...visibility.params]
+  let contactWhere = `c.deleted_at IS NULL ${visibility.sql}`
+  if (!canReadContacts) contactWhere += ' AND FALSE'
+  if (!isAdmin && user.allowed_agents?.length) {
+    contactParams.push(user.allowed_agents)
+    contactWhere += ` AND c.panel = ANY($${contactParams.length}::text[])`
+  }
+  const taskWhere = !canReadTasks ? 'AND FALSE' : isAdmin ? ''
+    : 'AND EXISTS (SELECT 1 FROM task_assignees scope WHERE scope.task_id=t.id AND scope.user_id=$1)'
+  const taskParams = !isAdmin && canReadTasks ? [user.user_id] : []
 
   try {
-    const [kpiRows, tasks, recentContacts, recentTasks] = await Promise.all([
-      query<{ contacts: string; tasks_pending: string; tasks_overdue: string }>(`
+    const [contactCounts, taskCounts, tasks, recentContacts, recentTasks] = await Promise.all([
+      query<{ contacts: string }>(`SELECT COUNT(*)::text AS contacts FROM contacts c WHERE ${contactWhere}`, contactParams),
+      query<{ tasks_pending: string; tasks_overdue: string }>(`
         SELECT
-          (SELECT COUNT(*)::text FROM contacts)                                         AS contacts,
-          (SELECT COUNT(*)::text FROM tasks WHERE status != 'done')                    AS tasks_pending,
-          (SELECT COUNT(*)::text FROM tasks WHERE status != 'done' AND due_date < NOW()) AS tasks_overdue
-      `),
+          COUNT(*)::text AS tasks_pending,
+          COUNT(*) FILTER (WHERE t.due_date < NOW())::text AS tasks_overdue
+        FROM tasks t WHERE t.deleted_at IS NULL AND t.status IN ('pendiente','en_progreso') ${taskWhere}
+      `, taskParams),
       query<PendingTask>(`
-        SELECT id, title, due_date, priority, assigned_to
-        FROM tasks
-        WHERE status != 'done'
+        SELECT t.id, t.title, t.due_date, t.priority,
+          (SELECT STRING_AGG(COALESCE(u.name, u.email), ', ' ORDER BY u.name)
+           FROM task_assignees ta JOIN users u ON u.id = ta.user_id
+           WHERE ta.task_id = t.id) AS assigned_to
+        FROM tasks t
+        WHERE t.deleted_at IS NULL AND t.status IN ('pendiente','en_progreso') ${taskWhere}
         ORDER BY
           CASE priority WHEN 'alta' THEN 1 WHEN 'media' THEN 2 ELSE 3 END,
           due_date ASC NULLS LAST
         LIMIT 10
-      `),
+      `, taskParams),
       query<{ title: string; created_at: string }>(`
-        SELECT COALESCE(first_name || ' ' || last_name, phone_number) AS title, created_at
-        FROM contacts
+        SELECT COALESCE(NULLIF(TRIM(CONCAT_WS(' ', c.first_name, c.last_name)),''), c.phone_number) AS title, c.created_at
+        FROM contacts c WHERE ${contactWhere}
         ORDER BY created_at DESC
         LIMIT 5
-      `),
+      `, contactParams),
       query<{ title: string; created_at: string }>(`
-        SELECT title, updated_at AS created_at
-        FROM tasks
-        WHERE status = 'done'
+        SELECT t.title, t.updated_at AS created_at
+        FROM tasks t
+        WHERE t.deleted_at IS NULL AND t.status = 'completada' ${taskWhere}
         ORDER BY updated_at DESC
         LIMIT 5
-      `),
+      `, taskParams),
     ])
 
-    const raw = kpiRows[0] ?? { contacts: '0', tasks_pending: '0', tasks_overdue: '0' }
+    const raw = { contacts: contactCounts[0]?.contacts ?? '0', tasks_pending: taskCounts[0]?.tasks_pending ?? '0', tasks_overdue: taskCounts[0]?.tasks_overdue ?? '0' }
     const kpis: CrmKPIs = {
       contacts:      parseInt(raw.contacts,      10),
       tasks_pending: parseInt(raw.tasks_pending, 10),

@@ -23,7 +23,7 @@ export async function handleTemplateStatusUpdate(
     update.message_template_id,
     internalStatus,
     update.reason ?? null,
-  ).catch(err => log.logWarn('db update failed', { error: String(err) }))
+  )
 
   cloudMetrics.templateStatusUpdated(update.message_template_name, update.event)
 

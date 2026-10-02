@@ -9,7 +9,10 @@
       },
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
-      "position": [0, 0],
+      "position": [
+        0,
+        0
+      ],
       "id": "a1b2c3d4-0001-4000-8000-000000000001",
       "name": "Webhook",
       "webhookId": "wf009-webhook-intent-router-v1"
@@ -20,7 +23,10 @@
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [240, 0],
+      "position": [
+        240,
+        0
+      ],
       "id": "a1b2c3d4-0002-4000-8000-000000000002",
       "name": "Code – Classify Intent"
     },
@@ -37,13 +43,16 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [480, 0],
+      "position": [
+        480,
+        0
+      ],
       "id": "a1b2c3d4-0003-4000-8000-000000000003",
       "name": "HTTP Request – Evolution API",
       "credentials": {
         "httpHeaderAuth": {
-          "id": "V8WM8QJb690a2dcm",
-          "name": "Header Auth account"
+          "id": "REPLACE_ME_CREDENTIAL_ID",
+          "name": "REPLACE_ME_CREDENTIAL_NAME"
         }
       }
     },
@@ -69,7 +78,9 @@
             "status": "sent",
             "sent_at": "={{ new Date().toISOString() }}"
           },
-          "matchingColumns": ["id"],
+          "matchingColumns": [
+            "id"
+          ],
           "schema": [
             {
               "id": "id",
@@ -129,13 +140,16 @@
       },
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
-      "position": [720, 0],
+      "position": [
+        720,
+        0
+      ],
       "id": "a1b2c3d4-0004-4000-8000-000000000004",
       "name": "Postgres – Insert outbound_messages",
       "credentials": {
         "postgres": {
-          "id": "xEGqwiZXpd5tMF9C",
-          "name": "Postgres account"
+          "id": "REPLACE_ME_CREDENTIAL_ID",
+          "name": "REPLACE_ME_CREDENTIAL_NAME"
         }
       }
     },
@@ -163,7 +177,10 @@
       },
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [960, 0],
+      "position": [
+        960,
+        0
+      ],
       "id": "a1b2c3d4-0005-4000-8000-000000000005",
       "name": "IF – Is Handoff"
     },
@@ -178,7 +195,10 @@
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [1200, -120],
+      "position": [
+        1200,
+        -120
+      ],
       "id": "a1b2c3d4-0006-4000-8000-000000000006",
       "name": "HTTP Request – Slack Handoff Alert"
     }
@@ -255,8 +275,14 @@
   },
   "id": "WF009IntentRouter",
   "tags": [
-    { "name": "soporte" },
-    { "name": "inbound" },
-    { "name": "intent-router" }
+    {
+      "name": "soporte"
+    },
+    {
+      "name": "inbound"
+    },
+    {
+      "name": "intent-router"
+    }
   ]
 }

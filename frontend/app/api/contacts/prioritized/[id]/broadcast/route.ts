@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { NextRequest, NextResponse } from 'next/server'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { UserPrioritizationService } from '@/lib/user-prioritization/UserPrioritizationService'
@@ -14,15 +15,20 @@ export async function PATCH(
   const auth = await checkPermissionWithUser(req, 'contacts', 'manage')
   if (!auth.ok) return auth.response
 
-  const { broadcasted } = await req.json() as { broadcasted: boolean }
-  const { id: contactId } = await params
+  const body = await req.json().catch(() => null)
+  const parsed = z.object({ broadcasted: z.boolean() }).safeParse(body)
+  const id = z.string().uuid().safeParse((await params).id)
+  if (!parsed.success || !id.success) return NextResponse.json({ error: 'Datos inválidos' }, { status: 400 })
+  const { broadcasted } = parsed.data
+  const contactId = id.data
+  const access = { role: auth.user.role, userId: auth.user.user_id, allowedAgents: auth.user.allowed_agents }
 
   let ok: boolean
   if (broadcasted) {
     const userName = auth.user?.name ?? auth.user?.email ?? 'unknown'
-    ok = await service.markBroadcasted(contactId, userName)
+    ok = await service.markBroadcasted(contactId, userName, access)
   } else {
-    ok = await service.unmarkBroadcasted(contactId)
+    ok = await service.unmarkBroadcasted(contactId, access)
   }
 
   if (!ok) {

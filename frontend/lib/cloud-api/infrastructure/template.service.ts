@@ -25,10 +25,21 @@ export class TemplateService {
   }
 
   async list(wabaId: string, limit = 100): Promise<MetaTemplate[]> {
-    const data = await this.gw.get<{ data: MetaTemplate[] }>(
-      `/${wabaId}/message_templates?fields=${TEMPLATE_FIELDS}&limit=${limit}`,
-    )
-    return data.data
+    const templates: MetaTemplate[] = []
+    let after: string | undefined
+    const seen = new Set<string>()
+    for (let page=0; page<100; page++) {
+      const data = await this.gw.get<{ data: MetaTemplate[]; paging?: { next?: string; cursors?: {after?: string} } }>(
+        `/${wabaId}/message_templates?fields=${TEMPLATE_FIELDS}&limit=${limit}${after ? `&after=${encodeURIComponent(after)}` : ''}`,
+      )
+      if (!Array.isArray(data.data)) throw new Error('Respuesta de plantillas inválida')
+      templates.push(...data.data)
+      if (!data.paging?.next) return templates
+      after = data.paging.cursors?.after
+      if (!after || seen.has(after)) throw new Error('Paginación de plantillas incompleta')
+      seen.add(after)
+    }
+    throw new Error('La consulta de plantillas superó el límite de páginas')
   }
 
   async get(templateId: string): Promise<MetaTemplate> {

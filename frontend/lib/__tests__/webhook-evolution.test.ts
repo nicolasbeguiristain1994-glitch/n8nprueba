@@ -25,6 +25,12 @@ vi.mock('@/lib/notify',           () => ({ notify: vi.fn() }))
 vi.mock('@/lib/automation-engine', () => ({ evaluateAutomations: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('@/lib/validate',          () => ({ normalizePhone: vi.fn().mockReturnValue(null) }))
 
+vi.hoisted(() => {
+  delete process.env.EVOLUTION_URL
+  delete process.env.EVOLUTION_GLOBAL_API_KEY
+  delete process.env.EVOLUTION_API_KEY
+})
+
 const mockFetch = vi.fn()
 vi.stubGlobal('fetch', mockFetch)
 
@@ -238,7 +244,7 @@ describe('webhook/evolution — syncLinePhoneNumber', () => {
     process.env.EVOLUTION_API_KEY        = 'test-api-key'
     mockQuery.mockReset()
     mockQuery.mockResolvedValue([])
-    mockFetch.mockReset()
+    mockFetch.mockReset().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
   })
 
   it('state=open con phone disponible → UPDATE phone_number en DB', async () => {
@@ -265,6 +271,10 @@ describe('webhook/evolution — syncLinePhoneNumber', () => {
     expect(phoneUpdateCall).toBeTruthy()
     expect(phoneUpdateCall![1]).toContain('+549123456789')
     expect(phoneUpdateCall![1]).toContain('wa-prod-01')
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/settings/set/wa-prod-01'),
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ readStatus: true }) }),
+    )
   })
 
   it('state=open pero Evolution no devuelve phone → sin UPDATE de phone', async () => {

@@ -1,88 +1,96 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser } from '@/lib/permissions'
+import { getAccessibleLineIds } from '@/lib/line-visibility'
+import { CONVERSATION_MESSAGES_CTE } from '@/lib/conversation-messages'
+import { CONVERSATION_INBOX_CTE } from '@/lib/conversation-inbox'
+import { LEVEL_DEFS, type CampaignOption } from '@/lib/scoring/conversation-scoring'
 
 // Normaliza teléfono: quita + y espacios para comparar consistentemente
 const normalize = (p: string) => p.replace(/^\+/, '').replace(/\s/g, '')
 
 export async function GET(req: NextRequest) {
-  const err = await checkPermission(req, 'conversations', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'conversations', 'read')
+  if (!auth.ok) return auth.response
 
   const phoneRaw = req.nextUrl.searchParams.get('phone')
 
   try {
+    const lineIds = await getAccessibleLineIds(auth.user)
     if (phoneRaw) {
       const phone = normalize(phoneRaw)
       const messages = await query(`
-        SELECT id, phone_number, message_body, direction, status, created_at, evolution_message_id
-        FROM whatsapp_messages
-        WHERE REPLACE(phone_number, '+', '') = $1
-        ORDER BY created_at ASC
-        LIMIT 200
-      `, [phone])
+        ${CONVERSATION_MESSAGES_CTE}
+        SELECT * FROM (
+          SELECT id,phone_number,message_body,direction,status,created_at,evolution_message_id
+          FROM conversation_messages WHERE REPLACE(phone_number,'+','')=$2
+          ORDER BY created_at DESC,id DESC LIMIT 200
+        ) recent ORDER BY created_at ASC,id ASC
+      `, [lineIds,phone])
       return NextResponse.json({ messages })
     }
 
     const offsetRaw = req.nextUrl.searchParams.get('offset')
     const offset    = Math.max(0, parseInt(offsetRaw || '0', 10) || 0)
     const PAGE_SIZE = 200
+    const campaign = req.nextUrl.searchParams.get('campaign') || 'all'
+    const level = req.nextUrl.searchParams.get('level') || 'all'
+    if (!['all', 'none'].includes(campaign) && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(campaign)) {
+      return NextResponse.json({ error: 'Campaña inválida' }, { status: 400 })
+    }
+    if (!['all', 'none', ...LEVEL_DEFS.map(item => item.key)].includes(level)) {
+      return NextResponse.json({ error: 'Nivel inválido' }, { status: 400 })
+    }
+    const params = [lineIds, campaign.toLowerCase(), level]
 
-    // Total de conversaciones únicas
-    const [{ total }] = await query<{ total: string }>(
-      `SELECT COUNT(DISTINCT REPLACE(phone_number, '+', '')) AS total FROM whatsapp_messages`
-    )
-    const totalCount = parseInt(total, 10)
-
-    // Lista de conversaciones — enriquecida con datos del contacto si existe
-    // Outer subquery allows proper time-based ORDER + OFFSET after DISTINCT ON
-    const conversations = await query(`
-      SELECT * FROM (
-        SELECT DISTINCT ON (REPLACE(wm.phone_number, '+', ''))
-          REPLACE(wm.phone_number, '+', '')        AS phone_number,
-          wm.message_body                          AS last_message,
-          wm.direction                             AS last_direction,
-          wm.status                                AS last_status,
-          wm.created_at                            AS last_at,
+    // Count, campaign options and page share one snapshot and one inbox scan.
+    // Filter before pagination, then enrich only the requested page.
+    const [{ total, campaigns, conversations }] = await query<{
+      total: string; campaigns: CampaignOption[]; conversations: Record<string, unknown>[]
+    }>(`
+      ${CONVERSATION_INBOX_CTE}, enriched_page AS (
+      SELECT page.*,
           COALESCE(cs.is_escalated, false)         AS is_escalated,
           cs.escalation_reason,
           cs.current_flow                          AS conv_flow,
           EXISTS (
             SELECT 1 FROM blacklist bl
-            WHERE bl.phone_number_normalized = REPLACE(wm.phone_number, '+', '')
+            WHERE bl.phone_number_normalized = page.phone_number
             AND   bl.removed_at IS NULL
           )                                        AS is_blacklisted,
           EXISTS (
             SELECT 1 FROM conversation_notes cn
-            WHERE cn.phone = REPLACE(wm.phone_number, '+', '')
+            WHERE cn.phone = page.phone_number
             AND   cn.content LIKE '%Seguimiento programado%'
           )                                        AS has_follow_up,
-          c.id                                     AS contact_id,
-          c.first_name,
-          c.last_name,
-          c.segment::text                          AS segment,
           (SELECT REPLACE(tag, 'casino:actividad:', '')
            FROM contact_tags
-           WHERE contact_id = c.id AND tag LIKE 'casino:actividad:%'
+           WHERE contact_id = page.contact_id AND tag LIKE 'casino:actividad:%'
            LIMIT 1)                                AS actividad,
           (SELECT REPLACE(tag, 'casino:valor_riesgo:', '')
            FROM contact_tags
-           WHERE contact_id = c.id AND tag LIKE 'casino:valor_riesgo:%'
+           WHERE contact_id = page.contact_id AND tag LIKE 'casino:valor_riesgo:%'
            LIMIT 1)                                AS valor_riesgo
-        FROM whatsapp_messages wm
-        LEFT JOIN conversation_state cs
-          ON cs.phone_number = REPLACE(wm.phone_number, '+', '')
-          AND cs.resolved_at IS NULL
-        LEFT JOIN contacts c
-          ON REPLACE(c.phone_number, '+', '') = REPLACE(wm.phone_number, '+', '')
-        ORDER BY REPLACE(wm.phone_number, '+', ''), wm.created_at DESC
-      ) sub
-      ORDER BY last_at DESC
-      LIMIT $1 OFFSET $2
-    `, [PAGE_SIZE, offset])
+        FROM (SELECT * FROM filtered_inbox ORDER BY last_at DESC, phone_number LIMIT $4 OFFSET $5) page
+        LEFT JOIN LATERAL (
+          SELECT is_escalated, escalation_reason, current_flow FROM conversation_state
+          WHERE phone_number = page.phone_number AND resolved_at IS NULL LIMIT 1
+        ) cs ON true
+      )
+      SELECT (SELECT COUNT(*)::text FROM filtered_inbox) AS total,
+        COALESCE((SELECT jsonb_agg(options ORDER BY options.name, options.id) FROM (
+          SELECT id, name, COUNT(*)::int AS count FROM campaign_threads GROUP BY id, name
+        ) options), '[]'::jsonb) AS campaigns,
+        COALESCE((SELECT jsonb_agg(p ORDER BY p.last_at DESC, p.phone_number)
+          FROM enriched_page p), '[]'::jsonb) AS conversations
+    `, [...params, PAGE_SIZE, offset])
+    const totalCount = parseInt(total, 10)
 
     return NextResponse.json({
-      conversations,
+      conversations: conversations.map(row => ({ ...row,
+        last_at: new Date(String(row.last_at)).toISOString(),
+      })),
+      campaigns,
       total:    totalCount,
       has_more: offset + PAGE_SIZE < totalCount,
     })

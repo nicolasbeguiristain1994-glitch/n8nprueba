@@ -1,0 +1,8 @@
+{
+  "name": "casino-exact-daily",
+  "version": "1.0.0",
+  "private": true,
+  "engines": {"node": "20.x"},
+  "scripts": {"start": "node daily.cjs", "test": "node --test test/*.test.cjs"},
+  "dependencies": {"pg": "8.20.0"}
+}

@@ -8,20 +8,22 @@ interface Props {
   items:    Conv[]
   selected: string | null
   onSelect: (phone: string) => void
+  selectedCampaign?: string
 }
 
-export function VirtualizedConvList({ items, selected, onSelect }: Props) {
+export function VirtualizedConvList({ items, selected, onSelect, selectedCampaign }: Props) {
   const parentRef = useRef<HTMLDivElement>(null)
 
   const virtualizer = useVirtualizer({
     count:           items.length,
     getScrollElement: () => parentRef.current,
-    estimateSize:    () => 74,
+    estimateSize:    () => 112,
+    getItemKey:      index => items[index].phone_number,
     overscan:        6,
   })
 
   if (items.length === 0) {
-    return <p className="text-sm text-gray-400 text-center py-10">Sin conversaciones</p>
+    return <p className="text-sm text-muted-foreground text-center py-10">Sin conversaciones</p>
   }
 
   return (
@@ -44,6 +46,7 @@ export function VirtualizedConvList({ items, selected, onSelect }: Props) {
             >
               <ConversationItem
                 conv={c}
+                selectedCampaign={selectedCampaign}
                 isSelected={selected === c.phone_number}
                 onClick={() => onSelect(c.phone_number)}
               />

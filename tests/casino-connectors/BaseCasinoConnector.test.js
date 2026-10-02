@@ -1,13 +1,21 @@
 'use strict'
 
-const { BaseCasinoConnector } = require('../../src/casino-connectors/base/BaseCasinoConnector')
+const {
+  BaseCasinoConnector,
+  normalizeIdRec,
+  PLAYER_LOCK_NAMESPACE,
+} = require('../../src/casino-connectors/base/BaseCasinoConnector')
 
 // ── Minimal concrete subclass ─────────────────────────────────────────────────
 // BaseCasinoConnector is abstract; we need a real subclass to exercise its
 // inherited methods without coupling the test to any specific platform.
 
 class TestConnector extends BaseCasinoConnector {
-  async fetchTransactions()         { return [] }
+  constructor(config, pool, raw = []) {
+    super(config, pool)
+    this.raw = raw
+  }
+  async fetchTransactions()         { return this.raw }
   async normalizeTransactions(raw)  { return raw }
   async healthCheck()               { return true }
 }
@@ -21,35 +29,39 @@ const BASE_CONFIG = {
   endpoint: '/api/test',
 }
 
-function makeClient(overrides = {}) {
-  return {
-    query:   jest.fn().mockResolvedValue({ rowCount: 1 }),
-    release: jest.fn(),
-    ...overrides,
-  }
+/**
+ * Cliente pg simulado. Los INSERT en casino_transactions devuelven una fila
+ * `{inserted}` por cada fila enviada (como RETURNING (xmax = 0)).
+ */
+function makeClient({ failOn = null, insertedFlags = null } = {}) {
+  const query = jest.fn(async (sql, params = []) => {
+    if (failOn && failOn(sql)) throw Object.assign(new Error('db error'), { code: '40001' })
+    if (/INSERT INTO casino_transactions/.test(sql)) {
+      const width = /\(platform, id_rec,/.test(sql) ? 9 : 8
+      const n     = params.length / width
+      const rows  = Array.from({ length: n }, (_, i) => ({ inserted: insertedFlags ? insertedFlags[i] : true }))
+      return { rows, rowCount: n }
+    }
+    if (/INSERT INTO casino_players/.test(sql)) return { rows: [], rowCount: params[0].length }
+    return { rows: [], rowCount: 0 }
+  })
+  return { query, release: jest.fn() }
 }
 
-function makePool(clientOverrides = {}) {
-  const client = makeClient(clientOverrides)
+function makeConnector(clientOpts = {}, raw = []) {
+  const client = makeClient(clientOpts)
   const pool   = {
     connect: jest.fn().mockResolvedValue(client),
-    query:   jest.fn().mockResolvedValue({ rowCount: 1 }),
+    query:   jest.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
   }
-  return { pool, client }
+  return { connector: new TestConnector(BASE_CONFIG, pool, raw), pool, client }
 }
 
-function makeConnector(poolOverrides = {}) {
-  const { pool, client } = makePool(poolOverrides)
-  return { connector: new TestConnector(BASE_CONFIG, pool), pool, client }
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function txWith(overrides = {}) {
+function tx(overrides = {}) {
   return {
-    id_rec:         'r1',
+    id_rec:         '101',
     fecha:          '2025-01-01',
-    fecha_hora_utc: null,
+    fecha_hora_utc: '2025-01-01T15:00:00.000Z',
     username:       'player1',
     agente:         'agente1',
     tipo:           'carga',
@@ -57,6 +69,10 @@ function txWith(overrides = {}) {
     raw_detalles:   'Carga directa',
     ...overrides,
   }
+}
+
+function sqlCalls(client) {
+  return client.query.mock.calls.map(c => c[0].replace(/\s+/g, ' ').trim())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -73,14 +89,19 @@ describe('BaseCasinoConnector', () => {
 
   describe('abstract instantiation guard', () => {
     it('throws when trying to instantiate the base class directly', () => {
-      const { pool } = makePool()
+      const { pool } = makeConnector()
       expect(() => new BaseCasinoConnector(BASE_CONFIG, pool))
         .toThrow('BaseCasinoConnector is abstract')
     })
 
     it('allows instantiation of a concrete subclass', () => {
-      const { pool } = makePool()
+      const { pool } = makeConnector()
       expect(() => new TestConnector(BASE_CONFIG, pool)).not.toThrow()
+    })
+
+    it('exposes the platform from config.name', () => {
+      const { connector } = makeConnector()
+      expect(connector.platform).toBe('test')
     })
   })
 
@@ -90,7 +111,7 @@ describe('BaseCasinoConnector', () => {
     it.each(['name', 'type', 'baseUrl', 'endpoint'])(
       'throws when required field "%s" is missing',
       (field) => {
-        const { pool } = makePool()
+        const { pool } = makeConnector()
         const config = { ...BASE_CONFIG, [field]: undefined }
         expect(() => new TestConnector(config, pool))
           .toThrow(`missing required field: "${field}"`)
@@ -167,77 +188,18 @@ describe('BaseCasinoConnector', () => {
       expect(res.status).toBe(200)
     })
 
-    it('does NOT retry on a generic 4xx (e.g. 400) — fails immediately', async () => {
-      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 400 })
-      await expect(connector._fetchWithRetry('http://test', {}, 'ctx'))
-        .rejects.toThrow('HTTP 400')
-      expect(global.fetch).toHaveBeenCalledTimes(1)
-    })
-
-    it('does NOT retry on 404', async () => {
-      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404 })
-      await expect(connector._fetchWithRetry('http://test', {}, 'ctx'))
-        .rejects.toThrow('HTTP 404')
-      expect(global.fetch).toHaveBeenCalledTimes(1)
-    })
-
-    // ── H11: 401/403 re-auth-and-retry-once ──────────────────────────────────
-
-    it('on 401, calls authenticate() once and retries the request once', async () => {
-      const authenticate = jest.spyOn(connector, 'authenticate').mockResolvedValue()
-      global.fetch = jest.fn()
-        .mockResolvedValueOnce({ ok: false, status: 401 })
-        .mockResolvedValueOnce({ ok: true,  status: 200 })
-      const res = await connector._fetchWithRetry('http://test', {}, 'ctx')
-      expect(res.status).toBe(200)
-      expect(authenticate).toHaveBeenCalledTimes(1)
-      expect(global.fetch).toHaveBeenCalledTimes(2)
-    })
-
-    it('on 403, calls authenticate() once and retries the request once', async () => {
-      const authenticate = jest.spyOn(connector, 'authenticate').mockResolvedValue()
-      global.fetch = jest.fn()
-        .mockResolvedValueOnce({ ok: false, status: 403 })
-        .mockResolvedValueOnce({ ok: true,  status: 200 })
-      const res = await connector._fetchWithRetry('http://test', {}, 'ctx')
-      expect(res.status).toBe(200)
-      expect(authenticate).toHaveBeenCalledTimes(1)
-      expect(global.fetch).toHaveBeenCalledTimes(2)
-    })
-
-    it('re-auth retry does NOT consume one of the normal 4 attempt slots', async () => {
-      // 401 on the very first call still gets its post-reauth retry even though
-      // every one of the 4 "normal" attempts below is a 503 that exhausts the
-      // whole retry budget — proves the reauth path is not counted against it.
-      jest.spyOn(connector, 'authenticate').mockResolvedValue()
-      global.fetch = jest.fn()
-        .mockResolvedValueOnce({ ok: false, status: 401 })
-        .mockResolvedValue({ ok: false, status: 503 })
-      await expect(connector._fetchWithRetry('http://test', {}, 'ctx'))
-        .rejects.toThrow('All 4 attempts failed')
-      // 1 (401) + 4 (503 exhausting MAX_ATTEMPTS) = 5
-      expect(global.fetch).toHaveBeenCalledTimes(5)
-    })
-
-    it('fails as non-retriable if the retry after re-auth still gets a 401 (no infinite loop)', async () => {
-      const authenticate = jest.spyOn(connector, 'authenticate').mockResolvedValue()
+    it('does NOT retry on 4xx — fails immediately', async () => {
       global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 401 })
       await expect(connector._fetchWithRetry('http://test', {}, 'ctx'))
         .rejects.toThrow('HTTP 401')
-      expect(authenticate).toHaveBeenCalledTimes(1)
-      expect(global.fetch).toHaveBeenCalledTimes(2)
+      expect(global.fetch).toHaveBeenCalledTimes(1)
     })
 
-    it('rebuilds options from a factory on every attempt, including the post-reauth retry', async () => {
-      let token = 'stale-token'
-      jest.spyOn(connector, 'authenticate').mockImplementation(async () => { token = 'fresh-token' })
-      global.fetch = jest.fn()
-        .mockResolvedValueOnce({ ok: false, status: 401 })
-        .mockResolvedValueOnce({ ok: true,  status: 200 })
-      const buildOptions = () => ({ headers: { 'X-Player-Token': token } })
-      await connector._fetchWithRetry('http://test', buildOptions, 'ctx')
-      expect(global.fetch.mock.calls[0][1].headers['X-Player-Token']).toBe('stale-token')
-      expect(global.fetch.mock.calls[1][1].headers['X-Player-Token']).toBe('fresh-token')
+    it('does NOT retry on 403', async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 403 })
+      await expect(connector._fetchWithRetry('http://test', {}, 'ctx'))
+        .rejects.toThrow('HTTP 403')
+      expect(global.fetch).toHaveBeenCalledTimes(1)
     })
 
     it('throws after exhausting all 4 attempts', async () => {
@@ -259,6 +221,24 @@ describe('BaseCasinoConnector', () => {
       expect(warn.mock.calls[1][0]).toMatch(/Retry 2\/3/)
     })
 
+    it('never propagates nor logs the text of a network error (may carry URL/credentials)', async () => {
+      const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+      global.fetch = jest.fn().mockRejectedValue(Object.assign(
+        new TypeError('fetch failed https://user:synthetic phrase with spaces@host.invalid/x?token=zzz9'),
+        { cause: { code: 'ECONNRESET' } },
+      ))
+      const err = await connector._fetchWithRetry('http://test', {}, 'agent "x"').catch(e => e)
+
+      expect(err.message).toBe('[test] All 4 attempts failed for agent "x": error de red (ECONNRESET)')
+      expect(JSON.stringify([err.message, warn.mock.calls])).not.toMatch(/synthetic|zzz9|host\.invalid/)
+    })
+
+    it('keeps the last HTTP status as a property after exhausting retries', async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 502 })
+      const err = await connector._fetchWithRetry('http://test', {}, 'ctx').catch(e => e)
+      expect(err.httpStatus).toBe(502)
+    })
+
     it('includes the context label in every retry log', async () => {
       const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
       global.fetch = jest.fn()
@@ -269,436 +249,262 @@ describe('BaseCasinoConnector', () => {
     })
   })
 
-  // ── insertTransactions ──────────────────────────────────────────────────────
+  // ── normalizeIdRec ──────────────────────────────────────────────────────────
 
-  describe('insertTransactions()', () => {
+  describe('normalizeIdRec()', () => {
+    it.each([
+      [null, null], [undefined, null], ['', null], ['   ', null],
+      [0, null], ['0', null], ['000', null],
+      [-1, null], ['-1', null], [1.5, null], ['1.5', null], ['abc', null], ['r1', null],
+      ['9223372036854775808', null],
+    ])('treats %p as "sin ID"', (input, expected) => {
+      expect(normalizeIdRec(input)).toBe(expected)
+    })
 
-    it('returns 0 for empty input without opening a DB connection', async () => {
+    it.each([
+      [42, '42'], ['42', '42'], [' 42 ', '42'], ['0042', '42'],
+      ['9223372036854775807', '9223372036854775807'], [BigInt(7), '7'],
+    ])('keeps valid id %p as %p', (input, expected) => {
+      expect(normalizeIdRec(input)).toBe(expected)
+    })
+  })
+
+  // ── prepareTransactions ─────────────────────────────────────────────────────
+
+  describe('prepareTransactions()', () => {
+    let connector
+    beforeEach(() => ({ connector } = makeConnector()))
+
+    it('dedupes repeated IDs inside the batch and counts them', () => {
+      const p = connector.prepareTransactions([tx({ id_rec: '1' }), tx({ id_rec: '1' }), tx({ id_rec: '2' })])
+      expect(p.withId).toHaveLength(2)
+      expect(p.stats.duplicateIds).toBe(1)
+      expect(p.coverage).toBe('complete')
+    })
+
+    it('routes id_rec = 0 to the no-ID path and marks coverage as limited', () => {
+      const p = connector.prepareTransactions([tx({ id_rec: 0 })])
+      expect(p.withId).toHaveLength(0)
+      expect(p.withoutId).toHaveLength(1)
+      expect(p.stats.withoutId).toBe(1)
+      expect(p.coverage).toBe('limited')
+    })
+
+    it('counts no-ID movements that the per-day key cannot tell apart', () => {
+      const p = connector.prepareTransactions([
+        tx({ id_rec: null, username: 'Juan' }),
+        tx({ id_rec: null, username: 'juan' }),   // mismo día, tipo y monto
+        tx({ id_rec: null, username: 'juan', monto: 200 }),
+      ])
+      expect(p.withoutId).toHaveLength(2)
+      expect(p.stats.collapsedWithoutId).toBe(1)
+    })
+
+    it('trims usernames, lowercases the recompute list and skips invalid rows', () => {
+      const p = connector.prepareTransactions([
+        tx({ id_rec: '1', username: '  Juan22 ' }),
+        tx({ id_rec: '2', username: 'JUAN22' }),
+        tx({ id_rec: '3', username: '   ' }),
+        tx({ id_rec: '4', tipo: 'bono' }),
+      ])
+      expect(p.withId.map(r => r.username)).toEqual(['Juan22', 'JUAN22'])
+      expect(p.usernames).toEqual(['juan22'])
+      expect(p.stats.invalid).toBe(2)
+    })
+  })
+
+  // ── persistSync ─────────────────────────────────────────────────────────────
+
+  describe('persistSync()', () => {
+    it('does not open a connection for an empty batch without hooks', async () => {
       const { connector, pool } = makeConnector()
-      const result = await connector.insertTransactions('ag', [])
-      expect(result).toBe(0)
+      const res = await connector.persistSync('ag', connector.prepareTransactions([]))
+      expect(res).toEqual({ inserted: 0, updated: 0, players: 0 })
       expect(pool.connect).not.toHaveBeenCalled()
     })
 
-    it('wraps all inserts in BEGIN / COMMIT on success', async () => {
+    it('still runs a transaction for an empty batch when afterWrite must record it', async () => {
       const { connector, client } = makeConnector()
-      await connector.insertTransactions('ag', [txWith()])
-      const ops = client.query.mock.calls.map(c => c[0].trim().split(/\s/)[0])
+      const afterWrite = jest.fn()
+      await connector.persistSync('ag', connector.prepareTransactions([]), { afterWrite })
+      expect(afterWrite).toHaveBeenCalledWith(client, { inserted: 0, updated: 0, players: 0 })
+      const ops = sqlCalls(client)
       expect(ops[0]).toBe('BEGIN')
       expect(ops[ops.length - 1]).toBe('COMMIT')
     })
 
-    it('issues ROLLBACK and re-throws when an INSERT fails', async () => {
-      const failingClient = makeClient({
-        query: jest.fn()
-          .mockResolvedValueOnce({ rowCount: 0 })        // BEGIN
-          .mockRejectedValueOnce(new Error('db error'))  // INSERT fails
-          .mockResolvedValue(   { rowCount: 0 }),        // ROLLBACK
-      })
-      const pool = { connect: jest.fn().mockResolvedValue(failingClient) }
-      const connector = new TestConnector(BASE_CONFIG, pool)
-
-      await expect(connector.insertTransactions('ag', [txWith({ id_rec: null })]))
-        .rejects.toThrow('db error')
-
-      const ops = failingClient.query.mock.calls.map(c => c[0].trim().split(/\s/)[0])
-      expect(ops).toContain('ROLLBACK')
-      expect(ops).not.toContain('COMMIT')
-    })
-
-    it('always releases the DB client after COMMIT', async () => {
+    it('inserts, locks players, recomputes and records in ONE transaction, in that order', async () => {
       const { connector, client } = makeConnector()
-      await connector.insertTransactions('ag', [txWith()])
+      const afterWrite = jest.fn(async (c) => { await c.query('SELECT hook') })
+      await connector.persistSync('ag', connector.prepareTransactions([tx()]), { afterWrite })
+
+      const ops = sqlCalls(client)
+      const idx = re => ops.findIndex(s => re.test(s))
+      expect(ops[0]).toBe('BEGIN')
+      expect(idx(/INSERT INTO casino_transactions/)).toBeGreaterThan(0)
+      expect(idx(/pg_advisory_xact_lock/)).toBeGreaterThan(idx(/INSERT INTO casino_transactions/))
+      expect(idx(/INSERT INTO casino_players/)).toBeGreaterThan(idx(/pg_advisory_xact_lock/))
+      expect(idx(/SELECT hook/)).toBeGreaterThan(idx(/INSERT INTO casino_players/))
+      expect(ops[ops.length - 1]).toBe('COMMIT')
       expect(client.release).toHaveBeenCalledTimes(1)
     })
 
-    it('always releases the DB client after ROLLBACK', async () => {
-      const failingClient = makeClient({
-        query: jest.fn()
-          .mockResolvedValueOnce({ rowCount: 0 })
-          .mockRejectedValueOnce(new Error('fail'))
-          .mockResolvedValue(   { rowCount: 0 }),
-      })
-      const pool = { connect: jest.fn().mockResolvedValue(failingClient) }
-      const connector = new TestConnector(BASE_CONFIG, pool)
-
-      await connector.insertTransactions('ag', [txWith({ id_rec: null })]).catch(() => {})
-      expect(failingClient.release).toHaveBeenCalledTimes(1)
-    })
-
-    it('routes records WITH id_rec to the (platform, id_rec) conflict clause', async () => {
+    it('tags every row with the connector platform and dedupes by (platform, id_rec)', async () => {
       const { connector, client } = makeConnector()
-      await connector.insertTransactions('ag', [txWith({ id_rec: 'abc' })])
-      const insertCall = client.query.mock.calls.find(c => c[0].includes('INSERT'))
-      expect(insertCall[0]).toContain('ON CONFLICT (platform, id_rec)')
+      await connector.persistSync('ag', connector.prepareTransactions([tx({ id_rec: '5' })]))
+      const [sql, params] = client.query.mock.calls.find(c => /INSERT INTO casino_transactions/.test(c[0]))
+      expect(sql).toContain('ON CONFLICT (platform, id_rec)')
+      expect(params[0]).toBe('test')
+      expect(params[1]).toBe('5')
     })
 
-    it('routes records WITHOUT id_rec to the platform-aware composite-key conflict clause', async () => {
+    it('routes rows without ID to the per-platform, case-insensitive day key', async () => {
       const { connector, client } = makeConnector()
-      await connector.insertTransactions('ag', [txWith({ id_rec: null })])
-      const insertCall = client.query.mock.calls.find(c => c[0].includes('INSERT'))
-      expect(insertCall[0]).toContain('ON CONFLICT (platform, fecha, lower(username)')
+      await connector.persistSync('ag', connector.prepareTransactions([tx({ id_rec: null })]))
+      const [sql, params] = client.query.mock.calls.find(c => /INSERT INTO casino_transactions/.test(c[0]))
+      expect(sql).toMatch(/ON CONFLICT \(platform, fecha, \(LOWER\(username\)\), tipo, monto, agente\)/)
+      expect(params[0]).toBe('test')
     })
 
-    it('always stamps the connector platform (config.name) on every inserted row', async () => {
+    it('counts only real inserts as inserted (RETURNING xmax = 0)', async () => {
+      const { connector } = makeConnector({ insertedFlags: [true, false, true] })
+      const res = await connector.persistSync('ag', connector.prepareTransactions([
+        tx({ id_rec: '1' }), tx({ id_rec: '2' }), tx({ id_rec: '3' }),
+      ]))
+      expect(res.inserted).toBe(2)
+      expect(res.updated).toBe(1)
+    })
+
+    it('recomputes by ASSIGNING totals from casino_transactions, never adding EXCLUDED', async () => {
       const { connector, client } = makeConnector()
-      await connector.insertTransactions('ag', [txWith({ id_rec: 'abc' })])
-      const insertCall = client.query.mock.calls.find(c => c[0].includes('INSERT'))
-      // BASE_CONFIG.name === 'test' — last positional param for the id_rec path
-      expect(insertCall[1]).toContain('test')
+      await connector.persistSync('ag', connector.prepareTransactions([tx()]))
+      const sql = sqlCalls(client).find(s => /INSERT INTO casino_players/.test(s))
+      expect(sql).toMatch(/FROM casino_transactions ct/)
+      expect(sql).toMatch(/total_cargas = EXCLUDED\.total_cargas/)
+      expect(sql).toMatch(/cant_retiros = EXCLUDED\.cant_retiros/)
+      expect(sql).not.toMatch(/casino_players\.total_cargas\s*\+/)
+      expect(sql).not.toMatch(/seg_monto|seg_actividad|labels/)
+      expect(sql).toMatch(/LOWER\(ct\.username\) <> LOWER\(ct\.agente\)/)
     })
 
-    // ── fase 2: identity collisions (source_id) ────────────────────────────
-
-    describe('_assertNoIdentityCollisions() — fase 2 (source_id)', () => {
-      it('does NOT flag a collision when a plain JS number (Zeus-style monto) matches a Postgres NUMERIC string read back as "100.00"', async () => {
-        // Regression guard: node-pg returns NUMERIC columns as strings
-        // ("100.00"), while a connector might normalize monto as a plain JS
-        // number (100, Zeus) or a fixed-decimal string ("100.00", Argenbet).
-        // A naive String(a) !== String(b) would treat "100.00" and 100 as
-        // different and misfire as a collision on every single Zeus re-sync.
-        // `agente` on the persisted row is always insertTransactions()'s own
-        // `agente` argument ('ag' below), never tx.agente — so the DB fixture
-        // must agree with 'ag' here to isolate the monto canonicalization
-        // being tested.
-        const existingRow = { id_rec: 'r1', fecha: '2025-01-01', agente: 'ag', source_id: null, monto: '100.00', username: 'player1', tipo: 'carga' }
-        const client = makeClient({
-          query: jest.fn()
-            .mockResolvedValueOnce({ rowCount: 0 })                 // BEGIN
-            .mockResolvedValueOnce({ rowCount: 0 })                 // advisory lock
-            .mockResolvedValueOnce({ rows: [existingRow] })         // collision-check SELECT
-            .mockResolvedValueOnce({ rows: [{ inserted: true }] })  // INSERT
-            .mockResolvedValueOnce({ rowCount: 0 }),                // COMMIT
-        })
-        const pool = { connect: jest.fn().mockResolvedValue(client) }
-        const connector = new TestConnector(BASE_CONFIG, pool)
-
-        await expect(
-          connector.insertTransactions('ag', [txWith({ id_rec: 'r1', monto: 100, username: 'player1', tipo: 'carga' })])
-        ).resolves.not.toThrow()
-      })
-
-      it('throws when an existing row disagrees on monto even after canonicalizing decimals', async () => {
-        const existingRow = { id_rec: 'r1', fecha: '2025-01-01', agente: 'ag', source_id: null, monto: '100.00', username: 'player1', tipo: 'carga' }
-        const client = makeClient({
-          query: jest.fn()
-            .mockResolvedValueOnce({ rowCount: 0 })  // BEGIN
-            .mockResolvedValueOnce({ rowCount: 0 })  // advisory lock
-            .mockResolvedValueOnce({ rows: [existingRow] })
-            .mockResolvedValue({ rowCount: 0 }),
-        })
-        const pool = { connect: jest.fn().mockResolvedValue(client) }
-        const connector = new TestConnector(BASE_CONFIG, pool)
-
-        await expect(
-          connector.insertTransactions('ag', [txWith({ id_rec: 'r1', monto: 999.99, username: 'player1', tipo: 'carga' })])
-        ).rejects.toThrow(/identity collision/)
-      })
-
-      it('the ON CONFLICT clause only backfills fecha_hora_utc/source_id when the existing row is actually missing them (never counts a no-op replay as an update)', async () => {
-        const { connector, client } = makeConnector()
-        await connector.insertTransactions('ag', [txWith({ id_rec: 'abc' })])
-        const insertCall = client.query.mock.calls.find(c => c[0].includes('INSERT'))
-        expect(insertCall[0]).toMatch(/WHERE \(casino_transactions\.fecha_hora_utc IS NULL AND EXCLUDED\.fecha_hora_utc IS NOT NULL\)/)
-        expect(insertCall[0]).toMatch(/OR \(casino_transactions\.source_id IS NULL AND EXCLUDED\.source_id IS NOT NULL\)/)
-      })
+    it('takes per-player advisory locks in key order before recomputing', async () => {
+      const { connector, client } = makeConnector()
+      await connector.persistSync('ag', connector.prepareTransactions([
+        tx({ id_rec: '1', username: 'Zeta' }), tx({ id_rec: '2', username: 'alfa' }),
+      ]))
+      const [sql, params] = client.query.mock.calls.find(c => /pg_advisory_xact_lock/.test(c[0]))
+      expect(sql).toMatch(/ORDER BY k/)
+      expect(params[0]).toBe(PLAYER_LOCK_NAMESPACE)
+      expect(params[1].sort()).toEqual(['alfa', 'zeta'])
     })
 
-    // ── fase 2 fix #1: exact decimal canonicalization (no Number/toFixed) ──
-
-    describe('_montoEquals() / _canonicalMonto() — exact decimal canonicalization', () => {
-      it('treats "100.00" and 100 as equal (Zeus number vs Postgres NUMERIC string)', () => {
-        const { connector } = makeConnector()
-        expect(connector._montoEquals('100.00', 100)).toBe(true)
-      })
-
-      it('treats "123.40" and 123.4 as equal after stripping trailing fraction zeros', () => {
-        const { connector } = makeConnector()
-        expect(connector._montoEquals('123.40', 123.4)).toBe(true)
-      })
-
-      it('treats two large decimals that differ only past Number precision as DIFFERENT (never rounds through Number/toFixed)', () => {
-        const { connector } = makeConnector()
-        expect(connector._montoEquals('9007199254740991.01', '9007199254740991.02')).toBe(false)
-      })
-
-      it('never treats null/invalid monto as equal, even to another invalid value', () => {
-        const { connector } = makeConnector()
-        expect(connector._montoEquals(null, null)).toBe(false)
-        expect(connector._montoEquals(undefined, 100)).toBe(false)
-        expect(connector._montoEquals('not-a-number', 'not-a-number')).toBe(false)
-      })
+    it('rolls back everything (no COMMIT, no hook) when the recompute fails', async () => {
+      const { connector, client } = makeConnector({ failOn: sql => /INSERT INTO casino_players/.test(sql) })
+      const afterWrite = jest.fn()
+      await expect(connector.persistSync('ag', connector.prepareTransactions([tx()]), { afterWrite }))
+        .rejects.toThrow('db error')
+      const ops = sqlCalls(client)
+      expect(ops).toContain('ROLLBACK')
+      expect(ops).not.toContain('COMMIT')
+      expect(afterWrite).not.toHaveBeenCalled()
+      expect(client.release).toHaveBeenCalledTimes(1)
     })
 
-    // ── fase 2 fix #2: fecha/agente are part of identity ────────────────────
-
-    describe('_identityConflicts() — fecha/agente are part of identity', () => {
-      it('throws when an existing row disagrees only on fecha (same monto/username/tipo/agente)', async () => {
-        const existingRow = { id_rec: 'r1', fecha: '2025-01-02', agente: 'ag', source_id: null, monto: '100.00', username: 'player1', tipo: 'carga' }
-        const client = makeClient({
-          query: jest.fn()
-            .mockResolvedValueOnce({ rowCount: 0 })  // BEGIN
-            .mockResolvedValueOnce({ rowCount: 0 })  // advisory lock
-            .mockResolvedValueOnce({ rows: [existingRow] })
-            .mockResolvedValue({ rowCount: 0 }),
-        })
-        const pool = { connect: jest.fn().mockResolvedValue(client) }
-        const connector = new TestConnector(BASE_CONFIG, pool)
-
-        await expect(
-          connector.insertTransactions('ag', [txWith({ id_rec: 'r1', fecha: '2025-01-01', monto: 100, username: 'player1', tipo: 'carga' })])
-        ).rejects.toThrow(/identity collision/)
-      })
-
-      it('throws when an existing row disagrees only on agente (same fecha/monto/username/tipo)', async () => {
-        // `agente` on the persisted row is insertTransactions()'s own `agente`
-        // argument ('ag' below), never tx.agente — 'other-agente' here
-        // simulates a row that was originally inserted under a different
-        // agente argument.
-        const existingRow = { id_rec: 'r1', fecha: '2025-01-01', agente: 'other-agente', source_id: null, monto: '100.00', username: 'player1', tipo: 'carga' }
-        const client = makeClient({
-          query: jest.fn()
-            .mockResolvedValueOnce({ rowCount: 0 })  // BEGIN
-            .mockResolvedValueOnce({ rowCount: 0 })  // advisory lock
-            .mockResolvedValueOnce({ rows: [existingRow] })
-            .mockResolvedValue({ rowCount: 0 }),
-        })
-        const pool = { connect: jest.fn().mockResolvedValue(client) }
-        const connector = new TestConnector(BASE_CONFIG, pool)
-
-        await expect(
-          connector.insertTransactions('ag', [txWith({ id_rec: 'r1', fecha: '2025-01-01', monto: 100, username: 'player1', tipo: 'carga' })])
-        ).rejects.toThrow(/identity collision/)
-      })
-
-      it('does NOT flag a collision when agente only differs by case/whitespace (normalized trim+lowercase)', async () => {
-        const existingRow = { id_rec: 'r1', fecha: '2025-01-01', agente: '  AG ', source_id: null, monto: '100.00', username: 'player1', tipo: 'carga' }
-        const client = makeClient({
-          query: jest.fn()
-            .mockResolvedValueOnce({ rowCount: 0 })  // BEGIN
-            .mockResolvedValueOnce({ rowCount: 0 })  // advisory lock
-            .mockResolvedValueOnce({ rows: [existingRow] })
-            .mockResolvedValueOnce({ rows: [{ inserted: true }] })
-            .mockResolvedValueOnce({ rowCount: 0 }),
-        })
-        const pool = { connect: jest.fn().mockResolvedValue(client) }
-        const connector = new TestConnector(BASE_CONFIG, pool)
-
-        await expect(
-          connector.insertTransactions('ag', [txWith({ id_rec: 'r1', fecha: '2025-01-01', monto: 100, username: 'player1', tipo: 'carga' })])
-        ).resolves.not.toThrow()
-      })
-
-      it('throws on two rows in the SAME batch sharing an id_rec but disagreeing on fecha (not just against the DB)', async () => {
-        const { connector } = makeConnector()
-        const txA = txWith({ id_rec: 'dup1', fecha: '2025-01-01' })
-        const txB = txWith({ id_rec: 'dup1', fecha: '2025-01-02' })
-        await expect(connector.insertTransactions('ag', [txA, txB]))
-          .rejects.toThrow(/identity collision within the same batch/)
-      })
+    it('rolls back when afterWrite fails (cursor/result are atomic with the data)', async () => {
+      const { connector, client } = makeConnector()
+      const afterWrite = jest.fn().mockRejectedValue(new Error('cursor write failed'))
+      await expect(connector.persistSync('ag', connector.prepareTransactions([tx()]), { afterWrite }))
+        .rejects.toThrow('cursor write failed')
+      expect(sqlCalls(client)).toContain('ROLLBACK')
+      expect(sqlCalls(client)).not.toContain('COMMIT')
     })
 
-    // ── fase 2 fix #3: insertedTxCount counts only real INSERTs ─────────────
-
-    describe('insertedTxCount — counts only real INSERTs (RETURNING xmax=0), never a backfill-only UPDATE', () => {
-      it('counts 0 for a WITH-id_rec row whose ON CONFLICT branch only backfilled columns (Zeus-style replay)', async () => {
-        const client = makeClient({
-          query: jest.fn()
-            .mockResolvedValueOnce({ rowCount: 0 })                    // BEGIN
-            .mockResolvedValueOnce({ rowCount: 0 })                    // advisory lock
-            .mockResolvedValueOnce({ rows: [] })                       // collision-check SELECT
-            .mockResolvedValueOnce({ rows: [{ inserted: false }] })    // INSERT: backfill only
-            .mockResolvedValueOnce({ rowCount: 0 }),                   // COMMIT
-        })
-        const pool = { connect: jest.fn().mockResolvedValue(client) }
-        const connector = new TestConnector(BASE_CONFIG, pool)
-
-        const result = await connector.insertTransactions('ag', [txWith({ id_rec: 'abc' })])
-        expect(result).toBe(0)
-      })
-
-      it('counts 1 for a WITH-id_rec row that RETURNING reports as a genuine insert', async () => {
-        const client = makeClient({
-          query: jest.fn()
-            .mockResolvedValueOnce({ rowCount: 0 })
-            .mockResolvedValueOnce({ rowCount: 0 })
-            .mockResolvedValueOnce({ rows: [] })
-            .mockResolvedValueOnce({ rows: [{ inserted: true }] })
-            .mockResolvedValueOnce({ rowCount: 0 }),
-        })
-        const pool = { connect: jest.fn().mockResolvedValue(client) }
-        const connector = new TestConnector(BASE_CONFIG, pool)
-
-        const result = await connector.insertTransactions('ag', [txWith({ id_rec: 'abc' })])
-        expect(result).toBe(1)
-      })
-
-      it('counts 0 for a WITHOUT-id_rec row (Zeus/Bet30, no source_id) whose ON CONFLICT branch only backfilled fecha_hora_utc — a replay of the same window must never look like new data', async () => {
-        const client = makeClient({
-          query: jest.fn()
-            .mockResolvedValueOnce({ rowCount: 0 })                    // BEGIN
-            .mockResolvedValueOnce({ rowCount: 0 })                    // advisory lock
-            .mockResolvedValueOnce({ rows: [{ inserted: false }] })    // INSERT: backfill only
-            .mockResolvedValueOnce({ rowCount: 0 }),                   // COMMIT
-        })
-        const pool = { connect: jest.fn().mockResolvedValue(client) }
-        const connector = new TestConnector(BASE_CONFIG, pool)
-
-        const result = await connector.insertTransactions('ag', [txWith({ id_rec: null })])
-        expect(result).toBe(0)
-      })
+    it('aborts before writing when beforeWrite throws', async () => {
+      const { connector, client } = makeConnector()
+      const beforeWrite = jest.fn().mockRejectedValue(new Error('legacy rows'))
+      await expect(connector.persistSync('ag', connector.prepareTransactions([tx()]), { beforeWrite }))
+        .rejects.toThrow('legacy rows')
+      expect(sqlCalls(client).some(s => /INSERT/.test(s))).toBe(false)
+      expect(sqlCalls(client)).toContain('ROLLBACK')
     })
 
-    // ── fase 2 fix #3b: intra-batch dedup for id_rec-less rows too ──────────
+    it('fails closed (LEGACY_UNCLASSIFIED) when an ID collides with an unclassified legacy row', async () => {
+      const { connector, client } = makeConnector()
+      const base = client.query.getMockImplementation()
+      client.query.mockImplementation(async (sql, params) =>
+        /platform IS NULL AND id_rec = ANY/.test(sql) ? { rows: [{ n: 1 }], rowCount: 1 } : base(sql, params))
 
-    describe('_dedupeIntraBatchWithoutId() — collapses exact duplicates for id_rec-less rows', () => {
-      it('collapses two identical without-id_rec rows into a single INSERT VALUES entry', async () => {
-        const { connector, client } = makeConnector()
-        await connector.insertTransactions('ag', [txWith({ id_rec: null }), txWith({ id_rec: null })])
-        const insertCall = client.query.mock.calls.find(c => c[0].includes('ON CONFLICT (platform, fecha, lower(username)'))
-        expect(insertCall[1].length).toBe(9) // one row's worth of params, not two
-      })
-
-      it('collapses duplicates even when monto is given as a number vs the equivalent NUMERIC string', async () => {
-        const { connector, client } = makeConnector()
-        await connector.insertTransactions('ag', [
-          txWith({ id_rec: null, monto: 100 }),
-          txWith({ id_rec: null, monto: '100.00' }),
-        ])
-        const insertCall = client.query.mock.calls.find(c => c[0].includes('ON CONFLICT (platform, fecha, lower(username)'))
-        expect(insertCall[1].length).toBe(9)
-      })
-
-      it('throws when two without-id_rec rows share the same identity but disagree on source_id', async () => {
-        const { connector } = makeConnector()
-        const txA = txWith({ id_rec: null, source_id: 'a' })
-        const txB = txWith({ id_rec: null, source_id: 'b' })
-        await expect(connector.insertTransactions('ag', [txA, txB]))
-          .rejects.toThrow(/identity collision within the same batch/)
-      })
+      await expect(connector.persistSync('ag', connector.prepareTransactions([tx()])))
+        .rejects.toMatchObject({ code: 'LEGACY_UNCLASSIFIED' })
+      expect(sqlCalls(client).some(s => /INSERT/.test(s))).toBe(false)
+      expect(sqlCalls(client)).toContain('ROLLBACK')
     })
 
-    // ── fase 2 fix #4: advisory lock covers ALL API ingestion, not just source_id ──
-
-    describe('advisory lock — unconditional, covers Zeus/Bet30 (no source_id) too', () => {
-      it('acquires the same named advisory lock the Excel importer uses even for a batch with no source_id at all', async () => {
-        const { connector, client } = makeConnector()
-        await connector.insertTransactions('ag', [txWith({ id_rec: null })]) // txWith() carries no source_id
-        const ops = client.query.mock.calls.map(c => c[0].trim())
-        const beginIdx = ops.findIndex(q => q.startsWith('BEGIN'))
-        const lockIdx  = ops.findIndex(q => q.includes('pg_advisory_xact_lock'))
-        const insertIdx = ops.findIndex(q => q.includes('INSERT INTO casino_transactions'))
-        expect(lockIdx).toBeGreaterThan(beginIdx)
-        expect(lockIdx).toBeLessThan(insertIdx)
-        expect(ops[lockIdx]).toContain("hashtext('casino-excel-import')")
+    it('discards the connection when ROLLBACK itself fails', async () => {
+      const { connector, client } = makeConnector({
+        failOn: sql => /INSERT INTO casino_players/.test(sql) || sql === 'ROLLBACK',
       })
+      await expect(connector.persistSync('ag', connector.prepareTransactions([tx()]))).rejects.toThrow()
+      expect(client.release).toHaveBeenCalledWith(expect.any(Error))
+    })
 
-      it('never issues the advisory-lock query outside the BEGIN/COMMIT transaction', async () => {
-        const { connector, client, pool } = makeConnector()
-        await connector.insertTransactions('ag', [txWith({ id_rec: null })])
-        expect(pool.query).not.toHaveBeenCalledWith(expect.stringContaining('pg_advisory_xact_lock'))
-        expect(client.query.mock.calls.some(c => c[0].includes('pg_advisory_xact_lock'))).toBe(true)
-      })
+    it('batches large inputs (500 rows per INSERT)', async () => {
+      const { connector, client } = makeConnector()
+      const rows = Array.from({ length: 1001 }, (_, i) => tx({ id_rec: String(i + 1) }))
+      const res  = await connector.persistSync('ag', connector.prepareTransactions(rows))
+      const inserts = client.query.mock.calls.filter(c => /INSERT INTO casino_transactions/.test(c[0]))
+      expect(inserts).toHaveLength(3)
+      expect(res.inserted).toBe(1001)
     })
   })
 
-  // ── recomputePlayers ───────────────────────────────────────────────────────
-  //
-  // D1/D2 (H1/H2/H3): casino_players is fully recomputed from casino_transactions
-  // in a single SQL statement — no JS-side money arithmetic, no accumulation.
-  // These tests assert the STRUCTURE of that statement against the spec
-  // (assignment not increment, platform+username scope not agente scope,
-  // deposit-only activity dates, deterministic agente tie-break). End-to-end
-  // idempotency / cross-agent / cross-platform semantics are covered
-  // separately in recompute.test.js against a fake in-memory Postgres, since a
-  // structural check alone can't prove the aggregate math is right.
-
-  describe('recomputePlayers()', () => {
-
-    it('returns 0 and skips the query when there are no normalized transactions', async () => {
-      const { connector, pool } = makeConnector()
-      const result = await connector.recomputePlayers([])
-      expect(result).toBe(0)
-      expect(pool.query).not.toHaveBeenCalled()
-    })
-
-    it('issues a single INSERT ... SELECT scoped by platform and the touched usernames (not agente)', async () => {
-      const { connector, pool } = makeConnector()
-      await connector.recomputePlayers([
-        { username: 'p1' }, { username: 'P1' }, { username: 'p2' },
-      ])
-      expect(pool.query).toHaveBeenCalledTimes(1)
-      const [sql, params] = pool.query.mock.calls[0]
-      expect(sql).toContain('INSERT INTO casino_players')
-      expect(sql).toContain('FROM casino_transactions')
-      expect(sql).not.toMatch(/WHERE[^;]*\bagente\s*=\s*\$2/)
-      expect(params[0]).toBe('test') // platform = config.name
-      expect(params[1].sort()).toEqual(['p1', 'p2']) // deduped, lowercased
-    })
-
-    it('uses assignment (EXCLUDED.x), never accumulation, on conflict', async () => {
-      const { connector, pool } = makeConnector()
-      await connector.recomputePlayers([{ username: 'p1' }])
-      const [sql] = pool.query.mock.calls[0]
-      expect(sql).toContain('ON CONFLICT (platform, username_lower)')
-      expect(sql).toContain('total_cargas  = EXCLUDED.total_cargas')
-      expect(sql).not.toMatch(/total_cargas\s*=\s*casino_players\.total_cargas\s*\+/)
-    })
-
-    it('computes totals with SQL SUM(...)::numeric-safe aggregates, not JS arithmetic', async () => {
-      const { connector, pool } = makeConnector()
-      await connector.recomputePlayers([{ username: 'p1' }])
-      const [sql] = pool.query.mock.calls[0]
-      expect(sql).toMatch(/SUM\(monto\)\s*FILTER\s*\(WHERE tipo = 'carga'\)/)
-      expect(sql).toMatch(/SUM\(monto\)\s*FILTER\s*\(WHERE tipo = 'retiro'\)/)
-    })
-
-    it('restricts fecha_primera/fecha_ultima to deposits only (a withdrawal must not reactivate a player)', async () => {
-      const { connector, pool } = makeConnector()
-      await connector.recomputePlayers([{ username: 'p1' }])
-      const [sql] = pool.query.mock.calls[0]
-      expect(sql).toMatch(/MIN\(fecha\)\s*FILTER\s*\(WHERE tipo = 'carga'\)/)
-      expect(sql).toMatch(/MAX\(fecha\)\s*FILTER\s*\(WHERE tipo = 'carga'\)/)
-    })
-
-    it('picks agente deterministically from the most recent transaction, not from the fetched batch', async () => {
-      const { connector, pool } = makeConnector()
-      await connector.recomputePlayers([{ username: 'p1' }])
-      const [sql] = pool.query.mock.calls[0]
-      expect(sql).toMatch(/array_agg\(agente\s+ORDER BY COALESCE\(fecha_hora_utc, fecha::timestamptz\) DESC, id DESC\)/)
-    })
-  })
+  // ── syncAgent ───────────────────────────────────────────────────────────────
 
   describe('syncAgent()', () => {
-    // Fase 4 critical-bug fix: insertTransactions() and recomputePlayers() are
-    // two SEPARATE DB calls (the first commits its own transaction before the
-    // second even starts) — if recompute fails, the caller (the orchestrator)
-    // needs to know transactions genuinely landed so it can persist that on
-    // the failed casino_sync_runs row, and so incrementalWindow's recovery
-    // checkpoint can widen desde back to this exact range on the next run
-    // instead of skipping past it via a MAX(fecha_hora_utc) watermark that
-    // already moved forward.
-    it('attaches insertedTxCount to the thrown error when recomputePlayers() fails after insertTransactions() already committed', async () => {
-      const { connector } = makeConnector()
-      jest.spyOn(connector, 'fetchTransactions').mockResolvedValue([{ username: 'p1' }])
-      jest.spyOn(connector, 'insertTransactions').mockResolvedValue(5)
-      jest.spyOn(connector, 'recomputePlayers').mockRejectedValue(new Error('recompute exploded'))
+    it('returns honest counters and passes them to afterWrite', async () => {
+      const raw = [tx({ id_rec: '1' }), tx({ id_rec: '1' }), tx({ id_rec: null, username: 'p2' })]
+      const { connector } = makeConnector({}, raw)
+      const afterWrite = jest.fn()
+      const summary = await connector.syncAgent('ag', '2025-01-01', '2025-01-01', { afterWrite })
 
-      await expect(connector.syncAgent('agente1', '2025-01-01', '2025-01-02')).rejects.toMatchObject({
-        message:               'recompute exploded',
-        insertedTxCount:       5,
-        recomputePlayersFailed: true,
+      expect(summary).toMatchObject({
+        txCount:         3,
+        txNormalized:    3,
+        insertedTxCount: 2,
+        txWithoutId:     1,
+        txDuplicateIds:  1,
+        coverage:        'limited',
       })
+      expect(summary.fetchStartedAt).toBeInstanceOf(Date)
+      expect(afterWrite.mock.calls[0][1]).toMatchObject({ insertedTxCount: 2, coverage: 'limited' })
     })
 
-    it('returns the real insertedTxCount and playerCount when everything succeeds', async () => {
-      const { connector } = makeConnector()
-      jest.spyOn(connector, 'fetchTransactions').mockResolvedValue([{ username: 'p1' }, { username: 'p2' }])
-      jest.spyOn(connector, 'insertTransactions').mockResolvedValue(2)
-      jest.spyOn(connector, 'recomputePlayers').mockResolvedValue(2)
+    it('rows the connector could not interpret make coverage limited (never "complete")', async () => {
+      const { connector } = makeConnector({}, [tx({ id_rec: '1' }), tx({ id_rec: '2' })])
+      connector.normalizeWithStats = async raw => ({ rows: raw.slice(0, 1), invalid: 1, excluded: 0 })
+      const summary = await connector.syncAgent('ag', '2025-01-01', '2025-01-01')
+      expect(summary).toMatchObject({ txInvalid: 1, coverage: 'limited' })
+    })
 
-      const result = await connector.syncAgent('agente1', '2025-01-01', '2025-01-02')
-      expect(result).toEqual({ txCount: 2, playerCount: 2, insertedTxCount: 2 })
+    it('by default, rows dropped by normalizeTransactions count as invalid', async () => {
+      const { connector } = makeConnector({}, [tx({ id_rec: '1' }), tx({ id_rec: '2' })])
+      connector.normalizeTransactions = async raw => raw.slice(0, 1)
+      const summary = await connector.syncAgent('ag', '2025-01-01', '2025-01-01')
+      expect(summary).toMatchObject({ txInvalid: 1, coverage: 'limited' })
+    })
+
+    it('expected exclusions do not limit coverage', async () => {
+      const { connector } = makeConnector({}, [tx({ id_rec: '1' }), tx({ id_rec: '2' })])
+      connector.normalizeWithStats = async raw => ({ rows: raw.slice(0, 1), invalid: 0, excluded: 1 })
+      const summary = await connector.syncAgent('ag', '2025-01-01', '2025-01-01')
+      expect(summary).toMatchObject({ txInvalid: 0, txExcluded: 1, coverage: 'complete' })
+    })
+
+    it('propagates fetch errors without touching the database', async () => {
+      const { connector, pool } = makeConnector()
+      connector.fetchTransactions = jest.fn().mockRejectedValue(new Error('HTTP 503'))
+      await expect(connector.syncAgent('ag', '2025-01-01', '2025-01-01')).rejects.toThrow('HTTP 503')
+      expect(pool.connect).not.toHaveBeenCalled()
     })
   })
 })

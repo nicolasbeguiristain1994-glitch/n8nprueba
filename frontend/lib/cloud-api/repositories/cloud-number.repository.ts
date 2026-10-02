@@ -111,7 +111,7 @@ export const cloudNumberRepository = {
         data.wabaId, data.phoneNumberId, data.displayPhone, data.verifiedName,
         data.plainToken, data.encryptionKey, data.tokenExpiresAt,
         data.coexistenceEnabled ?? false,
-        data.whatsappLineId ?? null, data.onboardedBy,
+        data.whatsappLineId ?? null, data.onboardedBy === 'bootstrap' ? null : data.onboardedBy,
       ],
     )
     return rows[0].id

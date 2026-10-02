@@ -28,6 +28,7 @@ export function verifyWebhookSignature(
   }
 
   const receivedHex = signature.slice(PREFIX.length)
+  if (!appSecret || !/^[a-f\d]{64}$/i.test(receivedHex)) return { valid: false, reason: 'Firma inválida' }
   const body = typeof rawBody === 'string' ? Buffer.from(rawBody, 'utf8') : rawBody
   const expectedHex = createHmac('sha256', appSecret).update(body).digest('hex')
 
@@ -54,7 +55,7 @@ export function verifyWebhookChallenge(params: {
   verifyToken: string
 }): string | null {
   if (
-    params.mode      === 'subscribe' &&
+    !!params.verifyToken && params.mode === 'subscribe' &&
     params.token     === params.verifyToken &&
     params.challenge !== null
   ) {

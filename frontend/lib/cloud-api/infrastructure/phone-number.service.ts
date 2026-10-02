@@ -10,10 +10,11 @@ export interface PhoneNumberInfo {
   code_verification_status:  string
   name_status:               string
   platform_type:             string
+  status:                    string
   throughput:                { level: string }
 }
 
-const PHONE_FIELDS = 'id,verified_name,display_phone_number,quality_rating,code_verification_status,name_status,platform_type,throughput'
+const PHONE_FIELDS = 'id,verified_name,display_phone_number,quality_rating,code_verification_status,name_status,platform_type,throughput,status'
 
 export class PhoneNumberService {
   private readonly gw: MetaHttpGateway
@@ -47,7 +48,8 @@ export class PhoneNumberService {
     await this.gw.post(`/${phoneNumberId}/verify_code`, { code })
   }
 
-  async register(phoneNumberId: string, pin = '000000'): Promise<void> {
+  async register(phoneNumberId: string, pin: string): Promise<void> {
+    if (!/^\d{6}$/.test(pin)) throw new Error('Se requiere el PIN de seis dígitos configurado para este número.')
     await this.gw.post(`/${phoneNumberId}/register`, {
       messaging_product: 'whatsapp',
       pin,

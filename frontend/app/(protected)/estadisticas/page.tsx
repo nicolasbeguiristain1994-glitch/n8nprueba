@@ -1,4 +1,5 @@
 'use client'
+import { argentinaToday, shiftDate } from '@/lib/dashboard-format'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
@@ -73,12 +74,12 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 const CAMPAIGN_STATUS_STYLE: Record<string, string> = {
-  draft:     'bg-gray-100 text-gray-600',
+  draft:     'bg-muted text-muted-foreground',
   scheduled: 'bg-blue-100 text-blue-700',
-  running:   'bg-green-100 text-green-700',
+  running:   'bg-success/15 text-success',
   paused:    'bg-yellow-100 text-yellow-700',
   completed: 'bg-purple-100 text-purple-700',
-  cancelled: 'bg-red-100 text-red-600',
+  cancelled: 'bg-destructive/15 text-destructive',
 }
 const CAMPAIGN_STATUS_LABEL: Record<string, string> = {
   draft:'Borrador', scheduled:'Programada', running:'Enviando',
@@ -86,8 +87,8 @@ const CAMPAIGN_STATUS_LABEL: Record<string, string> = {
 }
 
 const LINE_STATUS_STYLE: Record<string, string> = {
-  active:'bg-green-100 text-green-700', paused:'bg-yellow-100 text-yellow-700',
-  error:'bg-red-100 text-red-700', offline:'bg-gray-100 text-gray-500',
+  active:'bg-success/15 text-success', paused:'bg-yellow-100 text-yellow-700',
+  error:'bg-destructive/15 text-destructive', offline:'bg-muted text-muted-foreground',
 }
 
 const CHART_LINES = [
@@ -107,7 +108,7 @@ function pct(v: string | null | undefined): string {
 }
 function fmtDate(s: string | null): string {
   if (!s) return '—'
-  return new Date(s).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' })
+  return new Date(s).toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', timeZone:'America/Argentina/Buenos_Aires' })
 }
 function fmtDia(s: string): string {
   const [, m, d] = s.split('-')
@@ -116,11 +117,10 @@ function fmtDia(s: string): string {
 
 // ── Date range helpers ────────────────────────────────────────────────────────
 
-function today()    { return new Date().toISOString().slice(0, 10) }
-function daysAgo(n: number) { return new Date(Date.now() - n * 86400000).toISOString().slice(0, 10) }
+function today() { return argentinaToday() }
+function daysAgo(n: number) { return shiftDate(today(), -n) }
 function startOfMonth() {
-  const d = new Date(); d.setDate(1)
-  return d.toISOString().slice(0, 10)
+  return today().slice(0, 8) + '01'
 }
 
 const PRESETS = [
@@ -139,20 +139,20 @@ function KpiCard({ label, value, sub, icon: Icon, color = 'blue' }: {
 }) {
   const colors: Record<string, string> = {
     blue:   'bg-blue-50 text-blue-600',
-    green:  'bg-green-50 text-green-600',
+    green:  'bg-success/10 text-success',
     purple: 'bg-purple-50 text-purple-600',
-    amber:  'bg-amber-50 text-amber-600',
-    red:    'bg-red-50 text-red-600',
-    slate:  'bg-slate-50 text-slate-600',
+    amber:  'bg-warning/10 text-amber-600',
+    red:    'bg-destructive/10 text-destructive',
+    slate:  'bg-background text-slate-600',
   }
   return (
-    <Card className="border border-gray-100">
+    <Card className="border border-border">
       <CardContent className="p-5">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs text-gray-500 font-medium uppercase tracking-wide">{label}</p>
-            <p className="text-2xl font-bold text-gray-900 mt-1">{value}</p>
-            {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">{label}</p>
+            <p className="text-2xl font-bold text-foreground mt-1">{value}</p>
+            {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
           </div>
           <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${colors[color]}`}>
             <Icon size={18} />
@@ -203,6 +203,7 @@ export default function EstadisticasPage() {
 
   // Export
   const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
 
   // AI Chat tab
   interface AiMessage { role: 'user' | 'assistant'; content: string }
@@ -318,35 +319,38 @@ export default function EstadisticasPage() {
 
   // Export handler
   async function handleExport(type: string) {
-    setExporting(true)
+    setExporting(true); setExportError(null)
     try {
-      const res = await fetch(`/api/stats/export?from=${from}&to=${to}&type=${type}`)
-      if (!res.ok) return
+      const params = new URLSearchParams({from,to,type})
+      if(type==='campaigns') {params.set('status',campStatus);params.set('q',campQ)}
+      const res = await fetch('/api/stats/export?'+params)
+      if (!res.ok) {const data=await res.json().catch(()=>null);setExportError(data?.error||'No se pudo exportar');return}
       const blob = await res.blob()
       const url  = URL.createObjectURL(blob)
       const a    = document.createElement('a'); a.href = url
       a.download = `estadisticas_${type}_${from}_${to}.csv`; a.click()
       URL.revokeObjectURL(url)
-    } catch {} finally { setExporting(false) }
+    } catch {setExportError('No se pudo descargar el archivo')} finally { setExporting(false) }
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-5">
+      {exportError && <p role="alert" className="text-sm text-destructive">{exportError}</p>}
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">Estadísticas</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Métricas de mensajería y campañas en tiempo real</p>
+          <h1 className="page-title text-foreground">Estadísticas</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">Métricas en hora argentina. Campañas: resultado actual por destinatario; Resumen: actividad del período.</p>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex min-w-0 max-w-full items-center gap-2 flex-wrap">
           {/* Presets */}
-          <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+          <div className="flex max-w-full flex-wrap gap-1 bg-muted rounded-lg p-1">
             {PRESETS.map((p, i) => (
               <button key={p.label} onClick={() => applyPreset(i)}
                 className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
-                  preset === i && !custom ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  preset === i && !custom ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
                 }`}>
                 {p.label}
               </button>
@@ -354,16 +358,16 @@ export default function EstadisticasPage() {
           </div>
           {/* Custom date range */}
           <div className="flex items-center gap-1">
-            <Input type="date" value={from} max={to}
+            <Input aria-label="Estadísticas desde" type="date" value={from} max={to}
               onChange={e => { setFrom(e.target.value); setCustom(true); setPreset(-1) }}
               className="h-8 text-xs w-36" />
-            <span className="text-gray-400 text-xs">→</span>
-            <Input type="date" value={to} min={from}
+            <span className="text-muted-foreground text-xs">→</span>
+            <Input aria-label="Estadísticas hasta" type="date" value={to} min={from}
               onChange={e => { setTo(e.target.value); setCustom(true); setPreset(-1) }}
               className="h-8 text-xs w-36" />
           </div>
-          <Button variant="ghost" size="sm" onClick={() => { void loadOverview(); if (tab === 'campanas') void loadCampaigns() }} className="h-8">
-            <RefreshCw size={13} />
+          <Button variant="ghost" size="sm" onClick={() => { void loadOverview(); if (tab === 'campanas') { void loadCampaigns(); if (detail) void loadDetail(detail) } }} className="h-8">
+            <RefreshCw size={13} aria-label="Actualizar estadísticas" />
           </Button>
         </div>
       </div>
@@ -384,10 +388,10 @@ export default function EstadisticasPage() {
         <TabsContent value="resumen" className="space-y-5 mt-4">
           {loadingOv ? (
             <div className="flex items-center justify-center h-48">
-              <Loader2 size={24} className="animate-spin text-gray-300" />
+              <Loader2 size={24} className="animate-spin text-muted-foreground/60" />
             </div>
           ) : errorOv ? (
-            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+            <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3">
               <AlertCircle size={15} /> {errorOv}
             </div>
           ) : (
@@ -407,12 +411,12 @@ export default function EstadisticasPage() {
               </div>
 
               {/* Gráfico: evolución temporal */}
-              <Card className="border border-gray-100">
+              <Card className="border border-border">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm font-medium text-gray-700">Evolución de mensajes</CardTitle>
+                    <CardTitle className="text-sm font-medium text-foreground">Evolución de mensajes</CardTitle>
                     <button onClick={() => void handleExport('overview')} disabled={exporting}
-                      className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600">
+                      className="flex items-center gap-1 text-xs text-muted-foreground hover:text-muted-foreground">
                       <Download size={12} />
                       {exporting ? 'Exportando…' : 'CSV'}
                     </button>
@@ -420,7 +424,7 @@ export default function EstadisticasPage() {
                 </CardHeader>
                 <CardContent>
                   {series.length === 0 ? (
-                    <div className="h-48 flex items-center justify-center text-sm text-gray-400">
+                    <div className="h-48 flex items-center justify-center text-sm text-muted-foreground">
                       <BarChart2 size={32} className="mr-2 opacity-30" /> Sin datos en este período
                     </div>
                   ) : (
@@ -443,13 +447,13 @@ export default function EstadisticasPage() {
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {/* Distribución por estado */}
-                <Card className="border border-gray-100">
+                <Card className="border border-border">
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-gray-700">Distribución por estado</CardTitle>
+                    <CardTitle className="text-sm font-medium text-foreground">Distribución por estado</CardTitle>
                   </CardHeader>
                   <CardContent>
                     {distribution.length === 0 ? (
-                      <div className="h-40 flex items-center justify-center text-sm text-gray-400">Sin datos</div>
+                      <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">Sin datos</div>
                     ) : (
                       <div className="flex items-center gap-4">
                         <ResponsiveContainer width={160} height={160}>
@@ -467,9 +471,9 @@ export default function EstadisticasPage() {
                             <div key={d.status} className="flex items-center justify-between text-xs">
                               <div className="flex items-center gap-1.5">
                                 <div className="w-2.5 h-2.5 rounded-full" style={{ background: STATUS_COLORS[d.status] ?? '#94a3b8' }} />
-                                <span className="text-gray-600">{STATUS_LABEL[d.status] ?? d.status}</span>
+                                <span className="text-muted-foreground">{STATUS_LABEL[d.status] ?? d.status}</span>
                               </div>
-                              <span className="font-medium text-gray-800">{d.n.toLocaleString('es-AR')}</span>
+                              <span className="font-medium text-foreground">{d.n.toLocaleString('es-AR')}</span>
                             </div>
                           ))}
                         </div>
@@ -479,13 +483,13 @@ export default function EstadisticasPage() {
                 </Card>
 
                 {/* Top campañas */}
-                <Card className="border border-gray-100">
+                <Card className="border border-border">
                   <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-gray-700">Top campañas por volumen</CardTitle>
+                    <CardTitle className="text-sm font-medium text-foreground">Top campañas por volumen</CardTitle>
                   </CardHeader>
                   <CardContent>
                     {topCampaigns.length === 0 ? (
-                      <div className="h-40 flex items-center justify-center text-sm text-gray-400">Sin datos</div>
+                      <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">Sin datos</div>
                     ) : (
                       <ResponsiveContainer width="100%" height={180}>
                         <BarChart data={topCampaigns} layout="vertical" margin={{ top: 0, right: 10, left: 10, bottom: 0 }}>
@@ -505,17 +509,17 @@ export default function EstadisticasPage() {
 
               {/* Resumen campañas */}
               {campaignCount && (
-                <div className="grid grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                   {[
-                    { label: 'Campañas totales',    value: campaignCount.total,       color: 'text-gray-700' },
+                    { label: 'Campañas totales',    value: campaignCount.total,       color: 'text-foreground' },
                     { label: 'Completadas',         value: campaignCount.completadas, color: 'text-purple-700' },
-                    { label: 'En envío',            value: campaignCount.activas,     color: 'text-green-700' },
+                    { label: 'En envío',            value: campaignCount.activas,     color: 'text-success' },
                     { label: 'Programadas',         value: campaignCount.programadas, color: 'text-blue-700' },
                   ].map(item => (
-                    <Card key={item.label} className="border border-gray-100">
+                    <Card key={item.label} className="border border-border">
                       <CardContent className="p-4 text-center">
                         <p className={`text-2xl font-bold ${item.color}`}>{item.value}</p>
-                        <p className="text-xs text-gray-400 mt-1">{item.label}</p>
+                        <p className="text-xs text-muted-foreground mt-1">{item.label}</p>
                       </CardContent>
                     </Card>
                   ))}
@@ -527,40 +531,43 @@ export default function EstadisticasPage() {
 
         {/* ── TAB: CAMPAÑAS ────────────────────────────────────────────────── */}
         <TabsContent value="campanas" className="space-y-4 mt-4">
+          <p className="text-xs text-muted-foreground">Respuestas cuenta mensajes recibidos, no personas únicas. Se asignan al mensaje citado o al último envío de campaña de esa conversación.</p>
           {detail ? (
             /* DETALLE DE CAMPAÑA */
             <div className="space-y-4">
               <div className="flex items-center gap-3">
                 <button onClick={() => { setDetail(null); setDetailData(null) }}
-                  className="text-sm text-gray-500 hover:text-gray-800 flex items-center gap-1">
+                  className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1">
                   <X size={14} /> Volver a campañas
                 </button>
-                <span className="text-gray-300">|</span>
-                <span className="text-sm font-medium text-gray-700">
+                <span className="text-muted-foreground/60">|</span>
+                <span className="text-sm font-medium text-foreground">
                   {campaigns.find(c => c.id === detail)?.name ?? detail}
                 </span>
               </div>
               {loadingDetail ? (
                 <div className="flex items-center justify-center h-40">
-                  <Loader2 size={20} className="animate-spin text-gray-300" />
+                  <Loader2 size={20} className="animate-spin text-muted-foreground/60" />
                 </div>
               ) : detailData ? (
                 <>
-                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-2 xl:grid-cols-5 gap-4">
                     <KpiCard label="Enviados"   value={fmt(detailData.kpis.enviados)}   icon={Send}         color="blue" />
                     <KpiCard label="Entregados" value={fmt(detailData.kpis.entregados)} icon={CheckCheck}   color="green"
                       sub={pct(detailData.kpis.tasa_entrega) + ' tasa entrega'} />
                     <KpiCard label="Leídos"     value={fmt(detailData.kpis.leidos)}     icon={Eye}          color="purple"
                       sub={pct(detailData.kpis.tasa_lectura) + ' tasa lectura'} />
+                    <KpiCard label="Respuestas" value={fmt(detailData.kpis.respuestas)} icon={MessageSquare} color="amber"
+                      sub="Mensajes recibidos" />
                     <KpiCard label="Fallidos"   value={fmt(detailData.kpis.fallidos)}   icon={AlertCircle}  color="red" />
                   </div>
-                  <Card className="border border-gray-100">
+                  <Card className="border border-border">
                     <CardHeader className="pb-2">
-                      <CardTitle className="text-sm font-medium text-gray-700">Evolución diaria</CardTitle>
+                      <CardTitle className="text-sm font-medium text-foreground">Evolución diaria</CardTitle>
                     </CardHeader>
                     <CardContent>
                       {detailData.series.length === 0 ? (
-                        <div className="h-40 flex items-center justify-center text-sm text-gray-400">Sin datos</div>
+                        <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">Sin datos</div>
                       ) : (
                         <ResponsiveContainer width="100%" height={220}>
                           <LineChart data={detailData.series} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
@@ -572,6 +579,7 @@ export default function EstadisticasPage() {
                             <Line type="monotone" dataKey="enviados"   name="Enviados"   stroke="#60a5fa" strokeWidth={2} dot={false} />
                             <Line type="monotone" dataKey="entregados" name="Entregados" stroke="#34d399" strokeWidth={2} dot={false} />
                             <Line type="monotone" dataKey="leidos"     name="Leídos"     stroke="#a78bfa" strokeWidth={2} dot={false} />
+                            <Line type="monotone" dataKey="respuestas" name="Respuestas" stroke="#fbbf24" strokeWidth={2} dot={detailData.series.length === 1} />
                           </LineChart>
                         </ResponsiveContainer>
                       )}
@@ -594,7 +602,7 @@ export default function EstadisticasPage() {
                   </SelectContent>
                 </Select>
                 <Button variant="ghost" size="sm" onClick={() => void loadCampaigns()} className="h-8">
-                  <RefreshCw size={13} />
+                  <RefreshCw size={13} aria-label="Actualizar estadísticas" />
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => void handleExport('campaigns')}
                   disabled={exporting} className="h-8 text-xs gap-1 ml-auto">
@@ -602,39 +610,40 @@ export default function EstadisticasPage() {
                 </Button>
               </div>
               {loadingCamp ? (
-                <div className="flex items-center justify-center h-40"><Loader2 size={20} className="animate-spin text-gray-300" /></div>
+                <div className="flex items-center justify-center h-40"><Loader2 size={20} className="animate-spin text-muted-foreground/60" /></div>
               ) : errorCamp ? (
-                <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">
+                <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 rounded-lg px-4 py-3">
                   <AlertCircle size={15} /> {errorCamp}
                 </div>
               ) : campaigns.length === 0 ? (
-                <div className="text-center py-12 text-gray-400 text-sm">Sin campañas en este período</div>
+                <div className="text-center py-12 text-muted-foreground text-sm">Sin campañas en este período</div>
               ) : (
-                <div className="border border-gray-200 rounded-xl overflow-hidden">
+                <div className="border border-border rounded-xl overflow-x-auto">
                   <table className="w-full text-sm">
-                    <thead className="bg-gray-50 border-b border-gray-200">
+                    <thead className="bg-background border-b border-border">
                       <tr>
-                        {['Campaña','Estado','Enviados','Entregados','Leídos','Fallidos','T. entrega','T. lectura','Creada'].map(h => (
-                          <th key={h} className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                        {['Campaña','Estado','Enviados','Entregados','Leídos','Respuestas','Fallidos','T. entrega','T. lectura','Creada'].map(h => (
+                          <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-gray-100">
+                    <tbody className="divide-y divide-border">
                       {campaigns.map(c => (
-                        <tr key={c.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => setDetail(c.id)}>
-                          <td className="px-4 py-3 font-medium text-gray-900 max-w-[160px] truncate">{c.name}</td>
+                        <tr key={c.id} className="hover:bg-background cursor-pointer" onClick={() => setDetail(c.id)}>
+                          <td className="px-4 py-3 font-medium text-foreground max-w-[160px] truncate">{c.name}</td>
                           <td className="px-4 py-3">
                             <Badge className={CAMPAIGN_STATUS_STYLE[c.status] ?? ''}>
                               {CAMPAIGN_STATUS_LABEL[c.status] ?? c.status}
                             </Badge>
                           </td>
-                          <td className="px-4 py-3 text-gray-700">{fmt(c.enviados)}</td>
-                          <td className="px-4 py-3 text-gray-700">{fmt(c.entregados)}</td>
-                          <td className="px-4 py-3 text-gray-700">{fmt(c.leidos)}</td>
+                          <td className="px-4 py-3 text-foreground">{fmt(c.enviados)}</td>
+                          <td className="px-4 py-3 text-foreground">{fmt(c.entregados)}</td>
+                          <td className="px-4 py-3 text-foreground">{fmt(c.leidos)}</td>
+                          <td className="px-4 py-3 text-foreground">{fmt(c.respuestas)}</td>
                           <td className="px-4 py-3 text-red-500">{fmt(c.fallidos)}</td>
-                          <td className="px-4 py-3 text-gray-600">{pct(c.tasa_entrega)}</td>
-                          <td className="px-4 py-3 text-gray-600">{pct(c.tasa_lectura)}</td>
-                          <td className="px-4 py-3 text-gray-400 text-xs">{fmtDate(c.created_at)}</td>
+                          <td className="px-4 py-3 text-muted-foreground">{pct(c.tasa_entrega)}</td>
+                          <td className="px-4 py-3 text-muted-foreground">{pct(c.tasa_lectura)}</td>
+                          <td className="px-4 py-3 text-muted-foreground text-xs">{fmtDate(c.created_at)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -648,19 +657,19 @@ export default function EstadisticasPage() {
         {/* ── TAB: LÍNEAS ──────────────────────────────────────────────────── */}
         <TabsContent value="lineas" className="space-y-4 mt-4">
           {loadingLn ? (
-            <div className="flex items-center justify-center h-40"><Loader2 size={20} className="animate-spin text-gray-300" /></div>
+            <div className="flex items-center justify-center h-40"><Loader2 size={20} className="animate-spin text-muted-foreground/60" /></div>
           ) : errorLn ? (
-            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">
+            <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 rounded-lg px-4 py-3">
               <AlertCircle size={15} /> {errorLn}
             </div>
           ) : lines.length === 0 ? (
-            <div className="text-center py-12 text-gray-400 text-sm">Sin líneas configuradas</div>
+            <div className="text-center py-12 text-muted-foreground text-sm">Sin líneas configuradas</div>
           ) : (
             <>
               {/* BarChart de líneas */}
-              <Card className="border border-gray-100">
+              <Card className="border border-border">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-gray-700">Mensajes totales por línea</CardTitle>
+                  <CardTitle className="text-sm font-medium text-foreground">Mensajes totales por línea</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={200}>
@@ -677,37 +686,37 @@ export default function EstadisticasPage() {
               </Card>
 
               {/* Tabla */}
-              <div className="border border-gray-200 rounded-xl overflow-hidden">
+              <div className="border border-border rounded-xl overflow-hidden">
                 <table className="w-full text-sm">
-                  <thead className="bg-gray-50 border-b border-gray-200">
+                  <thead className="bg-background border-b border-border">
                     <tr>
                       {['Línea','Estado','Hoy','Capacidad/día','Total enviados','Entregados','Fallidos','T. entrega','T. error'].map(h => (
-                        <th key={h} className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                        <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
+                  <tbody className="divide-y divide-border">
                     {lines.map(l => (
-                      <tr key={l.id} className="hover:bg-gray-50">
+                      <tr key={l.id} className="hover:bg-background">
                         <td className="px-4 py-3">
-                          <p className="font-medium text-gray-900">{l.display_name}</p>
-                          {l.phone_number && <p className="text-xs text-gray-400">{l.phone_number}</p>}
+                          <p className="font-medium text-foreground">{l.display_name}</p>
+                          {l.phone_number && <p className="text-xs text-muted-foreground">{l.phone_number}</p>}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1.5">
                             <div className={`w-1.5 h-1.5 rounded-full ${l.is_connected ? 'bg-green-500' : 'bg-gray-300'}`} />
-                            <Badge className={LINE_STATUS_STYLE[l.status] ?? 'bg-gray-100 text-gray-500'}>
+                            <Badge className={LINE_STATUS_STYLE[l.status] ?? 'bg-muted text-muted-foreground'}>
                               {l.status}
                             </Badge>
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-gray-700">{fmt(l.msgs_sent_today)}</td>
-                        <td className="px-4 py-3 text-gray-500">{fmt(l.msg_per_day)}</td>
-                        <td className="px-4 py-3 text-gray-700">{fmt(l.total_sent)}</td>
-                        <td className="px-4 py-3 text-gray-700">{fmt(l.total_delivered)}</td>
+                        <td className="px-4 py-3 text-foreground">{fmt(l.msgs_sent_today)}</td>
+                        <td className="px-4 py-3 text-muted-foreground">{fmt(l.msg_per_day)}</td>
+                        <td className="px-4 py-3 text-foreground">{fmt(l.total_sent)}</td>
+                        <td className="px-4 py-3 text-foreground">{fmt(l.total_delivered)}</td>
                         <td className="px-4 py-3 text-red-500">{fmt(l.total_failed)}</td>
-                        <td className="px-4 py-3 text-gray-600">{pct(l.tasa_entrega)}</td>
-                        <td className="px-4 py-3 text-gray-600">{pct(l.tasa_error)}</td>
+                        <td className="px-4 py-3 text-muted-foreground">{pct(l.tasa_entrega)}</td>
+                        <td className="px-4 py-3 text-muted-foreground">{pct(l.tasa_error)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -720,39 +729,39 @@ export default function EstadisticasPage() {
         {/* ── TAB: PLANTILLAS ──────────────────────────────────────────────── */}
         <TabsContent value="plantillas" className="space-y-4 mt-4">
           {loadingTpl ? (
-            <div className="flex items-center justify-center h-40"><Loader2 size={20} className="animate-spin text-gray-300" /></div>
+            <div className="flex items-center justify-center h-40"><Loader2 size={20} className="animate-spin text-muted-foreground/60" /></div>
           ) : errorTpl ? (
-            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">
+            <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 rounded-lg px-4 py-3">
               <AlertCircle size={15} /> {errorTpl}
             </div>
           ) : templates.length === 0 ? (
-            <div className="text-center py-12 text-gray-400 text-sm">Sin plantillas creadas</div>
+            <div className="text-center py-12 text-muted-foreground text-sm">Sin plantillas creadas</div>
           ) : (
-            <div className="border border-gray-200 rounded-xl overflow-hidden">
+            <div className="border border-border rounded-xl overflow-hidden">
               <table className="w-full text-sm">
-                <thead className="bg-gray-50 border-b border-gray-200">
+                <thead className="bg-background border-b border-border">
                   <tr>
                     {['Plantilla','Categoría','Idioma','Estado','Usos totales','Enviados (período)','Leídos','T. lectura','Última vez'].map(h => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                      <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-border">
                   {templates.map(t => (
-                    <tr key={t.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-mono text-xs font-medium text-gray-900">{t.name}</td>
-                      <td className="px-4 py-3 text-gray-600">{t.category}</td>
-                      <td className="px-4 py-3 uppercase text-xs text-gray-500">{t.language}</td>
+                    <tr key={t.id} className="hover:bg-background">
+                      <td className="px-4 py-3 font-mono text-xs font-medium text-foreground">{t.name}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{t.category}</td>
+                      <td className="px-4 py-3 uppercase text-xs text-muted-foreground">{t.language}</td>
                       <td className="px-4 py-3">
-                        <Badge className={t.status === 'APROBADA' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}>
+                        <Badge className={t.status === 'APROBADA' ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground'}>
                           {t.status}
                         </Badge>
                       </td>
-                      <td className="px-4 py-3 text-gray-700">{fmt(t.usage_count)}</td>
-                      <td className="px-4 py-3 text-gray-700">{fmt(t.enviados)}</td>
-                      <td className="px-4 py-3 text-gray-700">{fmt(t.leidos)}</td>
-                      <td className="px-4 py-3 text-gray-600">{pct(t.tasa_lectura)}</td>
-                      <td className="px-4 py-3 text-gray-400 text-xs">{fmtDate(t.last_used_at)}</td>
+                      <td className="px-4 py-3 text-foreground">{fmt(t.usage_count)}</td>
+                      <td className="px-4 py-3 text-foreground">{fmt(t.enviados)}</td>
+                      <td className="px-4 py-3 text-foreground">{fmt(t.leidos)}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{pct(t.tasa_lectura)}</td>
+                      <td className="px-4 py-3 text-muted-foreground text-xs">{fmtDate(t.last_used_at)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -763,16 +772,16 @@ export default function EstadisticasPage() {
 
         {/* ── TAB: IA ANALYTICS ───────────────────────────────────────────── */}
         <TabsContent value="ia" className="mt-4">
-          <div className="flex flex-col h-[calc(100vh-220px)] min-h-[500px] border border-gray-200 rounded-xl overflow-hidden bg-white">
+          <div className="flex flex-col h-[calc(100vh-220px)] min-h-[500px] border border-border rounded-xl overflow-hidden bg-card">
 
             {/* Header */}
-            <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-100 bg-gray-50">
+            <div className="flex items-center gap-2.5 px-4 py-3 border-b border-border bg-background">
               <div className="w-7 h-7 rounded-lg bg-violet-100 flex items-center justify-center">
                 <Bot size={14} className="text-violet-600" />
               </div>
               <div>
-                <p className="text-sm font-medium text-gray-900">IA Analytics</p>
-                <p className="text-xs text-gray-400">Hacé preguntas sobre jugadores, transacciones y campañas</p>
+                <p className="text-sm font-medium text-foreground">IA Analytics</p>
+                <p className="text-xs text-muted-foreground">Hacé preguntas sobre jugadores, transacciones y campañas</p>
               </div>
             </div>
 
@@ -784,8 +793,8 @@ export default function EstadisticasPage() {
                     <Sparkles size={22} className="text-violet-500" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium text-gray-700">¿Qué querés saber?</p>
-                    <p className="text-xs text-gray-400 mt-1">Hacé preguntas en lenguaje natural sobre tu base de jugadores</p>
+                    <p className="text-sm font-medium text-foreground">¿Qué querés saber?</p>
+                    <p className="text-xs text-muted-foreground mt-1">Hacé preguntas en lenguaje natural sobre tu base de jugadores</p>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full max-w-lg">
                     {[
@@ -795,7 +804,7 @@ export default function EstadisticasPage() {
                       '¿Qué agente tiene más jugadores en riesgo?',
                     ].map(q => (
                       <button key={q} onClick={() => sendAiMessage(q)}
-                        className="text-left px-3 py-2.5 rounded-lg border border-gray-200 bg-gray-50 hover:bg-violet-50 hover:border-violet-200 text-xs text-gray-600 hover:text-violet-700 transition-colors">
+                        className="text-left px-3 py-2.5 rounded-lg border border-border bg-background hover:bg-violet-50 hover:border-violet-200 text-xs text-muted-foreground hover:text-violet-700 transition-colors">
                         {q}
                       </button>
                     ))}
@@ -813,7 +822,7 @@ export default function EstadisticasPage() {
                   <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
                     msg.role === 'user'
                       ? 'bg-violet-600 text-white rounded-br-sm'
-                      : 'bg-gray-100 text-gray-800 rounded-bl-sm'
+                      : 'bg-muted text-foreground rounded-bl-sm'
                   }`}>
                     {msg.content}
                   </div>
@@ -825,7 +834,7 @@ export default function EstadisticasPage() {
                   <div className="w-6 h-6 rounded-full bg-violet-100 flex items-center justify-center mr-2 mt-0.5 shrink-0">
                     <Bot size={12} className="text-violet-600" />
                   </div>
-                  <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1.5">
+                  <div className="bg-muted rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0ms]" />
                     <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:150ms]" />
                     <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:300ms]" />
@@ -834,7 +843,7 @@ export default function EstadisticasPage() {
               )}
 
               {aiError && (
-                <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                <div className="flex items-center gap-2 text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
                   <AlertCircle size={13} /> {aiError}
                 </div>
               )}
@@ -843,7 +852,7 @@ export default function EstadisticasPage() {
             </div>
 
             {/* Input */}
-            <div className="border-t border-gray-100 px-4 py-3 bg-white">
+            <div className="border-t border-border px-4 py-3 bg-card">
               <form onSubmit={e => { e.preventDefault(); void sendAiMessage() }} className="flex gap-2">
                 <Input
                   value={aiInput}

@@ -11,8 +11,8 @@ export const templateRepository = {
     rejectionReason: string | null = null,
   ): Promise<void> {
     await query(
-      `UPDATE templates
-       SET whatsapp_status  = $1,
+      `UPDATE whatsapp_templates
+       SET status  = $1,
            rejection_reason = $2,
            updated_at       = NOW()
        WHERE whatsapp_template_id = $3`,

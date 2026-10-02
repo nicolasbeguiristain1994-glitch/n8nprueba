@@ -38,6 +38,10 @@ export class MessageSenderService {
 // ─── Construcción de payload (función pura, testeable de forma aislada) ───────
 
 export function buildMessagePayload(req: SendMessageRequest): Record<string, unknown> {
+  const supported = ['text','template','image','video','audio','document','sticker','reaction','location','interactive']
+  if (!supported.includes(req.type) || !req[req.type as keyof SendMessageRequest]) throw new Error('Tipo o contenido de mensaje inválido')
+  if (req.type === 'text' && (!req.text?.body?.trim() || req.text.body.length > 4096)) throw new Error('El texto debe tener entre 1 y 4096 caracteres')
+  if (req.type === 'template' && (!req.template?.name || !req.template.language?.code)) throw new Error('Falta nombre o idioma de la plantilla')
   const base: Record<string, unknown> = {
     messaging_product: 'whatsapp',
     recipient_type:    'individual',

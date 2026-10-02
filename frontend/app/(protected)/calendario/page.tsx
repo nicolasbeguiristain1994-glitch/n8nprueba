@@ -12,6 +12,7 @@ import {
   ChevronLeft, ChevronRight, CalendarDays, Calendar, Clock, AlertTriangle,
   Megaphone, Pencil, Trash2, Plus, ImageIcon,
 } from 'lucide-react'
+import { argentinaToday, shiftDate, validDateRange } from '@/lib/dashboard-format'
 import { fetchJson }      from '@/lib/fetchJson'
 import { PageHeader }     from '@/components/layout/PageHeader'
 import { useCurrentUser } from '@/lib/useCurrentUser'
@@ -84,9 +85,9 @@ const PRIORITY_DOT: Record<string, string> = {
 }
 
 const PRIORITY_CHIP: Record<string, string> = {
-  alta:  'bg-red-100 text-red-700',
+  alta:  'bg-destructive/15 text-destructive',
   media: 'bg-yellow-100 text-yellow-700',
-  baja:  'bg-green-100 text-green-700',
+  baja:  'bg-success/15 text-success',
 }
 
 const HOUR_LABELS = Array.from({ length: 24 }, (_, i) =>
@@ -107,12 +108,16 @@ function toDateStr(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-function todayStr(): string { return toDateStr(new Date()) }
+function todayStr(): string { return argentinaToday() }
+
+function taskDay(iso: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : argentinaToday(new Date(iso))
+}
 
 function fmtDate(iso: string | null): string {
   if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('es-AR', {
-    day: '2-digit', month: '2-digit', year: 'numeric',
+  return new Date(`${taskDay(iso)}T12:00:00Z`).toLocaleDateString('es-AR', {
+    day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Argentina/Buenos_Aires',
   })
 }
 
@@ -139,7 +144,7 @@ export default function CalendarioPage() {
   const [viewMode, setViewMode] = useState<'month' | 'day'>('month')
 
   // ── Month view ─────────────────────────────────────────────────────────────
-  const now = new Date()
+  const now = new Date(`${todayStr()}T12:00:00`)
   const [year,  setYear]  = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth())
 
@@ -182,18 +187,16 @@ export default function CalendarioPage() {
 
   const { startISO, endISO, startDate, endDate } = useMemo(() => {
     const first    = new Date(year, month, 1)
-    const last     = new Date(year, month + 1, 0)
     const startDay = first.getDay()
     const extStart = new Date(first)
     extStart.setDate(1 - startDay)
     extStart.setHours(0, 0, 0, 0)
-    const endDay = last.getDay()
-    const extEnd = new Date(last)
-    extEnd.setDate(last.getDate() + (6 - endDay))
+    const extEnd = new Date(extStart)
+    extEnd.setDate(extStart.getDate() + 41)
     extEnd.setHours(23, 59, 59, 999)
     return {
-      startISO:  extStart.toISOString(),
-      endISO:    extEnd.toISOString(),
+      startISO:  `${toDateStr(extStart)}T00:00:00-03:00`,
+      endISO:    `${toDateStr(extEnd)}T23:59:59.999-03:00`,
       startDate: toDateStr(extStart),
       endDate:   toDateStr(extEnd),
     }
@@ -254,8 +257,8 @@ export default function CalendarioPage() {
       else    { arr.push({ task, isDeadline, isStart }) }
     }
     for (const task of tasks) {
-      const due  = task.due_date     ? task.due_date.slice(0, 10)     : null
-      const sched = task.scheduled_at ? task.scheduled_at.slice(0, 10) : null
+      const due  = task.due_date     ? taskDay(task.due_date)     : null
+      const sched = task.scheduled_at ? taskDay(task.scheduled_at) : null
       if (due)              addToDay(due,   task, true,          sched === due)
       if (sched && sched !== due) addToDay(sched, task, false, true)
     }
@@ -299,18 +302,18 @@ export default function CalendarioPage() {
     setSelectedDay(null)
   }
   function goToToday() {
-    const n = new Date()
+    const n = new Date(`${todayStr()}T12:00:00`)
     setYear(n.getFullYear()); setMonth(n.getMonth())
     setDayViewDate(toDateStr(n)); setSelectedDay(null)
   }
-  function prevDay() {
-    const d = new Date(`${dayViewDate}T12:00:00`)
-    d.setDate(d.getDate() - 1); setDayViewDate(toDateStr(d))
+  function selectDay(day: string) {
+    if (!validDateRange(day, day)) return
+    setDayViewDate(day)
+    setYear(Number(day.slice(0, 4)))
+    setMonth(Number(day.slice(5, 7)) - 1)
   }
-  function nextDay() {
-    const d = new Date(`${dayViewDate}T12:00:00`)
-    d.setDate(d.getDate() + 1); setDayViewDate(toDateStr(d))
-  }
+  function prevDay() { selectDay(shiftDate(dayViewDate, -1)) }
+  function nextDay() { selectDay(shiftDate(dayViewDate, 1)) }
 
   const today              = todayStr()
   const selectedDayEntries = selectedDay ? (dayMap.get(selectedDay) ?? []) : []
@@ -394,12 +397,12 @@ export default function CalendarioPage() {
 
       {/* ── View mode toggle ─────────────────────────────────────────────── */}
       <div className="flex items-center gap-3 mb-4">
-        <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden text-xs">
+        <div className="flex items-center border border-border rounded-lg overflow-hidden text-xs">
           <button
             onClick={() => setViewMode('month')}
             className={[
               'flex items-center gap-1.5 px-3 py-1.5 font-medium transition-colors',
-              viewMode === 'month' ? 'bg-blue-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50',
+              viewMode === 'month' ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground hover:bg-background',
             ].join(' ')}
           >
             <CalendarDays size={12} /> Mensual
@@ -408,7 +411,7 @@ export default function CalendarioPage() {
             onClick={() => setViewMode('day')}
             className={[
               'flex items-center gap-1.5 px-3 py-1.5 font-medium transition-colors',
-              viewMode === 'day' ? 'bg-blue-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50',
+              viewMode === 'day' ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground hover:bg-background',
             ].join(' ')}
           >
             <Clock size={12} /> Por día / hora
@@ -457,25 +460,25 @@ export default function CalendarioPage() {
       {/* ══════════════════════════════════════════════════════════════════ */}
       {viewMode === 'month' && (
         <>
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-5">
+          <div className="bg-card rounded-xl border border-border shadow-sm overflow-hidden mb-5">
             {/* Month nav */}
-            <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
               <div className="flex items-center gap-1">
                 <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={prevMonth}><ChevronLeft size={14} /></Button>
                 <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={nextMonth}><ChevronRight size={14} /></Button>
               </div>
               <div className="flex items-center gap-2">
-                <CalendarDays size={14} className="text-gray-400" />
-                <span className="font-semibold text-gray-800 text-sm tracking-tight">{MONTHS_ES[month]} {year}</span>
-                {loading && <span className="text-[11px] text-gray-400 animate-pulse">cargando...</span>}
+                <CalendarDays size={14} className="text-muted-foreground" />
+                <span className="font-semibold text-foreground text-sm tracking-tight">{MONTHS_ES[month]} {year}</span>
+                {loading && <span className="text-[11px] text-muted-foreground animate-pulse">cargando...</span>}
               </div>
               <Button variant="outline" size="sm" className="h-7 text-xs px-2.5" onClick={goToToday}>Hoy</Button>
             </div>
 
             {/* Day headers */}
-            <div className="grid grid-cols-7 border-b border-gray-100 bg-gray-50/60">
+            <div className="grid grid-cols-7 border-b border-border bg-background/60">
               {DAYS_ES.map(day => (
-                <div key={day} className="py-2 text-center text-[11px] font-medium text-gray-500 uppercase tracking-wide">{day}</div>
+                <div key={day} className="py-2 text-center text-[11px] font-medium text-muted-foreground uppercase tracking-wide">{day}</div>
               ))}
             </div>
 
@@ -494,18 +497,18 @@ export default function CalendarioPage() {
                     key={dateStr}
                     onClick={() => setSelectedDay(isSelected ? null : dateStr)}
                     className={[
-                      'relative min-h-[76px] p-1.5 border-r border-b border-gray-100 text-left',
+                      'relative min-h-[76px] p-1.5 border-r border-b border-border text-left',
                       'transition-colors duration-100 focus:outline-none',
                       !inMonth
-                        ? 'bg-gray-50/50 hover:bg-gray-100/50'
+                        ? 'bg-background/50 hover:bg-muted/50'
                         : isSelected
                           ? 'bg-blue-50 ring-1 ring-inset ring-blue-200'
-                          : 'bg-white hover:bg-blue-50/30',
+                          : 'bg-card hover:bg-blue-50/30',
                     ].join(' ')}
                   >
                     <span className={[
                       'inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium mb-0.5',
-                      isToday ? 'bg-blue-600 text-white font-bold' : inMonth ? 'text-gray-700' : 'text-gray-300',
+                      isToday ? 'bg-blue-600 text-white font-bold' : inMonth ? 'text-foreground' : 'text-muted-foreground/60',
                     ].join(' ')}>
                       {date.getDate()}
                     </span>
@@ -520,7 +523,7 @@ export default function CalendarioPage() {
                               entry.isDeadline ? 'opacity-100' : 'opacity-50'].join(' ')}
                           />
                         ))}
-                        {entries.length > 4 && <span className="text-[9px] text-gray-400">+{entries.length - 4}</span>}
+                        {entries.length > 4 && <span className="text-[9px] text-muted-foreground">+{entries.length - 4}</span>}
                       </div>
                     )}
 
@@ -537,13 +540,13 @@ export default function CalendarioPage() {
                       {shown.map(({ task, isDeadline }) => (
                         <div key={`chip-${dateStr}-${task.id}-${isDeadline ? 'd' : 's'}`}
                           className={['text-[10px] leading-tight rounded px-1 py-0.5 truncate max-w-full',
-                            isDeadline ? PRIORITY_CHIP[task.priority] ?? 'bg-gray-100 text-gray-600' : 'bg-gray-100 text-gray-500'].join(' ')}
+                            isDeadline ? PRIORITY_CHIP[task.priority] ?? 'bg-muted text-muted-foreground' : 'bg-muted text-muted-foreground'].join(' ')}
                           title={`${task.title} — ${isDeadline ? 'fecha límite' : 'inicio programado'}`}
                         >
                           {isDeadline ? '⚑ ' : '▶ '}{task.title}
                         </div>
                       ))}
-                      {overflow > 0 && <span className="text-[10px] text-gray-400 px-1">+{overflow} más</span>}
+                      {overflow > 0 && <span className="text-[10px] text-muted-foreground px-1">+{overflow} más</span>}
                     </div>
                   </button>
                 )
@@ -552,47 +555,47 @@ export default function CalendarioPage() {
           </div>
 
           {/* Legend */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-gray-400 mb-6">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground mb-6">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" /> Alta prioridad</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" /> Media prioridad</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" /> Baja prioridad</span>
-            <span className="text-gray-300">·</span>
+            <span className="text-muted-foreground/60">·</span>
             <span>⚑ = fecha límite</span>
             <span>▶ = inicio programado</span>
             <span className="flex items-center gap-1"><Megaphone size={10} className="text-purple-500" /> Marketing</span>
-            <span className="text-gray-300">·</span>
+            <span className="text-muted-foreground/60">·</span>
             <span>Clic en un día para ver el detalle</span>
           </div>
 
           {/* Unscheduled tasks */}
           <div>
             <div className="flex items-center gap-2 mb-3">
-              <Calendar size={14} className="text-gray-400" />
-              <h2 className="text-sm font-semibold text-gray-700">Sin fecha programada</h2>
+              <Calendar size={14} className="text-muted-foreground" />
+              <h2 className="text-sm font-semibold text-foreground">Sin fecha programada</h2>
               {unscheduled.length > 0 && (
                 <Badge variant="secondary" className="text-xs h-5 px-1.5">{unscheduled.length}</Badge>
               )}
             </div>
 
             {loadingUn ? (
-              <p className="text-sm text-gray-400 py-4">Cargando...</p>
+              <p className="text-sm text-muted-foreground py-4">Cargando...</p>
             ) : unscheduled.length === 0 ? (
-              <p className="text-sm text-gray-400 py-4">
+              <p className="text-sm text-muted-foreground py-4">
                 No hay tareas activas sin fecha programada
                 {(filterType || filterPriority || filterOperator) ? ' con los filtros aplicados' : ''}
               </p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                 {unscheduled.map(task => (
-                  <div key={task.id} className="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-sm transition-shadow">
+                  <div key={task.id} className="bg-card border border-border rounded-lg p-3 hover:shadow-sm transition-shadow">
                     <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
                       <Badge className={`text-xs py-0 ${TYPE_COLORS[task.type as TaskType]}`}>{TYPE_LABELS[task.type as TaskType]}</Badge>
                       <Badge className={`text-xs py-0 ${PRIORITY_COLORS[task.priority as TaskPriority]}`}>{PRIORITY_LABELS[task.priority as TaskPriority]}</Badge>
                       <Badge className={`text-xs py-0 ${STATUS_COLORS[task.status as TaskStatus]}`}>{STATUS_LABELS[task.status as TaskStatus]}</Badge>
                     </div>
-                    <p className="text-sm font-medium text-gray-800 leading-tight truncate">{task.title}</p>
+                    <p className="text-sm font-medium text-foreground leading-tight truncate">{task.title}</p>
                     {task.assignees.length > 0 && (
-                      <p className="text-[11px] text-gray-400 mt-1 truncate">
+                      <p className="text-[11px] text-muted-foreground mt-1 truncate">
                         {task.assignees.map(a => a.name || a.email).join(', ')}
                       </p>
                     )}
@@ -612,17 +615,17 @@ export default function CalendarioPage() {
           {/* Day navigation */}
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <div className="flex items-center gap-1">
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={prevDay}><ChevronLeft size={14} /></Button>
-              <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={nextDay}><ChevronRight size={14} /></Button>
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0" aria-label="Día anterior" onClick={prevDay}><ChevronLeft size={14} /></Button>
+              <Button variant="ghost" size="sm" className="h-8 w-8 p-0" aria-label="Día siguiente" onClick={nextDay}><ChevronRight size={14} /></Button>
               <input
-                type="date" value={dayViewDate}
-                onChange={e => setDayViewDate(e.target.value)}
-                className="ml-1 text-sm border border-gray-200 rounded-md px-2 py-1 text-gray-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                type="date" aria-label="Fecha del calendario" value={dayViewDate}
+                onChange={e => selectDay(e.target.value)}
+                className="ml-1 text-sm border border-border rounded-md px-2 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-gray-700 capitalize">{fmtDateLong(dayViewDate)}</span>
+              <span className="text-sm font-semibold text-foreground capitalize">{fmtDateLong(dayViewDate)}</span>
               {dayViewDate === today && <Badge variant="secondary" className="text-xs">Hoy</Badge>}
             </div>
 
@@ -638,17 +641,17 @@ export default function CalendarioPage() {
           </div>
 
           {/* Hourly timeline */}
-          <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+          <div className="bg-card border border-border rounded-xl shadow-sm overflow-hidden">
 
             {/* All-day entries (hour === null) */}
             {dayViewMkt.filter(e => e.hour === null).length > 0 && (
-              <div className="flex border-b border-gray-100">
-                <div className="w-16 shrink-0 bg-gray-50 border-r border-gray-100 flex items-center justify-center py-3">
-                  <span className="text-[10px] text-gray-400 font-medium [writing-mode:vertical-lr] rotate-180">Todo el día</span>
+              <div className="flex border-b border-border">
+                <div className="w-16 shrink-0 bg-background border-r border-border flex items-center justify-center py-3">
+                  <span className="text-[10px] text-muted-foreground font-medium [writing-mode:vertical-lr] rotate-180">Todo el día</span>
                 </div>
                 <div className="flex-1 p-2.5 flex flex-wrap gap-2">
                   {dayViewMkt.filter(e => e.hour === null).map(entry => (
-                    <MktCard key={entry.id} entry={entry} canEdit={canEditMarketing}
+                    <MktCard key={entry.id} entry={entry} canEdit={canEditMarketing && (isAdmin || entry.created_by === currentUser?.id)} canDelete={isAdmin}
                       onEdit={() => openEditMarketing(entry)} onDelete={() => handleDeleteMkt(entry.id)} compact />
                   ))}
                 </div>
@@ -658,19 +661,19 @@ export default function CalendarioPage() {
             {/* Hour slots 0-23 */}
             {HOUR_LABELS.map((label, hour) => {
               const hourEntries    = dayViewMkt.filter(e => e.hour === hour)
-              const isCurrentHour  = dayViewDate === today && new Date().getHours() === hour
+              const isCurrentHour  = dayViewDate === today && Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', hourCycle: 'h23' }).format(new Date())) === hour
               return (
                 <div key={hour} className={[
-                  'flex border-b border-gray-100 last:border-b-0 group',
-                  isCurrentHour ? 'bg-blue-50/30' : 'hover:bg-gray-50/30',
+                  'flex border-b border-border last:border-b-0 group',
+                  isCurrentHour ? 'bg-blue-50/30' : 'hover:bg-background/30',
                 ].join(' ')}>
                   {/* Hour label */}
                   <div className={[
-                    'w-16 shrink-0 border-r border-gray-100 flex items-start justify-end pr-3 pt-3 pb-2',
-                    isCurrentHour ? 'bg-blue-50' : 'bg-gray-50/40',
+                    'w-16 shrink-0 border-r border-border flex items-start justify-end pr-3 pt-3 pb-2',
+                    isCurrentHour ? 'bg-blue-50' : 'bg-background/40',
                   ].join(' ')}>
                     <span className={['text-[11px] font-medium tabular-nums',
-                      isCurrentHour ? 'text-blue-600 font-bold' : 'text-gray-400'].join(' ')}>
+                      isCurrentHour ? 'text-blue-600 font-bold' : 'text-muted-foreground'].join(' ')}>
                       {label}
                     </span>
                   </div>
@@ -680,14 +683,14 @@ export default function CalendarioPage() {
                     {hourEntries.length > 0 ? (
                       <div className="flex flex-col gap-2">
                         {hourEntries.map(entry => (
-                          <MktCard key={entry.id} entry={entry} canEdit={canEditMarketing}
+                          <MktCard key={entry.id} entry={entry} canEdit={canEditMarketing && (isAdmin || entry.created_by === currentUser?.id)} canDelete={isAdmin}
                             onEdit={() => openEditMarketing(entry)} onDelete={() => handleDeleteMkt(entry.id)} />
                         ))}
                       </div>
                     ) : canEditMarketing ? (
                       <button
                         onClick={() => openAddMarketing(dayViewDate, hour)}
-                        className="w-full text-left text-[11px] text-transparent group-hover:text-gray-300 hover:!text-purple-400 transition-colors py-1"
+                        className="w-full text-left text-[11px] text-transparent group-hover:text-muted-foreground/60 hover:!text-purple-400 transition-colors py-1"
                       >
                         + Agregar contenido de marketing
                       </button>
@@ -730,12 +733,12 @@ export default function CalendarioPage() {
               </div>
               <div className="space-y-2">
                 {selectedDayMkt.map(entry => (
-                  <MktCard key={entry.id} entry={entry} canEdit={canEditMarketing}
+                  <MktCard key={entry.id} entry={entry} canEdit={canEditMarketing && (isAdmin || entry.created_by === currentUser?.id)} canDelete={isAdmin}
                     onEdit={() => { setSelectedDay(null); openEditMarketing(entry) }}
                     onDelete={() => handleDeleteMkt(entry.id)} />
                 ))}
               </div>
-              {selectedDayEntries.length > 0 && <hr className="mt-3 border-gray-100" />}
+              {selectedDayEntries.length > 0 && <hr className="mt-3 border-border" />}
             </div>
           )}
 
@@ -743,7 +746,7 @@ export default function CalendarioPage() {
           {selectedDayEntries.length === 0 && selectedDayMkt.length === 0 ? (
             <div className="py-10 text-center">
               <CalendarDays size={36} className="mx-auto mb-3 text-gray-200" />
-              <p className="text-sm text-gray-400">No hay tareas ni contenido para este día</p>
+              <p className="text-sm text-muted-foreground">No hay tareas ni contenido para este día</p>
               {canEditMarketing && selectedDay && (
                 <button onClick={() => { setSelectedDay(null); openAddMarketing(selectedDay) }}
                   className="mt-3 text-xs text-purple-500 hover:text-purple-700 flex items-center gap-1 mx-auto">
@@ -758,21 +761,21 @@ export default function CalendarioPage() {
                 return (
                   <div key={`modal-${task.id}-${isDeadline ? 'd' : 's'}`}
                     className={['border rounded-lg p-3',
-                      overdue ? 'border-red-200 bg-red-50/40' : 'border-gray-200 bg-white'].join(' ')}>
+                      overdue ? 'border-destructive/20 bg-red-50/40' : 'border-border bg-card'].join(' ')}>
                     <div className="flex items-center gap-1.5 flex-wrap mb-2">
                       <Badge className={`text-xs py-0 ${TYPE_COLORS[task.type as TaskType]}`}>{TYPE_LABELS[task.type as TaskType]}</Badge>
                       <Badge className={`text-xs py-0 ${PRIORITY_COLORS[task.priority as TaskPriority]}`}>{PRIORITY_LABELS[task.priority as TaskPriority]}</Badge>
                       <Badge className={`text-xs py-0 ${STATUS_COLORS[task.status as TaskStatus]}`}>{STATUS_LABELS[task.status as TaskStatus]}</Badge>
                       {isDeadline && isStart  && <span className="text-[11px] text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded font-medium">Inicio y vencimiento</span>}
                       {isDeadline && !isStart && <span className="text-[11px] text-orange-700 bg-orange-50 border border-orange-100 px-1.5 py-0.5 rounded font-medium">⚑ Fecha límite</span>}
-                      {!isDeadline && isStart && <span className="text-[11px] text-gray-600 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded font-medium">▶ Inicio programado</span>}
-                      {overdue && <span className="flex items-center gap-0.5 text-[11px] text-red-600 font-medium"><AlertTriangle size={10} /> Vencida</span>}
+                      {!isDeadline && isStart && <span className="text-[11px] text-muted-foreground bg-muted border border-border px-1.5 py-0.5 rounded font-medium">▶ Inicio programado</span>}
+                      {overdue && <span className="flex items-center gap-0.5 text-[11px] text-destructive font-medium"><AlertTriangle size={10} /> Vencida</span>}
                     </div>
-                    <p className="font-semibold text-gray-900 text-sm leading-snug">{task.title}</p>
-                    <div className="flex flex-col gap-0.5 mt-2 text-xs text-gray-500">
-                      {task.due_date     && <span className={`flex items-center gap-1 ${overdue ? 'text-red-600 font-medium' : ''}`}><Calendar size={10} /> Vence: {fmtDate(task.due_date)}</span>}
+                    <p className="font-semibold text-foreground text-sm leading-snug">{task.title}</p>
+                    <div className="flex flex-col gap-0.5 mt-2 text-xs text-muted-foreground">
+                      {task.due_date     && <span className={`flex items-center gap-1 ${overdue ? 'text-destructive font-medium' : ''}`}><Calendar size={10} /> Vence: {fmtDate(task.due_date)}</span>}
                       {task.scheduled_at && <span className="flex items-center gap-1"><Clock size={10} /> Inicio: {fmtDate(task.scheduled_at)}</span>}
-                      {task.assignees.length > 0 && <span className="text-gray-400">Asignado a: {task.assignees.map(a => a.name || a.email).join(', ')}</span>}
+                      {task.assignees.length > 0 && <span className="text-muted-foreground">Asignado a: {task.assignees.map(a => a.name || a.email).join(', ')}</span>}
                     </div>
                   </div>
                 )
@@ -796,13 +799,13 @@ export default function CalendarioPage() {
             {/* Date + Hour */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-gray-600 mb-1 block">Fecha *</label>
+                <label className="text-xs text-muted-foreground mb-1 block">Fecha *</label>
                 <Input type="date" value={mktForm.date}
                   onChange={e => setMktForm(f => ({ ...f, date: e.target.value }))}
                   className="h-8 text-sm" />
               </div>
               <div>
-                <label className="text-xs text-gray-600 mb-1 block">Hora</label>
+                <label className="text-xs text-muted-foreground mb-1 block">Hora</label>
                 <Select value={mktForm.hour !== '' ? mktForm.hour : '__all'}
                   onValueChange={v => setMktForm(f => ({ ...f, hour: (v ?? '') === '__all' ? '' : (v ?? '') }))}>
                   <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
@@ -816,7 +819,7 @@ export default function CalendarioPage() {
 
             {/* Title */}
             <div>
-              <label className="text-xs text-gray-600 mb-1 block">Título *</label>
+              <label className="text-xs text-muted-foreground mb-1 block">Título *</label>
               <Input placeholder="Ej: Campaña fin de semana"
                 value={mktForm.title}
                 onChange={e => setMktForm(f => ({ ...f, title: e.target.value }))}
@@ -825,7 +828,7 @@ export default function CalendarioPage() {
 
             {/* Consigna */}
             <div>
-              <label className="text-xs text-gray-600 mb-1 block">Consigna / Mensaje</label>
+              <label className="text-xs text-muted-foreground mb-1 block">Consigna / Mensaje</label>
               <Textarea placeholder="Texto a difundir, instrucciones para el equipo..."
                 value={mktForm.consigna}
                 onChange={e => setMktForm(f => ({ ...f, consigna: e.target.value }))}
@@ -834,16 +837,16 @@ export default function CalendarioPage() {
 
             {/* Image */}
             <div>
-              <label className="text-xs text-gray-600 mb-1 block">Imagen</label>
-              <div className="flex border border-gray-200 rounded-lg overflow-hidden mb-2 text-xs">
+              <label className="text-xs text-muted-foreground mb-1 block">Imagen</label>
+              <div className="flex border border-border rounded-lg overflow-hidden mb-2 text-xs">
                 <button onClick={() => setMktForm(f => ({ ...f, imageMode: 'url' }))}
                   className={['flex-1 py-1 font-medium transition-colors',
-                    mktForm.imageMode === 'url' ? 'bg-purple-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'].join(' ')}>
+                    mktForm.imageMode === 'url' ? 'bg-purple-600 text-white' : 'bg-card text-muted-foreground hover:bg-background'].join(' ')}>
                   URL
                 </button>
                 <button onClick={() => setMktForm(f => ({ ...f, imageMode: 'upload' }))}
                   className={['flex-1 py-1 font-medium transition-colors',
-                    mktForm.imageMode === 'upload' ? 'bg-purple-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'].join(' ')}>
+                    mktForm.imageMode === 'upload' ? 'bg-purple-600 text-white' : 'bg-card text-muted-foreground hover:bg-background'].join(' ')}>
                   Subir archivo
                 </button>
               </div>
@@ -860,7 +863,7 @@ export default function CalendarioPage() {
                     onClick={() => fileRef.current?.click()}>
                     <ImageIcon size={12} className="mr-1.5" /> Seleccionar imagen (máx. 3 MB)
                   </Button>
-                  <p className="text-[10px] text-gray-400 mt-1">
+                  <p className="text-[10px] text-muted-foreground mt-1">
                     Se almacena como base64. Para producción, recomendamos subir a un CDN y usar URL.
                   </p>
                 </>
@@ -868,7 +871,7 @@ export default function CalendarioPage() {
 
               {/* Preview */}
               {(mktForm.imageMode === 'url' ? mktForm.imageUrl : mktForm.imagePreview) && (
-                <div className="mt-2 rounded-lg overflow-hidden border border-gray-200 bg-gray-50 h-28 flex items-center justify-center">
+                <div className="mt-2 rounded-lg overflow-hidden border border-border bg-background h-28 flex items-center justify-center">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={mktForm.imageMode === 'url' ? mktForm.imageUrl : mktForm.imagePreview}
@@ -881,7 +884,7 @@ export default function CalendarioPage() {
             </div>
 
             {mktError && (
-              <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded px-2.5 py-1.5">
+              <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded px-2.5 py-1.5">
                 {mktError}
               </p>
             )}
@@ -906,10 +909,11 @@ export default function CalendarioPage() {
 // ── MktCard — subcomponente de tarjeta de marketing ───────────────────────────
 
 function MktCard({
-  entry, canEdit, onEdit, onDelete, compact = false,
+  entry, canEdit, canDelete, onEdit, onDelete, compact = false,
 }: {
   entry: MarketingEntry
   canEdit: boolean
+  canDelete: boolean
   onEdit: () => void
   onDelete: () => void
   compact?: boolean
@@ -934,22 +938,22 @@ function MktCard({
               className="p-1 rounded hover:bg-purple-100 text-purple-400 hover:text-purple-600">
               <Pencil size={10} />
             </button>
-            <button onClick={onDelete}
-              className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-500">
+            {canDelete && <button onClick={onDelete}
+              className="p-1 rounded hover:bg-destructive/15 text-muted-foreground hover:text-red-500">
               <Trash2 size={10} />
-            </button>
+            </button>}
           </div>
         )}
       </div>
 
       {entry.consigna && !compact && (
-        <p className="text-[11px] text-gray-600 mt-1.5 leading-relaxed line-clamp-3 whitespace-pre-wrap">
+        <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed line-clamp-3 whitespace-pre-wrap">
           {entry.consigna}
         </p>
       )}
 
       {entry.image_url && !compact && (
-        <div className="mt-2 rounded-md overflow-hidden bg-gray-100 max-h-48">
+        <div className="mt-2 rounded-md overflow-hidden bg-muted max-h-48">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={entry.image_url} alt={entry.title}
             className="w-full object-cover"
@@ -964,7 +968,7 @@ function MktCard({
       )}
 
       {entry.creator_name && !compact && (
-        <p className="text-[10px] text-gray-400 mt-1.5">Por: {entry.creator_name}</p>
+        <p className="text-[10px] text-muted-foreground mt-1.5">Por: {entry.creator_name}</p>
       )}
     </div>
   )

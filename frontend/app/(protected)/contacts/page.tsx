@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import * as XLSX from 'xlsx'
+import dynamic from 'next/dynamic'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -14,11 +14,12 @@ import {
   Tag, Ban, ChevronLeft, ChevronRight, Compass,
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
+import { deleteContacts } from '@/lib/delete-contacts'
 import { useCurrentUser } from '@/lib/useCurrentUser'
+import { MovementRangeFilters } from '@/components/contacts/InactivityRangeFilter'
+import { EMPTY_INACTIVITY, inactivityParams, inactivityLabel, type InactivityRange } from '@/lib/inactivity-range'
 import { DownloadContactsModal } from '@/components/contacts/DownloadContactsModal'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { ProspectsTab } from '@/components/prospects/ProspectsTab'
-import { ProspectListsTab } from '@/components/prospects/ProspectListsTab'
 import {
   DataTable,
   DataTableColumnHeader,
@@ -30,6 +31,10 @@ import {
   EditableTextCell,
 } from '@/components/data-display/DataTable'
 import type { ColumnDef, RowSelectionState, PaginationState } from '@/components/data-display/DataTable'
+
+const tabLoading = () => <p role="status" className="py-6 text-sm text-muted-foreground">Cargando…</p>
+const ProspectsTab = dynamic(() => import('@/components/prospects/ProspectsTab').then(m => m.ProspectsTab), { loading: tabLoading })
+const ProspectListsTab = dynamic(() => import('@/components/prospects/ProspectListsTab').then(m => m.ProspectListsTab), { loading: tabLoading })
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos
@@ -60,27 +65,27 @@ const NIVEL_LABEL: Record<string, string> = {
 }
 
 const SEGMENT_STYLE: Record<string, string> = {
-  casual: 'bg-gray-100 text-gray-600', regular: 'bg-blue-100 text-blue-700',
-  super_vip: 'bg-purple-100 text-purple-700', whale: 'bg-amber-100 text-amber-700',
-  bajo: 'bg-orange-50 text-orange-700', medio: 'bg-slate-100 text-slate-600',
+  casual: 'bg-muted text-muted-foreground', regular: 'bg-blue-100 text-blue-700',
+  super_vip: 'bg-purple-100 text-purple-700', whale: 'bg-warning/15 text-warning',
+  bajo: 'bg-orange-50 text-orange-700', medio: 'bg-muted text-slate-600',
   vip: 'bg-yellow-100 text-yellow-700',
   vip_medio: 'bg-orange-100 text-orange-700',
-  vip_alto:  'bg-red-100 text-red-700',
+  vip_alto:  'bg-destructive/15 text-destructive',
 }
 const ACTIVIDAD_STYLE: Record<string, string> = {
-  frecuente: 'bg-green-100 text-green-700', regular: 'bg-blue-100 text-blue-700',
-  ocasional: 'bg-gray-100 text-gray-600', nuevo: 'bg-cyan-100 text-cyan-700',
-  en_riesgo: 'bg-orange-100 text-orange-700', inactivo: 'bg-red-100 text-red-600',
+  frecuente: 'bg-success/15 text-success', regular: 'bg-blue-100 text-blue-700',
+  ocasional: 'bg-muted text-muted-foreground', nuevo: 'bg-cyan-100 text-cyan-700',
+  en_riesgo: 'bg-orange-100 text-orange-700', inactivo: 'bg-destructive/15 text-destructive',
   perdido: 'bg-zinc-800 text-white',
 }
 const ACTIVIDAD_DESC: Record<string, string> = {
   frecuente: '≥ 3 cargas por semana en promedio',
-  regular:   '1–2 cargas por semana en promedio',
-  ocasional: '1–3 cargas al mes',
-  nuevo:     'Primera semana de actividad',
-  en_riesgo: 'Sin actividad en las últimas 2–4 semanas',
-  inactivo:  'Sin actividad entre 1 y 3 meses',
-  perdido:   'Sin actividad por más de 3 meses',
+  regular:   'Desde 1 y menos de 3 cargas por semana en promedio',
+  ocasional: 'Menos de 1 carga por semana en promedio',
+  nuevo:     'Primera carga hace hasta 30 días',
+  en_riesgo: 'Última carga hace 31–60 días',
+  inactivo:  'Última carga hace 61–180 días',
+  perdido:   'Última carga hace más de 180 días',
 }
 const ANTIGUEDAD_DESC: Record<string, string> = {
   leal:        'Más de 9 meses como cliente',
@@ -91,23 +96,23 @@ const ANTIGUEDAD_DESC: Record<string, string> = {
 }
 const NIVEL_DESC: Record<string, string> = {
   super_vip: 'Super Vip — depósitos >= $3.200.000/mes activo',
-  vip_alto:  'Vip Alto — depósitos $1.500.001 – $3.199.999/mes activo',
-  vip_medio: 'Vip Medio — depósitos $1.000.000 – $1.500.000/mes activo',
+  vip_alto:  'Vip Alto — depósitos desde $1.500.000 y menos de $3.200.000/mes activo',
+  vip_medio: 'Vip Medio — depósitos desde $1.000.000 y menos de $1.500.000/mes activo',
   vip:       'Vip Bajo — depósitos $500.000 – $999.999/mes activo',
   medio:     'Medio — depósitos $100.000 – $499.999/mes activo',
   bajo:      'Bajo — depósitos < $100.000/mes activo',
 }
 const VALOR_RIESGO_STYLE: Record<string, string> = {
-  critico: 'bg-red-100 text-red-700', medio: 'bg-orange-100 text-orange-700',
+  critico: 'bg-destructive/15 text-destructive', medio: 'bg-orange-100 text-orange-700',
   bajo: 'bg-yellow-100 text-yellow-700',
 }
 const ANTIGUEDAD_STYLE: Record<string, string> = {
   nuevo: 'bg-sky-100 text-sky-600', reciente: 'bg-blue-100 text-blue-600',
-  establecido: 'bg-indigo-100 text-indigo-700', veterano: 'bg-violet-100 text-violet-700',
+  establecido: 'bg-accent text-primary', veterano: 'bg-violet-100 text-violet-700',
   leal: 'bg-purple-100 text-purple-700',
 }
 const GAMING_STYLE: Record<string, string> = {
-  slots: 'bg-pink-100 text-pink-700', deportivas: 'bg-green-100 text-green-700',
+  slots: 'bg-pink-100 text-pink-700', deportivas: 'bg-success/15 text-success',
   ambas: 'bg-cyan-100 text-cyan-700',
 }
 
@@ -181,6 +186,7 @@ export default function Contacts() {
   const [filterPanel, setFilterPanel]         = useState('')
   const [filterLinea, setFilterLinea]         = useState('')
   const [filterLineaSub, setFilterLineaSub]   = useState('')
+  const [inactivity, setInactivity] = useState<InactivityRange>(EMPTY_INACTIVITY)
   const [filterActividad, setFilterActividad]   = useState<string[]>([])
   const [actividadOpen, setActividadOpen]       = useState(false)
   const actividadRef = useRef<HTMLDivElement>(null)
@@ -196,15 +202,18 @@ export default function Contacts() {
 
   // ── Selección (TanStack format) ───────────────────────────────────────────
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
-  const selectedIds   = Object.keys(rowSelection)
+  const selectedIds   = Object.keys(rowSelection).filter(id => rowSelection[id])
+  const selectedPhones = useRef<Record<string, string>>({})
   const selectedCount = selectedIds.length
 
-  const hasActiveFilters = !!(search || segments.length > 0 || filterGaming || filterPanel || filterLinea || filterLineaSub ||
-    filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag)
+
 
   // ── Listas ────────────────────────────────────────────────────────────────
   const [lists, setLists]             = useState<ContactList[]>([])
   const [filterList, setFilterList]   = useState('')
+  const hasActiveFilters = !!(search || segments.length > 0 || filterGaming || filterPanel || filterLinea || filterLineaSub ||
+    filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag || filterList)
+
   const [showListsMenu, setShowListsMenu] = useState(false)
   const [deletingListId, setDeletingListId] = useState<string | null>(null)
   const listsMenuRef = useRef<HTMLDivElement>(null)
@@ -252,20 +261,22 @@ export default function Contacts() {
   // ── View contact modal ────────────────────────────────────────────────────
   const [viewContact, setViewContact]   = useState<Contact | null>(null)
   const [viewContactIdx, setViewContactIdx] = useState<number>(-1)
-  const [casinoStats, setCasinoStats]   = useState<{
-    monto_cargas_mes: number; monto_retiros_mes: number; last_deposit_at: string | null
-    mes_referencia: string | null; fuente: 'transactions' | 'historico' | null
-    bet30?: { monto_cargas_mes: number; monto_retiros_mes: number; last_deposit_at: string | null; mes_referencia: string | null; fuente: 'transactions' | 'historico' } | null
-  } | null>(null)
+  const [casinoStats, setCasinoStats] = useState<{ platforms: Array<{
+    platform: string | null; monto_cargas_mes: number; monto_retiros_mes: number
+    last_deposit_at: string | null; mes_referencia: string | null; fuente: 'transactions' | 'historico'
+  }> } | null>(null)
+  const [casinoStatsError, setCasinoStatsError] = useState<string | null>(null)
+  const casinoStatsRequest = useRef(0)
 
   const openViewContact = (c: Contact) => {
+    const request = ++casinoStatsRequest.current
     setViewContact(c)
     setCasinoStats(null)
+    setCasinoStatsError(null)
     setViewContactIdx(contacts.findIndex(x => x.id === c.id))
-    fetch(`/api/contacts/${c.id}/casino-stats`)
-      .then(r => r.json())
-      .then(d => setCasinoStats(d))
-      .catch(() => {})
+    fetchJson<NonNullable<typeof casinoStats>>(`/api/contacts/${c.id}/casino-stats`)
+      .then(d => { if (request === casinoStatsRequest.current) setCasinoStats(d) })
+      .catch(() => { if (request === casinoStatsRequest.current) setCasinoStatsError('No se pudo cargar el historial') })
   }
 
   const goNextContact = () => {
@@ -304,8 +315,12 @@ export default function Contacts() {
     action: 'delete' | 'blacklist'
     mode: 'selection' | 'filters'
     count: number
+    ids?: string[]
   } | null>(null)
   const [confirmExecuting, setConfirmExecuting] = useState(false)
+  const [confirmError, setConfirmError] = useState<string | null>(null)
+  const [deleteNotice, setDeleteNotice] = useState<string | null>(null)
+  const confirming = useRef(false)
 
   // ── Split lista ───────────────────────────────────────────────────────────
   const [splitSource, setSplitSource]   = useState<ContactList | null>(null)
@@ -326,33 +341,77 @@ export default function Contacts() {
 
   const { user: currentUser, permissions } = useCurrentUser()
   const canCreateContacts = permissions.contacts?.includes('create') ?? false
+  useEffect(() => {
+    if (!canCreateContacts) return
+    const open = () => { setActiveTab('contacts'); setShowAdd(true) }
+    const url = new URL(window.location.href)
+    if (url.searchParams.get('action') === 'new') {
+      open(); url.searchParams.delete('action'); window.history.replaceState(null, '', url)
+    }
+    window.addEventListener('cmd:new-contact', open)
+    return () => window.removeEventListener('cmd:new-contact', open)
+  }, [canCreateContacts])
+
 
   // ── Carga de datos ────────────────────────────────────────────────────────
 
+  const buildContactParams = useCallback(() => new URLSearchParams({
+    q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
+    linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
+    linea_sub: filterLineaSub, list_id: filterList, plataforma: filterPlataforma,
+    sin_movimiento: String(filterSinMovimiento), tag: filterTag, ...inactivityParams(inactivity),
+  }), [search, segments, filterGaming, filterPanel, filterLinea, filterActividad,
+    filterAntiguedad, filterLineaSub, filterList, filterPlataforma, filterSinMovimiento, filterTag, inactivity])
+
+  const audienceKey = buildContactParams().toString()
+  const activeAudience = useRef(audienceKey)
+  activeAudience.current = audienceKey
+  const contactLoadRequest = useRef(0)
+  const loadRequest = useRef<AbortController | null>(null)
+  const loadTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const firstLoad = useRef(true)
+  useEffect(() => {
+    setRowSelection({})
+    selectedPhones.current = {}
+  }, [audienceKey])
+
   const load = useCallback(() => {
+    if (loadTimer.current) clearTimeout(loadTimer.current)
+    loadRequest.current?.abort()
+    const controller = new AbortController()
+    loadRequest.current = controller
+    const request = ++contactLoadRequest.current
     setLoading(true)
-    const q = new URLSearchParams({
-      q: search, page: String(pagination.pageIndex + 1),
-      segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
-      linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
-      ...(filterLineaSub      ? { linea_sub: filterLineaSub }    : {}),
-      ...(filterList          ? { list_id: filterList }          : {}),
-      ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
-      ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
-      ...(filterTag           ? { tag: filterTag }               : {}),
-    })
+    const q = buildContactParams()
+    q.set('page', String(pagination.pageIndex + 1))
     setLoadError(null)
-    fetchJson<{ contacts: Contact[]; total: number }>(`/api/contacts?${q}`)
-      .then(d => { setContacts(d.contacts || []); setTotal(d.total || 0) })
+    fetchJson<{ contacts: Contact[]; total: number }>(`/api/contacts?${q}`, { signal: controller.signal })
+      .then(d => {
+        if (request !== contactLoadRequest.current) return
+        for (const c of d.contacts || []) selectedPhones.current[c.id] = c.phone_number
+        setContacts(d.contacts || []); setTotal(d.total || 0)
+      })
       .catch((e: unknown) => {
+        if (request !== contactLoadRequest.current || controller.signal.aborted) return
         setContacts([])
         setTotal(0)
         setLoadError(e instanceof Error ? e.message : 'Error al cargar contactos')
       })
-      .finally(() => setLoading(false))
-  }, [search, pagination.pageIndex, segments, filterGaming, filterPanel, filterLinea, filterLineaSub, filterActividad, filterAntiguedad, filterList, filterPlataforma, filterSinMovimiento, filterTag])
+      .finally(() => { if (request === contactLoadRequest.current) setLoading(false) })
+  }, [buildContactParams, pagination.pageIndex])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    // Load the first page immediately; group rapid typing/filter edits into one
+    // request. Cancellation alone cannot stop SQL already running on the server.
+    setLoading(true)
+    if (firstLoad.current) { firstLoad.current = false; load() }
+    else loadTimer.current = setTimeout(load, 250)
+    return () => {
+      if (loadTimer.current) clearTimeout(loadTimer.current)
+      ++contactLoadRequest.current
+      loadRequest.current?.abort()
+    }
+  }, [load])
   const reloadLists = useCallback(() => {
     fetchJson<{ lists: ContactList[] }>('/api/lists')
       .then(d => setLists(d.lists || []))
@@ -416,55 +475,62 @@ export default function Contacts() {
 
   const deleteContact = useCallback(async (id: string) => {
     if (!confirm('¿Eliminar este contacto?')) return
-    const res = await fetch(`/api/contacts/${id}`, { method: 'DELETE' })
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      alert(`Error al eliminar: ${data.error || res.statusText}`)
+    const result = await deleteContacts([id])
+    if (result.failed.length) {
+      setUpdateError(result.failed[0].error)
       return
     }
+    setUpdateError(null)
+    setDeleteNotice('Contacto eliminado.')
     setContacts(prev => prev.filter(c => c.id !== id))
     setTotal(prev => prev - 1)
     setRowSelection(prev => { const n = { ...prev }; delete n[id]; return n })
   }, [])
 
   const deleteBulk = async (ids: string[]) => {
-    const responses = await Promise.all(
-      ids.map(id => fetch(`/api/contacts/${id}`, { method: 'DELETE' })
-        .then(r => ({ id, ok: r.ok })).catch(() => ({ id, ok: false })))
-    )
-    const deleted = new Set(responses.filter(r => r.ok).map(r => r.id))
-    if (deleted.size === 0) return
-    setContacts(prev => prev.filter(c => !deleted.has(c.id)))
-    setTotal(prev => prev - deleted.size)
-    setRowSelection({})
+    const result = await deleteContacts(ids)
+    const deleted = new Set(result.deleted)
+    if (deleted.size > 0) {
+      setContacts(prev => prev.filter(c => !deleted.has(c.id)))
+      setTotal(prev => Math.max(0, prev - deleted.size))
+      setRowSelection(prev => Object.fromEntries(Object.entries(prev).filter(([id]) => !deleted.has(id))))
+      setDeleteNotice(`${deleted.size.toLocaleString()} contactos eliminados.`)
+    }
+    if (result.failed.length > 0) {
+      const pendingIds = result.failed.map(item => item.id)
+      setRowSelection(Object.fromEntries(pendingIds.map(id => [id, true])))
+      // Retry only the failed IDs, including when the original request used filters.
+      setConfirmBulk({ action: 'delete', mode: 'selection', count: pendingIds.length, ids: pendingIds })
+      const errors = [...new Set(result.failed.map(item => item.error))].join(' ')
+      throw new Error(`${deleted.size} eliminados. No se pudieron eliminar ${pendingIds.length} contactos. ${errors}`)
+    }
   }
 
   const deleteSelected = async () => {
+    setConfirmError(null)
+    setDeleteNotice(null)
     if (selectedCount > 0) {
-      setConfirmBulk({ action: 'delete', mode: 'selection', count: selectedCount })
+      setConfirmBulk({ action: 'delete', mode: 'selection', count: selectedCount, ids: [...selectedIds] })
     } else if (hasActiveFilters) {
       setConfirmBulk({ action: 'delete', mode: 'filters', count: total })
     }
   }
 
   const selectAllFiltered = async () => {
+    const requestedAudience = audienceKey
     setSelectingAll(true)
     try {
-      const q = new URLSearchParams({
-        q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
-        linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
-        ...(filterLineaSub ? { linea_sub: filterLineaSub } : {}),
-        select_all: 'true',
-        ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
-        ...(filterList          ? { list_id: filterList }          : {}),
-        ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
-      })
-      const d = await fetchJson<{ ids: string[] }>(`/api/contacts?${q}`)
+      const q = buildContactParams()
+      q.set('select_all', 'true')
+      const d = await fetchJson<{ ids: string[]; phones: string[] }>(`/api/contacts?${q}`)
+      if (activeAudience.current !== requestedAudience) return
+      d.ids.forEach((id, i) => { selectedPhones.current[id] = d.phones[i] })
       const next: RowSelectionState = {}
       for (const id of d.ids || []) next[id] = true
       setRowSelection(next)
-    } catch { /* ignore */ }
-    finally { setSelectingAll(false) }
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'No se pudo seleccionar la audiencia')
+    } finally { setSelectingAll(false) }
   }
 
   // ── Import ────────────────────────────────────────────────────────────────
@@ -498,7 +564,8 @@ export default function Contacts() {
 
   const handleFile = (file: File) => {
     const reader = new FileReader()
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
+      try {
       const data = e.target?.result
       let rows: ImportRow[] = []
       if (file.name.endsWith('.vcf')) {
@@ -515,6 +582,7 @@ export default function Contacts() {
           return { phone: cols[phoneIdx] || '', name: cols[nameIdx] || undefined, segment: cols[segIdx] || undefined }
         }).filter(r => r.phone)
       } else {
+        const XLSX = await import('xlsx')
         const wb = XLSX.read(data, { type: 'binary' })
         const ws = wb.Sheets[wb.SheetNames[0]]
         const json = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '' })
@@ -541,6 +609,10 @@ export default function Contacts() {
           .then(data => setImportCheck(data))
           .catch(() => setImportCheck(null))
           .finally(() => setCheckLoading(false))
+      }
+      } catch {
+        setImportRows([])
+        setImportError('No se pudo leer el archivo. Volvé a seleccionarlo e intentá nuevamente.')
       }
     }
     if (file.name.endsWith('.csv') || file.name.endsWith('.vcf')) reader.readAsText(file)
@@ -585,6 +657,7 @@ export default function Contacts() {
 
   const buildFilterStr = () =>
     [
+      (inactivity.min || inactivity.max) && `${inactivity.mode === 'period' ? 'con-movimientos' : 'inactividad'}-${inactivity.min || '0'}-${inactivity.max || 'sin-maximo'}`,
       filterPanel      && `panel-${filterPanel}`,
       filterGaming     && `juego-${filterGaming}`,
       segments.length  && `nivel-${segments.join('-')}`,
@@ -593,17 +666,7 @@ export default function Contacts() {
       filterAntiguedad.length && `antiguedad-${filterAntiguedad.join('-')}`,
     ].filter(Boolean).join('_') || 'todos'
 
-  const buildDownloadParams = (): URLSearchParams => {
-    const p = new URLSearchParams({
-      q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
-      linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
-    })
-    if (filterLineaSub)      p.set('linea_sub', filterLineaSub)
-    if (filterList)          p.set('list_id', filterList)
-    if (filterPlataforma)    p.set('plataforma', filterPlataforma)
-    if (filterSinMovimiento) p.set('sin_movimiento', 'true')
-    return p
-  }
+  const buildDownloadParams = buildContactParams
 
   // ── Crear lista ───────────────────────────────────────────────────────────
 
@@ -618,21 +681,13 @@ export default function Contacts() {
       body = { name: newListName, contact_ids: selectedIds }
     } else if (listMode === 'filters') {
       try {
-        const q = new URLSearchParams({
-          q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
-          linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
-          ...(filterLineaSub ? { linea_sub: filterLineaSub } : {}),
-          select_all: 'true',
-          ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
-          ...(filterList          ? { list_id: filterList }          : {}),
-          ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
-          ...(filterTag           ? { tag: filterTag }               : {}),
-        })
+        const q = buildContactParams()
+        q.set('select_all', 'true')
         const d = await fetchJson<{ ids: string[] }>(`/api/contacts?${q}`)
         body = { name: newListName, contact_ids: d.ids || [] }
-      } catch {
+      } catch (e) {
         setSavingList(false)
-        setListError('Error al obtener los contactos filtrados')
+        setListError(e instanceof Error ? e.message : 'Error al obtener los contactos filtrados')
         return
       }
     } else {
@@ -808,6 +863,7 @@ export default function Contacts() {
   }
 
   const blacklistSelected = async () => {
+    setConfirmError(null)
     if (selectedCount > 0) {
       setConfirmBulk({ action: 'blacklist', mode: 'selection', count: selectedCount })
     } else if (hasActiveFilters) {
@@ -816,28 +872,23 @@ export default function Contacts() {
   }
 
   const executeConfirm = async () => {
-    if (!confirmBulk) return
+    if (!confirmBulk || confirming.current) return
+    confirming.current = true
     setConfirmExecuting(true)
+    setConfirmError(null)
     try {
       if (confirmBulk.mode === 'selection') {
         if (confirmBulk.action === 'delete') {
-          await deleteBulk(selectedIds)
+          await deleteBulk(confirmBulk.ids ?? selectedIds)
         } else {
-          const phones = contacts.filter(c => rowSelection[c.id]).map(c => c.phone_number)
+          const phones = selectedIds.map(id => selectedPhones.current[id]).filter(Boolean)
+          if (phones.length !== selectedIds.length) throw new Error('No se pudieron recuperar todos los teléfonos seleccionados. Volvé a seleccionar los contactos.')
           await sendToBlacklist(phones, () => setRowSelection({}))
         }
       } else {
         // filters mode: fetch all matching IDs + phones first
-        const q = new URLSearchParams({
-          q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
-          linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
-          ...(filterLineaSub ? { linea_sub: filterLineaSub } : {}),
-          select_all: 'true',
-          ...(filterPlataforma    ? { plataforma: filterPlataforma } : {}),
-          ...(filterList          ? { list_id: filterList }          : {}),
-          ...(filterSinMovimiento ? { sin_movimiento: 'true' }       : {}),
-          ...(filterTag           ? { tag: filterTag }               : {}),
-        })
+        const q = buildContactParams()
+        q.set('select_all', 'true')
         const d = await fetchJson<{ ids: string[]; phones: string[] }>(`/api/contacts?${q}`)
         if (confirmBulk.action === 'delete') {
           await deleteBulk(d.ids || [])
@@ -845,9 +896,12 @@ export default function Contacts() {
           await sendToBlacklist(d.phones || [], () => setRowSelection({}))
         }
       }
-    } finally {
-      setConfirmExecuting(false)
       setConfirmBulk(null)
+    } catch (e) {
+      setConfirmError(e instanceof Error ? e.message : 'No se pudo procesar la selección. Volvé a intentar.')
+    } finally {
+      confirming.current = false
+      setConfirmExecuting(false)
     }
   }
 
@@ -877,8 +931,9 @@ export default function Contacts() {
         const customTags = row.original.custom_tags ?? []
         return (
           <div className="flex flex-col gap-0.5 min-w-0">
-            <div className="flex items-center gap-1.5 min-w-0">
+            <div className="flex flex-wrap items-center gap-1.5 min-w-0 md:flex-nowrap">
               <EditableTextCell
+                className="min-w-0 break-words"
                 value={full}
                 placeholder="— sin nombre"
                 onSave={newName => {
@@ -892,9 +947,9 @@ export default function Contacts() {
               />
               {platforms.includes('zeus')  && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">Zeus</span>}
               {platforms.includes('bet30') && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-orange-100 text-orange-700">Bet30</span>}
-              {platforms.includes('ganamos') && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-green-100 text-green-700">Ganamos</span>}
+              {platforms.includes('ganamos') && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-success/15 text-success">Ganamos</span>}
               {platforms.includes('argenbet') && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-purple-100 text-purple-700">Argenbet</span>}
-              {platforms.length === 0 && hasName && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-gray-100 text-gray-500">otros</span>}
+              {platforms.length === 0 && hasName && <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-muted text-muted-foreground">otros</span>}
             </div>
             {customTags.length > 0 && (
               <div className="flex flex-wrap gap-1" onClick={e => e.stopPropagation()}>
@@ -903,7 +958,7 @@ export default function Contacts() {
                     key={t}
                     type="button"
                     onClick={() => { setFilterTag(t); resetPage() }}
-                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium border transition-colors cursor-pointer hover:bg-indigo-100 ${filterTag === t ? 'bg-indigo-200 border-indigo-400 text-indigo-800' : 'bg-indigo-50 text-indigo-600 border-indigo-200'}`}
+                    className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium border transition-colors cursor-pointer hover:bg-accent ${filterTag === t ? 'bg-indigo-200 border-indigo-400 text-accent-foreground' : 'bg-accent text-primary border-primary/20'}`}
                   >
                     {t}
                   </button>
@@ -924,8 +979,9 @@ export default function Contacts() {
         <EditableCell
           value={row.original.panel || ''}
           options={PANEL_OPTIONS.map(p => ({ value: p, label: p }))}
-          activeClass="bg-indigo-50 text-indigo-700"
+          activeClass="bg-accent text-primary"
           placeholder="— sin agente"
+          ariaLabel={`Editar Agente de ${row.original.first_name || row.original.phone_number}`}
           onChange={v => updateField(row.original.id, 'panel', v || null)}
         />
       ),
@@ -943,7 +999,8 @@ export default function Contacts() {
             options={Array.from({ length: 100 }, (_, i) => ({ value: String(i + 1), label: `Línea ${i + 1}` }))}
             activeClass="bg-orange-50 text-orange-700"
             placeholder="— sin línea"
-            onChange={v => updateField(row.original.id, 'linea', v ? Number(v) : null)}
+            ariaLabel={`Editar Línea de ${row.original.first_name || row.original.phone_number}`}
+          onChange={v => updateField(row.original.id, 'linea', v ? Number(v) : null)}
           />
           {row.original.linea != null && (
             <EditableCell
@@ -951,7 +1008,8 @@ export default function Contacts() {
               options={LINEA_SUB_OPTIONS.map(o => ({ value: o.v, label: o.l }))}
               activeClass="bg-orange-50 text-orange-700"
               placeholder="—"
-              onChange={v => updateField(row.original.id, 'linea_sub', v || null)}
+              ariaLabel={`Editar Variante de línea de ${row.original.first_name || row.original.phone_number}`}
+          onChange={v => updateField(row.original.id, 'linea_sub', v || null)}
             />
           )}
         </div>
@@ -973,6 +1031,7 @@ export default function Contacts() {
           ]}
           activeClass={GAMING_STYLE[row.original.gaming] ?? ''}
           placeholder="— sin asignar"
+          ariaLabel={`Editar Juego de ${row.original.first_name || row.original.phone_number}`}
           onChange={v => updateField(row.original.id, 'gaming', v || null)}
         />
       ),
@@ -994,8 +1053,9 @@ export default function Contacts() {
             { value: 'medio',     label: 'Medio' },
             { value: 'bajo',      label: 'Bajo' },
           ]}
-          activeClass={SEGMENT_STYLE[row.original.segment] ?? 'bg-gray-100 text-gray-600'}
+          activeClass={SEGMENT_STYLE[row.original.segment] ?? 'bg-muted text-muted-foreground'}
           placeholder="— sin nivel"
+          ariaLabel={`Editar Nivel de ${row.original.first_name || row.original.phone_number}`}
           onChange={v => updateField(row.original.id, 'segment', v || null)}
         />
       ),
@@ -1014,17 +1074,17 @@ export default function Contacts() {
         return (
           <div className="flex flex-col gap-0.5">
             {soloUnDeposito && (
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap bg-amber-100 text-amber-700 border border-amber-200">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap bg-warning/15 text-warning border border-warning/20">
                 1er dep. · 10d+
               </span>
             )}
             {c.valor_riesgo && (
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${VALOR_RIESGO_STYLE[c.valor_riesgo] ?? 'bg-gray-100 text-gray-600'}`}>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap ${VALOR_RIESGO_STYLE[c.valor_riesgo] ?? 'bg-muted text-muted-foreground'}`}>
                 ⚠ {c.valor_riesgo}
               </span>
             )}
             {c.antiguedad && (
-              <span className={`relative group text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap cursor-help ${ANTIGUEDAD_STYLE[c.antiguedad] ?? 'bg-gray-100 text-gray-600'}`}>
+              <span className={`relative group text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap cursor-help ${ANTIGUEDAD_STYLE[c.antiguedad] ?? 'bg-muted text-muted-foreground'}`}>
                 {c.antiguedad}
                 <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 rounded bg-gray-800 text-white text-[11px] whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-100 z-50">
                   {ANTIGUEDAD_DESC[c.antiguedad]}
@@ -1044,12 +1104,12 @@ export default function Contacts() {
       header: 'Estado',
       enableSorting: false,
       cell: ({ row }) => row.original.actividad ? (
-        <span className={`text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${ACTIVIDAD_STYLE[row.original.actividad] ?? 'bg-gray-100 text-gray-600'}`}>
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${ACTIVIDAD_STYLE[row.original.actividad] ?? 'bg-muted text-muted-foreground'}`}>
           {row.original.actividad}
         </span>
       ) : (
         <Badge variant={row.original.status === 'active' ? 'default' : 'secondary'}
-               className={`text-xs ${row.original.status === 'active' ? 'bg-green-100 text-green-700' : ''}`}>
+               className={`text-xs ${row.original.status === 'active' ? 'bg-success/15 text-success' : ''}`}>
           {row.original.status}
         </Badge>
       ),
@@ -1061,7 +1121,7 @@ export default function Contacts() {
       header: 'Opt-in',
       enableSorting: false,
       cell: ({ row }) => (
-        <span className={`text-xs font-medium ${row.original.opt_in ? 'text-green-600' : 'text-muted-foreground/50'}`}>
+        <span className={`text-xs font-medium ${row.original.opt_in ? 'text-success' : 'text-muted-foreground/50'}`}>
           {row.original.opt_in ? '✓' : '✗'}
         </span>
       ),
@@ -1122,12 +1182,12 @@ export default function Contacts() {
   return (
     <div className="space-y-5">
       {/* ── Tab switcher ── */}
-      <div className="flex gap-1 border-b pb-0">
+      <div className="flex gap-1 overflow-x-auto border-b pb-0">
         <button
           onClick={() => setActiveTab('contacts')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+          className={`shrink-0 px-3 py-2.5 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'contacts'
-              ? 'border-blue-600 text-blue-600'
+              ? 'border-primary text-primary'
               : 'border-transparent text-muted-foreground hover:text-foreground'
           }`}
         >
@@ -1135,9 +1195,9 @@ export default function Contacts() {
         </button>
         <button
           onClick={() => setActiveTab('prospects')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+          className={`shrink-0 px-3 py-2.5 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'prospects'
-              ? 'border-emerald-600 text-emerald-600'
+              ? 'border-primary text-primary'
               : 'border-transparent text-muted-foreground hover:text-foreground'
           }`}
         >
@@ -1145,9 +1205,9 @@ export default function Contacts() {
         </button>
         <button
           onClick={() => setActiveTab('prospect-lists')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+          className={`shrink-0 px-3 py-2.5 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'prospect-lists'
-              ? 'border-violet-600 text-violet-600'
+              ? 'border-primary text-primary'
               : 'border-transparent text-muted-foreground hover:text-foreground'
           }`}
         >
@@ -1161,23 +1221,24 @@ export default function Contacts() {
       {activeTab === 'contacts' && <>
       <PageHeader
         title="Contactos"
+        description="Tu base de clientes, organizada y siempre a mano."
         count={total}
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={load}>
+            <Button variant="outline" size="sm" onClick={load} aria-label="Actualizar contactos">
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             </Button>
 
             {currentUser?.can_download_contacts && (
               <Button variant="outline" size="sm"
                 onClick={() => setShowDownloadModal(true)}
-                className="border-teal-200 text-teal-700 hover:bg-teal-50">
+                className="border-input text-foreground hover:bg-muted">
                 <Download size={14} className="mr-1" /> Descargar
               </Button>
             )}
 
             <Button size="sm" variant="outline" onClick={selectAllFiltered} disabled={selectingAll}
-              className="border-blue-200 text-blue-700 hover:bg-blue-50">
+              className="border-input text-foreground hover:bg-muted">
               <CheckSquare size={14} className="mr-1" />
               {selectingAll ? 'Seleccionando…' : 'Seleccionar todos'}
             </Button>
@@ -1186,7 +1247,7 @@ export default function Contacts() {
               <Button
                 size="sm" variant="outline"
                 onClick={() => setShowListsMenu(v => !v)}
-                className={`border-indigo-200 text-indigo-700 hover:bg-indigo-50 ${filterList ? 'bg-indigo-50 border-indigo-400' : ''}`}
+                className={`border-input text-foreground hover:bg-muted hover:bg-accent ${filterList ? 'bg-accent border-indigo-400' : ''}`}
               >
                 <List size={14} className="mr-1" />
                 {filterList ? (lists.find(l => l.id === filterList)?.name ?? 'Lista') : 'Listas'}
@@ -1194,47 +1255,47 @@ export default function Contacts() {
                 {!filterList && <ChevronDown size={12} className="ml-1 opacity-60" />}
               </Button>
               {showListsMenu && (
-                <div className="absolute left-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg z-30 w-72 py-1 max-h-80 overflow-y-auto">
-                  <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between">
-                    <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Mis listas</span>
+                <div className="absolute left-0 top-full mt-1 bg-card border border-border rounded-xl shadow-lg z-30 w-72 py-1 max-h-80 overflow-y-auto">
+                  <div className="px-3 py-2 border-b border-border flex items-center justify-between">
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Mis listas</span>
                     <button
-                      className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                      className="text-xs text-primary hover:text-accent-foreground font-medium"
                       onClick={() => { setShowListsMenu(false); setListMode('criteria'); setShowList(true) }}
                     >
                       + Nueva lista
                     </button>
                   </div>
                   {lists.length === 0 && (
-                    <p className="text-xs text-gray-400 px-3 py-4 text-center">No hay listas creadas</p>
+                    <p className="text-xs text-muted-foreground px-3 py-4 text-center">No hay listas creadas</p>
                   )}
                   {lists.map(l => (
                     <div
                       key={l.id}
-                      className={`flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50 cursor-pointer group ${filterList === l.id ? 'bg-indigo-50' : ''}`}
+                      className={`flex items-center gap-2 px-3 py-2.5 hover:bg-background cursor-pointer group ${filterList === l.id ? 'bg-accent' : ''}`}
                       onClick={() => { setFilterList(l.id); resetPage(); setShowListsMenu(false) }}
                     >
-                      <Users size={13} className="text-gray-400 shrink-0" />
+                      <Users size={13} className="text-muted-foreground shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <p className={`text-sm truncate ${filterList === l.id ? 'font-semibold text-indigo-700' : 'text-gray-700'}`}>{l.name}</p>
-                        <p className="text-[11px] text-gray-400">{l.contact_count.toLocaleString()} contactos</p>
+                        <p className={`text-sm truncate ${filterList === l.id ? 'font-semibold text-primary' : 'text-foreground'}`}>{l.name}</p>
+                        <p className="text-[11px] text-muted-foreground">{l.contact_count.toLocaleString()} contactos</p>
                       </div>
                       {filterList === l.id && <Filter size={11} className="text-indigo-500 shrink-0" />}
                       <button
-                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-teal-500 p-0.5 rounded"
+                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground/60 hover:text-teal-500 p-0.5 rounded"
                         title="Descargar lista"
                         onClick={e => { e.stopPropagation(); setDownloadList(l); setShowListsMenu(false) }}
                       >
                         <Download size={13} />
                       </button>
                       <button
-                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-indigo-500 p-0.5 rounded"
+                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground/60 hover:text-indigo-500 p-0.5 rounded"
                         title="Dividir lista"
                         onClick={e => { e.stopPropagation(); openSplitModal(l) }}
                       >
                         <Scissors size={13} />
                       </button>
                       <button
-                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-gray-300 hover:text-red-500 p-0.5 rounded"
+                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground/60 hover:text-red-500 p-0.5 rounded"
                         title="Eliminar lista"
                         disabled={deletingListId === l.id}
                         onClick={e => { e.stopPropagation(); deleteList(l.id, l.name) }}
@@ -1244,7 +1305,7 @@ export default function Contacts() {
                     </div>
                   ))}
                   {currentUser?.role === 'admin' && (
-                    <div className="border-t border-gray-100 px-3 py-2 mt-1">
+                    <div className="border-t border-border px-3 py-2 mt-1">
                       <button
                         className="text-xs text-violet-600 hover:text-violet-800 font-medium flex items-center gap-1 disabled:opacity-50"
                         disabled={repopulating}
@@ -1260,7 +1321,7 @@ export default function Contacts() {
             {contacts.length > 0 && (
               <Button size="sm" variant="outline"
                 onClick={() => openViewContact(contacts[0])}
-                className="border-sky-200 text-sky-700 hover:bg-sky-50">
+                className="border-input text-foreground hover:bg-muted">
                 <Compass size={14} className="mr-1" /> Explorar
               </Button>
             )}
@@ -1282,23 +1343,23 @@ export default function Contacts() {
             {hasActiveFilters && (
               <Button size="sm" variant="outline"
                 onClick={() => { setListMode('filters'); setShowList(true) }}
-                className="border-violet-200 text-violet-700 hover:bg-violet-50">
+                className="border-input text-foreground hover:bg-muted">
                 <List size={14} className="mr-1" /> Crear lista ({total.toLocaleString()})
               </Button>
             )}
             <Button size="sm" variant="outline" onClick={() => { setListMode('selection'); setShowList(true) }}
-              className="border-indigo-200 text-indigo-700">
+              className="border-input text-foreground hover:bg-muted">
               <List size={14} className="mr-1" /> Lista por selección
             </Button>
             {canCreateContacts && (
-              <Button size="sm" onClick={() => setShowAdd(true)} className="bg-green-600 hover:bg-green-700 text-white">
+              <Button size="sm" onClick={() => setShowAdd(true)} className="bg-primary hover:bg-primary/90 text-primary-foreground">
                 <UserPlus size={14} className="mr-1" /> Nuevo contacto
               </Button>
             )}
             {canCreateContacts && (
               <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-input rounded-md bg-background hover:bg-muted transition-colors font-medium">
                 <Upload size={14} /> Importar
-                <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.vcf" className="hidden"
+                <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.vcf" className="sr-only" aria-label="Importar contactos"
                   onChange={e => { const f = e.target.files?.[0]; if (f) { handleFile(f); setShowImport(true); e.target.value = '' } }} />
               </label>
             )}
@@ -1313,6 +1374,7 @@ export default function Contacts() {
           <button onClick={() => setLoadError(null)} className="ml-4 opacity-60 hover:opacity-100">✕</button>
         </div>
       )}
+      {deleteNotice && <p role="status" className="text-sm text-success">{deleteNotice}</p>}
       {updateError && (
         <div className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-2 text-sm text-destructive flex items-center justify-between">
           <span>{updateError}</span>
@@ -1342,10 +1404,10 @@ export default function Contacts() {
       )}
 
       {/* Filtros — fila 1 */}
-      <div className="flex gap-3 flex-wrap">
+      <div className="filter-bar">
         <div className="relative flex-1 min-w-48">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input className="pl-9" placeholder="Buscar por nombre o teléfono…" value={search}
+          <Input className="pl-9" aria-label="Buscar contactos" placeholder="Buscar por nombre o teléfono…" value={search}
             onChange={e => { setSearch(e.target.value); resetPage() }} />
         </div>
         <Select value={filterPanel} onValueChange={v => { setFilterPanel(v ?? ''); resetPage() }}>
@@ -1424,7 +1486,7 @@ export default function Contacts() {
                       resetPage()
                     }}
                   />
-                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${SEGMENT_STYLE[v] ?? 'bg-gray-100 text-gray-600'}`}>
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${SEGMENT_STYLE[v] ?? 'bg-muted text-muted-foreground'}`}>
                     {NIVEL_LABEL[v] ?? v}
                   </span>
                 </label>
@@ -1473,7 +1535,7 @@ export default function Contacts() {
                       resetPage()
                     }}
                   />
-                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${ACTIVIDAD_STYLE[v] ?? 'bg-gray-100 text-gray-600'}`}>
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${ACTIVIDAD_STYLE[v] ?? 'bg-muted text-muted-foreground'}`}>
                     {v.replace('_', ' ')}
                   </span>
                 </label>
@@ -1482,6 +1544,10 @@ export default function Contacts() {
             </div>
           )}
         </div>
+
+        <MovementRangeFilters value={inactivity} onChange={range => {
+          setInactivity(range); setRowSelection({}); resetPage()
+        }} />
 
         {/* Multi-select Antigüedad */}
         <div className="relative" ref={antiguedadRef} onMouseLeave={() => setAntiguedadOpen(false)}>
@@ -1519,7 +1585,7 @@ export default function Contacts() {
                       resetPage()
                     }}
                   />
-                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-700">{v}</span>
+                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-muted text-foreground">{v}</span>
                 </label>
               ))}
             </div>
@@ -1527,19 +1593,20 @@ export default function Contacts() {
           )}
         </div>
 
-        {(filterActividad.length > 0 || filterAntiguedad.length > 0) && (
+        {(filterActividad.length > 0 || filterAntiguedad.length > 0 || inactivity.min !== '' || inactivity.max !== '') && (
           <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground h-8 px-2"
-            onClick={() => { setFilterActividad([]); setFilterAntiguedad([]); resetPage() }}>
+            onClick={() => { setFilterActividad([]); setFilterAntiguedad([]); setInactivity(EMPTY_INACTIVITY); setRowSelection({}); resetPage() }}>
             <X size={13} className="mr-1" /> Limpiar casino
           </Button>
         )}
 
         {/* ── Filtro plataforma ── */}
-        <div className="flex items-center gap-1 border rounded-lg p-0.5 bg-muted/40">
+        <div className="flex max-w-full flex-wrap items-center gap-1 border rounded-lg p-0.5 bg-muted/40">
           {(['', 'zeus', 'bet30', 'ganamos', 'argenbet', 'otros'] as const).map(v => (
             <button
               key={v || 'all'}
               onClick={() => { setFilterPlataforma(v); resetPage() }}
+              aria-pressed={filterPlataforma === v}
               className={`text-xs px-2.5 py-1 rounded-md font-medium transition-colors ${
                 filterPlataforma === v
                   ? v === 'zeus'  ? 'bg-blue-600 text-white shadow-sm'
@@ -1593,10 +1660,10 @@ export default function Contacts() {
       {filterList && (() => {
         const active = lists.find(l => l.id === filterList)
         return active ? (
-          <div className="flex items-center gap-2 text-xs text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-1.5">
+          <div className="flex items-center gap-2 text-xs text-primary bg-accent border border-primary/20 rounded-lg px-3 py-1.5">
             <Filter size={12} /> Mostrando lista: <span className="font-semibold">{active.name}</span>
             <span className="text-indigo-400">({active.contact_count.toLocaleString()} contactos)</span>
-            <button onClick={() => { setFilterList(''); resetPage() }} className="ml-1 text-indigo-400 hover:text-indigo-700">
+            <button onClick={() => { setFilterList(''); resetPage() }} className="ml-1 text-indigo-400 hover:text-primary">
               <X size={12} />
             </button>
           </div>
@@ -1621,8 +1688,8 @@ export default function Contacts() {
         totalRows={total}
         emptyState={
           <DataTableEmptyState
-            message="Sin contactos"
-            description="Ajustá los filtros o importá nuevos contactos."
+            message={loadError ? "No se pudieron cargar los contactos" : "Sin contactos"}
+            description={loadError ? "Usá el botón de actualizar para volver a intentar." : "Ajustá los filtros o importá nuevos contactos."}
           />
         }
         bulkActions={(ids) => (
@@ -1632,7 +1699,7 @@ export default function Contacts() {
           >
             <Button size="sm" variant="outline"
               onClick={() => { setListMode('selection'); setShowList(true) }}
-              className="h-7 text-xs border-green-200 text-green-700 hover:bg-green-50">
+              className="h-7 text-xs border-success/20 text-success hover:bg-success/10">
               <List size={13} className="mr-1" /> Crear lista ({ids.length})
             </Button>
             <Button size="sm" variant="outline"
@@ -1665,7 +1732,7 @@ export default function Contacts() {
           {importResult ? (
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-3 text-center">
-                <div className="bg-green-50 rounded-lg p-4"><p className="text-2xl font-bold text-green-600">{importResult.inserted}</p><p className="text-xs text-muted-foreground">Creados</p></div>
+                <div className="bg-success/10 rounded-lg p-4"><p className="text-2xl font-bold text-success">{importResult.inserted}</p><p className="text-xs text-muted-foreground">Creados</p></div>
                 <div className="bg-blue-50 rounded-lg p-4"><p className="text-2xl font-bold text-blue-600">{importResult.updated}</p><p className="text-xs text-muted-foreground">Actualizados</p></div>
                 <div className="bg-muted rounded-lg p-4"><p className="text-2xl font-bold text-muted-foreground">{importResult.skipped}</p><p className="text-xs text-muted-foreground">Omitidos</p></div>
               </div>
@@ -1700,11 +1767,11 @@ export default function Contacts() {
                 <p className="text-xs text-muted-foreground">Verificando contactos existentes…</p>
               )}
               {!checkLoading && importCheck && importCheck.total > 0 && (
-                <div className="border border-amber-200 bg-amber-50 rounded-lg p-3 space-y-2">
-                  <p className="text-sm font-medium text-amber-800">
+                <div className="border border-warning/20 bg-warning/10 rounded-lg p-3 space-y-2">
+                  <p className="text-sm font-medium text-warning">
                     ⚠️ {importCheck.total.toLocaleString()} contactos ya existen en la base de datos
                   </p>
-                  <div className="text-xs text-amber-700 space-y-0.5">
+                  <div className="text-xs text-warning space-y-0.5">
                     {Object.entries(importCheck.by_panel).map(([panel, count]) => (
                       <div key={panel} className="flex justify-between">
                         <span>{panel}</span>
@@ -1789,7 +1856,7 @@ export default function Contacts() {
               )}
               <div className="flex gap-2">
                 <Button variant="outline" className="flex-1" onClick={() => setShowImport(false)} disabled={importing}>Cancelar</Button>
-                <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={confirmImport} disabled={importing}>
+                <Button className="flex-1 bg-primary hover:bg-primary/90" onClick={confirmImport} disabled={importing}>
                   {importing ? `Importando… ${importProgress}%` : `Importar ${importRows.length.toLocaleString()} contactos`}
                 </Button>
               </div>
@@ -1840,12 +1907,13 @@ export default function Contacts() {
                       Se incluirán los <span className="font-semibold">{total.toLocaleString()} contactos</span> que coinciden con los filtros actuales:
                     </p>
                     <div className="flex flex-wrap gap-1.5">
-                      {search && <span className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded-full">Búsqueda: &quot;{search}&quot;</span>}
+                      {search && <span className="text-xs bg-muted text-foreground px-2 py-0.5 rounded-full">Búsqueda: &quot;{search}&quot;</span>}
                       {filterPanel && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Agente: {filterPanel}</span>}
                       {segments.length > 0 && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">Nivel: {segments.join(', ')}</span>}
-                      {filterActividad.length > 0 && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Actividad: {filterActividad.join(', ')}</span>}
+                      {(inactivity.min !== '' || inactivity.max !== '') && <span className="text-xs bg-success/15 text-success px-2 py-0.5 rounded-full">{inactivityLabel(inactivity)}</span>}
+                      {filterActividad.length > 0 && <span className="text-xs bg-success/15 text-success px-2 py-0.5 rounded-full">Actividad: {filterActividad.join(', ')}</span>}
                       {filterAntiguedad.length > 0 && <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">Antigüedad: {filterAntiguedad.join(', ')}</span>}
-                      {filterPlataforma && <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">Plataforma: {filterPlataforma}</span>}
+                      {filterPlataforma && <span className="text-xs bg-accent text-primary px-2 py-0.5 rounded-full">Plataforma: {filterPlataforma}</span>}
                       {filterGaming && <span className="text-xs bg-pink-100 text-pink-700 px-2 py-0.5 rounded-full">Juego: {filterGaming}</span>}
                       {filterLinea && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Línea: {filterLinea}</span>}
                       {filterLineaSub && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Variante: {filterLineaSub}</span>}
@@ -1903,7 +1971,7 @@ export default function Contacts() {
             <div className="flex gap-2">
               <Button variant="outline" className="flex-1" onClick={() => setShowList(false)} disabled={savingList}><X size={14} /> Cancelar</Button>
               <Button
-                className={`flex-1 ${listMode === 'criteria' ? 'bg-indigo-600 hover:bg-indigo-700' : listMode === 'filters' ? 'bg-violet-600 hover:bg-violet-700' : 'bg-green-600 hover:bg-green-700'}`}
+                className={`flex-1 ${listMode === 'criteria' ? 'bg-primary hover:bg-primary/90' : listMode === 'filters' ? 'bg-violet-600 hover:bg-violet-700' : 'bg-primary hover:bg-primary/90'}`}
                 onClick={createList}
                 disabled={
                   savingList || !newListName ||
@@ -1929,14 +1997,14 @@ export default function Contacts() {
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Teléfono <span className="text-destructive">*</span></label>
-              <Input placeholder="Ej: 5492236123456" value={newPhone} onChange={e => setNewPhone(e.target.value)} />
+              <label htmlFor="contact-phone" className="text-xs font-medium text-muted-foreground mb-1 block">Teléfono <span className="text-destructive">*</span></label>
+              <Input id="contact-phone" type="tel" autoComplete="tel" aria-required="true" placeholder="Ej: 5492236123456" value={newPhone} onChange={e => setNewPhone(e.target.value)} />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Nombre completo</label>
-              <Input placeholder="Ej: Juan Pérez" value={newName} onChange={e => setNewName(e.target.value)} />
+              <label htmlFor="contact-name" className="text-xs font-medium text-muted-foreground mb-1 block">Nombre completo</label>
+              <Input id="contact-name" autoComplete="name" placeholder="Ej: Juan Pérez" value={newName} onChange={e => setNewName(e.target.value)} />
             </div>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[
                 { label: 'Panel', value: newPanel, set: setNewPanel, items: PANEL_OPTIONS.map(p => ({ v: p, l: p })), ph: 'Panel' },
                 { label: 'Línea', value: newLinea, set: setNewLinea, items: Array.from({ length: 100 }, (_, i) => ({ v: String(i + 1), l: `Línea ${i + 1}` })), ph: 'Línea' },
@@ -1947,7 +2015,7 @@ export default function Contacts() {
                 <div key={label}>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">{label}</label>
                   <Select value={value} onValueChange={v => set(v ?? '')}>
-                    <SelectTrigger><SelectValue placeholder={ph} /></SelectTrigger>
+                    <SelectTrigger aria-label={label} className="w-full"><SelectValue placeholder={ph} /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="">Sin {label.toLowerCase()}</SelectItem>
                       {items.map(i => <SelectItem key={i.v} value={i.v}>{i.l}</SelectItem>)}
@@ -1956,10 +2024,10 @@ export default function Contacts() {
                 </div>
               ))}
             </div>
-            {addError && <p className="text-xs text-destructive">{addError}</p>}
+            {addError && <p role="alert" className="text-xs text-destructive">{addError}</p>}
             <div className="flex gap-2 pt-1">
               <Button variant="outline" className="flex-1" onClick={() => setShowAdd(false)}><X size={14} /> Cancelar</Button>
-              <Button className="flex-1 bg-green-600 hover:bg-green-700" onClick={addContact} disabled={addSaving}>
+              <Button className="flex-1 bg-primary hover:bg-primary/90" onClick={addContact} disabled={addSaving}>
                 {addSaving ? 'Guardando…' : 'Guardar contacto'}
               </Button>
             </div>
@@ -1997,11 +2065,11 @@ export default function Contacts() {
             <div className="space-y-3">
               <p className="font-mono text-sm text-muted-foreground">{viewContact.phone_number}</p>
               <div className="flex flex-wrap gap-1.5">
-                {viewContact.segment  && <span className={`text-xs px-2 py-0.5 rounded-full ${SEGMENT_STYLE[viewContact.segment] ?? 'bg-gray-100 text-gray-600'}`}>{NIVEL_LABEL[viewContact.segment] ?? viewContact.segment}</span>}
-                {viewContact.gaming   && <span className={`text-xs px-2 py-0.5 rounded-full ${GAMING_STYLE[viewContact.gaming] ?? 'bg-gray-100 text-gray-600'}`}>{viewContact.gaming}</span>}
-                {viewContact.actividad && <span className={`text-xs px-2 py-0.5 rounded-full ${ACTIVIDAD_STYLE[viewContact.actividad] ?? 'bg-gray-100 text-gray-600'}`}>{viewContact.actividad}</span>}
+                {viewContact.segment  && <span className={`text-xs px-2 py-0.5 rounded-full ${SEGMENT_STYLE[viewContact.segment] ?? 'bg-muted text-muted-foreground'}`}>{NIVEL_LABEL[viewContact.segment] ?? viewContact.segment}</span>}
+                {viewContact.gaming   && <span className={`text-xs px-2 py-0.5 rounded-full ${GAMING_STYLE[viewContact.gaming] ?? 'bg-muted text-muted-foreground'}`}>{viewContact.gaming}</span>}
+                {viewContact.actividad && <span className={`text-xs px-2 py-0.5 rounded-full ${ACTIVIDAD_STYLE[viewContact.actividad] ?? 'bg-muted text-muted-foreground'}`}>{viewContact.actividad}</span>}
                 {viewContact.antiguedad && (
-                  <span className={`relative group text-xs px-2 py-0.5 rounded-full cursor-help ${ANTIGUEDAD_STYLE[viewContact.antiguedad] ?? 'bg-gray-100 text-gray-600'}`}>
+                  <span className={`relative group text-xs px-2 py-0.5 rounded-full cursor-help ${ANTIGUEDAD_STYLE[viewContact.antiguedad] ?? 'bg-muted text-muted-foreground'}`}>
                     {viewContact.antiguedad}
                     <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 rounded bg-gray-800 text-white text-[11px] whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity duration-100 z-50">
                       {ANTIGUEDAD_DESC[viewContact.antiguedad]}
@@ -2015,92 +2083,37 @@ export default function Contacts() {
                   <p className="text-[10px] font-semibold text-blue-500 uppercase tracking-wide">Usuarios de casino</p>
                   {viewContact.casino_accounts!.map((acc, i) => (
                     <div key={i} className="flex items-center justify-between">
-                      <span className="text-xs text-gray-500 capitalize">{acc.panel}</span>
-                      <span className="text-xs font-mono font-medium text-gray-800">{acc.username}</span>
+                      <span className="text-xs text-muted-foreground capitalize">{acc.panel}</span>
+                      <span className="text-xs font-mono font-medium text-foreground">{acc.username}</span>
                     </div>
                   ))}
                 </div>
               )}
-              {/* Zeus stats (or primary platform when contact has only one) */}
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                    {casinoStats?.bet30 ? 'Zeus' : 'Historial del jugador'}
-                  </p>
-                  {casinoStats && (
-                    <span className="text-[10px] text-gray-400 bg-white border border-gray-200 rounded px-1.5 py-0.5">
-                      {casinoStats.mes_referencia ?? 'Histórico total'}
-                    </span>
-                  )}
-                </div>
-                <div className="grid grid-cols-3 gap-3 text-center">
-                  <div>
-                    <p className="text-xl font-bold text-gray-900">
-                      {casinoStats
-                        ? `$${casinoStats.monto_cargas_mes.toLocaleString('es-AR')}`
-                        : <span className="text-gray-300 text-sm">…</span>}
-                    </p>
-                    <p className="text-[10px] text-gray-500">{casinoStats?.fuente === 'historico' ? 'Cargas total' : 'Cargas'}</p>
-                  </div>
-                  <div>
-                    <p className="text-xl font-bold text-gray-900">
-                      {casinoStats
-                        ? `$${casinoStats.monto_retiros_mes.toLocaleString('es-AR')}`
-                        : <span className="text-gray-300 text-sm">…</span>}
-                    </p>
-                    <p className="text-[10px] text-gray-500">Retiros</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-gray-700">
-                      {casinoStats
-                        ? (casinoStats.last_deposit_at
-                            ? new Date(casinoStats.last_deposit_at).toLocaleDateString('es-AR')
-                            : '—')
-                        : <span className="text-gray-300">…</span>}
-                    </p>
-                    <p className="text-[10px] text-gray-500">Última carga</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Bet30 stats — solo visible cuando el contacto tiene ambas plataformas */}
-              {casinoStats?.bet30 && (
-                <div className="rounded-lg border border-orange-200 bg-orange-50 p-3">
+              {casinoStatsError && <p role="alert" className="text-sm text-destructive">{casinoStatsError}</p>}
+              {!casinoStats && !casinoStatsError && <p className="text-sm text-muted-foreground">Cargando historial…</p>}
+              {casinoStats?.platforms.length === 0 && <p className="text-sm text-muted-foreground">Sin historial vinculado. No permite determinar la actividad.</p>}
+              {casinoStats?.platforms.map(stats => (
+                <div key={stats.platform ?? 'unknown'} className="rounded-lg border border-border bg-background p-3">
                   <div className="flex items-center justify-between mb-2">
-                    <p className="text-xs font-semibold text-orange-600 uppercase tracking-wide">Bet30</p>
-                    <span className="text-[10px] text-gray-400 bg-white border border-gray-200 rounded px-1.5 py-0.5">
-                      {casinoStats.bet30.mes_referencia ?? 'Histórico total'}
-                    </span>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{stats.platform ?? 'Historial sin plataforma'}</p>
+                    <span className="text-xs text-muted-foreground">{stats.mes_referencia ?? 'Histórico total'}</span>
                   </div>
                   <div className="grid grid-cols-3 gap-3 text-center">
-                    <div>
-                      <p className="text-xl font-bold text-gray-900">
-                        ${casinoStats.bet30.monto_cargas_mes.toLocaleString('es-AR')}
-                      </p>
-                      <p className="text-[10px] text-gray-500">{casinoStats.bet30.fuente === 'historico' ? 'Cargas total' : 'Cargas'}</p>
-                    </div>
-                    <div>
-                      <p className="text-xl font-bold text-gray-900">
-                        ${casinoStats.bet30.monto_retiros_mes.toLocaleString('es-AR')}
-                      </p>
-                      <p className="text-[10px] text-gray-500">Retiros</p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-gray-700">
-                        {casinoStats.bet30.last_deposit_at
-                          ? new Date(casinoStats.bet30.last_deposit_at).toLocaleDateString('es-AR')
-                          : '—'}
-                      </p>
-                      <p className="text-[10px] text-gray-500">Última carga</p>
-                    </div>
+                    <div><p className="text-xl font-bold">${stats.monto_cargas_mes.toLocaleString('es-AR')}</p>
+                      <p className="text-xs text-muted-foreground">{stats.fuente === 'historico' ? 'Cargas total' : 'Cargas del mes'}</p></div>
+                    <div><p className="text-xl font-bold">${stats.monto_retiros_mes.toLocaleString('es-AR')}</p>
+                      <p className="text-xs text-muted-foreground">{stats.fuente === 'historico' ? 'Retiros total' : 'Retiros del mes'}</p></div>
+                    <div><p className="text-sm font-semibold">{stats.last_deposit_at
+                      ? new Date(stats.last_deposit_at.length === 10 ? `${stats.last_deposit_at}T12:00:00` : stats.last_deposit_at).toLocaleDateString('es-AR') : '—'}</p>
+                      <p className="text-xs text-muted-foreground">Última carga</p></div>
                   </div>
                 </div>
-              )}
+              ))}
               {/* Tags del contacto */}
               {(viewContact.custom_tags?.length ?? 0) > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {viewContact.custom_tags!.map(t => (
-                    <span key={t} className="text-xs bg-indigo-50 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded-full">{t}</span>
+                    <span key={t} className="text-xs bg-accent border border-input text-foreground hover:bg-muted px-2 py-0.5 rounded-full">{t}</span>
                   ))}
                 </div>
               )}
@@ -2146,7 +2159,7 @@ export default function Contacts() {
                 <Input placeholder="Apellido" value={editLastName} onChange={e => setEditLastName(e.target.value)} />
               </div>
             </div>
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[
                 { label: 'Panel',  value: editPanel,   set: setEditPanel,   items: PANEL_OPTIONS.map(p => ({ v: p, l: p })),                                                                                          ph: 'Panel'  },
                 { label: 'Línea',  value: editLinea,   set: setEditLinea,   items: Array.from({ length: 100 }, (_, i) => ({ v: String(i + 1), l: `Línea ${i + 1}` })),                                               ph: 'Línea'  },
@@ -2157,7 +2170,7 @@ export default function Contacts() {
                 <div key={label}>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">{label}</label>
                   <Select value={value} onValueChange={v => set(v ?? '')}>
-                    <SelectTrigger><SelectValue placeholder={ph} /></SelectTrigger>
+                    <SelectTrigger aria-label={label} className="w-full"><SelectValue placeholder={ph} /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="">Sin {label.toLowerCase()}</SelectItem>
                       {items.map(i => <SelectItem key={i.v} value={i.v}>{i.l}</SelectItem>)}
@@ -2168,29 +2181,29 @@ export default function Contacts() {
             </div>
             {/* Información financiera del jugador */}
             {editContact && (editContact.total_deposits !== undefined || editContact.last_deposit_at) && (
-              <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Historial del jugador</p>
+              <div className="rounded-lg border border-border bg-background p-3 space-y-2">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Historial del jugador</p>
                 <div className="grid grid-cols-3 gap-3 text-center">
                   <div>
-                    <p className="text-lg font-bold text-gray-900">{editContact.total_deposits ?? 0}</p>
-                    <p className="text-[10px] text-gray-500">Cargas (mes)</p>
+                    <p className="text-lg font-bold text-foreground">{editContact.total_deposits ?? 0}</p>
+                    <p className="text-[10px] text-muted-foreground">Cargas (mes)</p>
                   </div>
                   <div>
-                    <p className="text-lg font-bold text-gray-900">{editContact.total_withdrawals ?? 0}</p>
-                    <p className="text-[10px] text-gray-500">Retiros (mes)</p>
+                    <p className="text-lg font-bold text-foreground">{editContact.total_withdrawals ?? 0}</p>
+                    <p className="text-[10px] text-muted-foreground">Retiros (mes)</p>
                   </div>
                   <div>
-                    <p className="text-xs font-semibold text-gray-700">
+                    <p className="text-xs font-semibold text-foreground">
                       {editContact.last_deposit_at
                         ? new Date(editContact.last_deposit_at).toLocaleDateString('es-AR')
                         : '—'}
                     </p>
-                    <p className="text-[10px] text-gray-500">Última carga</p>
+                    <p className="text-[10px] text-muted-foreground">Última carga</p>
                   </div>
                 </div>
                 {editContact.total_deposits === 1 && editContact.last_deposit_at &&
                   (Date.now() - new Date(editContact.last_deposit_at).getTime()) > 10 * 24 * 60 * 60 * 1000 && (
-                  <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 text-center">
+                  <p className="text-[10px] text-warning bg-warning/10 border border-warning/20 rounded px-2 py-1 text-center">
                     Solo 1 depósito — más de 10 días desde la primera carga
                   </p>
                 )}
@@ -2223,7 +2236,7 @@ export default function Contacts() {
             {/* Chips actuales */}
             <div className="flex flex-wrap gap-1.5 min-h-[32px]">
               {tagsValue.map(t => (
-                <span key={t} className="inline-flex items-center gap-1 text-xs bg-indigo-50 border border-indigo-200 text-indigo-700 px-2 py-0.5 rounded-full">
+                <span key={t} className="inline-flex items-center gap-1 text-xs bg-accent border border-input text-foreground hover:bg-muted px-2 py-0.5 rounded-full">
                   {t}
                   <button type="button" onClick={() => removeTag(t)} className="hover:text-indigo-900 ml-0.5">
                     <X size={10} />
@@ -2287,24 +2300,24 @@ export default function Contacts() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Scissors size={16} className="text-indigo-600" />
+              <Scissors size={16} className="text-primary" />
               Dividir lista
             </DialogTitle>
           </DialogHeader>
 
           {splitResult ? (
             <div className="space-y-3">
-              <p className="text-sm text-gray-600">Las listas fueron creadas correctamente:</p>
+              <p className="text-sm text-muted-foreground">Las listas fueron creadas correctamente:</p>
               <div className="space-y-2">
                 {splitResult.map((l, i) => (
-                  <div key={l.id} className="flex items-center gap-2 bg-indigo-50 rounded-lg px-3 py-2">
-                    <span className="text-xs font-semibold text-indigo-700 w-5">{i + 1}.</span>
+                  <div key={l.id} className="flex items-center gap-2 bg-accent rounded-lg px-3 py-2">
+                    <span className="text-xs font-semibold text-primary w-5">{i + 1}.</span>
                     <span className="text-sm font-medium text-indigo-900 flex-1 truncate">{l.name}</span>
                     <span className="text-xs text-indigo-500 shrink-0">{l.total.toLocaleString()} contactos</span>
                   </div>
                 ))}
               </div>
-              <p className="text-xs text-gray-400">La lista original no fue modificada.</p>
+              <p className="text-xs text-muted-foreground">La lista original no fue modificada.</p>
               <div className="flex justify-end">
                 <Button size="sm" onClick={() => { setSplitSource(null); setSplitResult(null) }}>Listo</Button>
               </div>
@@ -2312,7 +2325,7 @@ export default function Contacts() {
           ) : (
             <div className="space-y-4">
               <div>
-                <p className="text-sm text-gray-600 mb-1">
+                <p className="text-sm text-muted-foreground mb-1">
                   Dividir <span className="font-semibold">"{splitSource?.name}"</span>{' '}
                   ({splitSource?.contact_count.toLocaleString()} contactos) en:
                 </p>
@@ -2323,8 +2336,8 @@ export default function Contacts() {
                       onClick={() => handleSplitPartsChange(p, splitSource?.name ?? '')}
                       className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${
                         splitParts === p
-                          ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                          : 'border-gray-200 text-gray-600 hover:border-indigo-300'
+                          ? 'border-indigo-500 bg-accent text-primary'
+                          : 'border-border text-muted-foreground hover:border-indigo-300'
                       }`}
                     >
                       {p} partes
@@ -2339,10 +2352,10 @@ export default function Contacts() {
               </div>
 
               <div className="space-y-2">
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Nombres de las partes</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Nombres de las partes</p>
                 {splitNames.map((name, i) => (
                   <div key={i} className="flex items-center gap-2">
-                    <span className="text-xs text-gray-400 w-5 text-right">{i + 1}.</span>
+                    <span className="text-xs text-muted-foreground w-5 text-right">{i + 1}.</span>
                     <Input
                       value={name}
                       onChange={e => setSplitNames(prev => prev.map((n, idx) => idx === i ? e.target.value : n))}
@@ -2355,7 +2368,7 @@ export default function Contacts() {
 
               {splitError && <p className="text-xs text-red-500">{splitError}</p>}
 
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-muted-foreground">
                 Los contactos se distribuyen aleatoriamente. La lista original no se modifica.
               </p>
 
@@ -2365,7 +2378,7 @@ export default function Contacts() {
                   size="sm"
                   onClick={doSplit}
                   disabled={splittingList || splitNames.some(n => !n.trim())}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground"
                 >
                   {splittingList ? 'Dividiendo…' : `Crear ${splitParts} listas`}
                 </Button>
@@ -2399,9 +2412,10 @@ export default function Contacts() {
               <div className="flex flex-wrap gap-1.5 p-2 bg-muted/50 rounded-lg">
                 {filterPanel && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Agente: {filterPanel}</span>}
                 {segments.length > 0 && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">Nivel: {segments.join(', ')}</span>}
-                {filterActividad.length > 0 && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">Actividad: {filterActividad.join(', ')}</span>}
+                {(inactivity.min !== '' || inactivity.max !== '') && <span className="text-xs bg-success/15 text-success px-2 py-0.5 rounded-full">{inactivityLabel(inactivity)}</span>}
+                      {filterActividad.length > 0 && <span className="text-xs bg-success/15 text-success px-2 py-0.5 rounded-full">Actividad: {filterActividad.join(', ')}</span>}
                 {filterAntiguedad.length > 0 && <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">Antigüedad: {filterAntiguedad.join(', ')}</span>}
-                {filterPlataforma && <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">Plataforma: {filterPlataforma}</span>}
+                {filterPlataforma && <span className="text-xs bg-accent text-primary px-2 py-0.5 rounded-full">Plataforma: {filterPlataforma}</span>}
                 {filterLinea && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Línea: {filterLinea}</span>}
                 {filterLineaSub && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Variante: {filterLineaSub}</span>}
                 {filterGaming && <span className="text-xs bg-pink-100 text-pink-700 px-2 py-0.5 rounded-full">Juego: {filterGaming}</span>}
@@ -2411,6 +2425,7 @@ export default function Contacts() {
             {confirmBulk?.action === 'delete' && (
               <p className="text-xs text-destructive font-medium">Esta acción no se puede deshacer.</p>
             )}
+            {confirmError && <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{confirmError}</p>}
             <div className="flex gap-2 pt-1">
               <Button variant="outline" className="flex-1" onClick={() => setConfirmBulk(null)} disabled={confirmExecuting}>
                 <X size={14} className="mr-1" /> Cancelar

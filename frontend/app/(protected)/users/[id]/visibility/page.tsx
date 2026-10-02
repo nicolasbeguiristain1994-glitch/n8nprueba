@@ -63,7 +63,7 @@ function ContactCard({
   return (
     <label
       className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-colors border
-        ${selected ? 'bg-green-50 border-green-300' : 'bg-white border-gray-100 hover:bg-gray-50'}`}
+        ${selected ? 'bg-success/10 border-green-300' : 'bg-card border-border hover:bg-background'}`}
     >
       <input
         type="checkbox"
@@ -73,11 +73,11 @@ function ContactCard({
       />
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">{name}</p>
-        <p className="text-xs text-gray-400 font-mono">{contact.phone_number}</p>
+        <p className="text-xs text-muted-foreground font-mono">{contact.phone_number}</p>
       </div>
       <div className="flex gap-1 flex-wrap justify-end">
         {contact.panel && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700">{contact.panel}</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-accent text-primary">{contact.panel}</span>
         )}
         {contact.segment && (
           <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-yellow-50 text-yellow-700">
@@ -198,23 +198,23 @@ export default function VisibilityPage() {
         </Button>
         <div>
           <h1 className="text-xl font-semibold flex items-center gap-2">
-            <UserCheck size={18} className="text-indigo-600" />
+            <UserCheck size={18} className="text-primary" />
             Visibilidad de contactos
           </h1>
           {operator && (
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-muted-foreground">
               {operator.name ?? operator.email}
               <Badge variant="outline" className="ml-2 text-xs">{operator.role}</Badge>
-              <span className="ml-2 text-gray-400">{assignedTotal.toLocaleString()} asignados</span>
+              <span className="ml-2 text-muted-foreground">{assignedTotal.toLocaleString()} asignados</span>
             </p>
           )}
         </div>
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-sm text-red-600 flex items-center justify-between">
+        <div className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-2 text-sm text-destructive flex items-center justify-between">
           {error}
-          <button onClick={() => setError(null)} className="ml-4 text-red-400 hover:text-red-600">✕</button>
+          <button onClick={() => setError(null)} className="ml-4 text-red-400 hover:text-destructive">✕</button>
         </div>
       )}
 
@@ -222,12 +222,12 @@ export default function VisibilityPage() {
       <div className="grid grid-cols-2 gap-4">
 
         {/* ── Panel izquierdo: disponibles ─────────────────────────────────── */}
-        <div className="border border-gray-200 rounded-xl overflow-hidden flex flex-col">
-          <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
+        <div className="border border-border rounded-xl overflow-hidden flex flex-col">
+          <div className="bg-background px-4 py-3 border-b border-border">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+              <span className="text-sm font-semibold text-foreground flex items-center gap-1.5">
                 <Users size={14} /> Disponibles
-                <span className="text-gray-400 font-normal">({availTotal.toLocaleString()})</span>
+                <span className="text-muted-foreground font-normal">({availTotal.toLocaleString()})</span>
               </span>
               <Button variant="ghost" size="sm" onClick={loadAvailable} disabled={loadingAvail}>
                 <RefreshCw size={12} className={loadingAvail ? 'animate-spin' : ''} />
@@ -235,7 +235,7 @@ export default function VisibilityPage() {
             </div>
             <div className="space-y-1.5">
               <div className="relative">
-                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input className="pl-8 h-8 text-sm" placeholder="Buscar…"
                   value={searchAvail} onChange={e => { setSearchAvail(e.target.value); setAvailPage(1) }} />
               </div>
@@ -264,9 +264,9 @@ export default function VisibilityPage() {
           {/* Lista */}
           <div className="flex-1 overflow-y-auto max-h-[420px] p-2 space-y-1">
             {loadingAvail
-              ? <p className="text-center text-sm text-gray-400 py-8">Cargando…</p>
+              ? <p className="text-center text-sm text-muted-foreground py-8">Cargando…</p>
               : available.length === 0
-                ? <p className="text-center text-sm text-gray-400 py-8">Sin contactos disponibles</p>
+                ? <p className="text-center text-sm text-muted-foreground py-8">Sin contactos disponibles</p>
                 : available.map(c => (
                   <ContactCard key={c.id} contact={c} selected={selectedAvail.has(c.id)} onToggle={toggleAvail} />
                 ))
@@ -275,20 +275,20 @@ export default function VisibilityPage() {
 
           {/* Paginación disponibles */}
           {availTotal > 50 && (
-            <div className="border-t border-gray-100 px-3 py-2 flex justify-between items-center text-xs text-gray-400">
+            <div className="border-t border-border px-3 py-2 flex justify-between items-center text-xs text-muted-foreground">
               <button disabled={availPage === 1} onClick={() => setAvailPage(p => p - 1)}
-                className="disabled:opacity-40 hover:text-gray-600">← Ant</button>
+                className="disabled:opacity-40 hover:text-muted-foreground">← Ant</button>
               <span>Pág. {availPage} / {Math.ceil(availTotal / 50)}</span>
               <button disabled={availPage * 50 >= availTotal} onClick={() => setAvailPage(p => p + 1)}
-                className="disabled:opacity-40 hover:text-gray-600">Sig →</button>
+                className="disabled:opacity-40 hover:text-muted-foreground">Sig →</button>
             </div>
           )}
 
           {/* Acciones disponibles */}
-          <div className="border-t border-gray-200 px-3 py-2 flex gap-2 flex-wrap bg-gray-50">
+          <div className="border-t border-border px-3 py-2 flex gap-2 flex-wrap bg-background">
             <Button size="sm" disabled={selectedAvail.size === 0 || working}
               onClick={() => doAssign(Array.from(selectedAvail))}
-              className="bg-green-600 hover:bg-green-700 text-white text-xs gap-1">
+              className="bg-primary hover:bg-primary/90 text-primary-foreground text-xs gap-1">
               Asignar {selectedAvail.size > 0 ? `(${selectedAvail.size})` : 'sel.'} <ArrowRight size={12} />
             </Button>
             <Button size="sm" variant="outline" disabled={working}
@@ -296,26 +296,26 @@ export default function VisibilityPage() {
                 panel: filterPanel || undefined,
                 segment: filterSegment || undefined,
               })}
-              className="text-xs border-green-200 text-green-700 hover:bg-green-50">
+              className="text-xs border-success/20 text-success hover:bg-success/10">
               Asignar todos{filterPanel || filterSegment ? ' (filtro)' : ''}
             </Button>
           </div>
         </div>
 
         {/* ── Panel derecho: asignados ──────────────────────────────────────── */}
-        <div className="border border-gray-200 rounded-xl overflow-hidden flex flex-col">
-          <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
+        <div className="border border-border rounded-xl overflow-hidden flex flex-col">
+          <div className="bg-background px-4 py-3 border-b border-border">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
-                <UserCheck size={14} className="text-green-600" /> Asignados
-                <span className="text-gray-400 font-normal">({assignedTotal.toLocaleString()})</span>
+              <span className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                <UserCheck size={14} className="text-success" /> Asignados
+                <span className="text-muted-foreground font-normal">({assignedTotal.toLocaleString()})</span>
               </span>
               <Button variant="ghost" size="sm" onClick={loadAssigned} disabled={loadingAssigned}>
                 <RefreshCw size={12} className={loadingAssigned ? 'animate-spin' : ''} />
               </Button>
             </div>
             <div className="relative">
-              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input className="pl-8 h-8 text-sm" placeholder="Buscar asignados…"
                 value={searchAssigned} onChange={e => { setSearchAssigned(e.target.value); setAssignedPage(1) }} />
             </div>
@@ -324,9 +324,9 @@ export default function VisibilityPage() {
           {/* Lista */}
           <div className="flex-1 overflow-y-auto max-h-[420px] p-2 space-y-1">
             {loadingAssigned
-              ? <p className="text-center text-sm text-gray-400 py-8">Cargando…</p>
+              ? <p className="text-center text-sm text-muted-foreground py-8">Cargando…</p>
               : assigned.length === 0
-                ? <p className="text-center text-sm text-gray-400 py-8">Sin contactos asignados</p>
+                ? <p className="text-center text-sm text-muted-foreground py-8">Sin contactos asignados</p>
                 : assigned.map(c => (
                   <ContactCard key={c.id} contact={c} selected={selectedAssigned.has(c.id)} onToggle={toggleAssigned} />
                 ))
@@ -335,26 +335,26 @@ export default function VisibilityPage() {
 
           {/* Paginación asignados */}
           {assignedTotal > 50 && (
-            <div className="border-t border-gray-100 px-3 py-2 flex justify-between items-center text-xs text-gray-400">
+            <div className="border-t border-border px-3 py-2 flex justify-between items-center text-xs text-muted-foreground">
               <button disabled={assignedPage === 1} onClick={() => setAssignedPage(p => p - 1)}
-                className="disabled:opacity-40 hover:text-gray-600">← Ant</button>
+                className="disabled:opacity-40 hover:text-muted-foreground">← Ant</button>
               <span>Pág. {assignedPage} / {Math.ceil(assignedTotal / 50)}</span>
               <button disabled={assignedPage * 50 >= assignedTotal} onClick={() => setAssignedPage(p => p + 1)}
-                className="disabled:opacity-40 hover:text-gray-600">Sig →</button>
+                className="disabled:opacity-40 hover:text-muted-foreground">Sig →</button>
             </div>
           )}
 
           {/* Acciones asignados */}
-          <div className="border-t border-gray-200 px-3 py-2 flex gap-2 flex-wrap bg-gray-50">
+          <div className="border-t border-border px-3 py-2 flex gap-2 flex-wrap bg-background">
             <Button size="sm" disabled={selectedAssigned.size === 0 || working}
               onClick={() => doUnassign(Array.from(selectedAssigned))}
               variant="outline"
-              className="text-xs border-red-200 text-red-600 hover:bg-red-50 gap-1">
+              className="text-xs border-destructive/20 text-destructive hover:bg-destructive/10 gap-1">
               <ArrowLeft size={12} /> Quitar {selectedAssigned.size > 0 ? `(${selectedAssigned.size})` : 'sel.'}
             </Button>
             <Button size="sm" variant="outline" disabled={working || assignedTotal === 0}
               onClick={() => { if (confirm(`¿Quitar los ${assignedTotal} contactos asignados?`)) doUnassign([], true) }}
-              className="text-xs border-red-200 text-red-600 hover:bg-red-50 gap-1">
+              className="text-xs border-destructive/20 text-destructive hover:bg-destructive/10 gap-1">
               <Trash2 size={12} /> Quitar todos
             </Button>
           </div>

@@ -41,3 +41,10 @@ export function cloudEligibleExpr(tableAlias?: string): string {
     AND ${p}msgs_sent_today < ${p}msg_per_day
     AND (${p}allowed_types IS NULL OR ${p}allowed_types @> '["campaign"]'::jsonb))`
 }
+
+/** Same local eligibility used by distribution, including active Cloud registration. */
+export function campaignLineEligibleExpr(tableAlias: string): string {
+  return `(${lineEligibleExpr(tableAlias)} OR (${cloudEligibleExpr(tableAlias)}
+    AND EXISTS (SELECT 1 FROM cloud_numbers eligible_cn
+      WHERE eligible_cn.whatsapp_line_id = ${tableAlias}.id AND eligible_cn.status = 'active')))`
+}

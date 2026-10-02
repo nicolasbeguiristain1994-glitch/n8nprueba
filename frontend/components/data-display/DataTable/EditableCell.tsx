@@ -36,6 +36,7 @@ export interface EditableCellProps {
   placeholder?: string
   onChange: (value: string) => void
   className?: string
+  ariaLabel?: string
 }
 
 export function EditableCell({
@@ -45,18 +46,21 @@ export function EditableCell({
   placeholder = '— sin asignar',
   onChange,
   className,
+  ariaLabel,
 }: EditableCellProps) {
   return (
     <select
+      aria-label={ariaLabel ?? placeholder}
       value={value}
       onChange={e => onChange(e.target.value)}
       onClick={e => e.stopPropagation()}
       className={cn(
         'text-xs px-2 py-0.5 rounded-full font-medium',
         'border-0 cursor-pointer appearance-none bg-transparent',
-        'focus:outline-none focus:ring-1 focus:ring-offset-0 focus:ring-border',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         value ? activeClass : 'text-muted-foreground',
         className,
+  ariaLabel,
       )}
     >
       <option value="">{placeholder}</option>

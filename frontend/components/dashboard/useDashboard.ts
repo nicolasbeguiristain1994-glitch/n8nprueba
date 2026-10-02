@@ -1,12 +1,17 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { arrayMove } from '@dnd-kit/sortable'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
+import { argentinaToday } from '@/lib/dashboard-format'
+import { queryDateRange } from '@/lib/dashboard-date-range'
+import type { DepositAnalytics } from '@/lib/dashboard-deposits'
+import type { PlatformActivity } from '@/lib/dashboard-overview'
 import type { CasinoSummary, CasinoAgente, CasinoVip, SegCount } from '@/app/api/dashboard/casino/route'
-import type { PendingTask, CrmKPIs } from '@/app/api/dashboard/crm/route'
+import type { PendingTask, CrmKPIs, CrmDashboardData } from '@/app/api/dashboard/crm/route'
 import {
   DEFAULT_DATE_RANGE,
+  normalizeDateRange,
   DEFAULT_LAYOUT,
   WIDGET_REGISTRY,
   type DateRange,
@@ -29,6 +34,9 @@ export interface MsgsStats {
 }
 
 export interface DashboardData {
+  deposits: DepositAnalytics | null
+  activity: PlatformActivity[] | null
+  crmAvailable: boolean
   casino: {
     summary:       CasinoSummary | null
     agentes:       CasinoAgente[]
@@ -48,10 +56,14 @@ const AUTO_REFRESH_INTERVAL = 300_000
 interface UseDashboardReturn extends DashboardFilters {
   layout:             DashboardLayout
   data:               DashboardData | null
+  financeLoading: boolean
+  activityLoading: boolean
+  depositsLoading: boolean
   loading:            boolean
   softLoading:        boolean
   error:              string | null
   lastUpdated:        Date | null
+  revision: number
   softSuccessCount:   number
   visibleWidgets:     WidgetId[]
   dateRange:          DateRange
@@ -66,7 +78,13 @@ interface UseDashboardReturn extends DashboardFilters {
 
 export function useDashboard(): UseDashboardReturn {
   const [layout, setLayout] = useLocalStorage<DashboardLayout>('dashboard:layout', DEFAULT_LAYOUT)
-  const [dateRange, setDateRangeStored] = useLocalStorage<DateRange>('dashboard:dateRange', DEFAULT_DATE_RANGE)
+  const [savedDateRange, setDateRangeStored] = useLocalStorage<DateRange>('dashboard:dateRange', DEFAULT_DATE_RANGE)
+  const today = argentinaToday()
+  const normalized = normalizeDateRange(savedDateRange)
+  const dateRange = useMemo(() => normalized, [normalized.preset, normalized.from, normalized.to, today])
+  useEffect(() => {
+    if (JSON.stringify(savedDateRange) !== JSON.stringify(dateRange)) setDateRangeStored(dateRange)
+  }, [savedDateRange, dateRange, setDateRangeStored])
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useLocalStorage<boolean>('dashboard:autoRefresh', true)
 
   // Platform + agent managed by focused sub-hook
@@ -74,63 +92,139 @@ export function useDashboard(): UseDashboardReturn {
 
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [activityLoading, setActivityLoading] = useState(true)
+  const [depositsLoading, setDepositsLoading] = useState(true)
   const [softLoading, setSoftLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [revision, setRevision] = useState(0)
   const [softSuccessCount, setSoftSuccessCount] = useState(0)
 
   const dateRangeRef          = useRef(dateRange)
   const lastUpdatedRef        = useRef<Date | null>(null)
   const autoRefreshEnabledRef = useRef(autoRefreshEnabled)
   const platformRef           = useRef(platform)
+  const agentRef = useRef(agent)
+  const requestRef = useRef<AbortController | null>(null)
+  const auxRef = useRef<{ crm: CrmDashboardData; msgs: { stats?: MsgsStats }; at: number } | null>(null)
 
   useEffect(() => { dateRangeRef.current          = dateRange },           [dateRange])
   useEffect(() => { lastUpdatedRef.current        = lastUpdated },         [lastUpdated])
   useEffect(() => { autoRefreshEnabledRef.current = autoRefreshEnabled },  [autoRefreshEnabled])
   useEffect(() => { platformRef.current           = platform },            [platform])
 
-  // ── Core fetch — casino + crm + msgs in parallel ─────────────────────────────
-  const fetchData = useCallback(async (_range: DateRange, soft = false) => {
-    if (soft) setSoftLoading(true)
-    else setLoading(true)
+  useEffect(() => { agentRef.current = agent }, [agent])
+  useEffect(() => () => requestRef.current?.abort(), [])
+
+  // Keep filter changes from refetching unrelated CRM/messages or overlapping Auto.
+  const fetchData = useCallback(async (range: DateRange, soft = false, force = false) => {
+    if (soft && requestRef.current) return
+    requestRef.current?.abort()
+    const controller = new AbortController()
+    requestRef.current = controller
+    let timedOut = false
+    const deadline = setTimeout(() => { timedOut = true; controller.abort() }, 30000)
+    const options = { signal: controller.signal, cache: 'no-store' as const }
+    const qs = new URLSearchParams({ platform: platformRef.current, agent: agentRef.current, ...queryDateRange(range) })
+    if (force || soft) setRevision(value => value + 1)
+    setLoading(true)
+    setActivityLoading(true)
+    setDepositsLoading(true)
+    setSoftLoading(soft)
+    if (!soft) { setData(null); setLastUpdated(null) }
     setError(null)
+    // A bounded request also settles when an upstream request stops responding.
+    const json = async (url: string) => {
+      try {
+        const res = await fetch(url, options)
+        return res.ok ? await res.json() : null
+      } catch { return null }
+    }
+    const aborted = new Promise<null>(resolve => controller.signal.addEventListener('abort', () => resolve(null), { once: true }))
+    const fetchJson = (url: string) => Promise.race([json(url), aborted])
     try {
-      const [casinoRes, crmRes, msgsRes] = await Promise.all([
-        fetch(`/api/dashboard/casino?platform=${platformRef.current}`),
-        fetch('/api/dashboard/crm'),
-        fetch('/api/dashboard'),
-      ])
-
-      const casinoJson = casinoRes.ok ? await casinoRes.json() : null
-      const crmJson    = crmRes.ok    ? await crmRes.json()    : null
-      const msgsJson   = msgsRes.ok   ? await msgsRes.json()   : null
-
-      setData({
-        casino: casinoJson
-          ? {
-              summary:       casinoJson.summary       ?? null,
-              agentes:       casinoJson.agentes        ?? [],
-              vips:          casinoJson.vips           ?? [],
-              seg_actividad: casinoJson.seg_actividad  ?? [],
-              seg_monto:     casinoJson.seg_monto      ?? [],
-            }
-          : null,
-        kpis:  crmJson?.kpis  ?? FALLBACK_KPIS,
-        tasks: crmJson?.tasks ?? [],
-        msgs:  msgsJson?.stats ?? null,
-      })
-
-      setLastUpdated(new Date())
-      if (soft) setSoftSuccessCount(c => c + 1)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : (soft ? 'Error al refrescar' : 'Error desconocido'))
+      const cached = auxRef.current
+      const reuseAux = !force && cached && Date.now() - cached.at < AUTO_REFRESH_INTERVAL
+      const partial: DashboardData = { activity: null, deposits: null, casino: null,
+        crmAvailable: !!reuseAux, kpis: reuseAux ? cached.crm.kpis : FALLBACK_KPIS,
+        tasks: reuseAux ? cached.crm.tasks : [], msgs: reuseAux ? cached.msgs.stats ?? null : null }
+      const publish = () => { if (!controller.signal.aborted) setData({ ...partial }) }
+      const failed: string[] = []
+      let crmJson: CrmDashboardData | null = reuseAux ? cached.crm : null
+      let msgsJson: { stats?: MsgsStats } | null = reuseAux ? cached.msgs : null
+      const jobs = [
+        async () => {
+          const result = await fetchJson(`/api/dashboard/casino/overview?${qs}`)
+          if (controller.signal.aborted) return
+          partial.activity = result?.activity ?? null
+          if (!result) failed.push('movimientos')
+          publish(); setActivityLoading(false)
+        },
+        async () => {
+          const result = await fetchJson(`/api/dashboard/casino/deposits?${qs}`)
+          if (controller.signal.aborted) return
+          partial.deposits = result
+          if (!result) failed.push('gráficos de depósitos')
+          publish(); setDepositsLoading(false)
+        },
+        async () => {
+          const result = await fetchJson(`/api/dashboard/casino?${qs}`)
+          if (controller.signal.aborted) return
+          partial.casino = result ? { summary: result.summary ?? null, agentes: result.agentes ?? [],
+            vips: result.vips ?? [], seg_actividad: result.seg_actividad ?? [], seg_monto: result.seg_monto ?? [] } : null
+          if (!result) failed.push('cuentas')
+          publish()
+        },
+        ...(!reuseAux ? [
+          async () => {
+            crmJson = await fetchJson('/api/dashboard/crm')
+            if (controller.signal.aborted) return
+            partial.crmAvailable = !!crmJson
+            partial.kpis = crmJson?.kpis ?? FALLBACK_KPIS
+            partial.tasks = crmJson?.tasks ?? []
+            if (!crmJson) failed.push('CRM')
+            publish()
+          },
+          async () => {
+            msgsJson = await fetchJson('/api/dashboard')
+            if (controller.signal.aborted) return
+            partial.msgs = msgsJson?.stats ?? null
+            if (!msgsJson) failed.push('mensajería')
+            publish()
+          },
+        ] : []),
+      ]
+      // At most two requests compete for the DB pool. Each finished block is
+      // rendered immediately and its slot starts the next job, even if the other
+      // request is slow. A timeout/filter change cannot start any queued work.
+      let nextJob = 0
+      const worker = async () => {
+        while (!controller.signal.aborted && nextJob < jobs.length) await jobs[nextJob++]()
+      }
+      await Promise.all([worker(), worker()])
+      if (controller.signal.aborted) return
+      if (!reuseAux && crmJson && msgsJson) auxRef.current = { crm: crmJson, msgs: msgsJson, at: Date.now() }
+      if (failed.length) setError(`No se pudieron consultar: ${failed.join(', ')}. Los bloques disponibles se muestran por separado.`)
+      if (!failed.length) setLastUpdated(new Date())
+      if (soft && !failed.length) setSoftSuccessCount(c => c + 1)
     } finally {
-      if (soft) setSoftLoading(false)
-      else setLoading(false)
+      clearTimeout(deadline)
+      if (requestRef.current === controller) {
+        requestRef.current = null
+        if (timedOut) setError('La consulta tardó demasiado. Podés cambiar las fechas o reintentar; los bloques disponibles se conservan.')
+        setSoftLoading(false); setLoading(false); setActivityLoading(false); setDepositsLoading(false)
+      }
     }
   }, [])
 
-  useEffect(() => { fetchData(dateRange) }, [dateRange, platform, fetchData])
+  useEffect(() => {
+    // Coalesce rapid selection changes before they reach the server. Aborting a
+    // browser request alone does not cancel already-running SQL.
+    const running = requestRef.current; requestRef.current = null; running?.abort()
+    setLoading(true); setActivityLoading(true); setDepositsLoading(true); setData(null)
+    const timer = setTimeout(() => { void fetchData(dateRange) }, 180)
+    return () => { clearTimeout(timer); const running = requestRef.current; requestRef.current = null; running?.abort() }
+  }, [dateRange.from, dateRange.to, platform, agent, fetchData])
 
   useEffect(() => {
     if (!autoRefreshEnabled) return
@@ -187,16 +281,20 @@ export function useDashboard(): UseDashboardReturn {
 
   const setDateRange      = useCallback((range: DateRange) => { setDateRangeStored(range) }, [setDateRangeStored])
   const toggleAutoRefresh = useCallback(() => { setAutoRefreshEnabled(prev => !prev) }, [setAutoRefreshEnabled])
-  const refresh           = useCallback(() => { fetchData(dateRangeRef.current) }, [fetchData])
+  const refresh           = useCallback(() => { fetchData(dateRangeRef.current, false, true) }, [fetchData])
 
   return {
     layout: { ...layout, order: safeOrder() },
     data,
     loading,
+    financeLoading: activityLoading || depositsLoading,
+    activityLoading,
+    depositsLoading,
     softLoading,
     error,
     lastUpdated,
     softSuccessCount,
+    revision,
     visibleWidgets,
     dateRange,
     autoRefreshEnabled,

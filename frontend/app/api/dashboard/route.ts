@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { visibilityClause } from '@/lib/contact-visibility'
-import { getCachedDashboardStats } from '@/lib/dashboard-cache'
+import { dashboardMessageStats } from '@/lib/dashboard-messages'
 
 export async function GET(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'dashboard', 'read')
@@ -10,6 +10,13 @@ export async function GET(req: NextRequest) {
   const { user } = auth
 
   const vis = visibilityClause(user.role, user.user_id, 0)
+  const contactParams: unknown[] = [...vis.params]
+  let contactFilter = `AND contacts.deleted_at IS NULL ${vis.sql}`
+  if (user.role !== 'admin' && !user.sectors?.includes('contacts')) contactFilter += ' AND FALSE'
+  if (user.role !== 'admin' && user.allowed_agents?.length) {
+    contactParams.push(user.allowed_agents)
+    contactFilter += ` AND contacts.panel = ANY($${contactParams.length}::text[])`
+  }
 
   // Filtro de visibilidad para mensajes (operadores ven solo sus contactos)
   const msgVisFilter = user.role === 'admin'
@@ -21,27 +28,10 @@ export async function GET(req: NextRequest) {
        )`
 
   try {
-    const result = await getCachedDashboardStats(user.role, user.user_id, async () => {
+    // Manual refresh must read current outcomes; cached counters hid new replies.
+    const compute = async () => {
       const [stats, lines, recent, campaignStats, contactStats] = await Promise.all([
-        // Stats de mensajes: limitados a últimos 30 días para evitar seq scan completo.
-        // last_24h usa el índice idx_wm_created_status_outbound para el count rápido.
-        query(`
-          SELECT
-            COUNT(*)                                                AS total,
-            COUNT(*) FILTER (WHERE wm.status = 'sent')            AS sent,
-            COUNT(*) FILTER (WHERE wm.status = 'failed')          AS failed,
-            COUNT(*) FILTER (WHERE wm.status = 'delivered')       AS delivered,
-            COUNT(*) FILTER (WHERE wm.status = 'read')            AS read,
-            COUNT(*) FILTER (WHERE wm.direction = 'inbound')      AS inbound,
-            COUNT(*) FILTER (WHERE wm.created_at > NOW() - INTERVAL '24h') AS last_24h,
-            ROUND(
-              100.0 * COUNT(*) FILTER (WHERE wm.status = 'read') /
-              NULLIF(COUNT(*) FILTER (WHERE wm.direction = 'outbound'), 0), 1
-            ) AS read_rate
-          FROM whatsapp_messages wm
-          WHERE wm.created_at > NOW() - INTERVAL '30 days'
-            ${msgVisFilter}
-        `),
+        dashboardMessageStats(user.role === 'admin' ? null : user.user_id),
 
         // Líneas activas — infraestructura global, no requiere filtro por usuario
         query(`
@@ -85,20 +75,20 @@ export async function GET(req: NextRequest) {
         query(`
           SELECT COUNT(*)::int AS total_contacts
           FROM contacts
-          WHERE TRUE ${vis.sql}
-        `, vis.params),
+          WHERE TRUE ${contactFilter}
+        `, contactParams),
       ])
 
       return {
-        stats:         stats[0],
+        stats,
         lines,
         recent,
         campaignStats: campaignStats[0],
         contactStats:  contactStats[0],
       }
-    })
+    }
 
-    return NextResponse.json(result)
+    return NextResponse.json(await compute(), { headers: { 'Cache-Control': 'no-store' } })
   } catch (e) {
     console.error('[/api/dashboard GET]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

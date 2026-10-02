@@ -89,13 +89,20 @@ describe('handleValidationError()', () => {
 // ── CreateTemplateSchema ──────────────────────────────────────────────────────
 
 describe('CreateTemplateSchema', () => {
+  const components = [{ type: 'BODY', text: 'Gracias por contactar a soporte.' }]
+
   it('parses valid input and applies defaults', () => {
-    const result = parseBody(CreateTemplateSchema, { name: 'my_template', category: 'UTILITY' })
+    const result = parseBody(CreateTemplateSchema, { name: 'my_template', category: 'UTILITY', components })
     expect(result.ok).toBe(true)
     if (result.ok) {
       expect(result.data.language).toBe('es')
-      expect(result.data.components).toEqual([])
+      expect(result.data.components).toEqual(components)
     }
+  })
+
+  it('requires a BODY component', () => {
+    expect(parseBody(CreateTemplateSchema, { name: 'my_template', category: 'UTILITY' }).ok).toBe(false)
+    expect(parseBody(CreateTemplateSchema, { name: 'my_template', category: 'UTILITY', components: [] }).ok).toBe(false)
   })
 
   it('rejects invalid category enum value', () => {
@@ -109,7 +116,7 @@ describe('CreateTemplateSchema', () => {
   })
 
   it('accepts explicit language override', () => {
-    const result = parseBody(CreateTemplateSchema, { name: 'tmpl', category: 'MARKETING', language: 'pt_BR' })
+    const result = parseBody(CreateTemplateSchema, { name: 'tmpl', category: 'MARKETING', language: 'pt_BR', components })
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.data.language).toBe('pt_BR')
   })

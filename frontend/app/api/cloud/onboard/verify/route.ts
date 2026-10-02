@@ -1,5 +1,6 @@
+import { cloudNumberAccess } from '@/lib/cloud-api/access'
 import { NextRequest, NextResponse } from 'next/server'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser } from '@/lib/permissions'
 import { verifyOTPAndActivate } from '@/lib/cloud-api/embedded-signup'
 import { getTokenForNumber } from '@/lib/cloud-api/token-store'
 import { audit } from '@/lib/audit'
@@ -11,8 +12,8 @@ import { audit } from '@/lib/audit'
 // Este endpoint es para casos donde se necesita verificación manual.
 
 export async function POST(req: NextRequest) {
-  const err = await checkPermission(req, 'lines', 'manage')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'lines', 'manage')
+  if (!auth.ok) return auth.response
 
   let body: { phoneNumberId?: string; otpCode?: string }
   try { body = await req.json() } catch {
@@ -21,12 +22,14 @@ export async function POST(req: NextRequest) {
 
   const { phoneNumberId, otpCode } = body
 
-  if (!phoneNumberId || !otpCode) {
+  if (typeof phoneNumberId !== 'string' || !/^\d{5,30}$/.test(phoneNumberId) || typeof otpCode !== 'string' || !/^\d{6}$/.test(otpCode)) {
     return NextResponse.json({ error: 'Se requieren: phoneNumberId, otpCode' }, { status: 400 })
   }
 
+  const denied = await cloudNumberAccess(auth.user, phoneNumberId)
+  if (denied) return denied
   try {
-    const accessToken = await getTokenForNumber(phoneNumberId)
+    const accessToken = await getTokenForNumber(phoneNumberId, true)
     const result = await verifyOTPAndActivate(phoneNumberId, otpCode, accessToken)
 
     void audit({
@@ -38,7 +41,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(result)
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    return NextResponse.json({ error: message }, { status: 500 })
+    return NextResponse.json({ error: 'No se pudo verificar el número. Revisá el código y su estado en Meta.' }, { status: 422 })
   }
 }

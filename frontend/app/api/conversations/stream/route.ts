@@ -28,7 +28,8 @@ export async function GET(req: NextRequest) {
       const pollTimer = setInterval(async () => {
         try {
           const rows = await query<{ has_new: boolean }>(
-            `SELECT EXISTS(SELECT 1 FROM whatsapp_messages WHERE created_at > $1) AS has_new`,
+            `SELECT (EXISTS(SELECT 1 FROM whatsapp_messages WHERE created_at > $1)
+              OR EXISTS(SELECT 1 FROM cloud_messages WHERE created_at > $1)) AS has_new`,
             [lastCheck.toISOString()]
           )
           if (rows[0]?.has_new) {

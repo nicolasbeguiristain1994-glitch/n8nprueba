@@ -1,12 +1,15 @@
 'use client'
 
-import { memo, useState, useEffect, useCallback } from 'react'
+import { memo, useState, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Users, GitCompare, X, AlertCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { argentinaToday, shiftDate } from '@/lib/dashboard-format'
+import { describeDateRange, exclusiveEndDate, queryDateRange, validCustomRange } from '@/lib/dashboard-date-range'
+import type { DateRange } from '../types'
 import type { Platform } from '@/lib/casino-agents'
 import type { CasinoAgente } from '@/app/api/dashboard/casino/route'
 
@@ -22,34 +25,25 @@ const PERIOD_LABELS: Record<Period, string> = {
 
 // ── Date helpers ───────────────────────────────────────────────────────────────
 
-function toISO(d: Date): string { return d.toISOString().split('T')[0] }
-
-function mesActualFrom(): string {
-  const d = new Date()
-  return toISO(new Date(d.getFullYear(), d.getMonth(), 1))
-}
-function mesAnteriorFrom(): string {
-  const d = new Date()
-  const last = new Date(d.getFullYear(), d.getMonth(), 0)
-  return toISO(new Date(last.getFullYear(), last.getMonth(), 1))
-}
-function mesAnteriorTo(): string {
-  const d = new Date()
-  return toISO(new Date(d.getFullYear(), d.getMonth(), 0))
+// Month presets are inclusive full days; custom uses the dashboard rule
+// [from 00:00, to 00:00). Returns inclusive DATE endpoints for the API, or null if invalid.
+function resolveRange(period: Period, from: string, to: string): { from: string; to: string } | null {
+  if (period === 'custom') return validCustomRange(from, to) ? queryDateRange({ preset: 'custom', from, to }) : null
+  const today = argentinaToday()
+  const first = `${today.slice(0, 7)}-01`
+  const lastMonth = shiftDate(first, -1)
+  return period === 'mes_actual' ? { from: first, to: today } : { from: `${lastMonth.slice(0, 7)}-01`, to: lastMonth }
 }
 
-function resolveRange(period: Period, from: string, to: string): { from: string; to: string } {
-  const now = new Date()
-  switch (period) {
-    case 'mes_actual':   return { from: mesActualFrom(), to: toISO(now) }
-    case 'mes_anterior': return { from: mesAnteriorFrom(), to: mesAnteriorTo() }
-    case 'custom':       return { from, to }
-  }
+/** Custom inputs covering the same days as a month preset (exclusive end). */
+function customBounds(period: Exclude<Period, 'custom'>): { from: string; to: string } {
+  const range = resolveRange(period, '', '')!
+  return { from: range.from, to: exclusiveEndDate({ preset: period, ...range }) }
 }
 
 function periodDisplayLabel(period: Period, from: string, to: string): string {
   if (period !== 'custom') return PERIOD_LABELS[period]
-  return `${from} → ${to}`
+  return describeDateRange({ preset: 'custom', from, to })
 }
 
 // ── Formatters ─────────────────────────────────────────────────────────────────
@@ -77,16 +71,16 @@ interface MetricDef {
 }
 
 const METRICS: MetricDef[] = [
-  { key: 'total',         label: 'Total',        fmtFn: fmtNum,   higherIsBetter: true  },
-  { key: 'nuevos_mes',    label: 'Nuevos',       fmtFn: fmtNum,   higherIsBetter: true  },
+  { key: 'total',         label: 'Cuentas',        fmtFn: fmtNum,   higherIsBetter: true  },
+  { key: 'nuevos_mes',    label: 'Primer depósito',       fmtFn: fmtNum,   higherIsBetter: true  },
   { key: 'activos_mes',   label: 'Activos',      fmtFn: fmtNum,   higherIsBetter: true  },
   { key: 'vip',           label: 'VIP',          fmtFn: fmtNum,   higherIsBetter: true  },
   { key: 'en_riesgo',     label: 'En riesgo',    fmtFn: fmtNum,   higherIsBetter: false },
   { key: 'sum_cargas',    label: 'Depósitos',    fmtFn: fmtMoney, higherIsBetter: true  },
   { key: 'sum_retiros',   label: 'Σ Retiros',    fmtFn: fmtMoney, higherIsBetter: false },
-  { key: 'avg_cargas',    label: 'Saldo',        fmtFn: fmtMoney, higherIsBetter: true  },
-  { key: 'response_rate', label: 'T. Respuesta', fmtFn: fmtPct,   higherIsBetter: true  },
-  { key: 'reload_rate',   label: 'T. Recarga',   fmtFn: fmtPct,   higherIsBetter: true  },
+  { key: 'avg_cargas',    label: 'Depósito por cuenta',        fmtFn: fmtMoney, higherIsBetter: true  },
+  { key: 'response_rate', label: '% con movimientos', fmtFn: fmtPct,   higherIsBetter: true  },
+  { key: 'reload_rate',   label: '% con depósitos',   fmtFn: fmtPct,   higherIsBetter: true  },
 ]
 
 // ── Aggregation ────────────────────────────────────────────────────────────────
@@ -132,14 +126,14 @@ function Skeleton() {
 
 // ── usePeriodData ──────────────────────────────────────────────────────────────
 // Self-contained hook: manages period state, validation and data fetch.
-// Both pA and pB always fetch (even when compare mode is off) so switching
-// modes is instant. The extra request is cheap and the data is tiny.
+// The comparison period is only fetched while the comparison is visible.
 
 interface PeriodState {
   period:       Period
   customFrom:   string
   customTo:     string
   dateError:    string | null
+  error: string | null
   agentes:      CasinoAgente[]
   loading:      boolean
   setPeriod:    (p: Period) => void
@@ -151,48 +145,46 @@ function usePeriodData(
   platform: Platform,
   agentFilter: string,
   defaultPeriod: Period,
+  revision: number,
+  enabled = true,
+  /** Custom bounds with an exclusive end, e.g. the dashboard range via exclusiveEndDate. */
+  initialRange?: { from: string; to: string },
 ): PeriodState {
   // Initialize custom dates based on the default period so the inputs
   // show sensible values when the user switches to "Rango personalizado".
   const [period, setPeriod]         = useState<Period>(defaultPeriod)
-  const [customFrom, setCustomFrom] = useState(() => resolveRange(defaultPeriod, '', '').from)
-  const [customTo,   setCustomTo]   = useState(() => resolveRange(defaultPeriod, '', '').to)
+  const seed = () => initialRange ?? customBounds(defaultPeriod === 'custom' ? 'mes_actual' : defaultPeriod)
+  const [customFrom, setCustomFrom] = useState(() => seed().from)
+  const [customTo,   setCustomTo]   = useState(() => seed().to)
   const [agentes,    setAgentes]    = useState<CasinoAgente[]>([])
   const [loading,    setLoading]    = useState(true)
 
-  const dateError: string | null =
-    period === 'custom' && customFrom > customTo
-      ? '"Desde" no puede ser posterior a "Hasta"'
-      : null
-
-  const loadData = useCallback(async () => {
-    // Skip fetch while date range is invalid — clear loading state
-    if (period === 'custom' && customFrom > customTo) {
-      setLoading(false)
-      return
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    if (initialRange) { setPeriod('custom'); setCustomFrom(initialRange.from); setCustomTo(initialRange.to) }
+  }, [initialRange?.from, initialRange?.to])
+  const range = resolveRange(period, customFrom, customTo)
+  const dateError = range ? null : 'Elegí un período válido: Desde debe ser anterior a Hasta (00:00, no incluido)'
+  const queryFrom = range?.from ?? '', queryTo = range?.to ?? ''
+  useEffect(() => {
+    const controller = new AbortController()
+    if (!enabled || dateError) { setLoading(false); return }
+    setLoading(true); setError(null)
+    const qs = new URLSearchParams({ platform, agent: agentFilter, from: queryFrom, to: queryTo })
+    async function load() {
+      try {
+        const res = await fetch(`/api/dashboard/casino?${qs}`, { signal: controller.signal, cache: 'no-store' })
+        if (!res.ok) throw new Error('No se pudo consultar el rendimiento por agente')
+        const data = await res.json()
+        if (!controller.signal.aborted) setAgentes(data.agentes ?? [])
+      } catch (e) {
+        if (!controller.signal.aborted) { setAgentes([]); setError(e instanceof Error ? e.message : 'Error de consulta') }
+      } finally { if (!controller.signal.aborted) setLoading(false) }
     }
-    setLoading(true)
-    const range      = resolveRange(period, customFrom, customTo)
-    const agentQS    = agentFilter ? `&agent=${encodeURIComponent(agentFilter)}` : ''
-    try {
-      const res = await fetch(
-        `/api/dashboard/casino?platform=${platform}&from=${range.from}&to=${range.to}${agentQS}`,
-      )
-      if (res.ok) {
-        const data = await res.json() as { agentes?: CasinoAgente[] }
-        setAgentes(data.agentes ?? [])
-      }
-    } catch { /* fail silently — table stays empty */ } finally {
-      setLoading(false)
-    }
-  }, [platform, agentFilter, period, customFrom, customTo])
-
-  useEffect(() => { void loadData() }, [loadData])
-
-  return {
-    period, customFrom, customTo, dateError, agentes, loading,
-    setPeriod, setCustomFrom, setCustomTo,
-  }
+    const timer = setTimeout(() => { void load() }, 180)
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [platform, agentFilter, queryFrom, queryTo, dateError, revision, enabled])
+  return { period, customFrom, customTo, dateError, error, agentes, loading, setPeriod, setCustomFrom, setCustomTo }
 }
 
 // ── PeriodPicker component ─────────────────────────────────────────────────────
@@ -212,6 +204,11 @@ function PeriodPicker({
   label, period, customFrom, customTo, dateError,
   onPeriodChange, onFromChange, onToChange,
 }: PeriodPickerProps) {
+  const [from, setFrom] = useState(customFrom)
+  const [to, setTo] = useState(customTo)
+  useEffect(() => { setFrom(customFrom); setTo(customTo) }, [customFrom, customTo])
+  const pending = from !== customFrom || to !== customTo
+  const draftValid = validCustomRange(from, to)
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center gap-1.5 flex-wrap">
@@ -222,7 +219,7 @@ function PeriodPicker({
         )}
         <Select value={period} onValueChange={(v: string | null) => onPeriodChange((v ?? 'mes_actual') as Period)}>
           <SelectTrigger size="sm" className="h-7 w-auto min-w-[150px] text-xs">
-            <SelectValue />
+            <SelectValue>{PERIOD_LABELS[period]}</SelectValue>
           </SelectTrigger>
           <SelectContent align="end">
             {(Object.keys(PERIOD_LABELS) as Period[]).map(p => (
@@ -237,23 +234,25 @@ function PeriodPicker({
           <div className="flex items-center gap-1">
             <Input
               type="date"
-              value={customFrom}
-              onChange={e => onFromChange(e.target.value)}
+              value={from}
+              onChange={e => setFrom(e.target.value)}
               className={cn(
                 'h-7 w-[110px] text-xs px-2',
                 dateError && 'border-rose-400 focus-visible:ring-rose-400',
               )}
-              aria-label="Desde"
+              aria-label={`Desde ${label}`}
             />
-            <span className="text-muted-foreground text-xs">→</span>
+            <span className="text-muted-foreground text-xs">00:00 →</span>
             <Input
               type="date"
-              value={customTo}
-              min={customFrom}
-              onChange={e => onToChange(e.target.value)}
+              value={to}
+              onChange={e => setTo(e.target.value)}
               className="h-7 w-[110px] text-xs px-2"
-              aria-label="Hasta"
+              aria-label={`Hasta ${label}`}
             />
+            <span className="text-muted-foreground text-xs">00:00 (no incluido)</span>
+            <Button size="sm" className="h-7 text-xs" disabled={!pending || !draftValid} onClick={() => { onFromChange(from); onToChange(to) }}>Aplicar {label}</Button>
+            {pending && !draftValid && <span role="alert" className="text-xs text-destructive">Completá un rango válido.</span>}
           </div>
         )}
       </div>
@@ -271,7 +270,7 @@ function PeriodPicker({
 // ── Normal table ───────────────────────────────────────────────────────────────
 
 function NormalTable({ agentes }: { agentes: CasinoAgente[] }) {
-  const HEADERS = ['Agente', 'Total', 'Nuevos', 'Activos', 'VIP', 'En riesgo', 'Depósitos', 'Σ Retiros', 'Saldo', 'T. Respuesta', 'T. Recarga']
+  const HEADERS = ['Agente', ...METRICS.map(metric => metric.label)]
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
@@ -409,17 +408,24 @@ function CompareTable({ agentesA, agentesB, labelA, labelB }: CompareTableProps)
 interface Props {
   platform:    Platform
   agentFilter: string
+  agentes: CasinoAgente[] | null
+  loading: boolean
+  dateRange: DateRange
+  revision: number
 }
 
-export const AgentesTableWidget = memo(function AgentesTableWidget({ platform, agentFilter }: Props) {
+export const AgentesTableWidget = memo(function AgentesTableWidget({ platform, agentFilter, dateRange, revision, agentes, loading }: Props) {
   const [compareMode, setCompareMode] = useState(false)
 
-  // Both periods always fetch so toggling compare mode is instant
-  const pA = usePeriodData(platform, agentFilter, 'mes_actual')
-  const pB = usePeriodData(platform, agentFilter, 'mes_anterior')
+  // Period A follows the global range; period B is loaded on demand.
+  // Expressed as custom bounds, so it queries exactly the dashboard's days.
+  const pA = usePeriodData(platform, agentFilter, 'custom', revision, compareMode, { from: dateRange.from, to: exclusiveEndDate(dateRange) })
+  const pB = usePeriodData(platform, agentFilter, 'mes_anterior', revision, compareMode)
 
   const hasDateError = pA.dateError !== null || (compareMode && pB.dateError !== null)
-  const isLoading    = pA.loading || (compareMode && pB.loading)
+  const isLoading = compareMode ? pA.loading || pB.loading : loading
+  const rows = compareMode ? pA.agentes : (agentes ?? [])
+  const error = compareMode ? pA.error || pB.error : (!loading && !agentes ? 'No se pudo consultar el rendimiento por agente. Reintentá con Refrescar vista.' : null)
 
   return (
     <Card>
@@ -444,6 +450,7 @@ export const AgentesTableWidget = memo(function AgentesTableWidget({ platform, a
           </Button>
         </div>
 
+        <p className="text-xs text-muted-foreground">El período A sigue la selección del dashboard y se puede ajustar aquí para comparar. VIP y riesgo reflejan el estado actual, no una foto histórica.</p>
         {/* Period picker(s) */}
         <div className={cn('mt-2 space-y-2', compareMode && 'pt-2 border-t border-border')}>
           {compareMode ? (
@@ -470,16 +477,7 @@ export const AgentesTableWidget = memo(function AgentesTableWidget({ platform, a
               />
             </>
           ) : (
-            <PeriodPicker
-              label=""
-              period={pA.period}
-              customFrom={pA.customFrom}
-              customTo={pA.customTo}
-              dateError={pA.dateError}
-              onPeriodChange={pA.setPeriod}
-              onFromChange={pA.setCustomFrom}
-              onToChange={pA.setCustomTo}
-            />
+            <p className="text-xs text-muted-foreground">{describeDateRange(dateRange)} · Período del dashboard</p>
           )}
         </div>
       </CardHeader>
@@ -488,7 +486,9 @@ export const AgentesTableWidget = memo(function AgentesTableWidget({ platform, a
       <CardContent className="p-0">
         {isLoading ? (
           <div className="px-4 pb-4"><Skeleton /></div>
-        ) : hasDateError ? (
+        ) : error ? (
+          <p role="alert" className="p-4 text-sm text-destructive">{error}</p>
+        ) : compareMode && hasDateError ? (
           <div className="flex items-center gap-2 text-rose-500 text-xs px-4 pb-4">
             <AlertCircle className="w-3.5 h-3.5 shrink-0" />
             Corregí las fechas inválidas para ver los datos.
@@ -500,10 +500,10 @@ export const AgentesTableWidget = memo(function AgentesTableWidget({ platform, a
             labelA={periodDisplayLabel(pA.period, pA.customFrom, pA.customTo)}
             labelB={periodDisplayLabel(pB.period, pB.customFrom, pB.customTo)}
           />
-        ) : pA.agentes.length === 0 ? (
+        ) : rows.length === 0 ? (
           <p className="text-sm text-muted-foreground px-4 pb-4">Sin datos de agentes</p>
         ) : (
-          <NormalTable agentes={pA.agentes} />
+          <NormalTable agentes={rows} />
         )}
       </CardContent>
     </Card>

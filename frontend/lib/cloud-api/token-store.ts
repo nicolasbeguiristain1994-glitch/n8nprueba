@@ -24,7 +24,7 @@ const tokenStoreLog = createLogger({ correlationId: 'system', operation: 'token_
 
 function getEncryptionKey(): string {
   const key = process.env.TOKEN_ENCRYPTION_KEY
-  if (!key || key.length < 16) {
+  if (!key || key.length < 32) {
     throw new CloudApiError(
       'TOKEN_ENCRYPTION_KEY no está configurada o es demasiado corta. Configúrala en Doppler.',
       0, 'ConfigurationError', undefined, false,
@@ -35,7 +35,7 @@ function getEncryptionKey(): string {
 
 // ─── Leer token (con migración lazy desde plaintext) ──────────────────────────
 
-export async function getTokenForNumber(phoneNumberId: string): Promise<string> {
+export async function getTokenForNumber(phoneNumberId: string, allowPending = false): Promise<string> {
   const encKey = getEncryptionKey()
 
   type Row = { token_enc: string | null; token_plain: string | null; expires_at: Date | null }
@@ -48,8 +48,8 @@ export async function getTokenForNumber(phoneNumberId: string): Promise<string> 
        CASE WHEN access_token_enc IS NULL THEN access_token ELSE NULL END AS token_plain,
        token_expires_at AS expires_at
      FROM cloud_numbers
-     WHERE phone_number_id = $2 AND status = 'active'`,
-    [encKey, phoneNumberId],
+     WHERE phone_number_id = $2 AND (status = 'active' OR ($3 AND status IN ('pending','code_sent','verified')))`,
+    [encKey, phoneNumberId, allowPending],
   )
 
   const row = rows[0]
@@ -58,10 +58,11 @@ export async function getTokenForNumber(phoneNumberId: string): Promise<string> 
   const token = row.token_enc ?? row.token_plain
 
   if (!token) throw new TokenExpiredError()
+  if (row.expires_at && row.expires_at.getTime() <= Date.now()) throw new TokenExpiredError()
 
   // Migración lazy: si vino de plaintext, encriptar ahora
   if (row.token_plain && !row.token_enc) {
-    void migrateToEncrypted(phoneNumberId, token, encKey)
+    await migrateToEncrypted(phoneNumberId, token, encKey)
   }
 
   // Renovar si vence pronto

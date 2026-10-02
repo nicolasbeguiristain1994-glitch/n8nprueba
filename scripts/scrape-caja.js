@@ -75,8 +75,8 @@ async function main() {
   if (await loginBtn.isVisible().catch(() => false)) {
     console.log('🔑 Login...');
     await page.waitForSelector('input', { timeout: 10000 });
-    await page.locator('input').nth(0).fill('adminbet');
-    await page.locator('input').nth(1).fill('Allblacks23!');
+    await page.locator('input').nth(0).fill('REPLACE_ME_USERNAME');
+    await page.locator('input').nth(1).fill('REPLACE_ME_PASSWORD');
     await loginBtn.click();
     await page.waitForTimeout(6000);
   } else {

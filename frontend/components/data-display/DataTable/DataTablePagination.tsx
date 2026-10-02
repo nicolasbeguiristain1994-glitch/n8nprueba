@@ -45,7 +45,7 @@ export function DataTablePagination<TData>({
 
   return (
     <div
-      className="flex items-center justify-between px-4 py-3 border-t border-border"
+      className="flex flex-wrap items-center justify-between gap-3 rounded-b-xl bg-muted/20 px-3 py-3 border-t border-border"
       aria-label="Paginación"
     >
       {/* Info de rango */}
@@ -56,7 +56,7 @@ export function DataTablePagination<TData>({
       </p>
 
       {/* Controles */}
-      <div className="flex items-center gap-2" role="group" aria-label="Controles de página">
+      <div className="flex min-w-0 flex-wrap items-center gap-2" role="group" aria-label="Controles de página">
         {/* Ir a página */}
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-muted-foreground whitespace-nowrap">Ir a:</span>
@@ -78,7 +78,7 @@ export function DataTablePagination<TData>({
           <Button
             variant="outline"
             size="sm"
-            className="h-7 w-7 p-0"
+            className="h-8 w-8 p-0"
             onClick={() => table.setPageIndex(0)}
             disabled={!table.getCanPreviousPage()}
             aria-label="Primera página"
@@ -88,7 +88,7 @@ export function DataTablePagination<TData>({
           <Button
             variant="outline"
             size="sm"
-            className="h-7 w-7 p-0"
+            className="h-8 w-8 p-0"
             onClick={() => table.previousPage()}
             disabled={!table.getCanPreviousPage()}
             aria-label="Página anterior"
@@ -99,7 +99,7 @@ export function DataTablePagination<TData>({
           <Button
             variant="outline"
             size="sm"
-            className="h-7 w-7 p-0"
+            className="h-8 w-8 p-0"
             onClick={() => table.nextPage()}
             disabled={!table.getCanNextPage()}
             aria-label="Página siguiente"
@@ -109,7 +109,7 @@ export function DataTablePagination<TData>({
           <Button
             variant="outline"
             size="sm"
-            className="h-7 w-7 p-0"
+            className="h-8 w-8 p-0"
             onClick={() => table.setPageIndex(pageCount - 1)}
             disabled={!table.getCanNextPage()}
             aria-label="Última página"

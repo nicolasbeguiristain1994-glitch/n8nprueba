@@ -122,12 +122,12 @@ export function ScoringTab() {
 
   if (loading) return (
     <div className="flex items-center justify-center h-32">
-      <Loader2 size={20} className="animate-spin text-gray-400" />
+      <Loader2 size={20} className="animate-spin text-muted-foreground" />
     </div>
   )
 
   if (fetchError || !config || !draft) return (
-    <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+    <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3">
       <AlertCircle size={16} className="shrink-0" /> {fetchError ?? 'Error al cargar'}
     </div>
   )
@@ -236,7 +236,7 @@ export function ScoringTab() {
             <CardTitle className="text-base">Pesos del Risk Score</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-muted-foreground">
               Distribución de los 100 puntos entre los tres componentes del risk score.
               La suma debe ser exactamente 100.
             </p>
@@ -248,13 +248,13 @@ export function ScoringTab() {
                 { key: 'risk_weight_cooldown' as const, label: 'Peso cooldown' },
               ] as const).map(({ key, label }) => (
                 <div key={key} className="space-y-1">
-                  <label className="text-xs font-medium text-gray-600">{label}</label>
+                  <label className="text-xs font-medium text-muted-foreground">{label}</label>
                   {numInput(key, 0, 100)}
                 </div>
               ))}
             </div>
 
-            <div className={`text-sm font-medium ${weightsSum === 100 ? 'text-green-600' : 'text-red-600'}`}>
+            <div className={`text-sm font-medium ${weightsSum === 100 ? 'text-success' : 'text-destructive'}`}>
               Suma actual: {weightsSum} / 100
               {weightsSum !== 100 && <span className="ml-2 text-xs font-normal">← debe ser exactamente 100</span>}
             </div>
@@ -262,13 +262,13 @@ export function ScoringTab() {
             {/* ── Otros escalares ─────────────────────────────────────────── */}
             <div className="grid grid-cols-2 gap-4 pt-2 border-t border-gray-50">
               <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-600">Score máx urgencia</label>
-                <p className="text-xs text-gray-400">Multiplicador en scoreUrgency()</p>
+                <label className="text-xs font-medium text-muted-foreground">Score máx urgencia</label>
+                <p className="text-xs text-muted-foreground">Multiplicador en scoreUrgency()</p>
                 {numInput('urgency_score_max', 1, 100)}
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-600">Multiplicador cooldown</label>
-                <p className="text-xs text-gray-400">Ventana = min_hours × multiplicador</p>
+                <label className="text-xs font-medium text-muted-foreground">Multiplicador cooldown</label>
+                <p className="text-xs text-muted-foreground">Ventana = min_hours × multiplicador</p>
                 {numInput('cooldown_multiplier', 1, 10)}
               </div>
             </div>
@@ -284,24 +284,24 @@ export function ScoringTab() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-xs text-gray-500">
+            <p className="text-xs text-muted-foreground">
               El Risk Score (0–100) determina si se envía (ALLOW), retrasa (DELAY) o bloquea (BLOCK)
               cada mensaje.
             </p>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-600">
+                <label className="text-xs font-medium text-muted-foreground">
                   Allow threshold <span className="text-orange-400">*</span>
                 </label>
-                <p className="text-xs text-gray-400">Score ≤ este valor → ALLOW</p>
+                <p className="text-xs text-muted-foreground">Score ≤ este valor → ALLOW</p>
                 {numInput('allow_threshold', 0, 100)}
               </div>
               <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-600">
+                <label className="text-xs font-medium text-muted-foreground">
                   Delay threshold <span className="text-orange-400">*</span>
                 </label>
-                <p className="text-xs text-gray-400">Score ≤ este valor → DELAY (arriba → BLOCK)</p>
+                <p className="text-xs text-muted-foreground">Score ≤ este valor → DELAY (arriba → BLOCK)</p>
                 {numInput('delay_threshold', 0, 100)}
               </div>
             </div>
@@ -331,7 +331,7 @@ export function ScoringTab() {
                   {blockPct >= 15 && 'BLOCK'}
                 </div>
               </div>
-              <div className="flex justify-between text-xs text-gray-400">
+              <div className="flex justify-between text-xs text-muted-foreground">
                 <span>0</span>
                 <span>{allowPct} — ALLOW</span>
                 <span>{delayPct} — DELAY</span>
@@ -345,7 +345,7 @@ export function ScoringTab() {
         {validationErrors.length > 0 && (
           <div className="space-y-1">
             {validationErrors.map((e, i) => (
-              <div key={i} className="flex items-center gap-1 text-sm text-red-600">
+              <div key={i} className="flex items-center gap-1 text-sm text-destructive">
                 <AlertCircle size={13} /> {e}
               </div>
             ))}
@@ -364,10 +364,10 @@ export function ScoringTab() {
               }
             </Button>
           ) : (
-            <span className="text-xs text-gray-400">Solo los administradores pueden modificar estos valores.</span>
+            <span className="text-xs text-muted-foreground">Solo los administradores pueden modificar estos valores.</span>
           )}
           {!hasAnyChange && !saving && (
-            <span className="text-xs text-gray-400">Sin cambios pendientes</span>
+            <span className="text-xs text-muted-foreground">Sin cambios pendientes</span>
           )}
         </div>
       </div>
@@ -394,7 +394,7 @@ export function ScoringTab() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-sm font-medium text-gray-700">
+              <label className="text-sm font-medium text-foreground">
                 Motivo del cambio <span className="text-red-500">*</span>
               </label>
               <Textarea
@@ -404,7 +404,7 @@ export function ScoringTab() {
                 className="text-sm resize-none"
                 rows={3}
               />
-              <p className={`text-xs ${reason.trim().length < 10 ? 'text-gray-400' : 'text-green-600'}`}>
+              <p className={`text-xs ${reason.trim().length < 10 ? 'text-muted-foreground' : 'text-success'}`}>
                 {reason.trim().length}/10 caracteres mínimos
               </p>
             </div>

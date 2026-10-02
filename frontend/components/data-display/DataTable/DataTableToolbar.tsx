@@ -10,10 +10,11 @@
  * La densidad y visibilidad se persisten vía useLocalStorage (ya resuelto en useDataTable).
  */
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Columns3, AlignJustify } from 'lucide-react'
 import type { Table } from '@tanstack/react-table'
 import { Button } from '@/components/ui/button'
+import { useMenuKeyboard } from '@/hooks/useMenuKeyboard'
 import { cn } from '@/lib/utils'
 import type { Density } from './types'
 import { DENSITY_LABELS } from './types'
@@ -44,6 +45,10 @@ export function DataTableToolbar<TData>({
   const [colsOpen,    setColsOpen]       = useState(false)
   const densityRef = useRef<HTMLDivElement>(null)
   const colsRef    = useRef<HTMLDivElement>(null)
+  const closeDensity = useCallback(() => setDensityOpen(false), [])
+  const closeColumns = useCallback(() => setColsOpen(false), [])
+  useMenuKeyboard(densityOpen, densityRef, closeDensity)
+  useMenuKeyboard(colsOpen, colsRef, closeColumns)
 
   // Cerrar dropdowns al hacer click fuera
   useEffect(() => {
@@ -63,12 +68,12 @@ export function DataTableToolbar<TData>({
   return (
     <div
       className={cn(
-        'flex items-center justify-between gap-3 px-4 py-2.5 border-b border-border bg-muted/20',
+        'flex flex-wrap items-center justify-between gap-2 rounded-t-xl px-3 py-2.5 border-b border-border bg-muted/20',
         className,
       )}
     >
       {/* Slot izquierdo */}
-      <div className="flex-1 flex items-center gap-2 min-w-0">
+      <div className="flex-1 flex flex-wrap items-center gap-2 min-w-0">
         {children}
       </div>
 
@@ -84,6 +89,7 @@ export function DataTableToolbar<TData>({
             onClick={() => { setDensityOpen(v => !v); setColsOpen(false) }}
             aria-label="Cambiar densidad de filas"
             aria-expanded={densityOpen}
+            aria-haspopup="menu"
           >
             <AlignJustify size={13} aria-hidden="true" />
             <span className="text-xs hidden sm:inline">{DENSITY_LABELS[density]}</span>
@@ -102,9 +108,9 @@ export function DataTableToolbar<TData>({
               {(['compact', 'normal', 'comfortable'] as Density[]).map(d => (
                 <button
                   key={d}
-                  role="menuitem"
+                  role="menuitemradio"
                   aria-checked={density === d}
-                  onClick={() => { onDensityChange(d); setDensityOpen(false) }}
+                  onClick={() => { onDensityChange(d); setDensityOpen(false); densityRef.current?.querySelector<HTMLElement>('[aria-expanded]')?.focus() }}
                   className={cn(
                     'w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors text-left',
                     density === d
@@ -130,6 +136,7 @@ export function DataTableToolbar<TData>({
               onClick={() => { setColsOpen(v => !v); setDensityOpen(false) }}
               aria-label="Columnas visibles"
               aria-expanded={colsOpen}
+              aria-haspopup="menu"
             >
               <Columns3 size={13} aria-hidden="true" />
               <span className="text-xs hidden sm:inline">Columnas</span>
@@ -146,9 +153,7 @@ export function DataTableToolbar<TData>({
                 )}
               >
                 {hideableColumns.map(col => {
-                  const label = typeof col.columnDef.header === 'string'
-                    ? col.columnDef.header
-                    : col.id
+                  const label = (col.columnDef.meta as { mobileLabel?: string } | undefined)?.mobileLabel ?? (typeof col.columnDef.header === 'string' ? col.columnDef.header : col.id)
                   return (
                     <button
                       key={col.id}

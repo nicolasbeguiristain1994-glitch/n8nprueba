@@ -6,6 +6,7 @@ import { ScoringTab } from '@/components/settings/ScoringTab'
 import { FrequencyRulesTab } from '@/components/settings/FrequencyRulesTab'
 import { AuditLogTab } from '@/components/settings/AuditLogTab'
 import { LtvTab } from '@/components/settings/LtvTab'
+import { FormField as FieldRow } from '@/components/ui/form-field'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -27,7 +28,6 @@ type AppSettings = {
   casino_risk_inactive_min: number
   casino_risk_inactive_max: number
   limits_max_lines: number
-  limits_max_warmup_lines: number
   perms_contacts_export_global: boolean
   perms_zeus_sync_global: boolean
 }
@@ -97,12 +97,12 @@ export default function SettingsPage() {
 
   if (loading) return (
     <div className="flex items-center justify-center h-48">
-      <Loader2 size={24} className="animate-spin text-gray-400" />
+      <Loader2 size={24} className="animate-spin text-muted-foreground" />
     </div>
   )
 
   if (!settings || fetchError) return (
-    <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3 max-w-lg">
+    <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3 max-w-lg">
       <AlertCircle size={16} className="shrink-0" />
       {fetchError || 'Error al cargar la configuración'}
     </div>
@@ -114,7 +114,7 @@ export default function SettingsPage() {
     const isSaving = saving === section
     const wasSaved  = saved  === section
     return (
-      <div className="flex items-center gap-3 pt-4 border-t border-gray-100 mt-4">
+      <div className="flex items-center gap-3 pt-4 border-t border-border mt-4">
         {!disabled && (
           <Button
             onClick={() => {
@@ -138,7 +138,6 @@ export default function SettingsPage() {
               })
               else if (section === 'limits') handleSave('limits', {
                 limits_max_lines:        settings!.limits_max_lines,
-                limits_max_warmup_lines: settings!.limits_max_warmup_lines,
               })
               else if (section === 'perms') handleSave('perms', {
                 perms_contacts_export_global: settings!.perms_contacts_export_global,
@@ -152,49 +151,38 @@ export default function SettingsPage() {
           </Button>
         )}
         {wasSaved && (
-          <span className="flex items-center gap-1 text-sm text-green-600">
+          <span className="flex items-center gap-1 text-sm text-success">
             <CheckCircle2 size={14} /> Guardado correctamente
           </span>
         )}
         {saveError && saving === null && saved === null && (
-          <span className="flex items-center gap-1 text-sm text-red-600">
+          <span className="flex items-center gap-1 text-sm text-destructive">
             <AlertCircle size={14} /> {saveError}
           </span>
         )}
         {disabled && (
-          <span className="text-xs text-gray-400">Solo los administradores pueden modificar estos valores.</span>
+          <span className="text-xs text-muted-foreground">Solo los administradores pueden modificar estos valores.</span>
         )}
       </div>
     )
   }
 
-  function FieldRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-    return (
-      <div className="grid grid-cols-3 gap-4 items-start py-3 border-b border-gray-50 last:border-0">
-        <div>
-          <p className="text-sm font-medium text-gray-700">{label}</p>
-          {hint && <p className="text-xs text-gray-400 mt-0.5">{hint}</p>}
-        </div>
-        <div className="col-span-2">{children}</div>
-      </div>
-    )
-  }
 
   return (
     <div className="max-w-3xl space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center">
-          <Settings size={16} className="text-gray-600" />
+        <div className="w-8 h-8 bg-muted rounded-lg flex items-center justify-center">
+          <Settings size={16} className="text-muted-foreground" />
         </div>
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">Ajustes</h1>
-          <p className="text-sm text-gray-500">Configuración global del sistema</p>
+          <h1 className="page-title text-foreground">Ajustes</h1>
+          <p className="text-sm text-muted-foreground">Configuración global del sistema</p>
         </div>
       </div>
 
       {saveError && saving === null && (
-        <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
+        <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3">
           <AlertCircle size={16} className="shrink-0" />
           {saveError}
         </div>
@@ -320,7 +308,7 @@ export default function SettingsPage() {
                     disabled={disabled}
                     onChange={e => setSettings(s => s ? { ...s, contacts_phone_normalize: e.target.checked } : s)}
                   />
-                  <span className="text-sm text-gray-700">Activado</span>
+                  <span className="text-sm text-foreground">Activado</span>
                 </label>
               </FieldRow>
               <SaveRow section="contacts" />
@@ -351,7 +339,7 @@ export default function SettingsPage() {
                           setSettings(s => s ? { ...s, casino_enabled_agents: next } : s)
                         }}
                       />
-                      <span className="text-sm text-gray-700 capitalize">{ag}</span>
+                      <span className="text-sm text-foreground capitalize">{ag}</span>
                     </label>
                   ))}
                 </div>
@@ -433,17 +421,6 @@ export default function SettingsPage() {
                   className="h-8 text-sm w-24"
                 />
               </FieldRow>
-              <FieldRow label="Máx. líneas calentamiento" hint="Límite de números en warmup simultáneo">
-                <Input
-                  type="number"
-                  min={1}
-                  max={200}
-                  value={settings.limits_max_warmup_lines}
-                  disabled={disabled}
-                  onChange={e => setSettings(s => s ? { ...s, limits_max_warmup_lines: Number(e.target.value) } : s)}
-                  className="h-8 text-sm w-24"
-                />
-              </FieldRow>
               <SaveRow section="limits" />
             </CardContent>
           </Card>
@@ -456,7 +433,7 @@ export default function SettingsPage() {
               <CardTitle className="text-base">Permisos funcionales globales</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-xs text-gray-400 mb-4">
+              <p className="text-xs text-muted-foreground mb-4">
                 Estos toggles controlan funciones a nivel del sistema. Un toggle desactivado bloquea la función para todos los usuarios, independientemente de sus permisos individuales.
               </p>
               <FieldRow label="Descarga de contactos" hint="Habilita o bloquea la descarga global">
@@ -468,7 +445,7 @@ export default function SettingsPage() {
                     disabled={disabled}
                     onChange={e => setSettings(s => s ? { ...s, perms_contacts_export_global: e.target.checked } : s)}
                   />
-                  <span className="text-sm text-gray-700">
+                  <span className="text-sm text-foreground">
                     {settings.perms_contacts_export_global ? 'Habilitada' : 'Deshabilitada'}
                   </span>
                 </label>
@@ -482,7 +459,7 @@ export default function SettingsPage() {
                     disabled={disabled}
                     onChange={e => setSettings(s => s ? { ...s, perms_zeus_sync_global: e.target.checked } : s)}
                   />
-                  <span className="text-sm text-gray-700">
+                  <span className="text-sm text-foreground">
                     {settings.perms_zeus_sync_global ? 'Habilitada' : 'Deshabilitada'}
                   </span>
                 </label>

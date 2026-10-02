@@ -41,13 +41,13 @@ function tableLabel(name: string) {
 }
 
 function operationBadge(op: 'INSERT' | 'UPDATE') {
-  if (op === 'INSERT') return <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">NUEVO</span>
+  if (op === 'INSERT') return <span className="text-xs bg-success/15 text-success px-1.5 py-0.5 rounded">NUEVO</span>
   return <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">EDIT</span>
 }
 
 function actorLabel(changedBy: string) {
-  if (changedBy.startsWith('migration:')) return <span className="text-gray-400 italic">{changedBy}</span>
-  if (changedBy === 'unknown')            return <span className="text-gray-400 italic">desconocido</span>
+  if (changedBy.startsWith('migration:')) return <span className="text-muted-foreground italic">{changedBy}</span>
+  if (changedBy === 'unknown')            return <span className="text-muted-foreground italic">desconocido</span>
   // UUID-like → acortar
   if (changedBy.includes('-') && changedBy.length > 20) return changedBy.slice(0, 8) + '…'
   return changedBy
@@ -66,19 +66,19 @@ function computeDiff(
 
 function DiffCell({ entry }: { entry: AuditEntry }) {
   if (entry.operation === 'INSERT') {
-    return <span className="text-xs text-gray-400 italic">Inserción inicial</span>
+    return <span className="text-xs text-muted-foreground italic">Inserción inicial</span>
   }
   const diffs = computeDiff(entry.old_value, entry.new_value)
   if (!diffs.length) {
-    return <span className="text-xs text-gray-400 italic">Sin diferencias detectadas</span>
+    return <span className="text-xs text-muted-foreground italic">Sin diferencias detectadas</span>
   }
   return (
     <div className="space-y-0.5">
       {diffs.map(d => (
         <div key={d.field} className="flex items-center gap-1.5 text-xs">
-          <span className="font-medium text-gray-600">{d.field}:</span>
-          <span className="line-through text-gray-400">{String(d.old)}</span>
-          <span className="text-gray-800 font-medium">→ {String(d.new)}</span>
+          <span className="font-medium text-muted-foreground">{d.field}:</span>
+          <span className="line-through text-muted-foreground">{String(d.old)}</span>
+          <span className="text-foreground font-medium">→ {String(d.new)}</span>
         </div>
       ))}
     </div>
@@ -131,7 +131,7 @@ export function AuditLogTab() {
 
       {/* Filtro */}
       <div className="flex items-center gap-3">
-        <label className="text-sm font-medium text-gray-700">Filtrar por tabla:</label>
+        <label className="text-sm font-medium text-foreground">Filtrar por tabla:</label>
         <Select value={tableFilter} onValueChange={handleFilterChange}>
           <SelectTrigger className="h-8 text-sm w-44">
             <SelectValue />
@@ -143,7 +143,7 @@ export function AuditLogTab() {
           </SelectContent>
         </Select>
         {!loading && (
-          <span className="text-xs text-gray-400">{pagination.total} registros</span>
+          <span className="text-xs text-muted-foreground">{pagination.total} registros</span>
         )}
       </div>
 
@@ -154,43 +154,43 @@ export function AuditLogTab() {
         <CardContent>
           {loading ? (
             <div className="flex items-center justify-center h-24">
-              <Loader2 size={20} className="animate-spin text-gray-400" />
+              <Loader2 size={20} className="animate-spin text-muted-foreground" />
             </div>
           ) : fetchError ? (
-            <div className="flex items-center gap-2 text-sm text-red-600">
+            <div className="flex items-center gap-2 text-sm text-destructive">
               <AlertCircle size={16} /> {fetchError}
             </div>
           ) : entries.length === 0 ? (
-            <p className="text-sm text-gray-400 text-center py-6">Sin registros de auditoría</p>
+            <p className="text-sm text-muted-foreground text-center py-6">Sin registros de auditoría</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-gray-100">
-                    <th className="text-left py-2 pr-3 font-medium text-gray-500 text-xs uppercase tracking-wide whitespace-nowrap">Fecha</th>
-                    <th className="text-left py-2 px-3 font-medium text-gray-500 text-xs uppercase tracking-wide">Tabla</th>
-                    <th className="text-left py-2 px-3 font-medium text-gray-500 text-xs uppercase tracking-wide">Registro</th>
-                    <th className="text-left py-2 px-3 font-medium text-gray-500 text-xs uppercase tracking-wide">Op.</th>
-                    <th className="text-left py-2 px-3 font-medium text-gray-500 text-xs uppercase tracking-wide">Cambios</th>
-                    <th className="text-left py-2 px-3 font-medium text-gray-500 text-xs uppercase tracking-wide">Actor</th>
-                    <th className="text-left py-2 px-3 font-medium text-gray-500 text-xs uppercase tracking-wide">Motivo</th>
+                  <tr className="border-b border-border">
+                    <th className="text-left py-2 pr-3 font-medium text-muted-foreground text-xs uppercase tracking-wide whitespace-nowrap">Fecha</th>
+                    <th className="text-left py-2 px-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Tabla</th>
+                    <th className="text-left py-2 px-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Registro</th>
+                    <th className="text-left py-2 px-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Op.</th>
+                    <th className="text-left py-2 px-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Cambios</th>
+                    <th className="text-left py-2 px-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Actor</th>
+                    <th className="text-left py-2 px-3 font-medium text-muted-foreground text-xs uppercase tracking-wide">Motivo</th>
                   </tr>
                 </thead>
                 <tbody>
                   {entries.map(entry => (
-                    <tr key={entry.id} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/40 align-top">
-                      <td className="py-2.5 pr-3 text-xs text-gray-500 whitespace-nowrap">{fmtDate(entry.changed_at)}</td>
-                      <td className="py-2.5 px-3 text-xs text-gray-600">{tableLabel(entry.table_name)}</td>
-                      <td className="py-2.5 px-3 text-xs font-mono text-gray-500">{entry.record_id}</td>
+                    <tr key={entry.id} className="border-b border-gray-50 last:border-0 hover:bg-background/40 align-top">
+                      <td className="py-2.5 pr-3 text-xs text-muted-foreground whitespace-nowrap">{fmtDate(entry.changed_at)}</td>
+                      <td className="py-2.5 px-3 text-xs text-muted-foreground">{tableLabel(entry.table_name)}</td>
+                      <td className="py-2.5 px-3 text-xs font-mono text-muted-foreground">{entry.record_id}</td>
                       <td className="py-2.5 px-3">{operationBadge(entry.operation)}</td>
                       <td className="py-2.5 px-3 max-w-xs">
                         <DiffCell entry={entry} />
                       </td>
-                      <td className="py-2.5 px-3 text-xs text-gray-600 whitespace-nowrap">
+                      <td className="py-2.5 px-3 text-xs text-muted-foreground whitespace-nowrap">
                         {actorLabel(entry.changed_by)}
                       </td>
-                      <td className="py-2.5 px-3 text-xs text-gray-500 max-w-xs">
-                        {entry.reason ?? <span className="text-gray-300 italic">—</span>}
+                      <td className="py-2.5 px-3 text-xs text-muted-foreground max-w-xs">
+                        {entry.reason ?? <span className="text-muted-foreground/60 italic">—</span>}
                       </td>
                     </tr>
                   ))}
@@ -201,8 +201,8 @@ export function AuditLogTab() {
 
           {/* Paginación */}
           {!loading && pagination.totalPages > 1 && (
-            <div className="flex items-center justify-between pt-4 border-t border-gray-100 mt-4">
-              <span className="text-xs text-gray-500">
+            <div className="flex items-center justify-between pt-4 border-t border-border mt-4">
+              <span className="text-xs text-muted-foreground">
                 Página {pagination.page} de {pagination.totalPages}
               </span>
               <div className="flex items-center gap-1">

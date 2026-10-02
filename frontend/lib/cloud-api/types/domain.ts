@@ -1,6 +1,6 @@
 // Tipos del dominio: entidades y value objects de la plataforma
 
-export const META_API_VERSION = 'v21.0'
+export const META_API_VERSION = /^v\d+\.0$/.test(process.env.META_API_VERSION ?? '') ? process.env.META_API_VERSION! : 'v21.0'
 export const META_BASE_URL    = `https://graph.facebook.com/${META_API_VERSION}`
 
 export type CloudNumberStatus  = 'pending' | 'code_sent' | 'verified' | 'active' | 'suspended' | 'banned'

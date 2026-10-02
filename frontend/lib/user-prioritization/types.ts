@@ -88,6 +88,7 @@ export interface PrioritizedContact {
 // ── Filtros para la consulta de operadores ────────────────────────────────────
 
 export interface PriorityFilters {
+  access?: import('./access').PriorityAccess
   reactivationSegment?: import('./config').ReactivationSegment
   valueTier?:           import('./config').ValueTier
   platform?:            string
@@ -111,6 +112,8 @@ export interface PaginatedResult<T> {
   page:       number
   pageSize:   number
   totalPages: number
+  computedAt?: string | null
+  recomputing?: boolean
 }
 
 // ── Resultado del recompute batch ─────────────────────────────────────────────

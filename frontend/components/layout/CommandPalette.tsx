@@ -34,11 +34,13 @@ import { useRouter } from 'next/navigation'
 import {
   Search,
   LayoutDashboard, Users, Megaphone, MessageSquare,
-  Activity, Flame, BarChart2, Bot, ShieldOff, FileText,
-  UserCog, Settings, UserPlus, SendHorizonal, ArrowRight, Filter, Send, BarChart2 as ReportIcon,
+  Activity, BarChart2, Bot, ShieldOff, FileText,
+  UserCog, Settings, UserPlus, SendHorizonal, ArrowRight,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { useCurrentUser } from '@/lib/useCurrentUser'
+import { BASE_NAV, ADMIN_NAV } from './navigation'
 import { cn } from '@/lib/utils'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,7 +65,7 @@ interface CommandItem {
    * el nombre `cmd:<id>` para que páginas puedan reaccionar de forma desacoplada.
    * Ej: window.addEventListener('cmd:new-contact', handler)
    */
-  action?: () => void
+  action?: (navigate: (href: string) => void) => void
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,12 +77,8 @@ const COMMAND_ITEMS: CommandItem[] = [
   { id: 'dashboard',     type: 'navigate', label: 'Dashboard',       icon: LayoutDashboard, href: '/',                 group: 'Navegación', keywords: ['inicio', 'home', 'resumen'] },
   { id: 'contacts',      type: 'navigate', label: 'Contactos',        icon: Users,           href: '/contacts',         group: 'Navegación', keywords: ['clientes', 'jugadores', 'lista'] },
   { id: 'campaigns',      type: 'navigate', label: 'Campañas',         icon: Megaphone,     href: '/campaigns',        group: 'Navegación', keywords: ['envios', 'masivo', 'whatsapp'] },
-  { id: 'segmentacion',  type: 'navigate', label: 'Segmentación',     icon: Filter,        href: '/segmentacion',     group: 'Navegación', keywords: ['filtros', 'export', 'csv', 'oficina'] },
-  { id: 'envio-wa',      type: 'navigate', label: 'Envío WA',         icon: Send,          href: '/envio-whatsapp',   group: 'Navegación', keywords: ['mensaje', 'masivo', 'whatsapp', 'csv'] },
-  { id: 'reportes',      type: 'navigate', label: 'Reportes',         icon: ReportIcon,    href: '/reportes',         group: 'Navegación', keywords: ['reporte', 'efectividad', 'enviados', 'dashboard'] },
   { id: 'conversations', type: 'navigate', label: 'Conversaciones',   icon: MessageSquare,   href: '/conversations',    group: 'Navegación', keywords: ['mensajes', 'chats', 'inbox'] },
   { id: 'lines',         type: 'navigate', label: 'Líneas',           icon: Activity,        href: '/lines',            group: 'Navegación', keywords: ['numeros', 'telefonos'] },
-  { id: 'warmup',        type: 'navigate', label: 'Calentamiento',    icon: Flame,           href: '/warmup',           group: 'Navegación', keywords: ['warming', 'activacion'] },
 
   // Admin
   { id: 'estadisticas',  type: 'navigate', label: 'Estadísticas',     icon: BarChart2,       href: '/estadisticas',     group: 'Admin', keywords: ['reportes', 'kpi', 'metricas', 'analytics'] },
@@ -99,10 +97,10 @@ const COMMAND_ITEMS: CommandItem[] = [
     icon: UserPlus,
     group: 'Acciones rápidas',
     keywords: ['crear', 'agregar', 'añadir', 'contacto', 'nuevo'],
-    action: () => {
+    action: (navigate) => {
       // Primero navegar a /contacts si no estamos ahí
       if (!window.location.pathname.startsWith('/contacts')) {
-        window.location.href = '/contacts'
+        navigate('/contacts?action=new')
         // El evento se emitirá al cargar la página — no es ideal sin state externo,
         // así que en este caso simplemente navegamos.
         return
@@ -119,9 +117,9 @@ const COMMAND_ITEMS: CommandItem[] = [
     icon: SendHorizonal,
     group: 'Acciones rápidas',
     keywords: ['crear', 'agregar', 'campaña', 'envio', 'nuevo', 'masivo'],
-    action: () => {
+    action: (navigate) => {
       if (!window.location.pathname.startsWith('/campaigns')) {
-        window.location.href = '/campaigns'
+        navigate('/campaigns?action=new')
         return
       }
       window.dispatchEvent(new CustomEvent('cmd:new-campaign'))
@@ -251,6 +249,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
+  const { user, permissions } = useCurrentUser()
 
   // ── Shortcut global Cmd+K / Ctrl+K ──────────────────────────────────────
   useEffect(() => {
@@ -276,10 +275,16 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
   // ── Filtrado memoizado ───────────────────────────────────────────────────
   const filtered = useMemo(() => {
     const trimmed = query.trim()
-    if (!trimmed) return COMMAND_ITEMS
+    const available = COMMAND_ITEMS.filter(item => {
+      if (item.id === 'new-contact') return permissions.contacts?.includes('create')
+      if (item.id === 'new-campaign') return permissions.campaigns?.includes('create')
+      const nav = [...BASE_NAV, ...ADMIN_NAV].find(link => link.href === item.href)
+      return user?.role === 'admin' || (nav && user?.sectors?.includes(nav.sector))
+    })
+    if (!trimmed) return available
     const nq = normalizeStr(trimmed)
-    return COMMAND_ITEMS.filter(item => matchesQuery(item, nq))
-  }, [query])
+    return available.filter(item => matchesQuery(item, nq))
+  }, [query, user, permissions])
 
   // ── Agrupado memoizado (depende de filtered) ─────────────────────────────
   const groups = useMemo(() => {
@@ -311,7 +316,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
       if (item.type === 'action' && item.action) {
         // Ejecutar después de cerrar el dialog para evitar conflictos de foco
         setTimeout(() => {
-          item.action!()
+          item.action!(href => router.push(href))
           // Emitir CustomEvent genérico para que las páginas puedan escuchar
           window.dispatchEvent(new CustomEvent(`cmd:${item.id}`))
         }, 80)
@@ -366,21 +371,15 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
         aria-label="Paleta de comandos"
       >
         {/* ── Input de búsqueda ── */}
-        {/*
-         * div[role="combobox"]: envuelve el input según el patrón ARIA.
-         * El input en sí tiene role="searchbox" y los aria-* de control.
-         */}
         <div
-          role="combobox"
-          aria-expanded={filtered.length > 0}
-          aria-haspopup="listbox"
-          aria-owns={LISTBOX_ID}
           className="flex items-center gap-3 px-4 border-b border-border"
         >
           <Search size={15} className="text-muted-foreground shrink-0" aria-hidden="true" />
           <input
             ref={inputRef}
-            role="searchbox"
+            role="combobox"
+            aria-expanded={open}
+            aria-haspopup="listbox"
             aria-label="Buscar comandos y páginas"
             aria-autocomplete="list"
             aria-controls={LISTBOX_ID}

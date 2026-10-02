@@ -8,7 +8,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // ─── Mocks globales (hoistados antes de cualquier import) ─────────────────────
 
-vi.mock('@/lib/db', () => ({ query: vi.fn() }))
+vi.mock('@/lib/db', () => ({ query: vi.fn(), withTransaction: vi.fn(async fn => fn({query: vi.fn(async (sql: string) => ({rows:sql.includes('RETURNING id') ? [{id:'conv-integration'}] : []}))})) }))
+
+vi.mock('@/lib/automation-engine', () => ({evaluateAutomations:vi.fn().mockResolvedValue(undefined)}))
 
 vi.mock('@/lib/cloud-api/token-store', () => ({
   getTokenForNumber: vi.fn().mockResolvedValue('mock_access_token'),
@@ -68,84 +70,36 @@ describe('OnboardCoexistenceUseCase – Embedded Signup → OTP', () => {
     vi.unstubAllGlobals()
   })
 
-  it('orquesta el flujo completo y devuelve status code_sent', async () => {
-    // Meta API: 4 llamadas en secuencia
-    mockFetch
-      .mockResolvedValueOnce(jsonResponse({ access_token: 'short_token', token_type: 'bearer' }))
-      .mockResolvedValueOnce(jsonResponse({ access_token: 'long_token',  expires_in: 0 }))
-      .mockResolvedValueOnce(jsonResponse({
-        id:                        'ph_test_001',
-        display_phone_number:      '+5491100001111',
-        verified_name:             'Empresa de Prueba',
-        code_verification_status:  'NOT_VERIFIED',
-      }))
-      .mockResolvedValueOnce(jsonResponse({ success: true }))  // OTP request
-
-    // DB: findByPhoneNumberId (nuevo) → insert → updateStatus
-    mockQuery
-      .mockResolvedValueOnce([])                          // findByPhoneNumberId → null
-      .mockResolvedValueOnce([{ id: 'cloud_num_abc' }])  // insert RETURNING id
-      .mockResolvedValueOnce([])                          // updateStatus → code_sent
-
+  function setup(verified: boolean) {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.includes('oauth/access_token')) return jsonResponse({access_token:'long_token',expires_in:0})
+      if (url.includes('debug_token')) return jsonResponse({data:{is_valid:true,app_id:'test_app_id_123',scopes:['whatsapp_business_management','whatsapp_business_messaging'],expires_at:0}})
+      if (url.includes('/phone_numbers')) return jsonResponse({data:[{id:'ph_test_001'}]})
+      if (url.includes('?fields=')) return jsonResponse({id:'ph_test_001',display_phone_number:'+5491100001111',verified_name:'Empresa',code_verification_status:verified?'VERIFIED':'NOT_VERIFIED',platform_type:'CLOUD_API',status:'CONNECTED'})
+      return jsonResponse({success:true})
+    })
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes('INSERT INTO cloud_numbers')) return [{id:'cloud_num_abc'}]
+      if (sql.includes('INSERT INTO whatsapp_lines')) return [{id:'line_new_001'}]
+      return []
+    })
+  }
+  it('keeps a pending number disconnected until OTP and registration are verified', async () => {
+    setup(false)
     const { OnboardCoexistenceUseCase } = await import('@/lib/cloud-api/use-cases/onboard-coexistence.use-case')
-    const uc = new OnboardCoexistenceUseCase()
-
-    const result = await uc.execute(
-      { code: 'oauth_code_xyz', wabaId: 'waba_test_456', phoneNumberId: 'ph_test_001' },
-      'user_initiator_001',
-    )
-
-    // Estado y IDs correctos
+    const result=await new OnboardCoexistenceUseCase().execute({code:'code',wabaId:'waba',phoneNumberId:'ph_test_001'},'user')
     expect(result.status).toBe('code_sent')
-    expect(result.cloudNumberId).toBe('cloud_num_abc')
-    expect(result.phoneNumberId).toBe('ph_test_001')
-    expect(result.displayPhone).toBe('+5491100001111')
-
-    // Las 4 llamadas a Meta API ocurrieron
-    expect(mockFetch).toHaveBeenCalledTimes(4)
-
-    // Primera llamada: exchange code
-    expect(mockFetch.mock.calls[0][0]).toContain('oauth/access_token')
-
-    // Las 3 queries DB ocurrieron
-    expect(mockQuery).toHaveBeenCalledTimes(3)
+    expect(mockQuery.mock.calls.find(c=>c[0].includes('INSERT INTO whatsapp_lines'))?.[0]).toContain("'active', false")
+    expect(mockFetch.mock.calls.some(c=>c[0].includes('subscribed_apps'))).toBe(false)
   })
-
-  it('activa directamente si el número ya está VERIFIED (re-onboarding)', async () => {
-    mockFetch
-      .mockResolvedValueOnce(jsonResponse({ access_token: 'short_token' }))
-      .mockResolvedValueOnce(jsonResponse({ access_token: 'long_token', expires_in: 0 }))
-      .mockResolvedValueOnce(jsonResponse({
-        id:                        'ph_test_002',
-        display_phone_number:      '+5491100002222',
-        verified_name:             'Empresa Verificada',
-        code_verification_status:  'VERIFIED',
-      }))
-      // subscribeFields (WABA webhooks)
-      .mockResolvedValueOnce(jsonResponse({ success: true }))
-
-    // findByPhoneNumberId (existente) → upsertForReOnboarding → updateStatus(active) → storeToken (query)
-    mockQuery
-      .mockResolvedValueOnce([{ id: 'existing_cn', waba_id: 'waba_456', phone_number_id: 'ph_test_002',
-        display_phone: '+5491100002222', verified_name: 'old', status: 'active',
-        coexistence_enabled: true, contacts_synced: false, history_synced: false,
-        history_sync_days: 180, quality_rating: 'GREEN', messaging_limit_tier: 'TIER_1K',
-        whatsapp_line_id: null, onboarded_at: null, token_expires_at: null,
-        created_at: new Date(), updated_at: new Date() }])  // findByPhoneNumberId
-      .mockResolvedValueOnce([])  // upsertForReOnboarding
-      .mockResolvedValueOnce([])  // updateStatus(active)
-      .mockResolvedValueOnce([])  // storeToken (updateToken)
-
+  it('activates a registered number after verifying app, WABA and subscription', async () => {
+    setup(true)
     const { OnboardCoexistenceUseCase } = await import('@/lib/cloud-api/use-cases/onboard-coexistence.use-case')
-    const uc = new OnboardCoexistenceUseCase()
-
-    const result = await uc.execute(
-      { code: 'oauth_code_abc', wabaId: 'waba_456', phoneNumberId: 'ph_test_002' },
-      'user_002',
-    )
-
+    const result=await new OnboardCoexistenceUseCase().execute({code:'code',wabaId:'waba',phoneNumberId:'ph_test_001'},'user')
     expect(result.status).toBe('active')
-    expect(result.cloudNumberId).toBe('existing_cn')
+    expect(mockFetch.mock.calls.some(c=>c[0].includes('debug_token'))).toBe(true)
+    expect(mockFetch.mock.calls.some(c=>c[0].includes('/phone_numbers'))).toBe(true)
+    expect(mockFetch.mock.calls.some(c=>c[0].includes('subscribed_apps'))).toBe(true)
   })
 })
 
@@ -212,7 +166,6 @@ describe('handleInboundMessage – correlationId propagado en todos los logs', (
     // openWindow
     // recordOptOut (2 queries: matchesKeyword result + recordOptOut)
     mockQuery
-      .mockResolvedValueOnce([])                      // openWindow
       .mockResolvedValueOnce([{ keyword: 'STOP' }])   // matchesStopKeyword → hit
       .mockResolvedValueOnce([])                      // recordOptOut insert
 

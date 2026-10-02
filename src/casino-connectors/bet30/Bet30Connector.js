@@ -9,7 +9,8 @@ const { ZeusConnector } = require('../zeus/ZeusConnector')
  *   endpoint, response shape, auth headers, date handling.
  *
  * All behavior is inherited from ZeusConnector.
- * Differentiation is purely config-driven (baseUrl, credentials).
+ * Differentiation is config-driven (name, baseUrl, credentials). In particular,
+ * the Zeus-only bonus-as-deposit rule does not apply to Bet30.
  */
 class Bet30Connector extends ZeusConnector {}
 

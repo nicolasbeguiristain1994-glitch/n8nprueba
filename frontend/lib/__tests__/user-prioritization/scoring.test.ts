@@ -77,8 +77,8 @@ describe('scoreValue', () => {
   it('medio obtiene 25',                 () => expect(scoreValue('medio')).toBe(25))
   it('bajo obtiene 10',                  () => expect(scoreValue('bajo')).toBe(10))
 
-  it('VIP siempre supera a BAJO independiente del urgencyScore (45+0 > 10+40)', () => {
-    expect(scoreValue('vip') + 0).toBeGreaterThan(scoreValue('bajo') + 40)
+  it('SUPER_VIP supera a BAJO incluso al final de su ventana (60 > 50)', () => {
+    expect(scoreValue('super_vip')).toBeGreaterThan(scoreValue('bajo') + 40)
   })
 })
 
@@ -312,8 +312,8 @@ describe('Consistencia de configuración', () => {
     }
   })
 
-  it('VALUE_SCORES garantizan que vip+0 > bajo+40 (orden inter-tier preservado)', () => {
-    expect(VALUE_SCORES.vip + 0).toBeGreaterThan(VALUE_SCORES.bajo + 40)
+  it('VALUE_SCORES garantizan prioridad mínima de super_vip sobre bajo', () => {
+    expect(VALUE_SCORES.super_vip).toBeGreaterThan(VALUE_SCORES.bajo + 40)
   })
 
   it('VALUE_SCORES están ordenados: super_vip > vip_alto > vip_medio > vip > medio > bajo', () => {

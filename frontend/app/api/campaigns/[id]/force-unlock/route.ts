@@ -41,7 +41,7 @@ export async function POST(
       processor_locked_at: string | null
       processor_lock_token: string | null
     }>(
-      `SELECT status, processor_locked_at, processor_lock_token
+      `SELECT status, processor_locked_at::text AS processor_locked_at, processor_lock_token
        FROM campaigns WHERE id = $1`,
       [id]
     )
@@ -70,12 +70,15 @@ export async function POST(
            processor_lock_token = NULL,
            updated_at           = NOW(),
            updated_by           = $2
-       WHERE id = $1
+       WHERE id = $1 AND status = $3::campaign_status
+         AND status IN ('running', 'paused')
+         AND processor_lock_token IS NOT DISTINCT FROM $4::uuid
+         AND processor_locked_at IS NOT DISTINCT FROM $5::timestamptz
        RETURNING id`,
-      [id, auth.user.user_id]
+      [id, auth.user.user_id, before.status, before.processor_lock_token, before.processor_locked_at]
     )
 
-    if (!updated) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (!updated) return NextResponse.json({ error: 'El estado o lock cambió; actualizá antes de volver a intentar' }, { status: 409 })
 
     clog.critical({
       event:      'lock.force_released',

@@ -1,5 +1,6 @@
+import { cloudNumberAccess } from '@/lib/cloud-api/access'
 import { NextRequest, NextResponse } from 'next/server'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser } from '@/lib/permissions'
 import { MetaCloudApiClient } from '@/lib/cloud-api/client'
 import { getTokenForNumber } from '@/lib/cloud-api/token-store'
 import { query } from '@/lib/db'
@@ -11,12 +12,14 @@ import type { CreateTemplateRequest } from '@/lib/cloud-api/types'
 // POST /api/cloud/templates                    — crear plantilla nueva
 
 export async function GET(req: NextRequest) {
-  const err = await checkPermission(req, 'templates', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'templates', 'read')
+  if (!auth.ok) return auth.response
 
   const phoneNumberId = req.nextUrl.searchParams.get('phoneNumberId')
   if (!phoneNumberId) return NextResponse.json({ error: 'phoneNumberId requerido' }, { status: 400 })
 
+  const denied = await cloudNumberAccess(auth.user, phoneNumberId)
+  if (denied) return denied
   const numResult = await query<{ waba_id: string }>(
     `SELECT waba_id FROM cloud_numbers WHERE phone_number_id = $1 AND status = 'active'`,
     [phoneNumberId],
@@ -36,8 +39,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const err = await checkPermission(req, 'templates', 'create')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'templates', 'create')
+  if (!auth.ok) return auth.response
 
   let body: CreateTemplateRequest & { phoneNumberId?: string }
   try { body = await req.json() } catch {
@@ -52,6 +55,11 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     )
   }
+
+  const denied = await cloudNumberAccess(auth.user, phoneNumberId)
+  if (denied) return denied
+  const [number] = await query<{waba_id:string}>('SELECT waba_id FROM cloud_numbers WHERE phone_number_id=$1',[phoneNumberId])
+  if (number?.waba_id !== wabaId) return NextResponse.json({error:'La WABA no corresponde al número'}, {status:400})
 
   // Validar categoría
   if (!['UTILITY', 'MARKETING', 'AUTHENTICATION'].includes(category)) {
@@ -88,8 +96,8 @@ export async function POST(req: NextRequest) {
 // DELETE /api/cloud/templates?phoneNumberId=xxx&name=yyy
 
 export async function DELETE(req: NextRequest) {
-  const err = await checkPermission(req, 'templates', 'delete')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'templates', 'delete')
+  if (!auth.ok) return auth.response
 
   const phoneNumberId = req.nextUrl.searchParams.get('phoneNumberId')
   const templateName  = req.nextUrl.searchParams.get('name')
@@ -98,6 +106,8 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: 'phoneNumberId y name son requeridos' }, { status: 400 })
   }
 
+  const denied = await cloudNumberAccess(auth.user, phoneNumberId)
+  if (denied) return denied
   const numResult = await query<{ waba_id: string }>(
     `SELECT waba_id FROM cloud_numbers WHERE phone_number_id = $1`,
     [phoneNumberId],

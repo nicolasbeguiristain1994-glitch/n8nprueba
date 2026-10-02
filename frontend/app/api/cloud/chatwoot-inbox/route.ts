@@ -1,6 +1,7 @@
+import { cloudNumberAccess } from '@/lib/cloud-api/access'
 import { NextRequest, NextResponse } from 'next/server'
 import { checkPermissionWithUser }   from '@/lib/permissions'
-import { createChatwootInboxUseCase } from '@/lib/cloud-api/use-cases/create-chatwoot-inbox.use-case'
+import { createChatwootInboxUseCase, ChatwootNotConfiguredError } from '@/lib/cloud-api/use-cases/create-chatwoot-inbox.use-case'
 import { CloudApiError }             from '@/lib/cloud-api/errors'
 import { audit }                     from '@/lib/audit'
 import { z }                         from 'zod'
@@ -21,15 +22,23 @@ export async function POST(req: NextRequest) {
 
   const { phoneNumberId } = parsed.data
 
+  const denied = await cloudNumberAccess(auth.user, phoneNumberId)
+  if (denied) return denied
   try {
     const result = await createChatwootInboxUseCase.execute(phoneNumberId)
     void audit({ req, action: 'create', resource: 'chatwoot_inbox', resource_id: result.inboxId,
       metadata: { phoneNumberId, inboxName: result.inboxName } })
     return NextResponse.json({ ok: true, inboxId: result.inboxId, inboxName: result.inboxName })
   } catch (e) {
-    const msg = e instanceof CloudApiError ? e.message : 'Error interno del servidor'
+    if (e instanceof ChatwootNotConfiguredError) {
+      return NextResponse.json({
+        error: 'La integración con Chatwoot no está disponible. La bandeja nativa sigue disponible para esta línea.',
+        code:  'CHATWOOT_NOT_CONFIGURED',
+      }, { status: 409 })
+    }
+    const msg = 'No se pudo crear la bandeja de Chatwoot. Revisá su configuración.'
     const status = e instanceof CloudApiError ? 422 : 500
-    console.error('[/api/cloud/chatwoot-inbox POST]', e instanceof Error ? e.message : e)
+    console.error('[/api/cloud/chatwoot-inbox POST] failed')
     return NextResponse.json({ error: msg }, { status })
   }
 }

@@ -27,9 +27,9 @@ function Delta({ current, previous }: { current: number; previous: number }) {
 
 function Skeleton() {
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
       {Array.from({ length: 5 }).map((_, i) => (
-        <div key={i} className="h-28 rounded-[20px] bg-muted animate-pulse" />
+        <div key={i} className="h-28 rounded-xl bg-muted animate-pulse" />
       ))}
     </div>
   )
@@ -38,15 +38,12 @@ function Skeleton() {
 export const CasinoKPIWidget = memo(function CasinoKPIWidget({ summary, loading }: Props) {
   if (loading) return <Skeleton />
 
-  const s = summary ?? {
-    nuevos_mes: 0, nuevos_anterior: 0,
-    activos_mes: 0, activos_anterior: 0,
-    total_vip: 0, prioridad_reactivacion: 0, total_jugadores: 0,
-  }
+  if (!summary) return <p className="p-4 text-sm text-muted-foreground">Indicadores de cuentas no disponibles.</p>
+  const s = summary
 
   const cards = [
     {
-      label: 'Nuevos este mes',
+      label: 'Primer depósito en período',
       value: s.nuevos_mes.toLocaleString('es-AR'),
       sub:   <Delta current={s.nuevos_mes} previous={s.nuevos_anterior} />,
       icon:  UserPlus,
@@ -54,7 +51,7 @@ export const CasinoKPIWidget = memo(function CasinoKPIWidget({ summary, loading 
       bg:    'bg-emerald-50 dark:bg-emerald-950/30',
     },
     {
-      label: 'Activos este mes',
+      label: 'Con movimientos en período',
       value: s.activos_mes.toLocaleString('es-AR'),
       sub:   <Delta current={s.activos_mes} previous={s.activos_anterior} />,
       icon:  TrendingUp,
@@ -64,7 +61,7 @@ export const CasinoKPIWidget = memo(function CasinoKPIWidget({ summary, loading 
     {
       label: 'Total VIP',
       value: s.total_vip.toLocaleString('es-AR'),
-      sub:   <span className="text-xs text-muted-foreground">seg_monto = vip</span>,
+      sub:   <span className="text-xs text-muted-foreground">Todos los niveles · estado actual</span>,
       icon:  Crown,
       color: 'text-vip',
       bg:    'bg-vip/10 dark:bg-vip/[.07]',
@@ -72,15 +69,15 @@ export const CasinoKPIWidget = memo(function CasinoKPIWidget({ summary, loading 
     {
       label: 'Reactivación urgente',
       value: s.prioridad_reactivacion.toLocaleString('es-AR'),
-      sub:   <span className="text-xs text-muted-foreground">VIP/Alto inactivos</span>,
+      sub:   <span className="text-xs text-muted-foreground">VIP en riesgo · estado actual</span>,
       icon:  AlertTriangle,
       color: s.prioridad_reactivacion > 0 ? 'text-rose-500' : 'text-slate-400',
-      bg:    s.prioridad_reactivacion > 0 ? 'bg-rose-50 dark:bg-rose-950/30' : 'bg-slate-50 dark:bg-slate-800/30',
+      bg:    s.prioridad_reactivacion > 0 ? 'bg-rose-50 dark:bg-rose-950/30' : 'bg-background dark:bg-slate-800/30',
     },
     {
-      label: 'Total jugadores',
+      label: 'Cuentas clasificadas',
       value: s.total_jugadores.toLocaleString('es-AR'),
-      sub:   <span className="text-xs text-muted-foreground">en base</span>,
+      sub:   <span className="text-xs text-muted-foreground">Historial disponible</span>,
       icon:  Users,
       color: 'text-primary',
       bg:    'bg-primary/10 dark:bg-primary/[.07]',
@@ -88,21 +85,23 @@ export const CasinoKPIWidget = memo(function CasinoKPIWidget({ summary, loading 
   ]
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+    <div>
+    <p className="mb-2 text-xs text-muted-foreground">Primer depósito y actividad: período elegido, comparado con el anterior de igual duración. VIP, riesgo y cuentas: estado actual; dependen del historial disponible.</p>
+    <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
       {cards.map(card => {
         const Icon = card.icon
         return (
           <Card
             key={card.label}
             size="sm"
-            className="gap-0 py-4 rounded-[20px] shadow-xl hover:-translate-y-0.5 hover:shadow-2xl transition-all duration-200 cursor-default"
+            className="gap-0 py-4 rounded-xl shadow-xs cursor-default"
           >
             <CardContent className="flex flex-col gap-2">
-              <div className={cn('w-10 h-10 rounded-full flex items-center justify-center', card.bg)}>
-                <Icon className={cn('w-5 h-5', card.color)} />
+              <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center', card.bg)}>
+                <Icon className={cn('w-4 h-4', card.color)} />
               </div>
               <div>
-                <p className="text-[34px] font-semibold tracking-tighter leading-none">{card.value}</p>
+                <p className="text-[28px] font-semibold tracking-tighter leading-none">{card.value}</p>
                 <p className="text-xs text-muted-foreground mt-1.5">{card.label}</p>
                 <div className="mt-0.5">{card.sub}</div>
               </div>
@@ -110,6 +109,7 @@ export const CasinoKPIWidget = memo(function CasinoKPIWidget({ summary, loading 
           </Card>
         )
       })}
+    </div>
     </div>
   )
 })

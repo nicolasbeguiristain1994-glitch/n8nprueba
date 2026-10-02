@@ -84,7 +84,7 @@ const META_ERROR_MAP: Record<number, ErrorMeta> = {
   131009: { retryable: false, userMessage: 'Valor de parámetro inválido en el mensaje' },
   131016: { retryable: false, userMessage: 'Servicio de Cloud API temporalmente no disponible' },
   131021: { retryable: false, userMessage: 'El número destinatario no está en WhatsApp' },
-  131026: { retryable: false, userMessage: 'El destinatario ha optado por no recibir mensajes' },
+  131026: { retryable: false, userMessage: 'No se pudo entregar el mensaje al destinatario' },
   131042: { retryable: false, userMessage: 'Error de vinculación del número de teléfono' },
   131045: { retryable: false, userMessage: 'Error de registro del número de teléfono' },
   131047: { retryable: false, userMessage: 'La ventana de 24h ha expirado — usa una plantilla' },

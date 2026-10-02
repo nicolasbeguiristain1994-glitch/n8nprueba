@@ -26,6 +26,7 @@ vi.mock('@/lib/permissions', () => ({
 }))
 vi.mock('@/lib/validate', () => ({ isUUID: vi.fn().mockReturnValue(true) }))
 vi.mock('@/lib/audit',   () => ({ audit: vi.fn() }))
+vi.mock('@/lib/campaign-audience', () => ({ campaignAudienceError: vi.fn().mockResolvedValue(null) }))
 vi.mock('@/lib/campaign-distributor', () => ({
   createDispatchUnits:            vi.fn(),
   acquireProcessorLock:           vi.fn(),
@@ -34,7 +35,7 @@ vi.mock('@/lib/campaign-distributor', () => ({
   getContactEligibilityBreakdown: vi.fn(),
   formatEligibilityError:         vi.fn(),
 }))
-vi.mock('@/lib/campaign-logger', () => ({ clog: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }))
+vi.mock('@/lib/campaign-logger', () => ({ clog: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), critical: vi.fn() } }))
 
 import * as db          from '@/lib/db'
 import * as permissions from '@/lib/permissions'
@@ -151,7 +152,7 @@ describe('all contacts already processed', () => {
     vi.mocked(db.query)
       .mockResolvedValueOnce([makeCampaignRow({ status: 'paused' })])
       .mockResolvedValueOnce([{ count: '10' }])   // processed count
-      .mockResolvedValueOnce([])                   // UPDATE completed
+      .mockResolvedValueOnce([{ id: CAMPAIGN_ID }]) // UPDATE completed
     vi.mocked(dist.createDispatchUnits).mockResolvedValueOnce({ total: 10, queued: 0 })
 
     const res = await POST(makeReq(), makeParams())

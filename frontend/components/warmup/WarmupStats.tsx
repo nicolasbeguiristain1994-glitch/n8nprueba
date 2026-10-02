@@ -24,11 +24,11 @@ function Stat({
 }) {
   return (
     <div className="flex items-center gap-2.5">
-      <div className={`shrink-0 ${highlight ? 'text-orange-500' : 'text-gray-400'}`}>{icon}</div>
+      <div className={`shrink-0 ${highlight ? 'text-orange-500' : 'text-muted-foreground'}`}>{icon}</div>
       <div>
-        <p className="text-[10px] text-gray-400 leading-tight">{label}</p>
-        <p className={`text-sm font-semibold leading-tight ${highlight ? 'text-orange-600' : 'text-gray-700'}`}>{value}</p>
-        {sub && <p className="text-[10px] text-gray-400 leading-tight">{sub}</p>}
+        <p className="text-[10px] text-muted-foreground leading-tight">{label}</p>
+        <p className={`text-sm font-semibold leading-tight ${highlight ? 'text-orange-600' : 'text-foreground'}`}>{value}</p>
+        {sub && <p className="text-[10px] text-muted-foreground leading-tight">{sub}</p>}
       </div>
     </div>
   )
@@ -52,14 +52,14 @@ export function WarmupStats({ numbers }: Props) {
     : String(totalHist)
 
   return (
-    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2.5 bg-gray-50 border border-gray-100 rounded-lg">
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-2.5 bg-background border border-border rounded-lg">
       <Stat
         icon={<Activity size={14} />}
         label="Salud promedio"
         value={`${avgHealth}/100`}
         highlight={avgHealth < 50}
       />
-      <div className="w-px h-6 bg-gray-200 shrink-0 hidden sm:block" />
+      <div className="w-px h-6 bg-border shrink-0 hidden sm:block" />
       <Stat
         icon={<AlertTriangle size={14} />}
         label="En riesgo"
@@ -67,13 +67,13 @@ export function WarmupStats({ numbers }: Props) {
         sub={atRisk > 0 ? 'requieren atención' : 'todo OK'}
         highlight={atRisk > 0}
       />
-      <div className="w-px h-6 bg-gray-200 shrink-0 hidden sm:block" />
+      <div className="w-px h-6 bg-border shrink-0 hidden sm:block" />
       <Stat
         icon={<Send size={14} />}
         label="Mensajes hoy"
         value={totalToday}
       />
-      <div className="w-px h-6 bg-gray-200 shrink-0 hidden sm:block" />
+      <div className="w-px h-6 bg-border shrink-0 hidden sm:block" />
       <Stat
         icon={<CheckCircle size={14} />}
         label="Histórico total"
@@ -82,7 +82,7 @@ export function WarmupStats({ numbers }: Props) {
       />
       {avgDays !== null && (
         <>
-          <div className="w-px h-6 bg-gray-200 shrink-0 hidden sm:block" />
+          <div className="w-px h-6 bg-border shrink-0 hidden sm:block" />
           <Stat
             icon={<Timer size={14} />}
             label="Promedio completado"

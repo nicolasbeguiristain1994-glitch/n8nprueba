@@ -54,37 +54,37 @@ export function WarmupMetrics({ numbers }: Props) {
   const avgScore   = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0
 
   return (
-    <div className="border border-gray-100 rounded-lg overflow-hidden bg-white">
+    <div className="border border-border rounded-lg overflow-hidden bg-card">
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between px-4 py-2.5 text-xs font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+        className="w-full flex items-center justify-between px-4 py-2.5 text-xs font-medium text-muted-foreground hover:bg-background transition-colors"
       >
         <span className="flex items-center gap-1.5">
-          <BarChart3 size={13} className="text-gray-400" />
+          <BarChart3 size={13} className="text-muted-foreground" />
           Métricas avanzadas
         </span>
         {open
-          ? <ChevronDown size={13} className="text-gray-400" />
-          : <ChevronRight size={13} className="text-gray-400" />}
+          ? <ChevronDown size={13} className="text-muted-foreground" />
+          : <ChevronRight size={13} className="text-muted-foreground" />}
       </button>
 
       {open && (
-        <div className="grid grid-cols-3 gap-6 px-4 pb-5 border-t border-gray-100 pt-4">
+        <div className="grid grid-cols-3 gap-6 px-4 pb-5 border-t border-border pt-4">
 
           {/* ── Health distribution ── */}
           <div>
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Distribución de salud</p>
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-3">Distribución de salud</p>
             <div className="space-y-2">
               {healthBuckets.map(b => (
                 <div key={b.label} className="flex items-center gap-2">
-                  <span className="text-[10px] text-gray-500 w-12 text-right shrink-0">{b.label}</span>
-                  <div className="flex-1 bg-gray-100 rounded-full h-1.5">
+                  <span className="text-[10px] text-muted-foreground w-12 text-right shrink-0">{b.label}</span>
+                  <div className="flex-1 bg-muted rounded-full h-1.5">
                     <div
                       className={`h-1.5 rounded-full ${b.cls}`}
                       style={{ width: `${numbers.length ? (b.count / numbers.length) * 100 : 0}%` }}
                     />
                   </div>
-                  <span className="text-[10px] text-gray-400 w-3 shrink-0">{b.count}</span>
+                  <span className="text-[10px] text-muted-foreground w-3 shrink-0">{b.count}</span>
                 </div>
               ))}
             </div>
@@ -92,33 +92,33 @@ export function WarmupMetrics({ numbers }: Props) {
 
           {/* ── Strategy distribution + totals ── */}
           <div>
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Por estrategia</p>
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-3">Por estrategia</p>
             <div className="space-y-2 mb-4">
               {(STRATEGIES).map(s => {
                 const count = strategyCount[s.key] ?? 0
                 return (
                   <div key={s.key} className="flex items-center gap-2">
-                    <span className="text-[10px] text-gray-500 w-14 shrink-0">{PRESET_LABEL[s.key]}</span>
-                    <div className="flex-1 bg-gray-100 rounded-full h-1.5">
+                    <span className="text-[10px] text-muted-foreground w-14 shrink-0">{PRESET_LABEL[s.key]}</span>
+                    <div className="flex-1 bg-muted rounded-full h-1.5">
                       <div
                         className={`h-1.5 rounded-full ${STRATEGY_BAR[s.key]}`}
                         style={{ width: `${(count / maxStrategy) * 100}%` }}
                       />
                     </div>
-                    <span className="text-[10px] text-gray-400 w-3 shrink-0">{count}</span>
+                    <span className="text-[10px] text-muted-foreground w-3 shrink-0">{count}</span>
                   </div>
                 )
               })}
             </div>
-            <div className="space-y-1.5 border-t border-gray-100 pt-3">
+            <div className="space-y-1.5 border-t border-border pt-3">
               {[
                 { label: 'Total enviados',   value: totalSent >= 1000 ? `${(totalSent / 1000).toFixed(1)}k` : String(totalSent) },
                 { label: 'Enviados hoy',     value: String(totalToday) },
                 { label: 'Salud promedio',   value: `${avgScore}/100` },
               ].map(({ label, value }) => (
                 <div key={label} className="flex justify-between">
-                  <span className="text-[10px] text-gray-500">{label}</span>
-                  <span className="text-[10px] font-semibold text-gray-700">{value}</span>
+                  <span className="text-[10px] text-muted-foreground">{label}</span>
+                  <span className="text-[10px] font-semibold text-foreground">{value}</span>
                 </div>
               ))}
             </div>
@@ -126,22 +126,22 @@ export function WarmupMetrics({ numbers }: Props) {
 
           {/* ── Fastest completions ── */}
           <div>
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Más rápido completadas</p>
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-3">Más rápido completadas</p>
             {completed.length === 0 ? (
-              <p className="text-[10px] text-gray-400 italic">Ninguna completada aún</p>
+              <p className="text-[10px] text-muted-foreground italic">Ninguna completada aún</p>
             ) : (
               <div className="space-y-2">
                 {completed.map((n, i) => (
                   <div key={n.id} className="flex items-center gap-2">
-                    <span className="text-[10px] text-gray-400 w-3 shrink-0">{i + 1}.</span>
-                    <span className="text-[10px] text-gray-600 truncate flex-1">{n.display_name || n.instance_name}</span>
-                    <span className="text-[10px] font-semibold text-green-600 shrink-0">{n.target_days}d</span>
+                    <span className="text-[10px] text-muted-foreground w-3 shrink-0">{i + 1}.</span>
+                    <span className="text-[10px] text-muted-foreground truncate flex-1">{n.display_name || n.instance_name}</span>
+                    <span className="text-[10px] font-semibold text-success shrink-0">{n.target_days}d</span>
                   </div>
                 ))}
               </div>
             )}
             {completed.length > 0 && (
-              <p className="text-[10px] text-gray-400 mt-3 border-t border-gray-100 pt-3">
+              <p className="text-[10px] text-muted-foreground mt-3 border-t border-border pt-3">
                 {completed.length} línea{completed.length !== 1 ? 's' : ''} finalizada{completed.length !== 1 ? 's' : ''}
               </p>
             )}

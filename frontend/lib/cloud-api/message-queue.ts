@@ -23,14 +23,17 @@ const DEFAULT_CONFIG: QueueConfig = {
   rateLimitMs:  50,      // 50ms entre mensajes = 20 msg/s
 }
 
-function getConnection(): ConnectionOptions {
-  const url = process.env.REDIS_URL ?? 'redis://localhost:6379'
+export function getConnection(): ConnectionOptions {
+  const url = process.env.REDIS_URL
+  if (!url) throw new Error('Redis no configurado')
   const parsed = new URL(url)
   return {
     host:     parsed.hostname,
     port:     parseInt(parsed.port || '6379', 10),
-    password: parsed.password || undefined,
-    username: parsed.username || undefined,
+    password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
+    username: parsed.username ? decodeURIComponent(parsed.username) : undefined,
+    db: Number(parsed.pathname.slice(1) || 0),
+    ...(parsed.protocol === 'rediss:' ? { tls: {} } : {}),
   }
 }
 

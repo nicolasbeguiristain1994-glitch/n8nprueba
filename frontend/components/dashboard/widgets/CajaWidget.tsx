@@ -9,47 +9,10 @@ import { Wallet, ChevronLeft, ChevronRight, BookOpen, Search } from 'lucide-reac
 import { cn } from '@/lib/utils'
 import type { CajaRow, CajaTotals } from '@/app/api/dashboard/caja/route'
 
-// ── Date helpers ───────────────────────────────────────────────────────────────
-
-function toISO(d: Date): string { return d.toISOString().split('T')[0] }
-
-type QuickPreset = 'hoy' | 'ayer' | 'semana' | 'mes_anterior' | 'mes_actual'
-
-const QUICK_LABELS: Record<QuickPreset, string> = {
-  hoy:          'Hoy',
-  ayer:         'Ayer',
-  semana:       'Última Semana',
-  mes_anterior: 'Mes Anterior',
-  mes_actual:   'Mes Actual',
-}
-
-function resolvePreset(p: QuickPreset): { from: string; to: string } {
-  const now   = new Date()
-  const today = toISO(now)
-  switch (p) {
-    case 'hoy':
-      return { from: today, to: today }
-    case 'ayer': {
-      const y = new Date(now); y.setDate(y.getDate() - 1)
-      return { from: toISO(y), to: toISO(y) }
-    }
-    case 'semana': {
-      const f = new Date(now); f.setDate(f.getDate() - 6)
-      return { from: toISO(f), to: today }
-    }
-    case 'mes_anterior': {
-      const last = new Date(now.getFullYear(), now.getMonth(), 0)
-      const first = new Date(last.getFullYear(), last.getMonth(), 1)
-      return { from: toISO(first), to: toISO(last) }
-    }
-    case 'mes_actual': {
-      const first = new Date(now.getFullYear(), now.getMonth(), 1)
-      return { from: toISO(first), to: today }
-    }
-  }
-}
-
-// ── Formatters ─────────────────────────────────────────────────────────────────
+import { formatPesos, formatProviderPesos } from '@/lib/dashboard-format'
+import { describeDateRange, queryDateRange } from '@/lib/dashboard-date-range'
+import type { Platform } from '@/lib/casino-agents'
+import type { DateRange } from '../types'
 
 function fmtDateTime(row: CajaRow): string {
   if (row.fecha_hora_utc) {
@@ -65,19 +28,8 @@ function fmtDateTime(row: CajaRow): string {
   return row.fecha
 }
 
-function fmtMoney(n: number): string {
-  return n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-
-// ── Platform options ───────────────────────────────────────────────────────────
-
-type CajaPlatform = 'all' | 'zeus' | 'royal'
-
-const PLATFORM_LABELS: Record<CajaPlatform, string> = {
-  all:   'Ambas',
-  zeus:  'Zeus',
-  royal: 'Royal',
-}
+const fmtMoney = formatPesos
+const PLATFORM_LABELS: Record<string, string> = { zeus: 'Zeus', bet30: 'Bet30', ganamos: 'Ganamos', argenbet: 'Argenbet', consolidado: 'Todas' }
 
 // ── Hook ───────────────────────────────────────────────────────────────────────
 
@@ -86,12 +38,16 @@ interface CajaState {
   total:    number
   totals:   CajaTotals | null
   loading:  boolean
+  error: string | null
 }
 
 interface CajaParams {
+  enabled: boolean
   from:     string
   to:       string
-  platform: CajaPlatform
+  platform: Platform
+  agent: string
+  revision: number
   search:   string
   searchBy: 'username' | 'agente'
   page:     number
@@ -103,32 +59,32 @@ function useCajaData(params: CajaParams): CajaState {
   const [totals,  setTotals]  = useState<CajaTotals | null>(null)
   const [loading, setLoading] = useState(false)
 
-  const fetchData = useCallback(async () => {
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    const controller = new AbortController()
     setLoading(true)
-    try {
-      const qs = new URLSearchParams({
-        from:      params.from,
-        to:        params.to,
-        platform:  params.platform,
-        page:      String(params.page),
-        per_page:  '20',
-        ...(params.search ? { search: params.search, search_by: params.searchBy } : {}),
-      })
-      const res = await fetch(`/api/dashboard/caja?${qs}`)
-      if (res.ok) {
+    setError(null)
+    if (!params.enabled) return
+    const qs = new URLSearchParams({ from: params.from, to: params.to, platform: params.platform,
+      agent: params.agent, page: String(params.page), per_page: '20', search: params.search, search_by: params.searchBy })
+    async function load() {
+      try {
+        const res = await fetch(`/api/dashboard/caja?${qs}`, { signal: controller.signal, cache: 'no-store' })
+        if (!res.ok) throw new Error('No se pudo consultar Caja. Reintentá con Refrescar vista.')
         const data = await res.json()
-        setRows(data.rows   ?? [])
-        setTotal(data.total ?? 0)
-        setTotals(data.totals ?? null)
-      }
-    } catch { /* silent */ } finally {
-      setLoading(false)
+        if (controller.signal.aborted) return
+        setRows(data.rows ?? []); setTotal(data.total ?? 0); setTotals(data.totals ?? null)
+      } catch (e) {
+        if (!controller.signal.aborted) {
+          setRows([]); setTotal(0); setTotals(null)
+          setError(e instanceof Error ? e.message : 'No se pudo consultar Caja')
+        }
+      } finally { if (!controller.signal.aborted) setLoading(false) }
     }
-  }, [params.from, params.to, params.platform, params.search, params.searchBy, params.page])
-
-  useEffect(() => { void fetchData() }, [fetchData])
-
-  return { rows, total, totals, loading }
+    const timer = setTimeout(() => { void load() }, 180)
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [params.from, params.to, params.platform, params.agent, params.search, params.searchBy, params.page, params.revision, params.enabled])
+  return { rows, total, totals, loading, error }
 }
 
 // ── Skeleton ───────────────────────────────────────────────────────────────────
@@ -238,51 +194,23 @@ function Pagination({ page, total, perPage, onChange }: PaginationProps) {
 
 // ── Widget ─────────────────────────────────────────────────────────────────────
 
-export const CajaWidget = memo(function CajaWidget() {
-  const initial = resolvePreset('mes_actual')
-
-  const [preset,   setPreset]   = useState<QuickPreset | null>('mes_actual')
-  const [from,     setFrom]     = useState(initial.from)
-  const [to,       setTo]       = useState(initial.to)
-  const [platform, setPlatform] = useState<CajaPlatform>('all')
+export const CajaWidget = memo(function CajaWidget({ dateRange, platform, agent, revision, enabled = true }: {
+  enabled?: boolean; dateRange: DateRange; platform: Platform; agent: string; revision: number
+}) {
+  const { from, to } = queryDateRange(dateRange)
   const [searchBy, setSearchBy] = useState<'username' | 'agente'>('username')
   const [search,   setSearch]   = useState('')
   const [inputVal, setInputVal] = useState('')
   const [page,     setPage]     = useState(1)
-
-  // Apply quick preset
-  const applyPreset = useCallback((p: QuickPreset) => {
-    const range = resolvePreset(p)
-    setPreset(p)
-    setFrom(range.from)
-    setTo(range.to)
-    setPage(1)
-  }, [])
-
-  const handleFromChange = useCallback((v: string) => {
-    setPreset(null)
-    setFrom(v)
-    setPage(1)
-  }, [])
-
-  const handleToChange = useCallback((v: string) => {
-    setPreset(null)
-    setTo(v)
-    setPage(1)
-  }, [])
 
   const handleSearch = useCallback(() => {
     setSearch(inputVal)
     setPage(1)
   }, [inputVal])
 
-  const handlePlatformChange = useCallback((p: CajaPlatform) => {
-    setPlatform(p)
-    setPage(1)
-  }, [])
-
-  const params: CajaParams = { from, to, platform, search, searchBy, page }
-  const { rows, total, totals, loading } = useCajaData(params)
+  useEffect(() => { setPage(1) }, [from, to, platform, agent])
+  const params: CajaParams = { enabled, from, to, platform, agent, revision, search, searchBy, page }
+  const { rows, total, totals, loading, error } = useCajaData(params)
 
   const PER_PAGE = 20
 
@@ -295,50 +223,8 @@ export const CajaWidget = memo(function CajaWidget() {
           Caja (Depósitos y Retiros)
         </CardTitle>
 
-        {/* Quick preset buttons */}
-        <div className="flex flex-wrap gap-1.5 mt-2">
-          {(Object.keys(QUICK_LABELS) as QuickPreset[]).map(p => (
-            <button
-              key={p}
-              onClick={() => applyPreset(p)}
-              className={cn(
-                'px-3 py-1 rounded-md text-xs font-medium border transition-colors',
-                preset === p
-                  ? 'bg-primary text-primary-foreground border-primary'
-                  : 'border-border text-muted-foreground hover:text-foreground hover:border-border/80',
-              )}
-            >
-              {QUICK_LABELS[p]}
-            </button>
-          ))}
-        </div>
-
-        {/* Filters row */}
+        <p className="text-xs text-muted-foreground">Período y plataforma del dashboard · {describeDateRange(dateRange)} · {PLATFORM_LABELS[platform]}{agent ? ` · ${agent}` : ''} · ARS. Saldo = depósitos + bonos registrados − retiros.</p>
         <div className="flex flex-wrap items-end gap-2 mt-2">
-          {/* Fecha Desde */}
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Fecha Desde</span>
-            <Input
-              type="date"
-              value={from}
-              max={to}
-              onChange={e => handleFromChange(e.target.value)}
-              className="h-7 w-[130px] text-xs px-2"
-            />
-          </div>
-
-          {/* Fecha Hasta */}
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Fecha Hasta</span>
-            <Input
-              type="date"
-              value={to}
-              min={from}
-              onChange={e => handleToChange(e.target.value)}
-              className="h-7 w-[130px] text-xs px-2"
-            />
-          </div>
-
           {/* Search by selector + input */}
           <div className="flex flex-col gap-1">
             <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Buscar en</span>
@@ -348,7 +234,7 @@ export const CajaWidget = memo(function CajaWidget() {
                 onValueChange={v => { setSearchBy(v as 'username' | 'agente'); setPage(1) }}
               >
                 <SelectTrigger size="sm" className="h-7 w-[110px] text-xs">
-                  <SelectValue />
+                  <SelectValue>{searchBy === 'username' ? 'Jugadores' : 'Agentes'}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="username" className="text-xs">Jugadores</SelectItem>
@@ -376,25 +262,6 @@ export const CajaWidget = memo(function CajaWidget() {
             </div>
           </div>
 
-          {/* Platform selector */}
-          <div className="flex flex-col gap-1">
-            <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Plataforma</span>
-            <Select
-              value={platform}
-              onValueChange={v => handlePlatformChange(v as CajaPlatform)}
-            >
-              <SelectTrigger size="sm" className="h-7 w-[90px] text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(Object.keys(PLATFORM_LABELS) as CajaPlatform[]).map(p => (
-                  <SelectItem key={p} value={p} className="text-xs">
-                    {PLATFORM_LABELS[p]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
         </div>
       </CardHeader>
 
@@ -402,6 +269,8 @@ export const CajaWidget = memo(function CajaWidget() {
       <CardContent className="p-0">
         {loading ? (
           <div className="px-4 pb-4"><Skeleton /></div>
+        ) : error ? (
+          <p role="alert" className="p-4 text-sm text-destructive">{error}</p>
         ) : rows.length === 0 ? (
           <p className="text-sm text-muted-foreground px-4 pb-4">
             Sin transacciones para el período seleccionado.
@@ -412,7 +281,7 @@ export const CajaWidget = memo(function CajaWidget() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-border bg-muted">
-                    {['Transacción', 'Fecha', 'Operación', 'Agente', 'Cuenta Destino', 'Monto', 'Balances'].map(h => (
+                    {['Transacción', 'Fecha', 'Operación', 'Plataforma', 'Agente', 'Cuenta destino', 'Monto (ARS)', 'Detalles'].map(h => (
                       <th
                         key={h}
                         className="px-3 py-3 text-left font-semibold text-muted-foreground whitespace-nowrap"
@@ -441,16 +310,17 @@ export const CajaWidget = memo(function CajaWidget() {
                             'font-medium',
                             isRetiro ? 'text-rose-600' : 'text-emerald-600',
                           )}>
-                            {isRetiro ? 'RETIRO' : 'DEPOSITO'}
+                            {isRetiro ? 'RETIRO' : row.tipo === 'bono' ? 'BONO' : 'DEPÓSITO'}
                           </span>
                         </td>
+                        <td className="px-3 py-2.5">{PLATFORM_LABELS[row.platform ?? ''] ?? 'Sin identificar'}</td>
                         <td className="px-3 py-2.5 font-medium capitalize">{row.agente}</td>
                         <td className="px-3 py-2.5 font-mono">{row.username}</td>
                         <td className={cn(
                           'px-3 py-2.5 text-right tabular-nums font-medium',
                           isRetiro ? 'text-rose-600' : 'text-foreground',
                         )}>
-                          {isRetiro ? '-' : ''}{fmtMoney(row.monto)}
+                          {isRetiro ? '-' : ''}{formatProviderPesos(row.monto, row.platform ?? '')}
                         </td>
                         <td className="px-3 py-2.5 text-center">
                           <button
@@ -470,26 +340,27 @@ export const CajaWidget = memo(function CajaWidget() {
                 {totals && (
                   <tfoot>
                     <tr className="border-t-2 border-border bg-muted/60">
-                      <td colSpan={3} className="px-3 py-3 font-semibold text-foreground">
+                      <td colSpan={4} className="px-3 py-3 font-semibold text-foreground">
                         TOTALES
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums" colSpan={2}>
                         <span className="text-[10px] text-muted-foreground uppercase tracking-wide mr-2">Depósitos</span>
                         <span className="font-semibold text-emerald-600">{fmtMoney(totals.depositos)}</span>
+                        <div className="text-xs text-muted-foreground">Bonos registrados: {fmtMoney(totals.deposito_bonificado ?? '0')}</div>
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums">
                         <div className="flex flex-col items-end gap-0.5">
                           <div>
                             <span className="text-[10px] text-muted-foreground uppercase tracking-wide mr-1">Retiros</span>
-                            <span className="font-semibold text-rose-600">{fmtMoney(totals.retiros)}</span>
+                            <span className="font-semibold text-rose-600">{formatProviderPesos(totals.retiros, platform)}</span>
                           </div>
                           <div>
-                            <span className="text-[10px] text-muted-foreground uppercase tracking-wide mr-1">Saldo</span>
+                            <span className="text-[10px] text-muted-foreground uppercase tracking-wide mr-1">Saldo con bonos</span>
                             <span className={cn(
                               'font-semibold',
-                              totals.saldo >= 0 ? 'text-blue-600' : 'text-rose-600',
+                              !totals.saldo.startsWith('-') ? 'text-blue-600' : 'text-rose-600',
                             )}>
-                              {fmtMoney(totals.saldo)}
+                              {formatProviderPesos(totals.saldo, platform)}
                             </span>
                           </div>
                         </div>

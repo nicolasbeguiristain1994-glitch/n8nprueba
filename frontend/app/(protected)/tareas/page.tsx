@@ -19,7 +19,7 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 import {
   type Task, type TaskLog, type TaskType, type TaskPriority, type TaskStatus,
-  TASK_TYPES, TASK_PRIORITIES, TASK_STATUSES,
+  TASK_TYPES, ACTIVE_TASK_TYPES, TASK_PRIORITIES, TASK_STATUSES,
   TYPE_LABELS, TYPE_COLORS, PRIORITY_LABELS, PRIORITY_COLORS,
   STATUS_LABELS, STATUS_COLORS, LOG_ACTION_LABELS,
 } from '@/lib/task-types'
@@ -391,7 +391,7 @@ export default function TareasPage() {
         count={total}
         actions={
           <div className="flex items-center gap-2">
-            <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer select-none">
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={showDeleted}
@@ -400,7 +400,7 @@ export default function TareasPage() {
               />
               Mostrar eliminadas
             </label>
-            <Button onClick={openCreate} size="sm" className="gap-1.5 bg-green-600 hover:bg-green-700 text-white">
+            <Button onClick={openCreate} size="sm" className="gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground">
               <Plus size={15} /> Nueva tarea
             </Button>
           </div>
@@ -412,7 +412,7 @@ export default function TareasPage() {
         <CardContent className="py-3">
           <div className="flex flex-wrap gap-2">
             <div className="relative flex-1 min-w-44">
-              <Search size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
+              <Search size={14} className="absolute left-2.5 top-2.5 text-muted-foreground" />
               <Input
                 placeholder="Buscar en título o descripción..."
                 value={search}
@@ -473,7 +473,7 @@ export default function TareasPage() {
                 value={bulkAction || 'ninguna'}
                 onValueChange={v => setBulkAction(v !== 'ninguna' && v !== null ? v as typeof bulkAction : '')}
               >
-                <SelectTrigger className="w-44 h-7 text-xs bg-white border-blue-200">
+                <SelectTrigger className="w-44 h-7 text-xs bg-card border-blue-200">
                   <SelectValue placeholder="Elegir acción..." />
                 </SelectTrigger>
                 <SelectContent>
@@ -486,7 +486,7 @@ export default function TareasPage() {
 
               {bulkAction === 'reassign' && (
                 <Select value={bulkOperator || 'ninguno'} onValueChange={v => setBulkOperator(v !== 'ninguno' && v !== null ? v : '')}>
-                  <SelectTrigger className="w-44 h-7 text-xs bg-white border-blue-200">
+                  <SelectTrigger className="w-44 h-7 text-xs bg-card border-blue-200">
                     <SelectValue placeholder="Seleccionar operador..." />
                   </SelectTrigger>
                   <SelectContent>
@@ -498,7 +498,7 @@ export default function TareasPage() {
 
               {bulkAction === 'priority' && (
                 <Select value={bulkPriority || 'ninguna'} onValueChange={v => setBulkPriority(v !== 'ninguna' && v !== null ? v : '')}>
-                  <SelectTrigger className="w-36 h-7 text-xs bg-white border-blue-200">
+                  <SelectTrigger className="w-36 h-7 text-xs bg-card border-blue-200">
                     <SelectValue placeholder="Nueva prioridad..." />
                   </SelectTrigger>
                   <SelectContent>
@@ -541,24 +541,24 @@ export default function TareasPage() {
       <Card>
         <CardContent className="p-0">
           {loading ? (
-            <div className="py-16 text-center text-sm text-gray-400">Cargando tareas...</div>
+            <div className="py-16 text-center text-sm text-muted-foreground">Cargando tareas...</div>
           ) : listError ? (
             <div className="py-16 text-center text-sm text-red-500">{listError}</div>
           ) : tasks.length === 0 ? (
             <div className="py-16 text-center">
-              <ClipboardList size={36} className="mx-auto mb-3 text-gray-300" />
-              <p className="text-sm text-gray-500 font-medium">No hay tareas que mostrar</p>
-              <p className="text-xs text-gray-400 mt-1">Crea una nueva tarea para comenzar</p>
+              <ClipboardList size={36} className="mx-auto mb-3 text-muted-foreground/60" />
+              <p className="text-sm text-muted-foreground font-medium">No hay tareas que mostrar</p>
+              <p className="text-xs text-muted-foreground mt-1">Crea una nueva tarea para comenzar</p>
             </div>
           ) : (
             <Table>
               <TableHeader>
-                <TableRow className="bg-gray-50">
+                <TableRow className="bg-background">
                   <TableHead className="w-10">
                     <button onClick={toggleSelectAll} className="p-0.5">
                       {allActiveSelected
                         ? <CheckSquare size={15} className="text-blue-600" />
-                        : <Square size={15} className="text-gray-400" />
+                        : <Square size={15} className="text-muted-foreground" />
                       }
                     </button>
                   </TableHead>
@@ -580,27 +580,27 @@ export default function TareasPage() {
                   return (
                     <TableRow
                       key={t.id}
-                      className={`hover:bg-gray-50 align-top ${isDeleted ? 'opacity-50' : ''} ${isSelected ? 'bg-blue-50' : ''}`}
+                      className={`hover:bg-background align-top ${isDeleted ? 'opacity-50' : ''} ${isSelected ? 'bg-blue-50' : ''}`}
                     >
                       <TableCell>
                         {!isDeleted && isEditable && (
                           <button onClick={() => toggleSelect(t.id)} className="p-0.5">
                             {isSelected
                               ? <CheckSquare size={14} className="text-blue-600" />
-                              : <Square size={14} className="text-gray-400" />
+                              : <Square size={14} className="text-muted-foreground" />
                             }
                           </button>
                         )}
                       </TableCell>
                       <TableCell className="max-w-52">
                         <div className="flex items-center gap-1.5">
-                          <p className={`font-medium text-sm truncate ${isDeleted ? 'line-through text-gray-400' : ''}`}>
+                          <p className={`font-medium text-sm truncate ${isDeleted ? 'line-through text-muted-foreground' : ''}`}>
                             {t.title}
                           </p>
-                          {isDeleted && <Badge className="text-xs bg-red-100 text-red-600 shrink-0">Eliminada</Badge>}
+                          {isDeleted && <Badge className="text-xs bg-destructive/15 text-destructive shrink-0">Eliminada</Badge>}
                         </div>
                         {t.description && (
-                          <p className="text-xs text-gray-400 truncate mt-0.5">{t.description}</p>
+                          <p className="text-xs text-muted-foreground truncate mt-0.5">{t.description}</p>
                         )}
                       </TableCell>
                       <TableCell>
@@ -608,16 +608,16 @@ export default function TareasPage() {
                       </TableCell>
                       <TableCell>
                         {t.assignees.length === 0 ? (
-                          <span className="text-xs text-gray-400">Sin asignar</span>
+                          <span className="text-xs text-muted-foreground">Sin asignar</span>
                         ) : (
                           <div className="flex flex-wrap gap-1">
                             {t.assignees.slice(0, 2).map(a => (
-                              <span key={a.id} className="text-xs bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded">
+                              <span key={a.id} className="text-xs bg-muted text-foreground px-1.5 py-0.5 rounded">
                                 {a.name || a.email}
                               </span>
                             ))}
                             {t.assignees.length > 2 && (
-                              <span className="text-xs text-gray-400">+{t.assignees.length - 2}</span>
+                              <span className="text-xs text-muted-foreground">+{t.assignees.length - 2}</span>
                             )}
                           </div>
                         )}
@@ -634,13 +634,13 @@ export default function TareasPage() {
                       </TableCell>
                       <TableCell>
                         {t.due_date ? (
-                          <span className={`text-xs ${isOverdue(t.due_date, t.status) ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
+                          <span className={`text-xs ${isOverdue(t.due_date, t.status) ? 'text-destructive font-medium' : 'text-muted-foreground'}`}>
                             {isOverdue(t.due_date, t.status) && <AlertTriangle size={11} className="inline mr-1" />}
                             {fmtDate(t.due_date)}
                           </span>
-                        ) : <span className="text-xs text-gray-400">—</span>}
+                        ) : <span className="text-xs text-muted-foreground">—</span>}
                       </TableCell>
-                      <TableCell className="text-xs text-gray-500">{fmt(t.created_at)}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{fmt(t.created_at)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
                           <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Ver detalle" onClick={() => openDetail(t)}>
@@ -662,7 +662,7 @@ export default function TareasPage() {
                               <RotateCcw size={12} /> Restaurar
                             </Button>
                           ) : (
-                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50" title="Eliminar" onClick={() => openDelete(t)}>
+                            <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-500 hover:text-destructive hover:bg-destructive/10" title="Eliminar" onClick={() => openDelete(t)}>
                               <Trash2 size={13} />
                             </Button>
                           )}
@@ -679,7 +679,7 @@ export default function TareasPage() {
 
       {/* Paginación */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between mt-4 text-sm text-gray-500">
+        <div className="flex items-center justify-between mt-4 text-sm text-muted-foreground">
           <span>{total} tareas · Página {page} de {totalPages}</span>
           <div className="flex gap-1">
             <Button variant="ghost" size="sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>
@@ -701,23 +701,23 @@ export default function TareasPage() {
           <div className="space-y-4 pt-2">
             {/* Título */}
             <div>
-              <label className="text-sm font-medium text-gray-700 block mb-1">Título *</label>
+              <label className="text-sm font-medium text-foreground block mb-1">Título *</label>
               <Input value={fTitle} onChange={e => setFTitle(e.target.value)} placeholder="Ej. Difusión promo fin de semana" maxLength={500} />
             </div>
 
             {/* Tipo + Prioridad */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-sm font-medium text-gray-700 block mb-1">Tipo de tarea</label>
+                <label className="text-sm font-medium text-foreground block mb-1">Tipo de tarea</label>
                 <Select value={fType} onValueChange={v => { if (v) setFType(v as TaskType) }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {TASK_TYPES.map(t => <SelectItem key={t} value={t}>{TYPE_LABELS[t]}</SelectItem>)}
+                    {ACTIVE_TASK_TYPES.map(t => <SelectItem key={t} value={t}>{TYPE_LABELS[t]}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
               <div>
-                <label className="text-sm font-medium text-gray-700 block mb-1">Prioridad</label>
+                <label className="text-sm font-medium text-foreground block mb-1">Prioridad</label>
                 <Select value={fPriority} onValueChange={v => { if (v) setFPriority(v as TaskPriority) }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -729,20 +729,20 @@ export default function TareasPage() {
 
             {/* Descripción */}
             <div>
-              <label className="text-sm font-medium text-gray-700 block mb-1">Instrucciones / Descripción</label>
+              <label className="text-sm font-medium text-foreground block mb-1">Instrucciones / Descripción</label>
               <Textarea value={fDescription} onChange={e => setFDescription(e.target.value)} placeholder="Detalla qué debe hacer el operador..." rows={3} maxLength={5000} />
             </div>
 
             {/* Fechas */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-sm font-medium text-gray-700 block mb-1">
+                <label className="text-sm font-medium text-foreground block mb-1">
                   <Calendar size={13} className="inline mr-1" />Fecha límite
                 </label>
                 <Input type="datetime-local" value={fDueDate} onChange={e => setFDueDate(e.target.value)} className="text-sm" />
               </div>
               <div>
-                <label className="text-sm font-medium text-gray-700 block mb-1">
+                <label className="text-sm font-medium text-foreground block mb-1">
                   <Calendar size={13} className="inline mr-1" />Programar inicio
                 </label>
                 <Input type="datetime-local" value={fScheduled} onChange={e => setFScheduled(e.target.value)} className="text-sm" />
@@ -751,25 +751,25 @@ export default function TareasPage() {
 
             {/* Asignar a */}
             <div>
-              <label className="text-sm font-medium text-gray-700 block mb-1">
+              <label className="text-sm font-medium text-foreground block mb-1">
                 <User size={13} className="inline mr-1" />Asignar a operadores
               </label>
               {operators.length === 0 ? (
-                <p className="text-xs text-gray-400">No hay operadores disponibles</p>
+                <p className="text-xs text-muted-foreground">No hay operadores disponibles</p>
               ) : (
                 <div className="border rounded-md p-2 max-h-36 overflow-y-auto space-y-1">
                   {operators.map(u => (
-                    <label key={u.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-gray-50 px-1 py-0.5 rounded">
+                    <label key={u.id} className="flex items-center gap-2 text-sm cursor-pointer hover:bg-background px-1 py-0.5 rounded">
                       <input type="checkbox" checked={fAssignees.includes(u.id)}
                         onChange={() => setFAssignees(prev => prev.includes(u.id) ? prev.filter(x => x !== u.id) : [...prev, u.id])}
                         className="rounded" />
                       <span>{u.name || u.email}</span>
-                      <span className="text-xs text-gray-400">{u.email}</span>
+                      <span className="text-xs text-muted-foreground">{u.email}</span>
                     </label>
                   ))}
                 </div>
               )}
-              {fAssignees.length > 0 && <p className="text-xs text-gray-500 mt-1">{fAssignees.length} operador(es) seleccionado(s)</p>}
+              {fAssignees.length > 0 && <p className="text-xs text-muted-foreground mt-1">{fAssignees.length} operador(es) seleccionado(s)</p>}
             </div>
 
             {/* Datos relacionados */}
@@ -777,7 +777,7 @@ export default function TareasPage() {
               <div className="border rounded-md p-3 bg-blue-50 space-y-3">
                 <p className="text-xs font-medium text-blue-700">Datos relacionados — {TYPE_LABELS[fType]}</p>
                 <div>
-                  <label className="text-xs text-gray-600 block mb-1">Campaña asociada</label>
+                  <label className="text-xs text-muted-foreground block mb-1">Campaña asociada</label>
                   <Select value={fCampaignId || 'ninguna'} onValueChange={v => setFCampaignId(v !== 'ninguna' && v !== null ? v : '')}>
                     <SelectTrigger className="text-sm"><SelectValue placeholder="Seleccionar campaña..." /></SelectTrigger>
                     <SelectContent>
@@ -787,7 +787,7 @@ export default function TareasPage() {
                   </Select>
                 </div>
                 <div>
-                  <label className="text-xs text-gray-600 block mb-1">Lista de contactos</label>
+                  <label className="text-xs text-muted-foreground block mb-1">Lista de contactos</label>
                   <Select value={fListId || 'ninguna'} onValueChange={v => setFListId(v !== 'ninguna' && v !== null ? v : '')}>
                     <SelectTrigger className="text-sm"><SelectValue placeholder="Seleccionar lista..." /></SelectTrigger>
                     <SelectContent>
@@ -809,7 +809,7 @@ export default function TareasPage() {
                         onChange={() => setFLineIds(prev => prev.includes(l.id) ? prev.filter(x => x !== l.id) : [...prev, l.id])}
                         className="rounded" />
                       <span>{l.display_name}</span>
-                      {l.phone_number && <span className="text-xs text-gray-400">{l.phone_number}</span>}
+                      {l.phone_number && <span className="text-xs text-muted-foreground">{l.phone_number}</span>}
                     </label>
                   ))}
                 </div>
@@ -819,17 +819,17 @@ export default function TareasPage() {
 
             {/* Notas */}
             <div>
-              <label className="text-sm font-medium text-gray-700 block mb-1">Notas adicionales</label>
+              <label className="text-sm font-medium text-foreground block mb-1">Notas adicionales</label>
               <Textarea value={fNotes} onChange={e => setFNotes(e.target.value)} placeholder="Información adicional para el operador..." rows={2} maxLength={2000} />
             </div>
 
             {formError && (
-              <div className="bg-red-50 text-red-700 text-sm px-3 py-2 rounded border border-red-100">{formError}</div>
+              <div className="bg-destructive/10 text-destructive text-sm px-3 py-2 rounded border border-destructive/20">{formError}</div>
             )}
 
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" onClick={() => setShowForm(false)} disabled={saving}>Cancelar</Button>
-              <Button onClick={handleSave} disabled={saving} className="bg-green-600 hover:bg-green-700 text-white">
+              <Button onClick={handleSave} disabled={saving} className="bg-primary hover:bg-primary/90 text-primary-foreground">
                 {saving ? 'Guardando...' : (editingTask ? 'Guardar cambios' : 'Crear tarea')}
               </Button>
             </div>
@@ -844,13 +844,13 @@ export default function TareasPage() {
             <DialogTitle>Detalle de tarea</DialogTitle>
           </DialogHeader>
           {loadingDetail ? (
-            <div className="py-10 text-center text-sm text-gray-400">Cargando...</div>
+            <div className="py-10 text-center text-sm text-muted-foreground">Cargando...</div>
           ) : detailTask ? (
             <div className="space-y-4 pt-2">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h2 className="font-semibold text-gray-900">{detailTask.title}</h2>
-                  {detailTask.description && <p className="text-sm text-gray-600 mt-1 whitespace-pre-line">{detailTask.description}</p>}
+                  <h2 className="font-semibold text-foreground">{detailTask.title}</h2>
+                  {detailTask.description && <p className="text-sm text-muted-foreground mt-1 whitespace-pre-line">{detailTask.description}</p>}
                 </div>
                 <div className="flex flex-col gap-1 shrink-0">
                   <Badge className={`text-xs ${STATUS_COLORS[detailTask.status]}`}>{STATUS_LABELS[detailTask.status]}</Badge>
@@ -858,18 +858,18 @@ export default function TareasPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm border rounded-md p-3 bg-gray-50">
-                <div><span className="text-gray-500">Tipo:</span> <strong>{TYPE_LABELS[detailTask.type]}</strong></div>
-                <div><span className="text-gray-500">Creada por:</span> <strong>{detailTask.created_by_name || '—'}</strong></div>
-                <div><span className="text-gray-500">Fecha límite:</span> <strong className={isOverdue(detailTask.due_date, detailTask.status) ? 'text-red-600' : ''}>{fmtDate(detailTask.due_date)}</strong></div>
-                <div><span className="text-gray-500">Creada el:</span> <strong>{fmt(detailTask.created_at)}</strong></div>
-                {detailTask.completed_at && <div><span className="text-gray-500">Completada:</span> <strong>{fmt(detailTask.completed_at)}</strong></div>}
-                {detailTask.deleted_at   && <div><span className="text-gray-500">Eliminada:</span>  <strong className="text-red-600">{fmt(detailTask.deleted_at)}</strong></div>}
+              <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm border rounded-md p-3 bg-background">
+                <div><span className="text-muted-foreground">Tipo:</span> <strong>{TYPE_LABELS[detailTask.type]}</strong></div>
+                <div><span className="text-muted-foreground">Creada por:</span> <strong>{detailTask.created_by_name || '—'}</strong></div>
+                <div><span className="text-muted-foreground">Fecha límite:</span> <strong className={isOverdue(detailTask.due_date, detailTask.status) ? 'text-destructive' : ''}>{fmtDate(detailTask.due_date)}</strong></div>
+                <div><span className="text-muted-foreground">Creada el:</span> <strong>{fmt(detailTask.created_at)}</strong></div>
+                {detailTask.completed_at && <div><span className="text-muted-foreground">Completada:</span> <strong>{fmt(detailTask.completed_at)}</strong></div>}
+                {detailTask.deleted_at   && <div><span className="text-muted-foreground">Eliminada:</span>  <strong className="text-destructive">{fmt(detailTask.deleted_at)}</strong></div>}
               </div>
 
               <div>
-                <p className="text-sm font-medium text-gray-700 mb-1">Asignada a</p>
-                {detailTask.assignees.length === 0 ? <p className="text-sm text-gray-400">Sin asignar</p> : (
+                <p className="text-sm font-medium text-foreground mb-1">Asignada a</p>
+                {detailTask.assignees.length === 0 ? <p className="text-sm text-muted-foreground">Sin asignar</p> : (
                   <div className="flex flex-wrap gap-1.5">
                     {detailTask.assignees.map(a => (
                       <span key={a.id} className="text-xs bg-blue-50 text-blue-700 border border-blue-100 px-2 py-1 rounded-full">{a.name || a.email}</span>
@@ -879,40 +879,40 @@ export default function TareasPage() {
               </div>
 
               {detailTask.completion_notes && (
-                <div className="bg-green-50 border border-green-100 rounded-md p-3">
-                  <p className="text-xs font-medium text-green-700 mb-1">Comentario de cierre</p>
-                  <p className="text-sm text-green-800 whitespace-pre-line">{detailTask.completion_notes}</p>
+                <div className="bg-success/10 border border-success/20 rounded-md p-3">
+                  <p className="text-xs font-medium text-success mb-1">Comentario de cierre</p>
+                  <p className="text-sm text-success whitespace-pre-line">{detailTask.completion_notes}</p>
                 </div>
               )}
               {detailTask.cancel_reason && (
-                <div className="bg-red-50 border border-red-100 rounded-md p-3">
-                  <p className="text-xs font-medium text-red-700 mb-1">Motivo</p>
-                  <p className="text-sm text-red-800">{detailTask.cancel_reason}</p>
+                <div className="bg-destructive/10 border border-destructive/20 rounded-md p-3">
+                  <p className="text-xs font-medium text-destructive mb-1">Motivo</p>
+                  <p className="text-sm text-destructive">{detailTask.cancel_reason}</p>
                 </div>
               )}
               {detailTask.notes && (
-                <div className="bg-amber-50 border border-amber-100 rounded-md p-3">
-                  <p className="text-xs font-medium text-amber-700 mb-1">Notas</p>
-                  <p className="text-sm text-amber-800 whitespace-pre-line">{detailTask.notes}</p>
+                <div className="bg-warning/10 border border-amber-100 rounded-md p-3">
+                  <p className="text-xs font-medium text-warning mb-1">Notas</p>
+                  <p className="text-sm text-warning whitespace-pre-line">{detailTask.notes}</p>
                 </div>
               )}
 
               <div>
-                <p className="text-sm font-medium text-gray-700 mb-2">Historial</p>
+                <p className="text-sm font-medium text-foreground mb-2">Historial</p>
                 {detailLogs.length === 0 ? (
-                  <p className="text-xs text-gray-400">Sin historial</p>
+                  <p className="text-xs text-muted-foreground">Sin historial</p>
                 ) : (
-                  <div className="space-y-2 border-l-2 border-gray-200 pl-3">
+                  <div className="space-y-2 border-l-2 border-border pl-3">
                     {detailLogs.map(log => (
                       <div key={log.id} className="relative">
                         <div className="absolute -left-[17px] top-1.5 w-2.5 h-2.5 rounded-full bg-gray-300 border-2 border-white" />
-                        <div className="text-xs text-gray-500">{fmt(log.created_at)}</div>
+                        <div className="text-xs text-muted-foreground">{fmt(log.created_at)}</div>
                         <div className="text-sm">
                           <span className="font-medium">{LOG_ACTION_LABELS[log.action] || log.action}</span>
-                          {log.user_name && <span className="text-gray-500"> por {log.user_name}</span>}
+                          {log.user_name && <span className="text-muted-foreground"> por {log.user_name}</span>}
                         </div>
                         {log.comment && (
-                          <div className="text-xs text-gray-600 bg-gray-50 rounded px-2 py-1 mt-0.5 italic">"{log.comment}"</div>
+                          <div className="text-xs text-muted-foreground bg-background rounded px-2 py-1 mt-0.5 italic">"{log.comment}"</div>
                         )}
                       </div>
                     ))}
@@ -928,17 +928,17 @@ export default function TareasPage() {
       <Dialog open={showDelete} onOpenChange={setShowDelete}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-700">
+            <DialogTitle className="flex items-center gap-2 text-destructive">
               <AlertTriangle size={18} /> Eliminar tarea
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 pt-2">
-            <p className="text-sm text-gray-700">
+            <p className="text-sm text-foreground">
               ¿Confirmas la eliminación de <strong>"{deleteTarget?.title}"</strong>?
               La tarea quedará oculta pero podrás verla activando "Mostrar eliminadas".
             </p>
             <div>
-              <label className="text-sm font-medium text-gray-700 block mb-1">Motivo (opcional)</label>
+              <label className="text-sm font-medium text-foreground block mb-1">Motivo (opcional)</label>
               <Textarea value={deleteReason} onChange={e => setDeleteReason(e.target.value)} rows={2} maxLength={500} placeholder="Explica por qué se elimina..." />
             </div>
             <div className="flex justify-end gap-2">
@@ -960,7 +960,7 @@ export default function TareasPage() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-3 pt-2">
-            <p className="text-sm text-gray-700">
+            <p className="text-sm text-foreground">
               ¿Restaurar <strong>"{restoreTarget?.title}"</strong>?
               La tarea volverá a aparecer en la lista y el operador podrá verla.
             </p>

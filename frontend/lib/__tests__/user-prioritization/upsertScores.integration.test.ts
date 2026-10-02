@@ -10,8 +10,8 @@
  * aplicadas ni de datos previos.
  *
  * Precondiciones para que corra (no se salte):
- *   - DB_POSTGRESDB_HOST definido en .env
- *   - PostgreSQL accesible con las credenciales del .env
+ *   - TEST_DATABASE_URL definido explícitamente (base local desechable)
+ *   - PostgreSQL accesible con las credenciales de TEST_DATABASE_URL
  *   - PostgreSQL >= 12 (jsonb_array_elements_text disponible desde pg 9.3)
  *
  * Si las credenciales no están disponibles, la suite se marca como skipped.
@@ -20,25 +20,17 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { Pool, type PoolClient }                      from 'pg'
 import { randomUUID }                                 from 'crypto'
-import * as dotenv                                    from 'dotenv'
-import * as path                                      from 'path'
-
-// Carga .env desde la raíz del monorepo (4 niveles arriba del test file)
-dotenv.config({ path: path.resolve(process.cwd(), '../.env') })
-
-// ── Configuración de conexión ─────────────────────────────────────────────────
-
+// Conexión explícita y exclusivamente local: nunca inferir credenciales desde .env.
+const testDatabaseUrl = process.env.TEST_DATABASE_URL
+if (testDatabaseUrl && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(testDatabaseUrl).hostname)) {
+  throw new Error('TEST_DATABASE_URL must point to a local disposable PostgreSQL database')
+}
 const DB_CONFIG = {
-  host:                    process.env.DB_POSTGRESDB_HOST,
-  port:                    Number(process.env.DB_POSTGRESDB_PORT ?? '5432'),
-  user:                    process.env.DB_POSTGRESDB_USER,
-  password:                process.env.DB_POSTGRESDB_PASSWORD,
-  database:                process.env.DB_POSTGRESDB_DATABASE ?? 'railway',
-  ssl:                     { rejectUnauthorized: false },
+  connectionString: testDatabaseUrl,
+  ssl: false,
   connectionTimeoutMillis: 5000,
 }
-
-const CAN_CONNECT = Boolean(DB_CONFIG.host && DB_CONFIG.user && DB_CONFIG.password)
+const CAN_CONNECT = Boolean(testDatabaseUrl)
 
 // ── SQL idéntico al de UserPrioritizationRepository.upsertScores ─────────────
 // (solo cambia el nombre de la tabla — el resto es copia exacta del fix)
@@ -218,9 +210,11 @@ describe.skipIf(!CAN_CONNECT)(
     })
 
     afterAll(async () => {
-      await client.query(`DROP TABLE IF EXISTS ${TABLE}`)
-      client.release()
-      await pool.end()
+      if (client) {
+        try { await client.query(`DROP TABLE IF EXISTS ${TABLE}`) }
+        finally { client.release() }
+      }
+      if (pool) await pool.end()
     })
 
     // ── Caso 1: INSERT con ragged arrays en el mismo batch ──────────────────

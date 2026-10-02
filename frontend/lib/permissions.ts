@@ -24,7 +24,6 @@ export type Resource =
   | 'estadisticas'
   | 'automations'
   | 'templates'
-  | 'encuestas'
 
 export type Action = 'read' | 'create' | 'update' | 'delete' | 'manage' | 'send' | 'assign' | 'transfer'
 
@@ -56,6 +55,8 @@ export function canAccess(
   resource: Resource,
   action: Action,
 ): boolean {
+  // Keep the legacy resource type for stored history, but never grant access.
+  if (resource === 'warmup') return false
   if (user.role === 'admin') return true
 
   // delete and manage are always admin-only
@@ -92,8 +93,8 @@ export function effectivePermissions(
 ): EffectivePermissions {
   const resources: Resource[] = [
     'dashboard', 'contacts', 'campaigns', 'conversations',
-    'lines', 'warmup', 'users', 'lists', 'send', 'audit', 'settings', 'blacklist', 'tasks',
-    'encuestas',
+    'lines', 'users', 'lists', 'send', 'audit', 'settings', 'blacklist', 'tasks',
+    'estadisticas', 'automations', 'templates',
   ]
   const actions: Action[] = ['read', 'create', 'update', 'delete', 'manage', 'send']
 
@@ -205,7 +206,7 @@ export async function checkPermissionWithUser(
  * Returns null if access is allowed, or a NextResponse (401/403) if not.
  *
  * Usage:
- *   const err = await checkPermission(req, 'warmup', 'read')
+ *   const err = await checkPermission(req, 'lines', 'read')
  *   if (err) return err
  */
 export async function checkPermission(

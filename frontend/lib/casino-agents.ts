@@ -40,11 +40,11 @@ export type SyncPlatform = typeof SYNC_PLATFORMS[number]
  * /api/dashboard/casino/sync (H4).
  */
 const PLATFORM_AGENTS_BASE: Record<Exclude<Platform, 'consolidado'>, string[]> = {
-  zeus:     ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet', 'lasvegas'],
-  bet30:    ['bigwin', 'zeus', 'zeusroyal', 'btcuno', 'btcdos'],
+  zeus:     ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet', 'imperio', 'lasvegas'],
+  bet30:    ['bigwin', 'zeus', 'zeusroyal', 'btcuno', 'btcdos', 'imperio'],
   // adminbtc→betcoin, adminzeus→ofizeus, adminroyal→royal, admbigwin→bigwin,
-  // amdfarabet→farabet, adminimperio→imperio (mapeo a operador canónico, plan §8.2)
-  ganamos:  ['adminbtc', 'adminzeus', 'adminroyal', 'admbigwin', 'amdfarabet', 'adminimperio'],
+  // adminfara→farabet, adminimperio→imperio (mapeo a operador canónico, plan §8.2)
+  ganamos:  ['adminbtc', 'adminzeus', 'adminroyal', 'admbigwin', 'adminfara', 'adminimperio'],
   // Nivel 2 del árbol bajo "peaky" — únicos 3 agentes que operan jugadores (D7/H10).
   // adminbtc→betcoin, adminzeus→ofizeus, adminroyal→royal.
   argenbet: ['adminbtc', 'adminzeus', 'adminroyal'],
@@ -65,7 +65,7 @@ const PLATFORM_AGENTS: Record<Platform, string[]> = {
  *             (bigwin ya se llama igual en zeus y bet30 — sin mapeo)
  *   argenbet: adminbtc→betcoin, adminzeus→ofizeus, adminroyal→royal (D7/H10)
  *   ganamos:  adminbtc→betcoin, adminzeus→ofizeus, adminroyal→royal,
- *             admbigwin→bigwin, amdfarabet→farabet, adminimperio→imperio
+ *             admbigwin→bigwin, adminfara→farabet, adminimperio→imperio
  *             ('imperio' es su PROPIO operador — no es un alias de 'bigwin';
  *             la migración 126 lo mapeaba mal a 'bigwin' en
  *             casino_contact_account_links, corregido en la 127)
@@ -87,7 +87,8 @@ export const AGENT_TO_CANONICAL: Record<string, string> = {
   adminroyal: 'royal',
   // ganamos-only
   admbigwin:    'bigwin',
-  amdfarabet:   'farabet',
+  adminfara:    'farabet',
+  amdfarabet:   'farabet', // alias histórico; no se sincroniza esta cuenta
   adminimperio: 'imperio',
 }
 
@@ -156,3 +157,6 @@ export function getPlatformFilterSql(platform: Platform, alias = ''): string {
   }
   return `${col('platform')} = '${platform}'`
 }
+
+/** Compatibility for existing production consumers. */
+export const BET30_TO_CANONICAL = { btcuno: "betcoin", btcdos: "farabet", zeus: "ofizeus", zeusroyal: "royal" }

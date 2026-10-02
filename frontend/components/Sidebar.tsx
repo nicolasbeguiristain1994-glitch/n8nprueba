@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Users, Megaphone, MessageSquare, Activity, Flame, LogOut, UserCog, Settings, FileText, BarChart2, ShieldOff, Bot, ClipboardList, TrendingUp } from 'lucide-react'
+import { LayoutDashboard, Users, Megaphone, MessageSquare, Activity, LogOut, UserCog, Settings, FileText, BarChart2, ShieldOff, Bot, ClipboardList, TrendingUp } from 'lucide-react'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
 const BASE_NAV = [
@@ -11,7 +11,6 @@ const BASE_NAV = [
   { href: '/prioridades',    label: 'Prioridades',     icon: TrendingUp,      sector: 'contacts' },
   { href: '/conversations',  label: 'Conversaciones',  icon: MessageSquare,   sector: 'conversations' },
   { href: '/lines',          label: 'Líneas',          icon: Activity,        sector: 'lines' },
-  { href: '/warmup',         label: 'Calentamiento',   icon: Flame,           sector: 'warmup' },
   { href: '/mis-tareas',     label: 'Mis Tareas',      icon: ClipboardList,   sector: 'tasks' },
 ]
 
@@ -41,8 +40,8 @@ export default function Sidebar() {
     router.push('/login')
   }
   return (
-    <aside className="w-56 bg-white border-r border-gray-200 flex flex-col shrink-0">
-      <div className="px-5 py-5 border-b border-gray-200">
+    <aside className="w-56 bg-card border-r border-border flex flex-col shrink-0">
+      <div className="px-5 py-5 border-b border-border">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 bg-green-500 rounded-lg flex items-center justify-center">
             <span className="text-white text-xs font-bold">WA</span>
@@ -59,8 +58,8 @@ export default function Sidebar() {
               href={href}
               className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
                 active
-                  ? 'bg-green-50 text-green-700 font-medium'
-                  : 'text-gray-600 hover:bg-gray-100'
+                  ? 'bg-success/10 text-success font-medium'
+                  : 'text-muted-foreground hover:bg-muted'
               }`}
             >
               <Icon size={16} />
@@ -69,11 +68,11 @@ export default function Sidebar() {
           )
         })}
       </nav>
-      <div className="px-3 py-4 border-t border-gray-200 space-y-2">
-        <p className="text-xs text-gray-400 px-2">v1.0 — producción</p>
+      <div className="px-3 py-4 border-t border-border space-y-2">
+        <p className="text-xs text-muted-foreground px-2">v1.0 — producción</p>
         <button
           onClick={logout}
-          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors w-full"
+          className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors w-full"
         >
           <LogOut size={16} /> Cerrar sesión
         </button>

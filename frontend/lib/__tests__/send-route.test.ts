@@ -27,11 +27,12 @@ vi.mock('@/lib/permissions', () => ({
 }))
 vi.mock('@/lib/validate', () => ({ isUUID: vi.fn() }))
 vi.mock('@/lib/audit',   () => ({ audit: vi.fn() }))
+vi.mock('@/lib/campaign-audience', () => ({ campaignAudienceError: vi.fn().mockResolvedValue(null) }))
 vi.mock('@/lib/send-processor', () => ({
   processInBackground:    vi.fn().mockResolvedValue(undefined),
   PROCESSOR_LOCK_MINUTES: 30,
 }))
-vi.mock('@/lib/campaign-logger', () => ({ clog: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }))
+vi.mock('@/lib/campaign-logger', () => ({ clog: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), critical: vi.fn() } }))
 
 import * as db          from '@/lib/db'
 import * as permissions from '@/lib/permissions'
@@ -201,7 +202,7 @@ describe('all contacts already processed', () => {
       .mockResolvedValueOnce([{ count: '0' }])
       // totals: 10 total, 10 already sent/failed/skipped
       .mockResolvedValueOnce([{ total: '10', sent: '10' }])
-      .mockResolvedValueOnce([])  // UPDATE campaigns SET status='completed'
+      .mockResolvedValueOnce([{ id: CAMPAIGN_ID }])  // UPDATE campaigns SET status='completed'
 
     const res = await POST(makeReq(), makeParams())
     expect(res.status).toBe(409)

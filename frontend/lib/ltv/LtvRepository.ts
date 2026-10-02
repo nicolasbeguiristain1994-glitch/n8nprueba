@@ -67,10 +67,16 @@ export class LtvRepository {
    * Retorna las métricas del run.
    */
   async refreshAll(): Promise<LtvRecomputeResult> {
-    const [result] = await query<RefreshResultDbRow>(
-      `SELECT * FROM refresh_player_ltv()`,
+    const [row] = await query<{ result: RefreshResultDbRow }>(
+      `SELECT refresh_player_ltv() AS result`,
       [],
     )
+
+    const result = row?.result
+    if (!result || !Number.isFinite(Number(result.rows_processed))
+      || !Number.isFinite(Number(result.duration_ms)) || !Number.isFinite(Date.parse(result.calculated_at))) {
+      throw new Error('Respuesta de recálculo LTV inválida')
+    }
 
     await query(
       `REFRESH MATERIALIZED VIEW CONCURRENTLY mv_player_ltv`,
