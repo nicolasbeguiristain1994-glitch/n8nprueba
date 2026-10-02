@@ -1,3 +1,4 @@
+import { contactScope } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
 import { query, withTransaction } from '@/lib/db'
 import { isUUID, clampStr } from '@/lib/validate'
@@ -58,9 +59,10 @@ export async function POST(
     }
 
     // Obtener todos los contact_ids en orden aleatorio
+    const scope = contactScope(session, 1, 'c')
     const members = await query<{ contact_id: string }>(
-      `SELECT contact_id FROM contact_list_members WHERE list_id = $1 ORDER BY random()`,
-      [id],
+      `SELECT contact_id FROM contact_list_members clm JOIN contacts c ON c.id=clm.contact_id WHERE list_id = $1 AND ${scope.sql} ORDER BY random()`,
+      [id, ...scope.params],
     )
 
     if (members.length === 0) {

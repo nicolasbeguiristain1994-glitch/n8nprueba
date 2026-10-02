@@ -1,91 +1,52 @@
-/**
- * contact-visibility.ts
- *
- * Helper central para el filtro de visibilidad de contactos por operador.
- * Usado en:
- *   - GET  /api/contacts
- *   - GET  /api/contacts/[id]  (check individual)
- *   - PATCH/DELETE /api/contacts/[id]
- *   - GET  /api/dashboard
- *   - GET  /api/users/[id]/visibility
- *
- * Reglas de negocio:
- *   - admin          → ve todo, sin filtro
- *   - operator/viewer → solo los contactos en operator_contact_visibility
- *   - Sin filas asignadas → ve 0 contactos
+/** One contact audience for reads, imports, mutations and notifications.
+ * Explicit assignments narrow allowed agents. With no assignments the agent
+ * scope alone applies; an empty allowed_agents list imposes no agent restriction.
  */
-
 import { query } from '@/lib/db'
-
-// ── Tipos ─────────────────────────────────────────────────────────────────────
-
 export type VisibilityRole = 'admin' | 'operator' | 'viewer'
-
-/**
- * Fragmento SQL que se inyecta en el WHERE de cualquier query sobre contacts.
- *
- * @param role       Rol del usuario actual
- * @param userId     ID del usuario actual
- * @param paramBase  Índice del último parámetro ya usado en la query principal
- *                   (para numerar $N correctamente)
- * @param alias      Alias de la tabla contacts en la query (default 'contacts')
- *
- * Devuelve:
- *   sql    → fragmento "AND EXISTS (...)" o "" si admin
- *   params → parámetros adicionales a concatenar al array de la query
- */
-export function visibilityClause(
-  role: VisibilityRole,
-  userId: string,
-  paramBase: number,
-  alias = 'contacts',
-): { sql: string; params: string[] } {
-  if (role === 'admin') {
-    return { sql: '', params: [] }
-  }
-
-  // Si el operador tiene contactos asignados explícitamente → filtrar a esos.
-  // Si no tiene ninguno asignado → ver todos (el filtro allowed_agents ya restringe por panel).
-  return {
-    sql: `
-      AND (
-        EXISTS (
-          SELECT 1 FROM operator_contact_visibility ocv
-          WHERE ocv.contact_id = ${alias}.id
-            AND ocv.operator_id = $${paramBase + 1}
-        )
-        OR NOT EXISTS (
-          SELECT 1 FROM operator_contact_visibility
-          WHERE operator_id = $${paramBase + 1}
-        )
-      )`,
-    params: [userId],
-  }
+export type ContactAccessUser = { role: VisibilityRole; user_id: string; allowed_agents?: string[] | null }
+export function visibilityClause(role: VisibilityRole, userId: string, paramBase: number, alias = 'contacts') {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(alias)) throw new Error('Invalid SQL alias')
+  if (role === 'admin') return { sql: '', params: [] as unknown[] }
+  return { sql: ` AND (EXISTS (SELECT 1 FROM operator_contact_visibility ocv
+    WHERE ocv.contact_id=${alias}.id AND ocv.operator_id=$${paramBase + 1})
+    OR NOT EXISTS (SELECT 1 FROM operator_contact_visibility WHERE operator_id=$${paramBase + 1}))`, params: [userId] as unknown[] }
 }
-
-// ── Check individual ──────────────────────────────────────────────────────────
-
-/**
- * Verifica si el usuario actual puede ver un contacto específico.
- * Admins siempre pueden. Operadores/viewers solo si tienen la fila en la tabla.
- *
- * @returns true si tiene acceso, false si no
- */
-export async function canSeeContact(
-  role: VisibilityRole,
-  userId: string,
-  contactId: string,
-): Promise<boolean> {
-  if (role === 'admin') return true
-
+export function contactScope(user: ContactAccessUser, paramBase = 0, alias = 'contacts') {
+  const vis = visibilityClause(user.role, user.user_id, paramBase, alias)
+  let sql = `${alias}.deleted_at IS NULL${vis.sql}`
+  const params = [...vis.params]
+  if (user.role !== 'admin' && user.allowed_agents?.length) {
+    params.push(user.allowed_agents)
+    sql += ` AND ${alias}.panel = ANY($${paramBase + params.length}::text[])`
+  }
+  return { sql, params }
+}
+export function canAssignPanels(user: ContactAccessUser, panels: (string | null)[]) {
+  return user.role === 'admin' || !user.allowed_agents?.length
+    || panels.every(panel => panel !== null && user.allowed_agents!.includes(panel))
+}
+export async function canSeeContact(user: ContactAccessUser, contactId: string): Promise<boolean> {
+  const scope = contactScope(user, 1)
   const rows = await query<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1 FROM operator_contact_visibility
-       WHERE operator_id = $1 AND contact_id = $2
-     ) AS exists`,
-    [userId, contactId],
-  )
+    `SELECT EXISTS (SELECT 1 FROM contacts WHERE id=$1 AND ${scope.sql}) AS exists`, [contactId, ...scope.params])
   return rows[0]?.exists ?? false
+}
+/** Phone aliases must not expose a hidden/deleted contact via another row. */
+export function contactPhoneScope(user: ContactAccessUser, phoneSql: string, paramBase: number, allowUnknown: boolean) {
+  const scope = contactScope(user, paramBase, 'contact_scope')
+  const matching = `REPLACE(contact_scope.phone_number,'+','')=REPLACE(${phoneSql},'+','')`
+  return { sql: `(NOT EXISTS (SELECT 1 FROM contacts contact_scope WHERE ${matching}
+      AND (${scope.sql}) IS NOT TRUE)${allowUnknown ? '' : ` AND EXISTS (SELECT 1 FROM contacts contact_scope WHERE ${matching})`})`, params: scope.params }
+}
+/** Keep newly created contacts visible without turning an unrestricted user into
+ * an explicitly restricted user by inserting their first assignment. */
+export async function grantCreatedContacts(client: { query(sql: string, params: unknown[]): Promise<unknown> }, user: ContactAccessUser, ids: string[]) {
+  if (user.role === 'admin' || !ids.length) return
+  await client.query(`INSERT INTO operator_contact_visibility(operator_id,contact_id,assigned_by)
+    SELECT $1, unnest($2::uuid[]), $1
+    WHERE EXISTS (SELECT 1 FROM operator_contact_visibility WHERE operator_id=$1)
+    ON CONFLICT(operator_id,contact_id) DO NOTHING`, [user.user_id, ids])
 }
 
 // ── Asignación bulk ───────────────────────────────────────────────────────────

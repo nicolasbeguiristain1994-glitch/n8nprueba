@@ -1,3 +1,4 @@
+import { canReadConversation, conversationPhone } from '@/lib/conversation-access'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
@@ -10,8 +11,10 @@ export async function GET(req: NextRequest, { params }: Params) {
   const auth = await checkPermissionWithUser(req, 'conversations', 'read')
   if (!auth.ok) return auth.response
 
-  const { phone } = await params
+  const { phone: rawPhone } = await params
+  const phone = conversationPhone(rawPhone)
   try {
+    if (!await canReadConversation(auth.user, phone)) return NextResponse.json({error: 'Forbidden'}, {status: 403})
     const notes = await query(
       `SELECT id, content, author_name, created_at
        FROM conversation_notes
@@ -29,10 +32,11 @@ export async function GET(req: NextRequest, { params }: Params) {
 
 // POST /api/conversations/[phone]/notes — agregar nota interna
 export async function POST(req: NextRequest, { params }: Params) {
-  const auth = await checkPermissionWithUser(req, 'conversations', 'read')
+  const auth = await checkPermissionWithUser(req, 'conversations', 'update')
   if (!auth.ok) return auth.response
 
-  const { phone } = await params
+  const { phone: rawPhone } = await params
+  const phone = conversationPhone(rawPhone)
   let body: { content?: string }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
 
@@ -42,6 +46,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   const authorName = auth.user.name || auth.user.email
 
   try {
+    if (!await canReadConversation(auth.user, phone)) return NextResponse.json({error: 'Forbidden'}, {status: 403})
     await query(
       `INSERT INTO conversation_notes (phone, content, author_id, author_name)
        VALUES ($1, $2, $3, $4)`,

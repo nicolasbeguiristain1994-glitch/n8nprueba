@@ -14,7 +14,7 @@ it('notifies Conversations only after the inbound message is durably stored',asy
  let done!:()=>void;mocks.receive.mockImplementation(()=>new Promise<void>(r=>{done=r}))
  const pending=handleInboundMessage('10001',msg,[],'test')
  expect(mocks.emit).not.toHaveBeenCalled();done();await pending
- expect(mocks.emit).toHaveBeenCalledWith('update',{source:'message'})
+ expect(mocks.emit).toHaveBeenCalledWith('update',{source:'message',phone:'+5491100000001'})
 })
 it('does not notify when persistence fails and leaves the webhook retryable',async()=>{
  mocks.receive.mockRejectedValue(new Error('storage unavailable'))

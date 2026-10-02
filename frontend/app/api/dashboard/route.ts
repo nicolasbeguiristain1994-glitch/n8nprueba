@@ -1,7 +1,8 @@
+import { contactPhoneScope } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
-import { visibilityClause } from '@/lib/contact-visibility'
+import { contactScope } from '@/lib/contact-visibility'
 import { dashboardMessageStats } from '@/lib/dashboard-messages'
 
 export async function GET(req: NextRequest) {
@@ -9,23 +10,12 @@ export async function GET(req: NextRequest) {
   if (!auth.ok) return auth.response
   const { user } = auth
 
-  const vis = visibilityClause(user.role, user.user_id, 0)
+  const vis = contactScope(user)
   const contactParams: unknown[] = [...vis.params]
-  let contactFilter = `AND contacts.deleted_at IS NULL ${vis.sql}`
+  let contactFilter = `AND ${vis.sql}`
   if (user.role !== 'admin' && !user.sectors?.includes('contacts')) contactFilter += ' AND FALSE'
-  if (user.role !== 'admin' && user.allowed_agents?.length) {
-    contactParams.push(user.allowed_agents)
-    contactFilter += ` AND contacts.panel = ANY($${contactParams.length}::text[])`
-  }
-
-  // Filtro de visibilidad para mensajes (operadores ven solo sus contactos)
-  const msgVisFilter = user.role === 'admin'
-    ? ''
-    : `AND wm.phone_number IN (
-         SELECT c.phone_number FROM contacts c
-         JOIN operator_contact_visibility ocv ON ocv.contact_id = c.id
-         WHERE ocv.operator_id = '${user.user_id}'
-       )`
+  const messageScope = contactPhoneScope(user, 'wm.phone_number', 0, user.role === 'admin')
+  const msgVisFilter = `AND ${messageScope.sql}${user.role !== 'admin' && !user.sectors.includes('conversations') ? ' AND FALSE' : ''}`
 
   try {
     // Manual refresh must read current outcomes; cached counters hid new replies.
@@ -51,7 +41,7 @@ export async function GET(req: NextRequest) {
             ${msgVisFilter}
           ORDER BY wm.created_at DESC
           LIMIT 8
-        `),
+        `, messageScope.params),
 
         // Campañas — admins ven todas; operadores ven solo las propias
         user.role === 'admin'

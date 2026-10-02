@@ -1,3 +1,4 @@
+import { contactScope } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
 import { query, withTransaction } from '@/lib/db'
 import { isUUID, clampStr } from '@/lib/validate'
@@ -23,18 +24,21 @@ export async function GET(req: NextRequest) {
       : `WHERE cl.owned_by = $1 AND COALESCE(cl.source, 'user') != 'casino'`
     const params = isAdmin ? [] : [session.user_id]
 
+    const scope = contactScope(session, params.length, 'c')
     const lists = await query(`
       SELECT cl.id, cl.name, cl.description, cl.filters, cl.created_at,
              cl.owned_by,
-             COUNT(clm.contact_id)::int AS contact_count
+             COUNT(c.id)::int AS contact_count
       FROM contact_lists cl
       LEFT JOIN contact_list_members clm ON clm.list_id = cl.id
+      LEFT JOIN contacts c ON c.id=clm.contact_id AND ${scope.sql}
       ${ownerClause}
       GROUP BY cl.id
       ORDER BY cl.created_at DESC
-    `, params)
+    `, [...params, ...scope.params])
     return NextResponse.json({ lists })
   } catch (e) {
+    if (e instanceof Response) return e
     console.error('[/api/lists GET]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
@@ -88,11 +92,12 @@ export async function POST(req: NextRequest) {
         }
 
         if (tags?.length) {
+          const scope = contactScope(session, 4, 'c')
           // Filtrar por tags de casino (contactos que tienen TODOS los tags indicados)
           const { rows } = await client.query<{ id: string }>(
             `SELECT c.id
              FROM contacts c
-             WHERE ($1 = '' OR c.panel = $1)
+             WHERE ${scope.sql} AND ($1 = '' OR c.panel = $1)
                AND ($2 = '' OR c.gaming::text = $2)
                AND ($3 = '' OR c.segment::text = $3)
                AND NOT EXISTS (
@@ -103,28 +108,32 @@ export async function POST(req: NextRequest) {
                    WHERE ct.contact_id = c.id AND ct.tag = required_tag
                  )
                )`,
-            [panel || '', gaming || '', segment || '', tags]
+            [panel || '', gaming || '', segment || '', tags, ...scope.params]
           )
           ids = rows.map(r => r.id)
         } else {
+          const scope = contactScope(session, 3)
           const { rows } = await client.query<{ id: string }>(
             `SELECT id FROM contacts
-             WHERE ($1 = '' OR panel = $1)
+             WHERE ${scope.sql} AND ($1 = '' OR panel = $1)
                AND ($2 = '' OR gaming::text = $2)
                AND ($3 = '' OR segment::text = $3)`,
-            [panel || '', gaming || '', segment || '']
+            [panel || '', gaming || '', segment || '', ...scope.params]
           )
           ids = rows.map(r => r.id)
         }
       }
 
+      ids = [...new Set(ids)]
       if (ids.length > 0) {
-        await client.query(
+        const scope = contactScope(session, 2)
+        const inserted = await client.query(
           `INSERT INTO contact_list_members (list_id, contact_id)
-           SELECT $1, unnest($2::uuid[])
-           ON CONFLICT DO NOTHING`,
-          [list.id, ids]
+           SELECT $1, id FROM contacts WHERE id=ANY($2::uuid[]) AND ${scope.sql}
+           ON CONFLICT DO NOTHING RETURNING contact_id`,
+          [list.id, ids, ...scope.params]
         )
+        if (inserted.rows.length !== ids.length) throw NextResponse.json({error: 'La selección incluye contactos fuera de tu alcance'}, {status: 403})
       }
 
       return { id: list.id, total: ids.length }
@@ -134,6 +143,7 @@ export async function POST(req: NextRequest) {
       metadata: { name: nameStr, owner: session.user_id } })
     return NextResponse.json({ id: result.id, name: nameStr, total: result.total })
   } catch (e) {
+    if (e instanceof Response) return e
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[/api/lists POST]', msg)
     if (msg.includes('contact_lists_name_unique')) {

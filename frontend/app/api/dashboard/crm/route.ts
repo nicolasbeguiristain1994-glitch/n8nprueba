@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
-import { visibilityClause } from '@/lib/contact-visibility'
+import { contactScope } from '@/lib/contact-visibility'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -69,14 +69,10 @@ export async function GET(req: NextRequest) {
   const isAdmin = user.role === 'admin'
   const canReadContacts = isAdmin || user.sectors?.includes('contacts')
   const canReadTasks = isAdmin || user.sectors?.includes('tasks')
-  const visibility = visibilityClause(user.role, user.user_id, 0, 'c')
+  const visibility = contactScope(user, 0, 'c')
   const contactParams: unknown[] = [...visibility.params]
-  let contactWhere = `c.deleted_at IS NULL ${visibility.sql}`
+  let contactWhere = visibility.sql
   if (!canReadContacts) contactWhere += ' AND FALSE'
-  if (!isAdmin && user.allowed_agents?.length) {
-    contactParams.push(user.allowed_agents)
-    contactWhere += ` AND c.panel = ANY($${contactParams.length}::text[])`
-  }
   const taskWhere = !canReadTasks ? 'AND FALSE' : isAdmin ? ''
     : 'AND EXISTS (SELECT 1 FROM task_assignees scope WHERE scope.task_id=t.id AND scope.user_id=$1)'
   const taskParams = !isAdmin && canReadTasks ? [user.user_id] : []

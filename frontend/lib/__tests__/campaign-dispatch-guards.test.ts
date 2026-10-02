@@ -52,6 +52,7 @@ beforeEach(() => {
     if (rejectQuery && sql.includes(rejectQuery)) throw new Error('synthetic database failure')
     if (sql.includes('SELECT c.*') || sql.includes('SELECT * FROM campaigns')) return [campaign]
     if (/SELECT owned_by FROM (contact_lists|prospect_lists)/.test(sql)) return missingList ? [] : [{ owned_by: listOwner }]
+    if (sql.includes('FROM contact_list_members members')) return []
     if (sql.includes('JOIN blacklist bl')) return [{ count: '0' }]
     if (sql.includes('INSERT INTO campaign_recipients')) return []
     if (sql.includes('COUNT(*)::text AS total')) return [{ total: '2', sent: processed }]

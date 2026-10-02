@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const result = await service.getPlayers({
+      access: auth.user,
       agente,
       tierLtv:      tierLtv as ValueTier | undefined,
       minPercentil: percentile,

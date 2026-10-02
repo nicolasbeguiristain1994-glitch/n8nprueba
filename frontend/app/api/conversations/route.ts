@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { getAccessibleLineIds } from '@/lib/line-visibility'
-import { CONVERSATION_MESSAGES_CTE } from '@/lib/conversation-messages'
-import { CONVERSATION_INBOX_CTE } from '@/lib/conversation-inbox'
+import { scopedConversationMessages } from '@/lib/conversation-messages'
+import { conversationInboxCte } from '@/lib/conversation-inbox'
 import { LEVEL_DEFS, type CampaignOption } from '@/lib/scoring/conversation-scoring'
 
 // Normaliza teléfono: quita + y espacios para comparar consistentemente
@@ -19,14 +19,15 @@ export async function GET(req: NextRequest) {
     const lineIds = await getAccessibleLineIds(auth.user)
     if (phoneRaw) {
       const phone = normalize(phoneRaw)
+      const scope = scopedConversationMessages(auth.user, 2)
       const messages = await query(`
-        ${CONVERSATION_MESSAGES_CTE}
+        ${scope.sql}
         SELECT * FROM (
           SELECT id,phone_number,message_body,direction,status,created_at,evolution_message_id
           FROM conversation_messages WHERE REPLACE(phone_number,'+','')=$2
           ORDER BY created_at DESC,id DESC LIMIT 200
         ) recent ORDER BY created_at ASC,id ASC
-      `, [lineIds,phone])
+      `, [lineIds,phone, ...scope.params])
       return NextResponse.json({ messages })
     }
 
@@ -41,6 +42,7 @@ export async function GET(req: NextRequest) {
     if (!['all', 'none', ...LEVEL_DEFS.map(item => item.key)].includes(level)) {
       return NextResponse.json({ error: 'Nivel inválido' }, { status: 400 })
     }
+    const scope = scopedConversationMessages(auth.user, 5)
     const params = [lineIds, campaign.toLowerCase(), level]
 
     // Count, campaign options and page share one snapshot and one inbox scan.
@@ -48,7 +50,7 @@ export async function GET(req: NextRequest) {
     const [{ total, campaigns, conversations }] = await query<{
       total: string; campaigns: CampaignOption[]; conversations: Record<string, unknown>[]
     }>(`
-      ${CONVERSATION_INBOX_CTE}, enriched_page AS (
+      ${conversationInboxCte(scope.sql)}, enriched_page AS (
       SELECT page.*,
           COALESCE(cs.is_escalated, false)         AS is_escalated,
           cs.escalation_reason,
@@ -83,12 +85,12 @@ export async function GET(req: NextRequest) {
         ) options), '[]'::jsonb) AS campaigns,
         COALESCE((SELECT jsonb_agg(p ORDER BY p.last_at DESC, p.phone_number)
           FROM enriched_page p), '[]'::jsonb) AS conversations
-    `, [...params, PAGE_SIZE, offset])
+    `, [...params, PAGE_SIZE, offset, ...scope.params])
     const totalCount = parseInt(total, 10)
 
     return NextResponse.json({
       conversations: conversations.map(row => ({ ...row,
-        last_at: new Date(String(row.last_at)).toISOString(),
+        last_at: row.last_at == null ? null : new Date(String(row.last_at)).toISOString(),
       })),
       campaigns,
       total:    totalCount,

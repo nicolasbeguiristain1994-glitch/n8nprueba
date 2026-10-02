@@ -1,7 +1,7 @@
 import { getLongRunningClient } from '@/lib/db'
 import { contactMovementQuery } from '@/lib/contact-movement-query'
 import { readInactivityRange } from '@/lib/contact-inactivity'
-import { visibilityClause, type VisibilityRole } from '@/lib/contact-visibility'
+import { contactScope, type VisibilityRole } from '@/lib/contact-visibility'
 
 const ACTIVITY = new Set(['nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido'])
 const TENURE = new Set(['nuevo', 'reciente', 'establecido', 'veterano', 'leal'])
@@ -15,7 +15,7 @@ export function contactFilters(sp: URLSearchParams, user: {
   role: VisibilityRole; user_id: string; allowed_agents?: string[] | null
 }) {
   const params: unknown[] = []
-  const where = ['contacts.deleted_at IS NULL']
+  const where = ['TRUE']
   const bind = (value: unknown) => { params.push(value); return `$${params.length}` }
   const csv = (key: string, allowed: Set<string>) => {
     const values = [...new Set(sp.getAll(key).flatMap(v => v.split(',')).map(v => v.trim()).filter(Boolean))]
@@ -49,10 +49,9 @@ export function contactFilters(sp: URLSearchParams, user: {
   if (platform === 'otros') where.push(`NOT (COALESCE(contacts.platforms, '{}') && ARRAY['zeus','bet30','ganamos','argenbet'])`)
   else if (platform) where.push(`'${platform}' = ANY(contacts.platforms)`)
   if (sp.get('sin_movimiento') === 'true') where.push(`(contacts.last_deposit_at IS NULL OR contacts.last_deposit_at < NOW() - INTERVAL '12 months')`)
-  const vis = visibilityClause(user.role, user.user_id, params.length)
+  const vis = contactScope(user, params.length)
   params.push(...vis.params)
-  let sql = where.join('\n AND ') + vis.sql
-  if (user.role !== 'admin' && user.allowed_agents?.length) sql += ` AND contacts.panel = ANY(${bind(user.allowed_agents)}::text[])`
+  const sql = where.join('\n AND ') + ' AND ' + vis.sql
   return { sql, params }
 }
 

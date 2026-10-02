@@ -3,7 +3,7 @@ import { CONVERSATION_MESSAGES_CTE } from './conversation-messages'
 // Only successful campaign messages establish membership. Replies and manual
 // sends keep that history; queued/failed campaigns never label a conversation.
 // Use the same visible, deduplicated message source as the inbox itself.
-export const CONVERSATION_INBOX_CTE = `${CONVERSATION_MESSAGES_CTE},
+export const conversationInboxCte = (messages = CONVERSATION_MESSAGES_CTE) => `${messages},
   campaign_threads AS (
     SELECT REPLACE(m.phone_number, '+', '') AS phone_number,
       cp.id, cp.name, MAX(m.created_at) AS last_sent_at
@@ -37,3 +37,5 @@ export const CONVERSATION_INBOX_CTE = `${CONVERSATION_MESSAGES_CTE},
       OR EXISTS (SELECT 1 FROM campaign_threads ct WHERE ct.phone_number = i.phone_number AND ct.id::text = $2))
       AND ($3::text = 'all' OR ($3 = 'none' AND i.segment IS NULL) OR i.segment = $3)
   )`
+
+export const CONVERSATION_INBOX_CTE = conversationInboxCte()

@@ -1,16 +1,18 @@
+import { canReadConversation, conversationPhone } from '@/lib/conversation-access'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser } from '@/lib/permissions'
 import { emitUpdate } from '@/lib/sse-events'
 
 type Params = { params: Promise<{ phone: string }> }
 
 // PATCH /api/conversations/[phone]/status — actualiza current_flow de la conversación
 export async function PATCH(req: NextRequest, { params }: Params) {
-  const err = await checkPermission(req, 'conversations', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'conversations', 'update')
+  if (!auth.ok) return auth.response
 
-  const { phone } = await params
+  const { phone: rawPhone } = await params
+  const phone = conversationPhone(rawPhone)
   let body: { flow?: string }
   try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
 
@@ -18,6 +20,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   try {
     // UPSERT: si existe conversación activa la actualiza, sino la crea
+    if (!await canReadConversation(auth.user, phone)) return NextResponse.json({error: 'Forbidden'}, {status: 403})
     await query(
       `INSERT INTO conversation_state (phone_number, current_flow, last_activity_at)
        VALUES ($1, $2, NOW())

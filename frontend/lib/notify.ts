@@ -1,3 +1,5 @@
+import { notificationScope } from '@/lib/notification-visibility'
+import type { SessionUser } from '@/lib/auth'
 /**
  * notify.ts — Helper centralizado para crear notificaciones internas.
  *
@@ -47,6 +49,10 @@ const PREF_COLUMN: Record<NotificationType, string> = {
  */
 export async function notify(payload: NotifyPayload): Promise<void> {
   try {
+    const {rows: [recipient]} = await pool.query<SessionUser>(
+      `SELECT id AS user_id, role, sectors, allowed_agents, is_super_admin FROM users WHERE id=$1 AND is_active=TRUE`, [payload.userId])
+    if (!recipient) return
+    const scope = await notificationScope(recipient)
     const col = PREF_COLUMN[payload.type]
 
     // Chequear preferencias (si no existe fila, DEFAULT = TRUE → notifica)
@@ -59,21 +65,15 @@ export async function notify(payload: NotifyPayload): Promise<void> {
     )
     if (!prefRows.rows[0]?.enabled) return
 
-    await pool.query(
-      `INSERT INTO notifications
-         (user_id, type, title, body, link, related_type, related_id, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`,
-      [
-        payload.userId,
-        payload.type,
-        payload.title,
-        payload.body   ?? null,
-        payload.link   ?? null,
-        payload.relatedType ?? null,
-        payload.relatedId   ?? null,
-        JSON.stringify(payload.metadata ?? {}),
-      ]
-    )
+    const values = [payload.userId, payload.type, payload.title, payload.body ?? null,
+      payload.link ?? null, payload.relatedType ?? null, payload.relatedId ?? null, JSON.stringify(payload.metadata ?? {})]
+    const p = (n: number) => `$${scope.params.length + n}`
+    await pool.query(`${scope.cte}
+      INSERT INTO notifications (user_id,type,title,body,link,related_type,related_id,metadata)
+      SELECT ${p(1)}::uuid,${p(2)},${p(3)},${p(4)},${p(5)},related_type,related_id,${p(8)}::jsonb
+      FROM (SELECT ${p(6)}::text AS related_type, ${p(7)}::text AS related_id) notifications
+      WHERE ${scope.sql}`, [...scope.params, ...values])
+
   } catch (e) {
     console.error('[notify] error al crear notificación:', e instanceof Error ? e.message : String(e))
   }

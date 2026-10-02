@@ -1,3 +1,4 @@
+import { contactScope, type ContactAccessUser } from '@/lib/contact-visibility'
 import { query } from '@/lib/db'
 import type { ValueTier } from '@/lib/user-prioritization/config'
 
@@ -95,6 +96,7 @@ export class LtvRepository {
    * Filtra por agente y/o tier_ltv si se pasan.
    */
   async getPlayers(opts: {
+    access?: ContactAccessUser
     agente?:      string
     tierLtv?:     ValueTier
     minPercentil?: number
@@ -122,6 +124,13 @@ export class LtvRepository {
       params.push(opts.minPercentil)
     }
 
+    if (opts.access) {
+      const scope = contactScope(opts.access, params.length, 'c')
+      conditions.push(`EXISTS (SELECT 1 FROM casino_contact_account_links link JOIN contacts c ON c.id=link.contact_id
+        WHERE link.player_id=mv.casino_player_id AND ${scope.sql})`)
+      params.push(...scope.params)
+      p = params.length + 1
+    }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
     const [countRow] = await query<CountRow>(

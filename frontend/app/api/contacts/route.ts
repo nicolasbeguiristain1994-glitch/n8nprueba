@@ -1,5 +1,6 @@
+import { canAssignPanels, grantCreatedContacts } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
-import { query } from '@/lib/db'
+import { query, withTransaction } from '@/lib/db'
 import { contactRead, ContactReadUnavailableError } from '@/lib/contact-read'
 import { isE164 } from '@/lib/validate'
 import { checkPermissionWithUser } from '@/lib/permissions'
@@ -77,6 +78,8 @@ export async function POST(req: NextRequest) {
   if (!phone_clean) return NextResponse.json({ error: 'Teléfono requerido' }, { status: 400 })
   if (!isE164(phone_clean)) return NextResponse.json({ error: 'Teléfono debe estar en formato E.164 (ej: +5491112345678)' }, { status: 400 })
 
+  if (!canAssignPanels(err.user, [panel || null])) return NextResponse.json({error: 'Agente fuera de tu alcance'}, {status: 403})
+
   const nameParts = (name || '').trim().split(' ')
   const first_name = nameParts[0] || null
   const last_name  = nameParts.slice(1).join(' ') || null
@@ -86,7 +89,8 @@ export async function POST(req: NextRequest) {
   const lineaSubVal = lineaVal !== null && ['a', 'b', 'c'].includes(lineaSubRaw) ? lineaSubRaw : null
 
   try {
-    const [row] = await query<{ id: string }>(
+    const row = await withTransaction(async client => {
+      const {rows: [created]} = await client.query<{ id: string }>(
       `INSERT INTO contacts
          (external_id, phone_number, first_name, last_name, segment, panel, gaming, linea, linea_sub, status,
           opt_in_marketing, opt_in_sms, platform_source, created_at, updated_at)
@@ -95,6 +99,9 @@ export async function POST(req: NextRequest) {
        RETURNING id`,
       [phone_clean, first_name, last_name, segment || null, panel || null, gaming || null, lineaVal, lineaSubVal]
     )
+      if (created) await grantCreatedContacts(client, err.user, [created.id])
+      return created
+    })
     if (!row) return NextResponse.json({ error: 'Ya existe un contacto con ese teléfono' }, { status: 409 })
     void audit({ req, action: 'create', resource: 'contacts', resource_id: row.id,
       metadata: { phone: phone_clean } })

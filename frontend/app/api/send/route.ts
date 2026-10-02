@@ -1,3 +1,4 @@
+import { contactPhoneScope } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isE164 } from '@/lib/validate'
@@ -69,6 +70,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `Teléfono inválido (debe ser E.164): ${invalidPhone}` }, { status: 400 })
   }
   const uniquePhones = [...new Set(normalizedPhones)]
+
+  if (session.role !== 'admin') {
+    const scope = contactPhoneScope(session, 'destination.phone', 1, true)
+    const denied = await query(`SELECT 1 FROM unnest($1::text[]) destination(phone) WHERE NOT ${scope.sql} LIMIT 1`, [uniquePhones, ...scope.params])
+    if (denied.length) return NextResponse.json({error: 'Destinatario fuera de tu alcance'}, {status: 403})
+  }
 
   // Ownership check — prevent attaching sends to another user's campaign
   if (campaign_id) {

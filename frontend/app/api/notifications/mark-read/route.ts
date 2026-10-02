@@ -1,6 +1,7 @@
+import { notificationScope } from '@/lib/notification-visibility'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { getSessionFromRequest } from '@/lib/auth'
+import { checkSessionWithUser } from '@/lib/permissions'
 
 // ── POST /api/notifications/mark-read — Marcar una o varias como leídas ──────
 //
@@ -9,8 +10,9 @@ import { getSessionFromRequest } from '@/lib/auth'
 // Solo marca notificaciones que pertenecen al usuario autenticado.
 
 export async function POST(req: NextRequest) {
-  const user = getSessionFromRequest(req)
-  if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+  const auth = await checkSessionWithUser(req)
+  if (!auth.ok) return auth.response
+  const user = auth.user
 
   let body: { ids?: unknown }
   try {
@@ -28,14 +30,15 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const placeholders = ids.map((_, i) => `$${i + 2}`).join(', ')
+    const scope = await notificationScope(user)
+    const placeholders = ids.map((_, i) => `$${scope.params.length + i + 1}`).join(', ')
     await query(
-      `UPDATE notifications
+      `${scope.cte} UPDATE notifications
        SET is_read = TRUE, read_at = NOW()
-       WHERE user_id = $1
+       WHERE user_id = $2 AND ${scope.sql}
          AND id IN (${placeholders})
          AND is_read = FALSE`,
-      [user.user_id, ...ids]
+      [...scope.params, ...ids]
     )
     return NextResponse.json({ ok: true })
   } catch (e) {

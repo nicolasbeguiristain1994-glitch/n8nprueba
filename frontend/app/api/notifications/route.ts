@@ -1,6 +1,7 @@
+import { notificationScope } from '@/lib/notification-visibility'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { getSessionFromRequest } from '@/lib/auth'
+import { checkSessionWithUser } from '@/lib/permissions'
 
 // ── GET /api/notifications — Bandeja del usuario autenticado ─────────────────
 //
@@ -13,8 +14,9 @@ import { getSessionFromRequest } from '@/lib/auth'
 // No requiere sector específico — cualquier usuario autenticado puede ver las suyas.
 
 export async function GET(req: NextRequest) {
-  const user = getSessionFromRequest(req)
-  if (!user) return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+  const auth = await checkSessionWithUser(req)
+  if (!auth.ok) return auth.response
+  const user = auth.user
 
   const url        = req.nextUrl
   const unreadOnly = url.searchParams.get('unread_only') === 'true'
@@ -35,9 +37,10 @@ export async function GET(req: NextRequest) {
       created_at: string
     }
 
-    const conditions = ['user_id = $1']
-    const params: unknown[] = [user.user_id]
-    let pIdx = 2
+    const scope = await notificationScope(user)
+    const conditions = ['user_id = $2', scope.sql]
+    const params = scope.params
+    let pIdx = params.length + 1
 
     if (unreadOnly) {
       conditions.push('is_read = FALSE')
@@ -46,6 +49,7 @@ export async function GET(req: NextRequest) {
     const where = `WHERE ${conditions.join(' AND ')}`
 
     const notifications = await query<NotifRow>(`
+      ${scope.cte}
       SELECT id, type, title, body, link, related_type, related_id,
              is_read, read_at, created_at
       FROM notifications
@@ -55,12 +59,13 @@ export async function GET(req: NextRequest) {
     `, [...params, limit, offset])
 
     const [countRow] = await query<{ total: string; unread: string }>(`
+      ${scope.cte}
       SELECT
         COUNT(*)::text                              AS total,
         COUNT(*) FILTER (WHERE is_read = FALSE)::text AS unread
       FROM notifications
-      WHERE user_id = $1
-    `, [user.user_id])  // user_id viene del token JWT, no de la DB
+      WHERE user_id = $2 AND ${scope.sql}
+    `, params)
 
     return NextResponse.json({
       notifications,

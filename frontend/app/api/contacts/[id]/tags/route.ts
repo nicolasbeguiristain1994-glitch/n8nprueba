@@ -1,5 +1,6 @@
+import { contactScope } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
-import { query, withTransaction } from '@/lib/db'
+import { withTransaction } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
 import { checkPermissionWithUser } from '@/lib/permissions'
 
@@ -29,10 +30,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     .slice(0, 20)
 
   try {
-    const existing = await query<{ id: string }>('SELECT id FROM contacts WHERE id = $1', [id])
-    if (!existing[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-
     await withTransaction(async (client) => {
+      const scope = contactScope(auth.user, 1)
+      const {rows} = await client.query(`SELECT id FROM contacts WHERE id=$1 AND ${scope.sql} FOR UPDATE`, [id, ...scope.params])
+      if (!rows.length) throw NextResponse.json({error: 'Contacto no disponible'}, {status: 403})
       // Remove old custom tags (keep casino: tags intact)
       await client.query(
         `DELETE FROM contact_tags WHERE contact_id = $1 AND tag NOT LIKE 'casino:%'`,
@@ -50,6 +51,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
     return NextResponse.json({ ok: true, tags })
   } catch (e) {
+    if (e instanceof Response) return e
     console.error('[PUT /api/contacts/[id]/tags]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

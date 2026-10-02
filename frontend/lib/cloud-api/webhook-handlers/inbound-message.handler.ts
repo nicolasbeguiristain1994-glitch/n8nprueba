@@ -22,7 +22,7 @@ export async function handleInboundMessage(
 
   // Persist the original event once; retries must not reopen the 24-hour window.
   await conversationRepository.receive(phoneNumberId, contactPhone, msg)
-  sseEmitter.emit('update', { source: 'message' })
+  sseEmitter.emit('update', { source: 'message', phone: contactPhone })
 
   const inboundText = cloudMessageText(msg, msg.type)
   if (inboundText) {

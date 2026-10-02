@@ -1,3 +1,4 @@
+import { contactScope, contactPhoneScope } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
@@ -19,6 +20,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!isCampaignOwnerOrAdmin(session, row.owned_by))
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
+
+  const recipientScope = contactPhoneScope(session, 'cr.phone_number', 1, true)
+  const listScope = contactPhoneScope(session, 'COALESCE(c.phone_number,p.phone_number)', 1, true)
+  const messageScope = contactPhoneScope(session, 'wm.phone_number', 1, true)
+  const contactPredicate = (alias: string) => `(${alias}.id IS NULL OR (${contactScope(session, 1, alias).sql}))`
 
   // ── Intento 1: campaign_recipients con FK join + fallback por teléfono ──────
   // Maneja tanto IDs directos como campañas donde contact_id/prospect_id son NULL.
@@ -50,7 +56,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       LEFT JOIN prospects p_fk ON p_fk.id = cr.prospect_id
       -- Fallback por teléfono si los FK son NULL (normaliza últimos 10 dígitos)
       LEFT JOIN LATERAL (
-        SELECT id, first_name, last_name FROM contacts
+        SELECT id, first_name, last_name, panel, deleted_at FROM contacts
         WHERE cr.contact_id IS NULL
           AND RIGHT(REGEXP_REPLACE(phone_number, '[^0-9]', '', 'g'), 10)
             = RIGHT(REGEXP_REPLACE(cr.phone_number, '[^0-9]', '', 'g'), 10)
@@ -73,7 +79,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         ORDER BY wm.created_at DESC
         LIMIT 1
       ) m ON true
-      WHERE cr.campaign_id = $1
+      WHERE cr.campaign_id = $1 AND ${recipientScope.sql} AND ${contactPredicate('c_fk')} AND ${contactPredicate('c_ph')}
       ORDER BY
         CASE COALESCE(m.status, cr.status)
           WHEN 'read'      THEN 1  WHEN 'delivered' THEN 2  WHEN 'sent'    THEN 3
@@ -81,7 +87,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           WHEN 'pending'   THEN 7  ELSE 8
         END,
         COALESCE(c_fk.first_name, p_fk.first_name, c_ph.first_name, p_ph.first_name)
-    `, [id])
+    `, [id, ...recipientScope.params])
     if (rows.length > 0) return NextResponse.json({ contacts: rows })
   } catch (e) {
     console.warn('[contacts] attempt 1 failed:', (e as Error).message)
@@ -116,7 +122,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         ORDER BY wm.created_at DESC
         LIMIT 1
       ) m ON true
-      WHERE camp.id = $1
+      WHERE camp.id = $1 AND ${listScope.sql} AND ${contactPredicate('c')}
         AND (c.id IS NOT NULL OR p.id IS NOT NULL)
       ORDER BY
         CASE m.status
@@ -124,7 +130,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           WHEN 'failed' THEN 4  WHEN 'skipped' THEN 5  WHEN 'sending' THEN 6
           WHEN 'pending' THEN 7  ELSE 8
         END, COALESCE(c.first_name, p.first_name)
-    `, [id])
+    `, [id, ...recipientScope.params])
     if (rows.length > 0) return NextResponse.json({ contacts: rows })
   } catch (e) {
     console.warn('[contacts] attempt 2 failed:', (e as Error).message)
@@ -150,7 +156,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       LEFT JOIN prospects p
         ON RIGHT(REGEXP_REPLACE(p.phone_number, '[^0-9]', '', 'g'), 10)
          = RIGHT(REGEXP_REPLACE(wm.phone_number, '[^0-9]', '', 'g'), 10)
-      WHERE wm.campaign_id = $1
+      WHERE wm.campaign_id = $1 AND ${messageScope.sql} AND ${contactPredicate('c')}
       ORDER BY
         RIGHT(REGEXP_REPLACE(wm.phone_number, '[^0-9]', '', 'g'), 10),
         CASE wm.status
@@ -158,7 +164,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
           WHEN 'failed' THEN 4  WHEN 'skipped' THEN 5  ELSE 6
         END,
         wm.created_at DESC
-    `, [id])
+    `, [id, ...recipientScope.params])
     return NextResponse.json({ contacts: rows })
   } catch (e) {
     // Fallback sin prospects (tabla puede no existir aún)
@@ -176,9 +182,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         LEFT JOIN contacts c
           ON RIGHT(REGEXP_REPLACE(c.phone_number, '[^0-9]', '', 'g'), 10)
            = RIGHT(REGEXP_REPLACE(wm.phone_number, '[^0-9]', '', 'g'), 10)
-        WHERE wm.campaign_id = $1
+        WHERE wm.campaign_id = $1 AND ${messageScope.sql} AND ${contactPredicate('c')}
         ORDER BY RIGHT(REGEXP_REPLACE(wm.phone_number, '[^0-9]', '', 'g'), 10), wm.created_at DESC
-      `, [id])
+      `, [id, ...recipientScope.params])
       return NextResponse.json({ contacts: rows })
     } catch (e2) {
       console.error('[contacts] attempt 3 failed:', (e2 as Error).message)

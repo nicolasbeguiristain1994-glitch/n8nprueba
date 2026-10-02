@@ -1,6 +1,7 @@
+import { contactScope } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser } from '@/lib/permissions'
 
 // POST /api/contacts/import/check
 // Recibe una lista de teléfonos y retorna cuáles ya existen en contacts,
@@ -10,8 +11,8 @@ import { checkPermission } from '@/lib/permissions'
 // Returns: { total: number, by_panel: { [panel: string]: number }, sample: string[] }
 
 export async function POST(req: NextRequest) {
-  const err = await checkPermission(req, 'contacts', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'contacts', 'read')
+  if (!auth.ok) return auth.response
 
   let body: { phones?: string[] }
   try { body = await req.json() } catch {
@@ -24,11 +25,12 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    const scope = contactScope(auth.user, 1)
     const rows = await query<{ phone_number: string; panel: string | null }>(
       `SELECT phone_number, panel
        FROM contacts
-       WHERE phone_number = ANY($1::text[])`,
-      [phones]
+       WHERE phone_number = ANY($1::text[]) AND ${scope.sql}`,
+      [phones, ...scope.params]
     )
 
     const byPanel: Record<string, number> = {}

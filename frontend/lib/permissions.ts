@@ -134,10 +134,10 @@ type FreshUserRow = {
  *   if (!auth.ok) return auth.response
  *   const session = auth.user  // fresh DB role/sectors
  */
-export async function checkPermissionWithUser(
+export async function checkSessionWithUser(
   req: Request,
-  resource: Resource,
-  action: Action,
+  resource?: Resource,
+  action?: Action,
 ): Promise<PermissionResult> {
   const session = getSessionFromRequest(req)
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0].trim()
@@ -157,7 +157,7 @@ export async function checkPermissionWithUser(
       securityLog('session_invalid', { ip, reason: 'bootstrap_expired', resource, action })
       return { ok: false, response: NextResponse.json({ error: 'Session expired' }, { status: 401 }) }
     }
-    if (!canAccess(session, resource, action)) {
+    if (resource && action && !canAccess(session, resource, action)) {
       securityLog('access_denied', { ip, userId: null, resource, action, reason: 'bootstrap_forbidden' })
       return { ok: false, response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
     }
@@ -190,7 +190,7 @@ export async function checkPermissionWithUser(
     is_super_admin:        dbUser.is_super_admin ?? false,
   }
 
-  if (!canAccess(freshUser, resource, action)) {
+  if (resource && action && !canAccess(freshUser, resource, action)) {
     securityLog('access_denied', { ip, userId: session.user_id, role: freshUser.role, resource, action })
     return { ok: false, response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
   }
@@ -258,3 +258,7 @@ export function isOwnerOrAdmin(
  * reference this name.
  */
 export const isCampaignOwnerOrAdmin = isOwnerOrAdmin
+
+export function checkPermissionWithUser(req: Request, resource: Resource, action: Action) {
+  return checkSessionWithUser(req, resource, action)
+}

@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import { useCurrentUser } from '@/lib/useCurrentUser'
 import { StickyNote, Send, Loader2 } from 'lucide-react'
 
 interface Note {
@@ -18,6 +19,8 @@ function fmtNote(dateStr: string): string {
 }
 
 export function InternalNotes({ phone }: Props) {
+  const {permissions} = useCurrentUser()
+  const canUpdate = permissions.conversations?.includes('update') ?? false
   const [notes,   setNotes]   = useState<Note[]>([])
   const [text,    setText]    = useState('')
   const [loading, setLoading] = useState(false)
@@ -34,7 +37,7 @@ export function InternalNotes({ phone }: Props) {
 
   const save = async () => {
     const content = text.trim()
-    if (!content || saving) return
+    if (!canUpdate || !content || saving) return
     setSaving(true)
     try {
       const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/notes`, {
@@ -56,6 +59,7 @@ export function InternalNotes({ phone }: Props) {
       {/* Input */}
       <div className="flex gap-1.5 mb-2.5">
         <textarea
+          disabled={!canUpdate}
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); save() } }}
@@ -65,7 +69,7 @@ export function InternalNotes({ phone }: Props) {
         />
         <button
           onClick={save}
-          disabled={!text.trim() || saving}
+          disabled={!canUpdate || !text.trim() || saving}
           className="self-end p-1.5 rounded bg-indigo-600 text-white disabled:opacity-40 hover:bg-indigo-700 transition-colors"
         >
           {saving ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}

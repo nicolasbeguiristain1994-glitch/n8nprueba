@@ -13,9 +13,10 @@ Nunca publicar una carpeta de trabajo mediante `railway up` directamente.
 2. Usar Node 20 e instalar dependencias con `npm ci --ignore-scripts` en la raíz y
    `npm ci --prefix frontend`. No reutilizar dependencias de otra versión.
 3. Configurar `OPS_TEST_DATABASE_URL` hacia PostgreSQL local. Las pruebas crean y
-   eliminan únicamente su propia base temporal. Ejecutar:
+   eliminan únicamente sus bases, esquemas o tablas temporales. Ejecutar:
    `node scripts/ops/release.mjs validate`.
-   Se prueban migraciones reales, la interfaz, tipos y compilación. La constancia
+   Se prueban migraciones reales, visibilidad e importaciones en PostgreSQL,
+   conversaciones Cloud, la interfaz, tipos y compilación. La constancia
    queda vinculada al commit, árbol Git y catálogo exactos.
 4. Consultar el ID activo en Railway. Preparar una carpeta nueva:
    `node scripts/ops/release.mjs prepare --output /ruta/nueva --expect-active ID`.
@@ -55,7 +56,9 @@ histórico se ejecutó: registra el esquema existente como punto de partida.
   realizados fuera del ejecutor. Cada paso confirmado guarda su huella de esquema.
 
 Las credenciales de migración deben poder crear el esquema privado; éste revoca
-el acceso de PUBLIC. Ninguna ruta de la aplicación utiliza estas tablas.
+el acceso de PUBLIC. Ninguna ruta de la aplicación utiliza estas tablas. El antiguo endpoint
+`POST /api/admin/migrate` devuelve 410 y no ejecuta SQL; las migraciones pasan
+por este ejecutor.
 
 ## Migraciones nuevas
 

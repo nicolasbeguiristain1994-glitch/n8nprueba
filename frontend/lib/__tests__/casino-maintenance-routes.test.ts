@@ -144,9 +144,10 @@ describe('POST /api/admin/resegment — chequeo de rol', () => {
 })
 
 describe('POST /api/admin/migrate — sin pausa', () => {
-  it('ejecuta sus pasos como antes', async () => {
+  it('remite al ejecutor versionado sin modificar el esquema', async () => {
     const res = await migratePOST(makeReq('POST', '/api/admin/migrate'))
-    expect(res.status).toBe(200)
-    expect(vi.mocked(db.query).mock.calls.length).toBeGreaterThan(0)
+    expect(res.status).toBe(410)
+    expect((await res.json()).code).toBe('USE_VERIFIED_MIGRATION_RUNNER')
+    expect(vi.mocked(db.query).mock.calls.some(([sql]) => /ALTER|CREATE|DROP/i.test(sql))).toBe(false)
   })
 })

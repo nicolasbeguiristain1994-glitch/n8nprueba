@@ -3,7 +3,7 @@ import { query } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
-import { canSeeContact } from '@/lib/contact-visibility'
+import { contactScope, canAssignPanels } from '@/lib/contact-visibility'
 import { parseBody, handleValidationError, UpdateContactSchema } from '@/lib/schema'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -14,83 +14,42 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { id } = await params
   if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
-  // Verificar visibilidad: operadores solo pueden editar contactos asignados
-  if (!(await canSeeContact(user.role, user.user_id, id))) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
-
   const rawBody = await req.json().catch(() => null)
   const parsed  = parseBody(UpdateContactSchema, rawBody)
   if (!parsed.ok) return handleValidationError(req, parsed.error, 'contacts')
 
   const { segment, gaming, panel, linea, linea_sub, first_name, last_name } = parsed.data
 
+  if (panel !== undefined && !canAssignPanels(user, [panel])) {
+    return NextResponse.json({error: 'Agente fuera de tu alcance'}, {status: 403})
+  }
   try {
-    const existing = await query<{ id: string }>('SELECT id FROM contacts WHERE id = $1', [id])
-    if (!existing[0]) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-
+    const values: unknown[] = [id]
+    const sets: string[] = []
     const changedFields: string[] = []
-
-    if (segment !== undefined) {
-      await query(`UPDATE contacts SET segment = $1::contact_segment, updated_at = NOW() WHERE id = $2`, [segment, id])
-      changedFields.push('segment')
+    const bind = (value: unknown) => { values.push(value); return `$${values.length}` }
+    for (const [field, value, cast] of [
+      ['segment', segment, '::contact_segment'], ['gaming', gaming, '::gaming_type'],
+      ['first_name', first_name, ''], ['last_name', last_name, ''],
+    ] as const) {
+      if (value !== undefined) { sets.push(`${field}=${bind(value || null)}${cast}`); changedFields.push(field) }
     }
-
-    if (gaming !== undefined) {
-      await query(`UPDATE contacts SET gaming = $1::gaming_type, updated_at = NOW() WHERE id = $2`, [gaming, id])
-      changedFields.push('gaming')
-    }
-
     if (panel !== undefined) {
-      await query(
-        `UPDATE contacts
-         SET panel           = $1,
-             panels_assigned = CASE
-               WHEN $1 IS NULL THEN panels_assigned
-               WHEN $1 = ANY(panels_assigned) THEN panels_assigned
-               ELSE (SELECT ARRAY(SELECT DISTINCT unnest FROM unnest(panels_assigned || ARRAY[$1]) ORDER BY unnest))
-             END,
-             updated_at = NOW()
-         WHERE id = $2`,
-        [panel, id]
-      )
+      const p = bind(panel)
+      sets.push(`panel=${p}`, `panels_assigned=CASE WHEN ${p}::text IS NULL THEN panels_assigned
+        ELSE ARRAY(SELECT DISTINCT unnest(panels_assigned || ARRAY[${p}]::text[])) END`)
       changedFields.push('panel')
     }
-
-    if (linea !== undefined) {
-      // Al quitar la línea también se limpia la sub-variante (el CHECK exige linea NOT NULL)
-      await query(
-        `UPDATE contacts
-         SET linea = $1,
-             linea_sub = CASE WHEN $1::smallint IS NULL THEN NULL ELSE linea_sub END,
-             updated_at = NOW()
-         WHERE id = $2`,
-        [linea, id]
-      )
-      changedFields.push('linea')
+    const nextLine = linea !== undefined ? bind(linea) + '::smallint' : 'linea'
+    if (linea !== undefined) { sets.push(`linea=${nextLine}`); changedFields.push('linea') }
+    if (linea !== undefined || linea_sub !== undefined) {
+      sets.push(`linea_sub=CASE WHEN ${nextLine} IS NULL THEN NULL ELSE ${linea_sub !== undefined ? bind(linea_sub) : 'linea_sub'} END`)
+      if (linea_sub !== undefined) changedFields.push('linea_sub')
     }
-
-    if (linea_sub !== undefined) {
-      // Solo se aplica si el contacto ya tiene línea; si no, queda en NULL
-      await query(
-        `UPDATE contacts
-         SET linea_sub = CASE WHEN linea IS NULL THEN NULL ELSE $1 END,
-             updated_at = NOW()
-         WHERE id = $2`,
-        [linea_sub, id]
-      )
-      changedFields.push('linea_sub')
-    }
-
-    if (first_name !== undefined) {
-      await query(`UPDATE contacts SET first_name = $1, updated_at = NOW() WHERE id = $2`, [first_name || null, id])
-      changedFields.push('first_name')
-    }
-
-    if (last_name !== undefined) {
-      await query(`UPDATE contacts SET last_name = $1, updated_at = NOW() WHERE id = $2`, [last_name || null, id])
-      changedFields.push('last_name')
-    }
+    const scope = contactScope(user, values.length)
+    const updated = await query<{id: string}>(`UPDATE contacts SET ${[...sets, 'updated_at=NOW()'].join(', ')}
+      WHERE id=$1 AND ${scope.sql} RETURNING id`, [...values, ...scope.params])
+    if (!updated[0]) return NextResponse.json({error: 'Contacto no disponible'}, {status: 403})
 
     void audit({ req, action: 'update', resource: 'contacts', resource_id: id,
       metadata: { changedFields } })

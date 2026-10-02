@@ -55,12 +55,13 @@ export function validate(root=ROOT){
  if(!process.env.OPS_TEST_DATABASE_URL)throw Error('OPS_TEST_DATABASE_URL is required for migration integration tests (localhost only)');
  const steps=[
   [process.execPath,['--test',...fs.readdirSync(path.join(root,'scripts/ops/tests')).filter(f=>f.endsWith('.test.mjs')).map(f=>`scripts/ops/tests/${f}`)],root],
-  ['npm',['test'],path.join(root,'frontend')],
+  ['npm',['test'],path.join(root,'frontend'),{...process.env,CONTACTS_TEST_DATABASE_URL:process.env.OPS_TEST_DATABASE_URL}],
+  [process.execPath,['node_modules/vitest/vitest.mjs','run','lib/__tests__/cloud-conversations-postgres.test.ts'],path.join(root,'frontend'),{...process.env,RUN_CAMPAIGN_PG_TESTS:'1',DATABASE_URL:process.env.OPS_TEST_DATABASE_URL}],
   [process.execPath,['node_modules/next/dist/bin/next','typegen'],path.join(root,'frontend')],
   [process.execPath,['node_modules/typescript/bin/tsc','--noEmit','--incremental','false'],path.join(root,'frontend')],
   ['npm',['run','build'],path.join(root,'frontend')],
  ];
- for(const [cmd,args,cwd] of steps)run(cmd,args,cwd);
+ for(const [cmd,args,cwd,env] of steps)run(cmd,args,cwd,env??process.env);
  const after=sourceIdentity(root);if(after.commit!==identity.commit||after.tree!==identity.tree)throw Error('Source changed during validation');
  const proof={...identity,catalogDigest:catalog.digest,ok:true,at:new Date().toISOString(),node:process.versions.node,steps:steps.map(([cmd,args])=>[path.basename(cmd),...args])};
  fs.mkdirSync(path.join(root,'.local-tools'),{recursive:true});fs.writeFileSync(path.join(root,'.local-tools/release-validation.json'),JSON.stringify(proof,null,2)+'\n');return proof;

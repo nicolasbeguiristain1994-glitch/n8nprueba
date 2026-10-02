@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { useCurrentUser } from '@/lib/useCurrentUser'
 import { Crown, Clock, UserCheck, CheckCircle2, Ban, ShieldOff, Loader2, Check } from 'lucide-react'
 import type { Conv } from '@/lib/scoring/conversation-scoring'
 
@@ -31,6 +32,9 @@ function ActionButton({
 interface Props { phone: string; conv: Conv | undefined; onRefresh?: () => void }
 
 export function QuickActions({ phone, conv, onRefresh }: Props) {
+  const {permissions} = useCurrentUser()
+  const canUpdate = permissions.conversations?.includes('update') ?? false
+  const canBlacklist = permissions.blacklist?.includes('manage') ?? false
   const [loading, setLoading] = useState<ActionKey | null>(null)
   const [done,    setDone]    = useState<ActionKey | null>(null)
   const [showFU,  setShowFU]  = useState(false)
@@ -111,7 +115,7 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
           icon={<Crown size={13} className="text-yellow-600 shrink-0" />}
           onClick={markVip}
           loading={loading === 'vip'} done={done === 'vip'}
-          disabled={!conv?.contact_id}
+          disabled={!conv?.contact_id || !permissions.contacts?.includes('update')}
         />
 
         {inProcess ? (
@@ -119,14 +123,14 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
             label="Resolver (quitar En Proceso)"
             icon={<CheckCircle2 size={13} className="text-muted-foreground shrink-0" />}
             onClick={resolveProcess}
-            loading={loading === 'resolve'} done={done === 'resolve'}
+            loading={loading === 'resolve'} done={done === 'resolve'} disabled={!canUpdate}
           />
         ) : (
           <ActionButton
             label="Marcar En Proceso"
             icon={<UserCheck size={13} className="text-blue-600 shrink-0" />}
             onClick={markProcess}
-            loading={loading === 'process'} done={done === 'process'}
+            loading={loading === 'process'} done={done === 'process'} disabled={!canUpdate}
           />
         )}
 
@@ -134,7 +138,7 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
           label="Programar seguimiento"
           icon={<Clock size={13} className="text-primary shrink-0" />}
           onClick={() => setShowFU(v => !v)}
-          loading={loading === 'schedule'} done={done === 'schedule'}
+          loading={loading === 'schedule'} done={done === 'schedule'} disabled={!canUpdate}
         />
 
         {showFU && (
@@ -154,7 +158,7 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
             />
             <button
               onClick={saveFollowUp}
-              disabled={!fuDate || loading === 'schedule'}
+              disabled={!canUpdate || !fuDate || loading === 'schedule'}
               className="w-full text-xs bg-indigo-600 text-white rounded py-1 hover:bg-indigo-700 disabled:opacity-40 transition-colors"
             >
               Guardar seguimiento
@@ -167,14 +171,14 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
             label="Remover de blacklist"
             icon={<ShieldOff size={13} className="text-muted-foreground shrink-0" />}
             onClick={removeFromBlacklist}
-            loading={loading === 'unblacklist'} done={done === 'unblacklist'}
+            loading={loading === 'unblacklist'} done={done === 'unblacklist'} disabled={!canBlacklist}
           />
         ) : (
           <ActionButton
             label="Agregar a blacklist"
             icon={<Ban size={13} className="text-red-500 shrink-0" />}
             onClick={addToBlacklist}
-            loading={loading === 'blacklist'} done={done === 'blacklist'}
+            loading={loading === 'blacklist'} done={done === 'blacklist'} disabled={!canBlacklist}
           />
         )}
 

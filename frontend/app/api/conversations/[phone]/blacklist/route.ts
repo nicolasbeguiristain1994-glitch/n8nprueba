@@ -1,3 +1,4 @@
+import { canReadConversation, conversationPhone } from '@/lib/conversation-access'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
@@ -8,10 +9,11 @@ type Params = { params: Promise<{ phone: string }> }
 
 // POST — agregar a blacklist
 export async function POST(req: NextRequest, { params }: Params) {
-  const auth = await checkPermissionWithUser(req, 'conversations', 'read')
+  const auth = await checkPermissionWithUser(req, 'blacklist', 'manage')
   if (!auth.ok) return auth.response
 
-  const { phone } = await params
+  const { phone: rawPhone } = await params
+  const phone = conversationPhone(rawPhone)
   const normalized = normalizePhone(phone)
   if (!normalized) return NextResponse.json({ error: 'Teléfono inválido' }, { status: 400 })
 
@@ -21,6 +23,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   const addedBy = isUUID(auth.user.user_id) ? auth.user.user_id : null
 
   try {
+    if (!await canReadConversation(auth.user, phone)) return NextResponse.json({error: 'Forbidden'}, {status: 403})
     await query(
       `INSERT INTO blacklist (phone_number_raw, phone_number_normalized, reason, source, added_by)
        VALUES ($1, $2, $3, 'manual', $4::UUID)
@@ -37,16 +40,18 @@ export async function POST(req: NextRequest, { params }: Params) {
 
 // PATCH — remover de blacklist
 export async function PATCH(req: NextRequest, { params }: Params) {
-  const auth = await checkPermissionWithUser(req, 'conversations', 'read')
+  const auth = await checkPermissionWithUser(req, 'blacklist', 'manage')
   if (!auth.ok) return auth.response
 
-  const { phone } = await params
+  const { phone: rawPhone } = await params
+  const phone = conversationPhone(rawPhone)
   const normalized = normalizePhone(phone)
   if (!normalized) return NextResponse.json({ error: 'Teléfono inválido' }, { status: 400 })
 
   const removedBy = isUUID(auth.user.user_id) ? auth.user.user_id : null
 
   try {
+    if (!await canReadConversation(auth.user, phone)) return NextResponse.json({error: 'Forbidden'}, {status: 403})
     await query(
       `UPDATE blacklist
        SET removed_at = NOW(), removed_by = $1::UUID

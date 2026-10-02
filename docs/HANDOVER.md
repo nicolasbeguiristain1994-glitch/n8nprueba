@@ -774,7 +774,7 @@ El proyecto está configurado para Railway. Ver `docs/deployment.md` para el che
 **Proceso de deploy:**
 1. Push a `main`
 2. Railway detecta cambios, construye Next.js
-3. **Ejecutar manualmente** `POST /api/admin/migrate` (admin only) para correr migraciones nuevas
+3. Publicar mediante el [ejecutor de versiones verificadas](runbooks/verified-releases.md). El endpoint histórico `POST /api/admin/migrate` fue retirado; no ejecuta SQL.
 4. Reiniciar worker BullMQ si hay cambios en `scripts/workers/`
 
 ### 10.5 Operaciones cotidianas

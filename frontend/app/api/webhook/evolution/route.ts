@@ -163,7 +163,7 @@ export async function POST(req: NextRequest) {
       )
 
       // Notificar en tiempo real a todos los clientes SSE conectados
-      sseEmitter.emit('update', { source: 'message' })
+      sseEmitter.emit('update', { source: 'message', phone: phone })
 
       // ── Detección de opt-out automático ──────────────────────────────────────
       // Si el mensaje contiene una keyword de baja, agrega el número a blacklist.

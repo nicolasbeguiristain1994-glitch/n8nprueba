@@ -3,7 +3,6 @@ import { NextRequest } from 'next/server'
 const q=vi.hoisted(()=>vi.fn(async(sql:string)=>sql.includes('COUNT(*)')?[{count:'0'}]:[]))
 vi.mock('@/lib/db',()=>({query:q}))
 vi.mock('@/lib/permissions',()=>({checkPermissionWithUser:vi.fn(async()=>({ok:true,user:{role:'admin',user_id:'test',can_download_contacts:true}}))}))
-vi.mock('@/lib/contact-visibility',()=>({visibilityClause:()=>({sql:'',params:[]})}))
 vi.mock('@/lib/app-settings',()=>({getAppSetting:async()=>true}))
 vi.mock('@/lib/audit',()=>({audit:vi.fn()}))
 import {GET as contacts} from '@/app/api/contacts/route'

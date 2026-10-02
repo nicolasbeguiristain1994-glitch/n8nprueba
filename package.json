@@ -1,7 +1,12 @@
 {
   "scripts": {
     "test": "jest",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "release:validate": "node scripts/ops/release.mjs validate",
+    "release:prepare": "node scripts/ops/release.mjs prepare",
+    "release:deploy": "node scripts/ops/release.mjs deploy",
+    "migrations:status": "node scripts/ops/run-migrations.mjs --status",
+    "migrations:check": "node scripts/ops/run-migrations.mjs --check"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
