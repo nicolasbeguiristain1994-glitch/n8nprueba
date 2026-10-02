@@ -34,6 +34,7 @@ const UNPROTECTED_API_PREFIXES: readonly string[] = [
 const UNPROTECTED_PAGES: readonly string[] = [
   '/',
   '/login',
+  '/release.json', // generated from the validated Git artifact; no secrets
   '/politica-de-privacidad',
   '/terminos-y-condiciones',
   '/eliminacion-de-datos',

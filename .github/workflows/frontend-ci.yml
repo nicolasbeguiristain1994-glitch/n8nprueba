@@ -1,46 +1,45 @@
-name: Frontend CI
-
+name: Verified release checks
 on:
   push:
-    branches: [main]
+    branches: [main, 'codex/**']
   pull_request:
     branches: [main]
-
+permissions:
+  contents: read
 jobs:
-  ci:
-    name: Typecheck and Build
+  verify:
     runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: frontend
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Test
-        run: npm test
-
-      - name: Typecheck
-        run: npx tsc --noEmit
-
-      - name: Build
-        run: npm run build
+    services:
+      postgres:
+        image: postgres:16
         env:
-          # NEXT_PUBLIC_* vars are inlined at build time.
-          # Provide placeholder values so the build does not fail on missing vars.
-          NEXT_PUBLIC_EVOLUTION_MANAGER_URL: http://localhost:8080/manager
-          # next/font/google requires outbound network access during build.
-          # If this step fails in CI with a network error, consider switching to
-          # next/font/local. See docs/deployment.md for details.
+          POSTGRES_PASSWORD: local-test-only
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      OPS_TEST_DATABASE_URL: postgresql://postgres:local-test-only@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - name: Install locked tooling dependencies
+        run: npm ci --ignore-scripts
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend
+      - name: Validate exact Git version, real migrations, frontend and build
+        run: node scripts/ops/release.mjs validate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validation-${{ github.sha }}
+          path: .local-tools/release-validation.json
+          include-hidden-files: true

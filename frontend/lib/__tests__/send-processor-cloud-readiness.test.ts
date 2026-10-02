@@ -9,6 +9,12 @@ import { ConversationWindowError, OptOutError } from '@/lib/cloud-api/errors'
 import { sendOne, processInBackground, type CampaignRow, type RecipientRow } from '@/lib/send-processor'
 
 vi.mock('@/lib/db', () => ({ query: vi.fn() }))
+// Routing has its own PostgreSQL suite; this adapter test must not enter a real transaction.
+vi.mock('@/lib/campaign-routing', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/campaign-routing')>(),
+  prepareCampaignRouting: vi.fn(async () => {}),
+  getCampaignAssignedLine: vi.fn(async () => 'cloud-line'),
+}))
 vi.mock('@/lib/campaign-logger', () => ({ clog: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } }))
 vi.mock('@/lib/contact-frequency/ContactFrequencyEngine', () => ({
   ContactFrequencyEngine: { atomicEvaluateAndRecord: vi.fn() },
@@ -152,7 +158,7 @@ describe('single-line Cloud campaign readiness', () => {
     })
     await processInBackground(campaign, 'lock')
     expect(status).toBe('paused')
-    expect(getEligibleLines).toHaveBeenCalledTimes(1)
+    expect(getEligibleLines).toHaveBeenCalledTimes(2)
     expect(statements().some(sql => sql.includes('UPDATE campaign_recipients') && sql.includes("SET status = 'failed'"))).toBe(false)
   })
 
