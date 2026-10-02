@@ -86,7 +86,7 @@ async function deploy(dir){
  run(process.execPath,['scripts/ops/run-migrations.mjs','--root',dir,'--check']);
  if(active()!==manifest.expectedActive)throw Error('Production changed while checking migrations; deployment cancelled');
  verifyArtifact(dir);
- run(cli,['up',dir,...scope,'--detach','--message',`git:${manifest.commit} tree:${manifest.tree} catalog:${manifest.catalogDigest}`]);
+ run(cli,['up','.',...scope,'--detach','--message',`git:${manifest.commit} tree:${manifest.tree} catalog:${manifest.catalogDigest}`],dir);
  return {submitted:true,commit:manifest.commit,expectedActive:manifest.expectedActive};
 }
 async function main(){
