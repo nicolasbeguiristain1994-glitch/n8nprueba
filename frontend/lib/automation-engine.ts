@@ -4,7 +4,7 @@ import { sseEmitter } from '@/lib/sse-events'
 
 export type AutomationSource = { provider: 'cloud'; phoneNumberId: string } | { provider: 'evolution'; instance: string }
 type Rule = { id: string; name: string; type: 'reply'|'flow'|'handoff'; trigger_type: string;
-  trigger_config: { keywords?: string[] }; action_config: { message?: string; steps?: { message: string; delay_sec?: number }[] } }
+  trigger_config: { keywords?: string[]; once_per_chat?: boolean }; action_config: { message?: string; steps?: { message: string; delay_sec?: number }[] } }
 type Job = { id: string; event_key: string; automation_id: string; automation_name: string; phone: string;
   provider: 'cloud'|'evolution'; source_id: string; body: string; step: number; handoff: boolean; legacy_message_id: string|null }
 const digits = (phone: string) => phone.replace(/\D/g,'')
@@ -41,14 +41,26 @@ export async function evaluateAutomations(phone: string, messageText: string, me
     const blocked=await db.query(`SELECT 1 FROM conversation_state WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND resolved_at IS NULL AND is_escalated=true
       UNION ALL SELECT 1 FROM blacklist WHERE phone_number_normalized=$1 AND removed_at IS NULL LIMIT 1`,[number])
     if (blocked.rows.length) return
-    const recent=await db.query(`SELECT 1 FROM automation_message_jobs WHERE phone=$1 AND provider=$2 AND source_id=$3
-      AND created_at>NOW()-interval '10 seconds' AND status IN ('queued','processing','sent') LIMIT 1`,[number,provider,sourceId])
-    if (recent.rows.length) return
     const rules=await db.query<Rule>(`SELECT a.id,a.name,a.type,a.trigger_type,a.trigger_config,a.action_config
       FROM automations a JOIN users u ON u.id=a.created_by
       WHERE a.is_active=true AND u.is_active=true AND u.role='admin' ORDER BY a.priority,a.created_at,a.id`)
     const rule=rules.rows.find(r=>automationMatches(r,messageText))
     if (!rule) return
+    if (rule.type==='reply' && rule.trigger_config.once_per_chat===true) {
+      // Chats in the inbox are keyed by phone, even across lines/providers.
+      // Serialize different inbound events before checking the durable history.
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`automation-once:${rule.id}:${number}`])
+      const prior=await db.query(`SELECT 1 FROM automation_message_jobs
+        WHERE automation_id=$1 AND phone=$2 AND status IN ('queued','processing','sent','uncertain') LIMIT 1`,[rule.id,number])
+      if (prior.rows.length) {
+        await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details)
+          VALUES($1,$2,$3,'skipped','Respuesta única por chat: ya enviada o pendiente de confirmación')`,[rule.id,rule.name,number])
+        return
+      }
+    }
+    const recent=await db.query(`SELECT 1 FROM automation_message_jobs WHERE phone=$1 AND provider=$2 AND source_id=$3
+      AND created_at>NOW()-interval '10 seconds' AND status IN ('queued','processing','sent') LIMIT 1`,[number,provider,sourceId])
+    if (recent.rows.length) return
     const contact=await db.query<{first_name:string|null;panel:string|null}>(`SELECT first_name,panel FROM contacts WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 LIMIT 1`,[number])
     const resolve=(message:string)=>message.replace(/\{\{nombre\}\}/gi,contact.rows[0]?.first_name?.trim()||'Cliente')
       .replace(/\{\{empresa\}\}/gi,contact.rows[0]?.panel?.trim()||'')
@@ -86,10 +98,24 @@ async function complete(job:Job,status:'sent'|'failed'|'skipped'|'uncertain',det
 async function sendJob(job:Job):Promise<void> {
   // Recheck operator handoff, opt-out and active rule/creator at send time,
   // including delayed flow steps. Each reply stays on its inbound line.
-  const active=await query(`SELECT 1 FROM automations a JOIN users u ON u.id=a.created_by WHERE a.id=$1 AND a.is_active=true AND u.is_active=true AND u.role='admin'`,[job.automation_id])
+  const active=await query<Pick<Rule,'type'|'trigger_config'>>(`SELECT a.type,a.trigger_config FROM automations a JOIN users u ON u.id=a.created_by WHERE a.id=$1 AND a.is_active=true AND u.is_active=true AND u.role='admin'`,[job.automation_id])
   const blocked=await query(`SELECT 1 FROM blacklist WHERE phone_number_normalized=$1 AND removed_at IS NULL
     UNION ALL SELECT 1 FROM conversation_state WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND resolved_at IS NULL AND is_escalated=true AND NOT $2 LIMIT 1`,[job.phone,job.handoff])
   if (!active.length||blocked.length) { await complete(job,'skipped','Regla pausada, baja solicitada o conversación atendida por un operador');return }
+  if (active[0].type==='reply' && active[0].trigger_config.once_per_chat===true) {
+    // The option can be enabled after multiple replies were queued. Keep only
+    // the oldest eligible event; a sent/uncertain result always blocks a repeat.
+    const duplicate=await withTransaction(async db=>{
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`automation-once:${job.automation_id}:${job.phone}`])
+      return (await db.query(`SELECT 1 FROM automation_message_jobs prior
+        WHERE prior.automation_id=$1 AND prior.phone=$2 AND prior.event_key<>$3
+          AND (prior.status IN ('sent','uncertain') OR (
+            prior.status IN ('queued','processing') AND (prior.created_at,prior.event_key)<
+              (SELECT current.created_at,current.event_key FROM automation_message_jobs current WHERE current.id=$4)))
+        LIMIT 1`,[job.automation_id,job.phone,job.event_key,job.id])).rows.length>0
+    })
+    if (duplicate) { await complete(job,'skipped','Respuesta única por chat: ya enviada o reservada por otro mensaje');return }
+  }
   if (job.provider==='cloud') {
     const ready=await query(`SELECT 1 FROM cloud_numbers cn JOIN whatsapp_lines wl ON wl.id=cn.whatsapp_line_id
       WHERE cn.phone_number_id=$1 AND cn.status='active' AND wl.status='active' AND wl.is_connected=true AND wl.sending_enabled=true`,[job.source_id])

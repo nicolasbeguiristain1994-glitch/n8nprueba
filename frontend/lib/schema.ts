@@ -221,13 +221,16 @@ export {
 
 const AUTOMATION_TYPES = ['reply', 'flow', 'handoff'] as const
 const TRIGGER_TYPES    = ['keyword', 'contains', 'any_inbound'] as const
+const AutomationTriggerConfigSchema = z.object({
+  once_per_chat: z.boolean().optional(),
+}).catchall(z.unknown())
 
 export const CreateAutomationSchema = z.object({
   name:           z.string().min(1, 'El nombre es requerido').max(200),
   description:    z.string().max(500).optional().nullable(),
   type:           z.enum(AUTOMATION_TYPES, { message: 'Tipo inválido' }),
   trigger_type:   z.enum(TRIGGER_TYPES, { message: 'Tipo de trigger inválido' }),
-  trigger_config: z.record(z.string(), z.unknown()).optional().default({}),
+  trigger_config: AutomationTriggerConfigSchema.optional().default({}),
   action_config:  z.record(z.string(), z.unknown()).optional().default({}),
   is_active:      z.boolean().optional().default(true),
   priority:       z.number().int().min(1).max(1000).optional().default(100),
@@ -239,7 +242,7 @@ export const UpdateAutomationSchema = z.object({
   description:    z.string().max(500).nullable().optional(),
   type:           z.enum(AUTOMATION_TYPES).optional(),
   trigger_type:   z.enum(TRIGGER_TYPES).optional(),
-  trigger_config: z.record(z.string(), z.unknown()).optional(),
+  trigger_config: AutomationTriggerConfigSchema.optional(),
   action_config:  z.record(z.string(), z.unknown()).optional(),
   is_active:      z.boolean().optional(),
   priority:       z.number().int().min(1).max(1000).optional(),

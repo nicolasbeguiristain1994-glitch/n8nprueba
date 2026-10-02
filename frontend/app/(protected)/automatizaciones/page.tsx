@@ -16,7 +16,7 @@ import { fetchJson } from '@/lib/fetchJson'
 type AutomationType  = 'reply' | 'flow' | 'handoff'
 type TriggerType     = 'keyword' | 'contains' | 'any_inbound'
 
-interface TriggerConfig { keywords?: string[] }
+interface TriggerConfig { keywords?: string[]; once_per_chat?: boolean }
 interface ReplyActionConfig { message: string }
 interface FlowStep { message: string; delay_sec?: number }
 interface FlowActionConfig { steps: FlowStep[] }
@@ -94,6 +94,7 @@ const BLANK_FORM = {
   handoff_msg:   '',
   priority:      '100',
   is_active:     true,
+  once_per_chat: true,
 }
 
 // ── Página principal ──────────────────────────────────────────────────────────
@@ -192,6 +193,7 @@ export default function AutomatizacionesPage() {
       handoff_msg:  handoffMsg,
       priority:     String(a.priority),
       is_active:    a.is_active,
+      once_per_chat: tc.once_per_chat === true,
     })
     setSaveError(null)
     setShowEditor(true)
@@ -203,7 +205,8 @@ export default function AutomatizacionesPage() {
     setSaveError(null)
     if (!form.name.trim()) { setSaveError('El nombre es requerido'); return }
 
-    const trigger_config: TriggerConfig = {}
+    const trigger_config: TriggerConfig = { ...editTarget?.trigger_config, once_per_chat: form.type === 'reply' && form.once_per_chat }
+    delete trigger_config.keywords
     if (form.trigger_type !== 'any_inbound') {
       const kws = form.keywords.split(',').map(k => k.trim()).filter(Boolean)
       if (kws.length === 0) { setSaveError('Ingresá al menos una palabra clave'); return }
@@ -403,6 +406,9 @@ export default function AutomatizacionesPage() {
                                   {kws.slice(0, 3).join(', ')}{kws.length > 3 ? ` +${kws.length - 3}` : ''}
                                 </div>
                               )}
+                              {item.type === 'reply' && tc.once_per_chat === true && (
+                                <div className="mt-1 text-xs font-medium text-primary">Una vez por chat</div>
+                              )}
                             </td>
                             <td className="px-4 py-3">
                               <Badge className={`text-xs border-0 ${item.is_active ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground'}`}>
@@ -600,6 +606,18 @@ export default function AutomatizacionesPage() {
                 </div>
               )}
             </div>
+
+            {/* Frecuencia de la respuesta */}
+            {form.type === 'reply' && (
+              <div className="rounded-lg border border-border p-4 space-y-2">
+                <label className="flex items-start gap-2 text-sm font-medium">
+                  <input type="checkbox" className="mt-0.5 h-4 w-4 accent-primary" checked={form.once_per_chat}
+                    onChange={event => setForm(f => ({ ...f, once_per_chat: event.target.checked }))} />
+                  Enviar esta respuesta solo una vez por chat
+                </label>
+                <p className="text-xs text-muted-foreground">Cada teléfono recibe esta respuesta una sola vez, aunque vuelva a escribir o tocar otro botón de la misma automatización. Se tienen en cuenta los envíos anteriores y las distintas líneas. El límite no se reinicia al día siguiente ni al editar el texto.</p>
+              </div>
+            )}
 
             {/* Acción según tipo */}
             <div className="space-y-3 border border-border rounded-lg p-4">
