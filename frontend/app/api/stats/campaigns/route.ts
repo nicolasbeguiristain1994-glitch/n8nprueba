@@ -5,6 +5,7 @@ import { isUUID } from '@/lib/validate'
 import { campaignStatistics, statisticsRange, STATS_TIMEZONE } from '@/lib/statistics'
 import { CAMPAIGN_STATS_SQL, CAMPAIGN_OUTCOME_SQL } from '@/lib/campaign-stats'
 import { CAMPAIGN_REPLIES_SQL } from '@/lib/campaign-replies'
+import { campaignEffectiveness } from '@/lib/campaign-effectiveness'
 
 export async function GET(req: NextRequest) {
   const auth=await checkPermissionWithUser(req,'estadisticas','read')
@@ -44,9 +45,11 @@ export async function GET(req: NextRequest) {
         COALESCE(enviados,0) AS enviados,COALESCE(entregados,0) AS entregados,
         COALESCE(leidos,0) AS leidos,COALESCE(respuestas,0) AS respuestas
         FROM outbound_days FULL JOIN reply_days USING (dia) ORDER BY dia`,[id])
-      return NextResponse.json({kpis:rows[0],series,timezone:STATS_TIMEZONE,metricScope:'campaign_recipients'})
+      const effectiveness=(await campaignEffectiveness([id],true)).get(id)!
+      const {efectivos_detalle,...effectivenessKpis}=effectiveness
+      return NextResponse.json({kpis:{...rows[0],...effectivenessKpis},efectivos:efectivos_detalle,series,timezone:STATS_TIMEZONE,metricScope:'campaign_recipients'})
     }
-    const campaigns=await campaignStatistics(range.from,range.to,owner,req.nextUrl.searchParams.get('status')||'',req.nextUrl.searchParams.get('q')||'')
+    const campaigns=await campaignStatistics(range.from,range.to,owner,req.nextUrl.searchParams.get('status')||'',req.nextUrl.searchParams.get('q')||'',true)
     return NextResponse.json({campaigns,timezone:STATS_TIMEZONE,metricScope:'campaign_recipients'})
   } catch {
     return NextResponse.json({error:'No se pudieron cargar las estadísticas de campañas'},{status:500})

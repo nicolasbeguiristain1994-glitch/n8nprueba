@@ -1,5 +1,7 @@
 'use client'
-import { argentinaToday, shiftDate } from '@/lib/dashboard-format'
+import { argentinaToday, shiftDate, formatPesos } from '@/lib/dashboard-format'
+import { CampaignEffectivenessPanel } from '@/components/campaigns/CampaignEffectivenessPanel'
+import type { CampaignEffectiveness, EffectiveRecipient } from '@/lib/campaign-effectiveness'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
@@ -28,14 +30,15 @@ interface DistPoint   { status: string; n: number }
 interface TopCampaign { id: string; name: string; type: string; status: string; total: number; leidos: number }
 interface CampaignCount { total: number; completadas: number; activas: number; programadas: number }
 
-interface Campaign {
+interface Campaign extends CampaignEffectiveness {
   id: string; name: string; type: string; status: string
   created_at: string; completed_at: string | null
   enviados: number; entregados: number; leidos: number; fallidos: number; respuestas: number
   tasa_entrega: string | null; tasa_lectura: string | null
 }
 interface CampaignDetail {
-  kpis: { enviados: number; entregados: number; leidos: number; fallidos: number; respuestas: number; tasa_entrega: string; tasa_lectura: string }
+  kpis: Omit<CampaignEffectiveness, 'efectivos_detalle'> & { enviados: number; entregados: number; leidos: number; fallidos: number; respuestas: number; tasa_entrega: string; tasa_lectura: string }
+  efectivos: EffectiveRecipient[]
   series: SeriesPoint[]
 }
 interface LineStats {
@@ -190,6 +193,8 @@ export default function EstadisticasPage() {
   const [detail,       setDetail]       = useState<string | null>(null)
   const [detailData,   setDetailData]   = useState<CampaignDetail | null>(null)
   const [loadingDetail, setLoadingDetail] = useState(false)
+  const [errorDetail, setErrorDetail] = useState<string | null>(null)
+  const detailRequest = useRef(0)
 
   // Lines tab
   const [lines,      setLines]      = useState<LineStats[]>([])
@@ -268,13 +273,16 @@ export default function EstadisticasPage() {
   }, [from, to])
 
   const loadDetail = useCallback(async (id: string) => {
-    setLoadingDetail(true); setDetailData(null)
+    const request = ++detailRequest.current
+    setLoadingDetail(true); setDetailData(null); setErrorDetail(null)
     try {
       const res  = await fetch(`/api/stats/campaigns?id=${id}&from=${from}&to=${to}`)
       const data = await res.json() as CampaignDetail & { error?: string }
-      if (!res.ok) return
+      if (request !== detailRequest.current) return
+      if (!res.ok) { setErrorDetail(data.error || 'No se pudo cargar la campaña'); return }
       setDetailData(data)
-    } catch {} finally { setLoadingDetail(false) }
+    } catch { if (request === detailRequest.current) setErrorDetail('Error de red al cargar la campaña') }
+    finally { if (request === detailRequest.current) setLoadingDetail(false) }
   }, [from, to])
 
   useEffect(() => { void loadOverview() }, [loadOverview])
@@ -532,6 +540,7 @@ export default function EstadisticasPage() {
         {/* ── TAB: CAMPAÑAS ────────────────────────────────────────────────── */}
         <TabsContent value="campanas" className="space-y-4 mt-4">
           <p className="text-xs text-muted-foreground">Respuestas cuenta mensajes recibidos, no personas únicas. Se asignan al mensaje citado o al último envío de campaña de esa conversación.</p>
+          <p className="text-xs text-muted-foreground">Efectivos: destinatarios con una carga confirmada dentro de las 24 horas posteriores a su envío. Los montos corresponden a cargas, sin bonos.</p>
           {detail ? (
             /* DETALLE DE CAMPAÑA */
             <div className="space-y-4">
@@ -549,8 +558,11 @@ export default function EstadisticasPage() {
                 <div className="flex items-center justify-center h-40">
                   <Loader2 size={20} className="animate-spin text-muted-foreground/60" />
                 </div>
+              ) : errorDetail ? (
+                <p role="alert" className="text-sm text-destructive">{errorDetail}</p>
               ) : detailData ? (
                 <>
+                  <CampaignEffectivenessPanel key={detail} stats={detailData.kpis} recipients={detailData.efectivos} />
                   <div className="grid grid-cols-2 xl:grid-cols-5 gap-4">
                     <KpiCard label="Enviados"   value={fmt(detailData.kpis.enviados)}   icon={Send}         color="blue" />
                     <KpiCard label="Entregados" value={fmt(detailData.kpis.entregados)} icon={CheckCheck}   color="green"
@@ -622,7 +634,7 @@ export default function EstadisticasPage() {
                   <table className="w-full text-sm">
                     <thead className="bg-background border-b border-border">
                       <tr>
-                        {['Campaña','Estado','Enviados','Entregados','Leídos','Respuestas','Fallidos','T. entrega','T. lectura','Creada'].map(h => (
+                        {['Campaña','Estado','Enviados','Efectivos (24 h)','Efectividad','Monto cargado (24 h)','Entregados','Leídos','Respuestas','Fallidos','T. entrega','T. lectura','Creada'].map(h => (
                           <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -637,6 +649,12 @@ export default function EstadisticasPage() {
                             </Badge>
                           </td>
                           <td className="px-4 py-3 text-foreground">{fmt(c.enviados)}</td>
+                          <td className="px-4 py-3 text-success">{fmt(c.efectivos)}</td>
+                          <td className="px-4 py-3 text-foreground">
+                            {pct(c.tasa_efectividad)}
+                            {c.ventanas_abiertas > 0 && <span className="block text-xs text-muted-foreground">Provisional</span>}
+                          </td>
+                          <td className="px-4 py-3 text-foreground whitespace-nowrap">{formatPesos(c.monto_cargado_24h)}</td>
                           <td className="px-4 py-3 text-foreground">{fmt(c.entregados)}</td>
                           <td className="px-4 py-3 text-foreground">{fmt(c.leidos)}</td>
                           <td className="px-4 py-3 text-foreground">{fmt(c.respuestas)}</td>

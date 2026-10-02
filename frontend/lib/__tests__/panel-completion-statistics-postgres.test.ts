@@ -47,7 +47,14 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('statistics metrics, sc
    ALTER TABLE campaign_recipients ADD id uuid,ADD line_id uuid,ADD sent_at timestamptz,ADD evolution_message_id text;
    UPDATE campaign_recipients SET id='${id(50)}',line_id='${id(60)}' WHERE campaign_id='${id(1)}';
    UPDATE campaign_recipients SET id='${id(51)}',line_id='${id(61)}' WHERE campaign_id='${id(2)}';
-   ALTER TABLE whatsapp_messages ADD sent_at timestamptz,ADD campaign_recipient_id uuid,ADD original_campaign_recipient_id uuid;`)
+   ALTER TABLE whatsapp_messages ADD sent_at timestamptz,ADD campaign_recipient_id uuid,ADD original_campaign_recipient_id uuid;
+   ALTER TABLE campaign_recipients ADD contact_id uuid;
+   UPDATE campaign_recipients SET contact_id='${id(70)}' WHERE campaign_id='${id(1)}';
+   CREATE TABLE casino_contact_account_links(contact_id uuid,platform text,username_lower text);
+   ALTER TABLE contacts ADD first_name text,ADD last_name text,ADD deleted_at timestamptz,ADD casino_accounts jsonb DEFAULT '[]';
+   CREATE VIEW casino_segmentation_players AS SELECT DISTINCT md5(platform || ':' || username_lower)::uuid AS id,platform,username_lower,'admin'::text AS agente FROM casino_contact_account_links;
+   CREATE TABLE casino_transactions(id bigint,platform text,username text,tipo text,monto numeric,fecha date,fecha_hora_utc timestamptz,raw_detalles text);
+   CREATE TABLE casino_financial_source_records(transaction_id bigint,platform text,kind text,monto numeric);`)
   m.query.mockImplementation(async(sql,params)=>(await db.query(sql,params)).rows)
   m.auth.mockResolvedValue({ok:true,user:{role:'operator',user_id:id(10)}})
  })
@@ -68,6 +75,25 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('statistics metrics, sc
  it('uses the same retry result for template analytics',async()=>{
   const r=await templates(req('templates'));expect(r.status).toBe(200)
   expect((await r.json()).templates[0]).toMatchObject({enviados:1,leidos:1})
+ })
+ it('shares 24-hour effectiveness across list/detail/CSV, beyond the selected date range',async()=>{
+  await db.query('SAVEPOINT campaign_effectiveness')
+  try {
+   await db.query(`INSERT INTO casino_contact_account_links VALUES('${id(70)}','bet30','player');
+    UPDATE contacts SET casino_accounts='[{"platform":"bet30","username":"player"}]' WHERE id='${id(70)}';
+    INSERT INTO casino_transactions VALUES(1,'bet30','player','carga',1234.56,'2026-10-01','2026-10-01T04:00:00Z',NULL)`)
+   const list=await(await campaigns(req('campaigns'))).json()
+   expect(list.campaigns[0]).toMatchObject({efectivos:1,tasa_efectividad:'100.0',monto_cargado_24h:'1234.56'})
+   const detail=await(await campaigns(req('campaigns?id='+id(1)))).json()
+   expect(detail.kpis).toMatchObject({efectivos:1,tasa_efectividad:'100.0',monto_cargado_24h:'1234.56',monto_apostado_24h:null})
+   expect(detail.efectivos).toHaveLength(1)
+   const csv=await(await exportCsv(req('export?type=campaigns'))).text()
+   expect(csv).toContain('"Efectivos (24 h)","Efectividad %","Cargas (24 h)","Monto cargado (24 h)"')
+   expect(csv).toContain('"1","100.0","1","1234.56","No disponible"')
+   m.query.mockClear()
+   expect((await campaigns(req('campaigns?id='+id(2)))).status).toBe(404)
+   expect(m.query).toHaveBeenCalledTimes(1)
+  } finally {await db.query('ROLLBACK TO SAVEPOINT campaign_effectiveness')}
  })
  it('counts Cloud replies and linked legacy replies once, including days with only replies',async()=>{
   await db.query('SAVEPOINT reply_counts')
