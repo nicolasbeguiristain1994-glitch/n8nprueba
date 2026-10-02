@@ -86,7 +86,9 @@ async function deploy(dir){
  run(process.execPath,['scripts/ops/run-migrations.mjs','--root',dir,'--check']);
  if(active()!==manifest.expectedActive)throw Error('Production changed while checking migrations; deployment cancelled');
  verifyArtifact(dir);
- run(cli,['up','.',...scope,'--detach','--message',`git:${manifest.commit} tree:${manifest.tree} catalog:${manifest.catalogDigest}`],dir);
+ // Run inside the archive without a path argument: Railway treats an explicit
+ // relative path as a different archive prefix and can fail before upload.
+ run(cli,['up',...scope,'--detach','--message',`git:${manifest.commit} tree:${manifest.tree} catalog:${manifest.catalogDigest}`],dir);
  return {submitted:true,commit:manifest.commit,expectedActive:manifest.expectedActive};
 }
 async function main(){
