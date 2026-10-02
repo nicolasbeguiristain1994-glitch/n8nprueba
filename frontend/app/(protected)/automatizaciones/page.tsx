@@ -634,7 +634,7 @@ export default function AutomatizacionesPage() {
                     placeholder={`Hola {{nombre}}! ¿En qué podemos ayudarte hoy?\nOpción 1: Consultas\nOpción 2: Soporte`}
                   />
                   <p className="text-xs text-amber-600 bg-warning/10 rounded px-2 py-1 mt-1">
-                    ⚠ MVP: solo se envía el primer paso inmediatamente. Los pasos siguientes requieren configuración adicional.
+                    Escribí un mensaje por línea. Los pasos se procesan en orden; revisá el resultado de cada uno en Historial de ejecuciones.
                   </p>
                 </div>
               )}

@@ -1,1135 +1,211 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { useCurrentUser } from '@/lib/useCurrentUser'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import {
-  LayoutDashboard, Users, Megaphone, MessageSquare, Activity,
-  ClipboardList, CheckSquare, CalendarDays, BarChart2, Bot, ShieldOff,
-  FileText, UserCog, Settings, ChevronRight, ChevronDown,
-  Lightbulb, AlertTriangle, Info, Star, ArrowRight,
-  HelpCircle, BookOpen, Tag,
-  QrCode, TrendingUp, Pause, Trash2,
+  Activity, ArrowRight, BarChart2, BookOpen, Bot, CalendarDays, CheckSquare,
+  ChevronDown, ClipboardList, FileText, HelpCircle, Info, LayoutDashboard,
+  Lightbulb, Megaphone, MessageSquare, Search, Settings, ShieldOff, Star,
+  Tag, TrendingUp, UserCog, Users, type LucideIcon,
 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { PageHeader } from '@/components/layout/PageHeader'
+import { useCurrentUser } from '@/lib/useCurrentUser'
+import {
+  GUIDE_REVIEWED_AT, guideSectionsForUser, matchesGuideSearch,
+  type GuideSection,
+} from '@/lib/usage-guide'
 import { cn } from '@/lib/utils'
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-type Role = 'admin' | 'operator' | 'both'
-
-interface ActionItem {
-  icon: React.ElementType
-  label: string
-  desc: string
-  color?: string
+const ICONS: Record<string, LucideIcon> = {
+  'primeros-pasos': BookOpen, dashboard: LayoutDashboard, contactos: Users,
+  segmentacion: Tag, prospectos: Users, prioridades: TrendingUp, campanas: Megaphone,
+  estadisticas: BarChart2, efectividad: TrendingUp, conversaciones: MessageSquare,
+  plantillas: FileText, lineas: Activity, 'mis-tareas': CheckSquare, calendario: CalendarDays,
+  automatizaciones: Bot, blacklist: ShieldOff, tareas: ClipboardList, usuarios: UserCog,
+  ajustes: Settings, 'problemas-frecuentes': HelpCircle,
 }
-
-interface Step {
-  title: string
-  detail: string
-  actions?: ActionItem[]
-}
-
-interface Tip {
-  type: 'tip' | 'warning' | 'info' | 'example'
-  text: string
-}
-
-interface ModuleSection {
-  id: string
-  label: string
-  icon: React.ElementType
-  role: Role
-  color: string
-  subtitle: string
-  description: string
-  steps: Step[]
-  tips: Tip[]
-  adminOnly?: boolean
-}
-
-// ── Module documentation ──────────────────────────────────────────────────────
-
-const MODULES: ModuleSection[] = [
-  {
-    id: 'dashboard',
-    label: 'Dashboard',
-    icon: LayoutDashboard,
-    role: 'both',
-    color: 'text-slate-600',
-    subtitle: 'Vista general del estado del sistema',
-    description:
-      'El Dashboard es la pantalla de inicio. Muestra en tiempo real los indicadores más importantes: líneas activas, mensajes enviados hoy, campañas en curso y conversaciones pendientes. Es el punto de partida para entender qué está pasando en la plataforma.',
-    steps: [
-      {
-        title: 'Revisar los KPIs del día',
-        detail:
-          'Al entrar verás las tarjetas de métricas clave: líneas activas, mensajes enviados hoy, campañas activas y conversaciones abiertas. Si un número aparece en rojo, hay algo que necesita atención inmediata.',
-      },
-      {
-        title: 'Interpretar las alertas',
-        detail:
-          'Si una línea está desconectada o una campaña falló, el dashboard mostrará una alerta. Hacé clic en el ícono o en el enlace de la alerta para ir directamente al módulo que tiene el problema.',
-      },
-      {
-        title: 'Refrescar los datos',
-        detail:
-          'Los datos se actualizan automáticamente cada 30 segundos. También podés hacer clic en el botón "Refrescar" para forzar la actualización manual.',
-      },
-    ],
-    tips: [
-      {
-        type: 'tip',
-        text: 'Usá el Dashboard como punto de partida cada vez que entrás al sistema. En 30 segundos ya sabés si todo está funcionando correctamente.',
-      },
-      {
-        type: 'info',
-        text: 'Los operadores ven solo los módulos a los que su administrador les dio acceso. Si no ves alguna sección, pedile acceso al administrador.',
-      },
-    ],
-  },
-
-  {
-    id: 'contactos',
-    label: 'Contactos',
-    icon: Users,
-    role: 'both',
-    color: 'text-blue-600',
-    subtitle: 'Gestión del directorio de contactos',
-    description:
-      'El módulo de Contactos almacena todos los números de WhatsApp y sus datos asociados. Podés importar contactos en masa desde Excel/CSV, crear contactos individuales, organizarlos en listas y filtrarlos por múltiples criterios.',
-    steps: [
-      {
-        title: 'Importar contactos desde un archivo',
-        detail:
-          'Hacé clic en "Importar CSV". Descargá la plantilla de ejemplo, completala con tus contactos (columnas: nombre, teléfono, email, tags) y subí el archivo. La plataforma te mostrará una vista previa antes de importar y te avisará si hay números duplicados o inválidos.',
-      },
-      {
-        title: 'Crear un contacto individual',
-        detail:
-          'Hacé clic en "Nuevo contacto". Ingresá el número en formato internacional (ej: 5491112345678, sin + ni espacios). Podés agregar nombre, email, notas y etiquetas. El número es el único campo obligatorio.',
-      },
-      {
-        title: 'Buscar y filtrar',
-        detail:
-          'Usá la barra de búsqueda para encontrar contactos por nombre, teléfono o email. El filtro avanzado te permite combinar criterios: por lista, por etiqueta, por fecha de creación o por estado (activo/bloqueado).',
-      },
-      {
-        title: 'Organizar en listas',
-        detail:
-          'Seleccioná varios contactos con los checkboxes y hacé clic en "Agregar a lista". Las listas sirven para segmentar audiencias antes de crear una campaña. Un contacto puede pertenecer a múltiples listas.',
-      },
-      {
-        title: 'Editar o eliminar un contacto',
-        detail:
-          'Hacé clic en los tres puntos (...) al lado de cualquier contacto para ver las opciones: editar, agregar a lista, enviar mensaje directo o eliminar.',
-      },
-    ],
-    tips: [
-      {
-        type: 'example',
-        text: 'Ejemplo: Tenés 2.000 clientes de tu base de datos de Excel. Los exportás a CSV con columnas nombre, teléfono, ciudad. Los importás a la plataforma, creás una lista "Clientes Buenos Aires" filtrando por ciudad, y luego usás esa lista para una campaña segmentada.',
-      },
-      {
-        type: 'warning',
-        text: 'Los números deben estar en formato internacional SIN el signo +. Para Argentina: 549 + código de área + número (ej: 5491155667788).',
-      },
-      {
-        type: 'tip',
-        text: 'Usá etiquetas (tags) para clasificar contactos por interés, estado de compra o cualquier criterio de tu negocio. Las etiquetas facilitan los filtros después.',
-      },
-    ],
-  },
-
-  {
-    id: 'segmentacion',
-    label: 'Segmentación de Jugadores',
-    icon: Tag,
-    role: 'both',
-    color: 'text-pink-600',
-    subtitle: 'Cómo se clasifican automáticamente los jugadores del casino',
-    description:
-      'Cada jugador importado desde el panel del casino recibe automáticamente tres clasificaciones: Nivel de monto (cuánto cargó en total), Actividad (qué tan activo está) y Antigüedad (hace cuánto es cliente). Estas etiquetas permiten filtrar contactos y crear listas ultra-segmentadas para campañas precisas.',
-    steps: [
-      {
-        title: 'Nivel de monto (seg_monto) — 6 categorías',
-        detail:
-          'Se calcula sobre el promedio mensual activo de cargas de cada jugador usando umbrales fijos:\n• Bajo → menos de $100.000/mes activo\n• Medio → entre $100.000 y $499.999/mes activo\n• VIP Bajo → entre $500.000 y $999.999/mes activo\n• VIP Medio → entre $1.000.000 y $1.499.999/mes activo\n• VIP Alto → entre $1.500.000 y $3.199.999/mes activo\n• Super VIP → $3.200.000 o más/mes activo',
-      },
-      {
-        title: 'Actividad (seg_actividad) — 7 estados',
-        detail:
-          'Se calcula combinando los días transcurridos desde la última carga y la frecuencia semanal promedio:\n• Nuevo → primera carga hace ≤ 30 días\n• Frecuente → activo + promedio de ≥ 3 cargas por semana\n• Regular → activo + promedio de ≥ 1 carga por semana\n• Ocasional → activo + promedio de < 1 carga por semana\n• En riesgo → última carga hace 31–60 días (sin actividad reciente)\n• Inactivo → última carga hace 61–180 días\n• Perdido → última carga hace más de 180 días (o sin historial)',
-      },
-      {
-        title: 'Antigüedad — 5 niveles',
-        detail:
-          'Se calcula desde la fecha de la primera carga registrada:\n• Nuevo → cliente desde hace menos de 30 días\n• Reciente → 30–89 días como cliente\n• Establecido → 90–149 días como cliente\n• Veterano → 150–269 días como cliente\n• Leal → más de 270 días como cliente',
-      },
-      {
-        title: 'Valor en riesgo (combinación monto + actividad)',
-        detail:
-          'Cuando un jugador de alto valor deja de estar activo, se genera automáticamente una etiqueta adicional de alerta:\n• Riesgo crítico → (Perdido / Inactivo / En riesgo) + (Super VIP / VIP Alto / VIP Medio / VIP Bajo)\n• Riesgo medio → (Perdido / Inactivo / En riesgo) + Medio\n• Riesgo bajo → (Perdido / Inactivo / En riesgo) + Bajo\nEstas etiquetas son ideales para campañas de reactivación priorizadas.',
-      },
-      {
-        title: 'Sin movimiento — jugadores sin actividad hace 12+ meses',
-        detail:
-          'La categoría "Sin movimiento" identifica a los jugadores que no registraron ningún depósito en los últimos 12 meses (o que nunca depositaron).\n\nCómo usarla:\n• En el módulo de Contactos activá el filtro "Sin movimiento" (botón en la barra de filtros).\n• Estos jugadores son candidatos a campañas de reactivación agresiva o acciones de limpieza de base.\n• También podés cruzarlos con el filtro de Nivel para priorizar: primero los Super VIP y VIP Alto sin movimiento, luego los VIP Medio, VIP Bajo, etc.\n\nCriterio técnico: la plataforma considera "sin movimiento" cuando el campo last_deposit_at es nulo o está antes del 12 meses atrás desde hoy.',
-      },
-      {
-        title: 'Dónde ver y usar la segmentación',
-        detail:
-          'En el módulo de Contactos podés filtrar por cualquiera de estas dimensiones usando los selectores de "Nivel", "Actividad", "Antigüedad" y el botón "Sin movimiento". Al crear una lista dinámica, podés combinar varios filtros (ej: Nivel = Super VIP o VIP Alto + "Sin movimiento") para construir audiencias muy específicas para tus campañas.',
-      },
-    ],
-    tips: [
-      {
-        type: 'info',
-        text: 'Los umbrales de Nivel (Bajo / Medio / VIP Bajo / VIP Medio / VIP Alto / Super VIP) se calculan sobre el promedio mensual activo de cada jugador. Los valores fijos son: $100k, $500k, $1M, $1.5M y $3.2M/mes.',
-      },
-      {
-        type: 'example',
-        text: 'Ejemplo de campaña de reactivación: filtrás Nivel = VIP Alto o Super VIP + Actividad = En riesgo o Inactivo. Obtenés la lista de tus mejores clientes que dejaron de jugar en los últimos 1–6 meses. Les mandás una oferta exclusiva de bienvenida de vuelta.',
-      },
-      {
-        type: 'example',
-        text: 'Ejemplo con "Sin movimiento": activás el filtro "Sin movimiento" + Nivel = Medio o Superior. Obtenés jugadores de valor que llevan más de un año sin cargar. Son candidatos perfectos para una campaña de reactivación con bono especial.',
-      },
-      {
-        type: 'example',
-        text: 'Ejemplo de campaña de fidelización: filtrás Actividad = Frecuente + Antigüedad = Veterano o Leal. Son tus clientes más fieles y activos. Usá esta lista para recompensas exclusivas o comunicaciones VIP.',
-      },
-      {
-        type: 'warning',
-        text: 'La segmentación se actualiza solo cuando se corre el script de importación o re-segmentación. Si un jugador cargó ayer, su estado de actividad no cambia automáticamente hasta la próxima actualización.',
-      },
-    ],
-  },
-
-  {
-    id: 'campanas',
-    label: 'Campañas',
-    icon: Megaphone,
-    role: 'both',
-    color: 'text-purple-600',
-    subtitle: 'Envío masivo de mensajes a listas de contactos',
-    description:
-      'Una campaña es un envío masivo de mensajes WhatsApp a una lista de contactos. Podés enviar texto, imágenes o video, con hasta 10 variantes del mismo mensaje para que cada contacto reciba una versión diferente. El sistema distribuye los envíos con delays humanizados entre líneas activas para evitar bloqueos. Requisitos mínimos: al menos una línea conectada y activa, y una lista con contactos que tengan opt_in_marketing activado.',
-    steps: [
-      {
-        title: 'Crear la campaña',
-        detail:
-          'Hacé clic en "Nueva campaña". Poné un nombre descriptivo (ej: "Promo Mayo - VIP"). Seleccioná la lista de destinatarios — si no tenés una, primero andá a Contactos a crearla. Elegí el tipo de campaña (promoción, retención, soporte, etc.) para organizarlas mejor.',
-      },
-      {
-        title: 'Escribir el mensaje y variantes',
-        detail:
-          'Escribí el texto directamente o seleccioná una plantilla guardada. Usá {{nombre}} para personalizar — se reemplaza automáticamente con el nombre de cada contacto. Podés agregar hasta 10 variantes del mensaje: el sistema las distribuye al azar entre los contactos, lo que hace que el tráfico parezca más orgánico y reduce el riesgo de detección como spam. También podés adjuntar una imagen o video.',
-      },
-      {
-        title: 'Configurar el ritmo de envío',
-        detail:
-          'Definí el delay mínimo y máximo entre mensajes. El valor recomendado es entre 3 y 8 segundos — el sistema elige un valor aleatorio dentro de ese rango para cada envío. Delays más altos son más seguros pero más lentos. Para listas grandes con urgencia podés bajar a 2–5s; para campañas de alto valor donde el riesgo importa, subilo a 8–15s.',
-      },
-      {
-        title: 'Elegir el modo de envío',
-        detail:
-          'Modo simple: usa una sola línea, más fácil de controlar. Modo multi-línea: distribuye los mensajes entre todas las líneas activas en paralelo, mucho más rápido para listas grandes. En modo multi-línea, las líneas con más cupo disponible reciben más mensajes — el sistema balancea automáticamente. Activá multi-línea al crear la campaña si querés ese modo.',
-      },
-      {
-        title: 'Programar o enviar ahora',
-        detail:
-          'Podés iniciar el envío inmediatamente o agendarlo para una fecha y hora específica. Una campaña programada se activa sola cuando llega el momento. Podés programarla para el viernes a las 18hs y olvidarte — el sistema la lanza solo.',
-      },
-      {
-        title: 'Monitorear el progreso en tiempo real',
-        detail:
-          'Una vez iniciada, la campaña muestra: Enviados (WhatsApp confirmó recepción ✓), Entregados (llegó al teléfono ✓✓), Leídos (abierto por el contacto ✓✓ azul), Fallidos (error permanente) y Saltados (omitido por frecuencia u opt-out). En modo multi-línea también ves el desglose por línea — cuánto envió cada una y si hubo errores concentrados en alguna.',
-      },
-      {
-        title: 'Entender los estados de una campaña',
-        detail: '',
-        actions: [
-          {
-            icon: FileText,
-            label: 'Borrador',
-            desc: 'Recién creada. Podés editarla antes de enviar.',
-            color: 'bg-muted text-muted-foreground',
-          },
-          {
-            icon: CalendarDays,
-            label: 'Programada',
-            desc: 'Tiene fecha futura. Se activa sola cuando llega el momento.',
-            color: 'bg-blue-100 text-blue-600',
-          },
-          {
-            icon: Activity,
-            label: 'En curso',
-            desc: 'Enviando ahora. Podés pausarla en cualquier momento.',
-            color: 'bg-success/15 text-success',
-          },
-          {
-            icon: Pause,
-            label: 'Pausada',
-            desc: 'Detenida. Siempre muestra el motivo. Podés reanudarla cuando quieras.',
-            color: 'bg-warning/15 text-amber-600',
-          },
-          {
-            icon: CheckSquare,
-            label: 'Completada',
-            desc: 'Todos los contactos fueron procesados. Solo lectura.',
-            color: 'bg-accent text-primary',
-          },
-          {
-            icon: Trash2,
-            label: 'Cancelada',
-            desc: 'Terminal. No se puede revertir ni reanudar.',
-            color: 'bg-destructive/15 text-red-500',
-          },
-        ],
-      },
-      {
-        title: 'Qué hacer cuando se pausa sola',
-        detail:
-          'Si la campaña se pausa automáticamente, fijate en el motivo que aparece bajo el estado. "Sin líneas elegibles": todas tus líneas llegaron al límite diario — esperá al día siguiente o agregá más líneas. "Fuera de horario": las líneas no están en su horario activo — se reanuda sola cuando entren en horario. "Frecuencia agotada": todos los contactos ya recibieron un mensaje reciente — esperá las 24–48hs de cooldown. "Error sistémico": error técnico — avisale al administrador.',
-      },
-      {
-        title: 'Acciones rápidas por campaña',
-        detail:
-          'Cada campaña tiene hasta 4 botones de acción según su estado. 👁 Ver detalle: abre el panel con el desglose completo de mensajes, estados y métricas. 🚚 Sincronizar entrega/lectura: consulta Evolution y actualiza los estados "Entregado" y "Leído" de los mensajes ya enviados — útil cuando el porcentaje de entregados se ve bajo. ↺F Reintentar fallidos: aparece solo cuando hay mensajes con error; resetea únicamente esos a "pendiente" y vuelve a intentar sin tocar los ya enviados. 🔄 Resetear campaña (admin): devuelve todos los contadores a cero para poder re-probar la campaña completa — solo disponible en campañas ya procesadas.',
-      },
-      {
-        title: 'Reintentar mensajes fallidos',
-        detail:
-          'Si algunos mensajes fallaron (número inválido, línea caída momentáneamente), podés reintentar solo esos sin tocar los que ya llegaron. El botón ↺F aparece en la fila de la campaña cuando hay al menos un mensaje fallido. La plataforma resetea solo los fallidos a "pendiente" y vuelve a intentar — los contactos que ya recibieron el mensaje no se ven afectados.',
-      },
-    ],
-    tips: [
-      {
-        type: 'example',
-        text: 'Ejemplo promo flash: Creás "Descuento fin de semana" para la lista "Clientes activos" (500 contactos). Configurás 3 variantes del mensaje con distintos emojis. Delay: 4–8s. Multi-línea activado (tenés 3 líneas). Lo programás para el viernes 18hs. El sistema lo lanza solo y en ~2 horas todos lo recibieron.',
-      },
-      {
-        type: 'example',
-        text: 'Ejemplo segmentado: Filtrás en Contactos: Nivel = Super VIP o VIP Alto + Actividad = En riesgo. Creás la lista "VIP en riesgo" con esos 80 contactos. Campaña de reactivación con mensaje personalizado y delay conservador 8–15s. Resultado: alta tasa de lectura porque es un mensaje relevante para una audiencia chica y específica.',
-      },
-      {
-        type: 'tip',
-        text: 'Con 10 variantes de mensaje y personalización de nombre activada, cada contacto recibe un mensaje único. Es la mejor defensa contra la detección de spam en envíos masivos.',
-      },
-      {
-        type: 'info',
-        text: 'Un mismo contacto no puede recibir el mismo mensaje dos veces en una campaña. Y entre campañas distintas hay un cooldown de 24–48hs por contacto — si un contacto aparece como "saltado", es por esta protección.',
-      },
-    ],
-  },
-
-  {
-    id: 'conversaciones',
-    label: 'Conversaciones',
-    icon: MessageSquare,
-    role: 'both',
-    color: 'text-teal-600',
-    subtitle: 'Bandeja de conversaciones entrantes y escaladas',
-    description:
-      'En Conversaciones podés ver todos los chats activos que llegaron a tus líneas de WhatsApp. Las conversaciones que un bot no pudo resolver se escalan a un operador humano para atención manual. También podés iniciar conversaciones directamente desde aquí.',
-    steps: [
-      {
-        title: 'Ver las conversaciones pendientes',
-        detail:
-          'La pestaña "Escaladas" muestra los chats que necesitan atención humana. Aparecen ordenados por antigüedad — las más viejas primero. El número en el badge indica cuántas hay pendientes.',
-      },
-      {
-        title: 'Tomar una conversación',
-        detail:
-          'Hacé clic en una conversación para abrirla. Podés ver todo el historial del chat, incluyendo los mensajes intercambiados con el bot. Hacé clic en "Asignarme" para tomar la responsabilidad de esa conversación.',
-      },
-      {
-        title: 'Responder al contacto',
-        detail:
-          'Escribí el mensaje en el campo de texto y presioná Enter o el botón de enviar. Podés usar plantillas de respuesta rápida haciendo clic en el ícono de rayo. También podés adjuntar archivos.',
-      },
-      {
-        title: 'Asignar a otro operador',
-        detail:
-          'Si la conversación le corresponde a otro operador, hacé clic en "Reasignar" y seleccioná al operador de la lista. Él recibirá una notificación automáticamente.',
-      },
-      {
-        title: 'Resolver la conversación',
-        detail:
-          'Cuando el cliente quedó satisfecho, hacé clic en "Marcar como resuelta". La conversación pasa al historial y el slot queda libre para nuevas escalaciones.',
-      },
-    ],
-    tips: [
-      {
-        type: 'tip',
-        text: 'Activá las notificaciones del navegador para recibir alertas cuando te asignan una conversación nueva. Las notificaciones aparecen en la campana del encabezado.',
-      },
-      {
-        type: 'info',
-        text: 'Las conversaciones se marcan en rojo si llevan más de 2 horas sin respuesta. Priorizalas para mantener una buena experiencia del cliente.',
-      },
-      {
-        type: 'example',
-        text: 'Ejemplo de flujo: Un cliente escribe "Quiero hacer una devolución". El bot no sabe cómo manejar eso, escala la conversación. El operador recibe notificación, abre el chat, ve el historial, responde con el proceso de devolución y marca como resuelta.',
-      },
-    ],
-  },
-
-  {
-    id: 'lineas',
-    label: 'Líneas',
-    icon: Activity,
-    role: 'both',
-    color: 'text-success',
-    subtitle: 'Gestión de números de WhatsApp conectados',
-    description:
-      'El módulo de Líneas muestra todos los números de WhatsApp que están conectados a la plataforma. Podés ver el estado de cada línea (conectada o desconectada), escanear el código QR para conectar nuevos números y monitorear la salud de cada línea.',
-    steps: [
-      {
-        title: 'Ver el estado de las líneas',
-        detail:
-          'Cada tarjeta muestra: el número de teléfono, el nombre del perfil de WhatsApp, el estado (verde = conectada, rojo = desconectada, naranja = reconectando) y la cantidad de mensajes enviados hoy.',
-      },
-      {
-        title: 'Conectar una nueva línea',
-        detail:
-          'Hacé clic en "Agregar línea". Se abrirá un panel con un código QR. Abrí WhatsApp en tu celular, andá a Configuración → Dispositivos vinculados → Vincular dispositivo y escaneá el código QR. La línea quedará conectada en segundos.',
-      },
-      {
-        title: 'Reconectar una línea caída',
-        detail:
-          'Si una línea aparece en rojo, hacé clic en "Reconectar" para que intente restablecer la sesión automáticamente. Si no funciona, usá "Escanear QR" para volver a vincularte con el celular.',
-      },
-      {
-        title: 'Ver el historial de la línea',
-        detail:
-          'Hacé clic en una línea para ver su historial: mensajes enviados por día, tasa de entrega, errores y alertas. Esto ayuda a detectar si una línea está teniendo problemas antes de que se bloquee.',
-      },
-    ],
-    tips: [
-      {
-        type: 'warning',
-        text: 'Una línea desconectada no puede enviar mensajes. Si tenés campañas programadas que usan esa línea, pausalas hasta que esté reconectada.',
-      },
-      {
-        type: 'tip',
-        text: 'Recomendamos tener al menos 2 líneas activas. Si una falla, la otra puede seguir operando mientras resolvés el problema.',
-      },
-    ],
-  },
-
-  {
-    id: 'tareas',
-    label: 'Tareas (Admin)',
-    icon: ClipboardList,
-    role: 'admin',
-    color: 'text-violet-600',
-    subtitle: 'Crear y gestionar tareas para el equipo',
-    description:
-      'El módulo de Tareas (vista administrador) permite crear, asignar y hacer seguimiento de todas las tareas del equipo. Los administradores pueden ver el estado de todas las tareas, filtrarlas por operador, tipo o prioridad, y cancelar o reasignar tareas según sea necesario.',
-    steps: [
-      {
-        title: 'Crear una tarea nueva',
-        detail:
-          'Hacé clic en "Nueva tarea". Completá el título, descripción detallada (instrucciones para el operador), tipo de tarea, prioridad (alta/media/baja), fecha límite y fecha de inicio programado. Asigná la tarea a uno o más operadores.',
-      },
-      {
-        title: 'Tipos de tarea disponibles',
-        detail:
-          'Difusión (para que el operador gestione una campaña), Envío manual (envíos específicos a contactos), Atención (responder conversaciones escaladas), Seguimiento (contactar un cliente específico), Revisión (auditar campañas o listas) y Otro (tarea libre).',
-      },
-      {
-        title: 'Monitorear el estado',
-        detail:
-          'La lista de tareas muestra: pendiente (no iniciada), en progreso (operador trabajando) y completada/cancelada. Filtrá por estado para ver solo las urgentes o las demoradas.',
-      },
-      {
-        title: 'Ver el historial de una tarea',
-        detail:
-          'Hacé clic en cualquier tarea para ver su historial completo: cuándo se creó, cuándo fue iniciada, si fue reasignada y cuándo se completó. Esto sirve para auditorías.',
-      },
-      {
-        title: 'Cancelar o reasignar',
-        detail:
-          'Si necesitás cambiar el operador asignado, abrí la tarea y usá el botón "Reasignar". Para cancelar una tarea, usá "Cancelar" e ingresá el motivo. El operador recibirá una notificación.',
-      },
-    ],
-    tips: [
-      {
-        type: 'example',
-        text: 'Ejemplo: Querés que tu operador haga un seguimiento de todos los clientes que no respondieron la última campaña. Creás una tarea tipo "Seguimiento" con prioridad alta, fecha límite para el viernes y las instrucciones detalladas en la descripción.',
-      },
-      {
-        type: 'tip',
-        text: 'Usá el campo "Notas" para dejar contexto adicional que el operador debe conocer pero que no forma parte de las instrucciones de la tarea.',
-      },
-    ],
-  },
-
-  {
-    id: 'mis-tareas',
-    label: 'Mis Tareas (Operador)',
-    icon: CheckSquare,
-    role: 'operator',
-    color: 'text-violet-600',
-    subtitle: 'Ver y ejecutar las tareas asignadas',
-    description:
-      'El módulo Mis Tareas es la vista del operador. Acá aparecen solo las tareas que el administrador te asignó a vos. Podés ver el detalle de cada tarea, iniciarlas cuando empezás a trabajar en ellas y marcarlas como completadas cuando terminás.',
-    steps: [
-      {
-        title: 'Ver tus tareas pendientes',
-        detail:
-          'Al entrar a Mis Tareas verás las tarjetas de KPIs: cuántas tareas tenés pendientes, en progreso, completadas hoy y vencidas. Debajo está la lista completa.',
-      },
-      {
-        title: 'Iniciar una tarea',
-        detail:
-          'Cuando empezás a trabajar en una tarea, hacé clic en el botón "Iniciar". Esto cambia el estado a "En progreso" y le avisa al administrador que ya empezaste. Siempre iniciá la tarea antes de comenzar el trabajo.',
-      },
-      {
-        title: 'Ver el detalle e instrucciones',
-        detail:
-          'Hacé clic en "Ver detalle" para ver las instrucciones completas del administrador, el enlace de acceso rápido al módulo relacionado (ej: ir a Campañas), las fechas y el historial.',
-      },
-      {
-        title: 'Usar el acceso rápido',
-        detail:
-          'Dependiendo del tipo de tarea, verás un botón de acceso rápido: "Ir a Campañas", "Ir a Contactos", "Ir a Conversaciones", etc. Usá ese botón para navegar directamente al módulo donde debés trabajar.',
-      },
-      {
-        title: 'Marcar como completada',
-        detail:
-          'Cuando terminás el trabajo, hacé clic en "Completar". Se abrirá un cuadro para que escribas un comentario de cierre (opcional pero recomendado). Describí brevemente qué hiciste o el resultado obtenido.',
-      },
-    ],
-    tips: [
-      {
-        type: 'tip',
-        text: 'Siempre iniciá la tarea antes de empezar a trabajar. Así el administrador sabe que ya estás en eso y no te reasigna a otro operador.',
-      },
-      {
-        type: 'info',
-        text: 'Recibirás una notificación en la campana cada vez que te asignen una nueva tarea o cuando el administrador haga cambios en alguna de tus tareas.',
-      },
-      {
-        type: 'example',
-        text: 'Ejemplo: El admin te asigna "Enviar campaña de seguimiento a lista VIP". Entrás a Mis Tareas, leés las instrucciones, hacés clic en "Iniciar", luego en "Ir a Campañas" y creás la campaña. Al terminar, volvés a Mis Tareas y completás con el comentario "Campaña enviada a 200 contactos. 185 entregados."',
-      },
-    ],
-  },
-
-  {
-    id: 'calendario',
-    label: 'Calendario',
-    icon: CalendarDays,
-    role: 'both',
-    color: 'text-blue-500',
-    subtitle: 'Vista mensual de tareas programadas',
-    description:
-      'El Calendario muestra todas las tareas distribuidas en un grid mensual, según su fecha de inicio programado y/o fecha límite. Es ideal para planificar la carga de trabajo del equipo y detectar semanas con muchas tareas venciendo.',
-    steps: [
-      {
-        title: 'Navegar por meses',
-        detail:
-          'Usá las flechas izquierda/derecha para moverte entre meses. El botón "Hoy" te lleva al mes actual. El nombre del mes y el año aparecen en el centro.',
-      },
-      {
-        title: 'Interpretar los puntos de colores',
-        detail:
-          'Cada punto en un día representa una tarea. El color indica la prioridad: rojo = alta, amarillo = media, verde = baja. El ícono ⚑ indica fecha límite y el ícono ▶ indica inicio programado.',
-      },
-      {
-        title: 'Ver el detalle de un día',
-        detail:
-          'Hacé clic en cualquier día para abrir el panel de detalle. Verás todas las tareas de ese día con su tipo, prioridad, estado y fechas. Los días con muchas tareas muestran un "+N más" indicador.',
-      },
-      {
-        title: 'Filtrar tareas',
-        detail:
-          'Usá los filtros de arriba para ver solo las tareas de cierto tipo o prioridad. Los administradores también pueden filtrar por operador específico para ver la carga de trabajo individual.',
-      },
-      {
-        title: 'Ver tareas sin fecha',
-        detail:
-          'Al final de la página hay una sección "Sin fecha programada" con todas las tareas activas que no tienen fecha asignada. Estas tareas no aparecen en el grid y necesitan ser programadas.',
-      },
-    ],
-    tips: [
-      {
-        type: 'tip',
-        text: 'Revisá el calendario cada lunes para planificar la semana. Si ves un día con muchas tareas venciendo, reorganizá las prioridades con el equipo.',
-      },
-      {
-        type: 'info',
-        text: 'Los operadores ven solo sus tareas en el calendario. Los administradores ven las de todo el equipo.',
-      },
-    ],
-  },
-
-  {
-    id: 'estadisticas',
-    label: 'Estadísticas',
-    icon: BarChart2,
-    role: 'both',
-    color: 'text-primary',
-    subtitle: 'Métricas y reportes de rendimiento',
-    description:
-      'El módulo de Estadísticas ofrece gráficos e indicadores de rendimiento para analizar el desempeño de las campañas, la actividad de las líneas y la productividad del equipo. Los datos se pueden exportar a CSV para análisis externos.',
-    steps: [
-      {
-        title: 'Seleccionar el período de análisis',
-        detail:
-          'Usá el selector de fechas en la parte superior para elegir el rango que querés analizar: último día, última semana, último mes o rango personalizado.',
-      },
-      {
-        title: 'Leer los KPIs principales',
-        detail:
-          'Las tarjetas de KPI muestran: mensajes enviados, tasa de entrega, conversaciones resueltas y tareas completadas para el período seleccionado. Los números en verde son mejoras respecto al período anterior.',
-      },
-      {
-        title: 'Analizar los gráficos',
-        detail:
-          'El gráfico de barras muestra la actividad por día. El gráfico circular muestra la distribución por tipo de campaña o módulo. Pasando el cursor sobre los puntos del gráfico se ven los valores exactos.',
-      },
-      {
-        title: 'Hacer drill-down',
-        detail:
-          'Hacé clic en cualquier barra del gráfico para ver el detalle de ese día específico: qué campañas se enviaron, qué operadores estuvieron activos y qué tareas se completaron.',
-      },
-      {
-        title: 'Exportar a CSV',
-        detail:
-          'Hacé clic en "Exportar CSV" para descargar los datos del período seleccionado en formato planilla. Útil para reportes a gerencia o para análisis en Excel.',
-      },
-    ],
-    tips: [
-      {
-        type: 'example',
-        text: 'Ejemplo de análisis: Filtrás el último mes. Ves que los martes tienen el 40% más de mensajes que el resto de la semana. Conclusión: tus campañas de martes funcionan mejor. Planificás las próximas campañas importantes para los martes.',
-      },
-      {
-        type: 'tip',
-        text: 'Comparar semana a semana te ayuda a detectar tendencias. Si la tasa de entrega cayó 10%, revisá el estado de las líneas.',
-      },
-    ],
-  },
-
-  {
-    id: 'automatizaciones',
-    label: 'Automatizaciones / Bots',
-    icon: Bot,
-    role: 'both',
-    color: 'text-cyan-600',
-    subtitle: 'Flujos automatizados con n8n',
-    description:
-      'El módulo de Automatizaciones permite gestionar los bots y flujos de conversación que responden automáticamente a los mensajes entrantes. Está integrado con n8n, una plataforma de automatización sin código. Acá podés ver los flujos activos, activarlos o desactivarlos y ver los logs de ejecución.',
-    steps: [
-      {
-        title: 'Ver los flujos activos',
-        detail:
-          'La pantalla principal muestra todos los flujos (workflows) configurados. Cada uno tiene: nombre, descripción, estado (activo/inactivo), cuántas veces se ejecutó y la última ejecución.',
-      },
-      {
-        title: 'Activar o desactivar un flujo',
-        detail:
-          'Usá el switch al lado de cada flujo para activarlo o desactivarlo. Un flujo inactivo no responde a mensajes. Útil para pausar un bot durante mantenimiento o días feriados.',
-      },
-      {
-        title: 'Ver los logs de ejecución',
-        detail:
-          'Hacé clic en un flujo y luego en "Ver logs" para ver qué mensajes procesó, si hubo errores y cuánto tardó cada ejecución. Los errores aparecen en rojo con el mensaje de error.',
-      },
-      {
-        title: 'Acceder al editor de n8n',
-        detail:
-          'Si tenés permisos avanzados, el botón "Editar en n8n" te lleva directamente al editor visual donde podés modificar la lógica del bot. Requiere conocimiento de la plataforma n8n.',
-      },
-    ],
-    tips: [
-      {
-        type: 'info',
-        text: 'Si un bot deja de responder, lo primero que debés hacer es revisar los logs. En el 90% de los casos, el log muestra exactamente qué salió mal.',
-      },
-      {
-        type: 'warning',
-        text: 'No desactives un flujo sin avisar al equipo. Si el bot de atención se cae, todas las conversaciones llegan directamente a los operadores sin filtrar.',
-      },
-    ],
-  },
-
-  {
-    id: 'blacklist',
-    label: 'Blacklist Global',
-    icon: ShieldOff,
-    role: 'both',
-    color: 'text-destructive',
-    subtitle: 'Números excluidos de todos los envíos',
-    description:
-      'La Blacklist Global es la lista de números que nunca recibirán mensajes de la plataforma, independientemente de la campaña o lista en la que estén. Incluye automáticamente a los contactos que respondieron "STOP" o "No quiero más mensajes", y permite agregar números manualmente.',
-    steps: [
-      {
-        title: 'Ver los números bloqueados',
-        detail:
-          'La lista muestra todos los números en la blacklist, la fecha en que fueron agregados y el motivo (opt-out manual, respuesta STOP, o agregado por el administrador).',
-      },
-      {
-        title: 'Agregar un número manualmente',
-        detail:
-          'Hacé clic en "Agregar a blacklist", ingresá el número en formato internacional y el motivo. Ese número quedará excluido de todos los envíos futuros de inmediato.',
-      },
-      {
-        title: 'Buscar un número específico',
-        detail:
-          'Usá la barra de búsqueda para verificar si un número está en la blacklist antes de intentar contactarlo. Útil para verificar antes de una campaña importante.',
-      },
-      {
-        title: 'Remover un número de la blacklist',
-        detail:
-          'Si un contacto solicitó volver a recibir comunicaciones, podés eliminarlo de la blacklist haciendo clic en el ícono de eliminar. El número vuelve a estar activo para futuras campañas.',
-      },
-    ],
-    tips: [
-      {
-        type: 'warning',
-        text: 'Nunca ignores los opt-outs. Enviar mensajes a alguien que dijo STOP es una violación de las políticas de WhatsApp y puede resultar en el bloqueo de tus líneas.',
-      },
-      {
-        type: 'info',
-        text: 'La plataforma detecta automáticamente respuestas como "STOP", "NO QUIERO MÁS", "BAJA", "DESUSCRIBIR" y agrega el número a la blacklist sin intervención manual.',
-      },
-      {
-        type: 'example',
-        text: 'Ejemplo: Un competidor empieza a spamearte con sus productos y querés que nunca le lleguen tus mensajes (si tenés su número en contactos). Buscás su número, lo agregás a la blacklist con motivo "Competidor - no contactar".',
-      },
-    ],
-  },
-
-  {
-    id: 'plantillas',
-    label: 'Plantillas',
-    icon: FileText,
-    role: 'both',
-    color: 'text-amber-600',
-    subtitle: 'Mensajes predefinidos reutilizables',
-    description:
-      'Las Plantillas son mensajes predefinidos que podés reutilizar en campañas y respuestas de conversaciones. Ahorran tiempo y garantizan consistencia en la comunicación. Soportan variables como {{nombre}} que se reemplazan automáticamente con los datos del contacto.',
-    steps: [
-      {
-        title: 'Crear una plantilla',
-        detail:
-          'Hacé clic en "Nueva plantilla". Poné un nombre descriptivo (ej: "Saludo de bienvenida"), elegí la categoría (marketing, atención, seguimiento), escribí el texto y guardá. Podés incluir imágenes o archivos adjuntos.',
-      },
-      {
-        title: 'Usar variables dinámicas',
-        detail:
-          'Escribí {{nombre}} en el texto para que se reemplace con el nombre del contacto. También podés usar {{empresa}}, {{producto}} u otras variables que hayas configurado. Al enviar, el sistema reemplaza automáticamente todas las variables.',
-      },
-      {
-        title: 'Usar una plantilla en una campaña',
-        detail:
-          'Al crear una campaña, en el paso de "Mensaje" seleccioná "Usar plantilla" y elegí la que querés. Podés ver una vista previa del mensaje con las variables antes de confirmar.',
-      },
-      {
-        title: 'Usar una plantilla en conversaciones',
-        detail:
-          'Dentro de una conversación, hacé clic en el ícono de rayo (⚡) para abrir el selector de plantillas. Elegí la que corresponde y el texto se carga automáticamente. Podés editarlo antes de enviar.',
-      },
-      {
-        title: 'Editar o eliminar plantillas',
-        detail:
-          'Hacé clic en los tres puntos (...) de cualquier plantilla para editarla o eliminarla. Los cambios en una plantilla NO afectan los mensajes ya enviados.',
-      },
-    ],
-    tips: [
-      {
-        type: 'example',
-        text: 'Ejemplo de plantilla de seguimiento: "Hola {{nombre}}! Te escribimos de {{empresa}} para hacer un seguimiento de tu consulta del {{fecha}}. ¿Pudiste resolver tu inquietud? Si necesitás ayuda, estamos disponibles. ¡Saludos!"',
-      },
-      {
-        type: 'tip',
-        text: 'Organizá tus plantillas por categoría: Bienvenida, Seguimiento, Soporte, Ventas, Despedida. Con buenas categorías, los operadores encuentran la correcta en segundos.',
-      },
-    ],
-  },
-
-  {
-    id: 'usuarios',
-    label: 'Usuarios',
-    icon: UserCog,
-    role: 'admin',
-    color: 'text-slate-600',
-    subtitle: 'Gestión de administradores y operadores',
-    description:
-      'El módulo de Usuarios permite crear y gestionar las cuentas de acceso al sistema. Podés crear administradores (acceso total) y operadores (acceso limitado a los módulos que vos les asignés). También podés cambiar contraseñas, desactivar cuentas y ver la actividad de cada usuario.',
-    steps: [
-      {
-        title: 'Crear un nuevo usuario',
-        detail:
-          'Hacé clic en "Nuevo usuario". Elegí el rol: Administrador (ve y controla todo) u Operador (ve solo lo que le asignás). Completá nombre, email y contraseña temporal. El usuario puede cambiar su contraseña al ingresar por primera vez.',
-      },
-      {
-        title: 'Asignar sectores a un operador',
-        detail:
-          'Al editar un operador, verás una lista de sectores: Dashboard, Contactos, Campañas, Conversaciones, Líneas, Tareas, Estadísticas, Automatizaciones, Blacklist, Plantillas. Activá solo los que ese operador necesita. El operador solo verá esos módulos en su sidebar.',
-      },
-      {
-        title: 'Editar o desactivar una cuenta',
-        detail:
-          'Hacé clic en el ícono de editar (lápiz) para modificar los datos o sectores de un usuario. Para desactivar una cuenta sin eliminarla, usá el switch "Activo/Inactivo". El usuario no podrá iniciar sesión mientras esté inactivo.',
-      },
-      {
-        title: 'Ver actividad reciente',
-        detail:
-          'Hacé clic en un usuario para ver su historial de actividad: cuándo inició sesión, qué acciones realizó y qué tareas completó. Útil para auditorías.',
-      },
-    ],
-    tips: [
-      {
-        type: 'example',
-        text: 'Ejemplo: Tenés un operador nuevo que se va a encargar solo de atender conversaciones y completar tareas de seguimiento. Le creás la cuenta con rol Operador y le asignás los sectores: Conversaciones y Tareas. Solo esos módulos aparecerán en su menú.',
-      },
-      {
-        type: 'warning',
-        text: 'Nunca compartas contraseñas entre usuarios. Cada persona debe tener su propia cuenta para que el sistema de auditoría funcione correctamente.',
-      },
-      {
-        type: 'tip',
-        text: 'Usá el campo de nombre completo para que el sistema muestre "Atendido por: Juan Pérez" en las conversaciones y logs. Facilita saber quién hizo qué.',
-      },
-    ],
-  },
-
-  {
-    id: 'ajustes',
-    label: 'Ajustes',
-    icon: Settings,
-    role: 'admin',
-    color: 'text-muted-foreground',
-    subtitle: 'Configuración general de la plataforma',
-    description:
-      'El módulo de Ajustes centraliza la configuración global del sistema: integraciones con servicios externos, configuración de notificaciones, parámetros de las líneas de WhatsApp y personalización de la plataforma para tu empresa.',
-    steps: [
-      {
-        title: 'Configurar notificaciones',
-        detail:
-          'En la sección de notificaciones podés activar o desactivar qué tipos de alertas recibís: nuevas conversaciones, tareas asignadas, campañas finalizadas, etc. También podés configurar notificaciones por email para alertas críticas.',
-      },
-      {
-        title: 'Parámetros de envío globales',
-        detail:
-          'Configurá el delay mínimo entre mensajes, el horario permitido de envío (ej: solo de 8hs a 22hs) y el límite diario por línea. Estos parámetros aplican a todas las campañas por defecto.',
-      },
-      {
-        title: 'Integraciones',
-        detail:
-          'Conectá la plataforma con servicios externos: CRM, herramientas de análisis, webhooks personalizados. Cada integración tiene su propia sección con los campos de configuración necesarios.',
-      },
-    ],
-    tips: [
-      {
-        type: 'tip',
-        text: 'Configurá el horario de envío para que coincida con los horarios de atención de tu empresa. Evitá enviar mensajes de madrugada aunque las campañas estén programadas.',
-      },
-    ],
-  },
+const SHORTCUTS = [
+  { id: 'contactos', label: 'Preparar una lista', detail: 'Importación, filtros y destinatarios' },
+  { id: 'campanas', label: 'Enviar una campaña', detail: 'Mensaje, prueba y seguimiento' },
+  { id: 'efectividad', label: 'Medir la efectividad', detail: 'Cargas, usuarios y plataformas en 24 h' },
+  { id: 'problemas-frecuentes', label: 'Resolver una duda', detail: 'Permisos, pausas y datos que faltan' },
 ]
-
-// ── Tip components ────────────────────────────────────────────────────────────
-
-const TIP_CONFIG = {
-  tip:     { icon: Lightbulb,     bg: 'bg-blue-50 border-blue-200',   text: 'text-blue-800',   label: 'Consejo' },
-  warning: { icon: AlertTriangle, bg: 'bg-warning/10 border-warning/20', text: 'text-warning',  label: 'Atención' },
-  info:    { icon: Info,          bg: 'bg-background border-border', text: 'text-slate-700',  label: 'Info' },
-  example: { icon: Star,          bg: 'bg-success/10 border-success/20', text: 'text-success',  label: 'Ejemplo' },
+const TIP_STYLES = {
+  note: { icon: Info, label: 'Para tener en cuenta', className: 'border-border bg-muted/30' },
+  tip: { icon: Lightbulb, label: 'Consejo', className: 'border-primary/20 bg-accent/40' },
+  example: { icon: Star, label: 'Ejemplo', className: 'border-success/20 bg-success/5' },
 }
 
-function TipBox({ tip }: { tip: Tip }) {
-  const cfg  = TIP_CONFIG[tip.type]
-  const Icon = cfg.icon
-  return (
-    <div className={`flex gap-2.5 border rounded-lg p-3 ${cfg.bg}`}>
-      <Icon size={15} className={`shrink-0 mt-0.5 ${cfg.text}`} />
-      <div>
-        <span className={`text-[11px] font-semibold uppercase tracking-wide ${cfg.text} mr-1.5`}>
-          {cfg.label}:
+function GuideModule({ section, open, onToggle }: { section: GuideSection; open: boolean; onToggle: () => void }) {
+  const Icon = ICONS[section.id] ?? BookOpen
+  return <section id={section.id} aria-labelledby={`heading-${section.id}`} className="scroll-mt-4 overflow-hidden rounded-xl border bg-card shadow-sm">
+    <h2>
+      <button id={`heading-${section.id}`} type="button" onClick={onToggle}
+        aria-expanded={open} aria-controls={`content-${section.id}`}
+        className="flex w-full items-center gap-3 p-4 text-left text-foreground transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:p-5">
+        <span className="rounded-lg bg-accent p-2 text-primary"><Icon size={18} aria-hidden="true" /></span>
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+            {section.label}{section.adminOnly && <Badge variant="outline" className="text-[10px]">Administradores</Badge>}
+          </span>
+          <span className="mt-1 block text-xs font-normal text-muted-foreground">{section.subtitle}</span>
         </span>
-        <span className={`text-sm ${cfg.text}`}>{tip.text}</span>
-      </div>
-    </div>
-  )
-}
-
-// ── Role badge ────────────────────────────────────────────────────────────────
-
-function RoleBadge({ role }: { role: Role }) {
-  if (role === 'admin')    return <Badge className="bg-violet-100 text-violet-700 text-[11px]">Solo Admin</Badge>
-  if (role === 'operator') return <Badge className="bg-teal-100 text-teal-700 text-[11px]">Solo Operador</Badge>
-  return (
-    <div className="flex gap-1">
-      <Badge className="bg-violet-100 text-violet-700 text-[11px]">Admin</Badge>
-      <Badge className="bg-teal-100 text-teal-700 text-[11px]">Operador</Badge>
-    </div>
-  )
-}
-
-// ── Module section ────────────────────────────────────────────────────────────
-
-function ModuleSection({ mod, defaultOpen }: { mod: ModuleSection; defaultOpen: boolean }) {
-  const [open, setOpen] = useState(defaultOpen)
-  const Icon = mod.icon
-
-  return (
-    <div id={mod.id} className="bg-card border border-border rounded-xl overflow-hidden shadow-sm scroll-mt-4">
-      {/* Header */}
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-background transition-colors"
-      >
-        <div className={`p-2 rounded-lg bg-muted ${mod.color}`}>
-          <Icon size={18} />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-semibold text-foreground text-sm">{mod.label}</span>
-            <RoleBadge role={mod.role} />
-          </div>
-          <p className="text-xs text-muted-foreground mt-0.5">{mod.subtitle}</p>
-        </div>
-        {open
-          ? <ChevronDown size={16} className="text-muted-foreground shrink-0" />
-          : <ChevronRight size={16} className="text-muted-foreground shrink-0" />
-        }
+        <ChevronDown size={16} aria-hidden="true" className={cn('shrink-0 text-muted-foreground transition-transform', open && 'rotate-180')} />
       </button>
-
-      {/* Body */}
-      {open && (
-        <div className="px-5 pb-5 border-t border-border">
-          {/* Description */}
-          <p className="text-sm text-foreground leading-relaxed mt-4 mb-5">{mod.description}</p>
-
-          {/* Steps */}
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
-            Cómo usar este módulo
-          </h3>
-          <ol className="space-y-3 mb-5">
-            {mod.steps.map((step, i) => (
-              <li key={i} className="flex gap-3">
-                <span className="shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center mt-0.5">
-                  {i + 1}
-                </span>
-                <div className="flex-1">
-                  <p className="text-sm font-semibold text-foreground">{step.title}</p>
-                  {step.actions ? (
-                    <div className="grid grid-cols-2 gap-2 mt-2">
-                      {step.actions.map((a, j) => {
-                        const Icon = a.icon
-                        return (
-                          <div key={j} className="flex items-start gap-2.5 bg-background border border-border rounded-lg px-3 py-2.5">
-                            <div className={`shrink-0 w-7 h-7 rounded-md flex items-center justify-center ${a.color ?? 'bg-border text-muted-foreground'}`}>
-                              <Icon size={14} />
-                            </div>
-                            <div>
-                              <p className="text-xs font-semibold text-foreground leading-tight">{a.label}</p>
-                              <p className="text-[11px] text-muted-foreground leading-relaxed mt-0.5">{a.desc}</p>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  ) : (
-                    <p className="text-sm text-muted-foreground mt-0.5 leading-relaxed">{step.detail}</p>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ol>
-
-          {/* Tips */}
-          {mod.tips.length > 0 && (
-            <>
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">
-                Consejos y ejemplos
-              </h3>
-              <div className="space-y-2">
-                {mod.tips.map((tip, i) => <TipBox key={i} tip={tip} />)}
-              </div>
-            </>
-          )}
-        </div>
-      )}
+    </h2>
+    <div id={`content-${section.id}`} hidden={!open} className="space-y-5 border-t p-4 sm:p-5">
+      <p className="text-sm leading-relaxed">{section.description}</p>
+      {section.href && <Link href={section.href} prefetch={false} className="inline-flex items-center gap-1.5 rounded text-sm font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        Abrir {section.label}<ArrowRight size={14} aria-hidden="true" />
+      </Link>}
+      <ol className="space-y-4">
+        {section.steps.map((step, index) => <li key={step.title} className="flex gap-3">
+          <span aria-hidden="true" className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">{index + 1}</span>
+          <div className="min-w-0 space-y-1">
+            <h3 className="text-sm font-semibold">{step.title}</h3>
+            <p className="text-sm leading-relaxed text-muted-foreground">{step.detail}</p>
+          </div>
+        </li>)}
+      </ol>
+      {!!section.tips?.length && <div className="space-y-2">
+        {section.tips.map(tip => {
+          const style = TIP_STYLES[tip.kind]
+          const TipIcon = style.icon
+          return <div key={tip.text} className={cn('flex items-start gap-2.5 rounded-lg border p-3', style.className)}>
+            <TipIcon size={15} aria-hidden="true" className="mt-0.5 shrink-0 text-primary" />
+            <p className="text-sm leading-relaxed"><span className="font-semibold">{style.label}. </span>{tip.text}</p>
+          </div>
+        })}
+      </div>}
     </div>
-  )
+  </section>
 }
-
-// ── TOC link ──────────────────────────────────────────────────────────────────
-
-function TocLink({ mod, active }: { mod: ModuleSection; active: boolean }) {
-  const Icon = mod.icon
-  return (
-    <a
-      href={`#${mod.id}`}
-      className={cn(
-        'flex items-center gap-2 px-2 py-1.5 rounded-md text-xs font-medium transition-colors',
-        active
-          ? 'bg-blue-50 text-blue-700'
-          : 'text-muted-foreground hover:text-foreground hover:bg-muted',
-      )}
-    >
-      <Icon size={13} className={`shrink-0 ${active ? 'text-blue-600' : mod.color}`} />
-      <span className="truncate">{mod.label}</span>
-    </a>
-  )
-}
-
-// ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function AyudaPage() {
-  const { user: currentUser } = useCurrentUser()
-  const isAdmin    = currentUser?.role === 'admin'
-  const [activeId, setActiveId] = useState<string>(MODULES[0].id)
-  const [search,   setSearch]   = useState('')
+  const { user, permissions, loading, error } = useCurrentUser()
+  const [search, setSearch] = useState('')
+  const [expanded, setExpanded] = useState(() => new Set(['primeros-pasos']))
+  const [activeId, setActiveId] = useState('primeros-pasos')
+  const accessible = useMemo(() => guideSectionsForUser(user?.role, permissions), [user?.role, permissions])
+  const visible = useMemo(() => accessible.filter(section => matchesGuideSearch(section, search)), [accessible, search])
+  const shortcuts = SHORTCUTS.filter(shortcut => accessible.some(section => section.id === shortcut.id))
 
-  // Filter modules by role and search
-  const visibleModules = MODULES.filter(mod => {
-    if (!isAdmin && mod.role === 'admin') return false
-    if (isAdmin   && mod.role === 'operator') return false  // admins don't need operator view
-    if (search) {
-      const q = search.toLowerCase()
-      return (
-        mod.label.toLowerCase().includes(q) ||
-        mod.subtitle.toLowerCase().includes(q) ||
-        mod.description.toLowerCase().includes(q) ||
-        mod.steps.some(s => s.title.toLowerCase().includes(q) || s.detail.toLowerCase().includes(q))
-      )
-    }
-    return true
-  })
+  const revealSection = useCallback((id: string) => {
+    if (!accessible.some(section => section.id === id)) return
+    setSearch('')
+    setExpanded(previous => new Set(previous).add(id))
+    setActiveId(id)
+    requestAnimationFrame(() => document.getElementById(id)?.scrollIntoView?.({ block: 'start' }))
+  }, [accessible])
 
-  // Intersection observer to highlight TOC
-  const observerRef = useRef<IntersectionObserver | null>(null)
+  // Direct links and browser back/forward open their section, including after user permissions load.
   useEffect(() => {
-    observerRef.current?.disconnect()
-    observerRef.current = new IntersectionObserver(
-      entries => {
-        const visible = entries.filter(e => e.isIntersecting)
-        if (visible.length > 0) {
-          setActiveId(visible[0].target.id)
-        }
-      },
-      { rootMargin: '-20% 0px -70% 0px', threshold: 0 }
-    )
-    MODULES.forEach(mod => {
-      const el = document.getElementById(mod.id)
-      if (el) observerRef.current?.observe(el)
+    const revealHash = () => revealSection(window.location.hash.slice(1))
+    revealHash()
+    window.addEventListener('hashchange', revealHash)
+    return () => window.removeEventListener('hashchange', revealHash)
+  }, [revealSection])
+
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined' || loading) return
+    const observer = new IntersectionObserver(entries => {
+      const current = entries.find(entry => entry.isIntersecting)
+      if (current) setActiveId(current.target.id)
+    }, { rootMargin: '-10% 0px -65% 0px', threshold: 0 })
+    visible.forEach(section => {
+      const element = document.getElementById(section.id)
+      if (element) observer.observe(element)
     })
-    return () => observerRef.current?.disconnect()
-  }, [])
+    return () => observer.disconnect()
+  }, [visible, loading])
 
-  return (
-    <div>
-      <PageHeader
-        title="Guía de uso"
-        description="Documentación completa de todos los módulos de la plataforma"
-        actions={
-          <div className="flex items-center gap-2">
-            <BookOpen size={14} className="text-muted-foreground" />
-            <span className="text-xs text-muted-foreground">
-              {visibleModules.length} módulos disponibles para tu rol
-            </span>
-          </div>
-        }
-      />
+  function updateSearch(value: string) {
+    setSearch(value)
+    if (value.trim()) setExpanded(new Set(accessible.filter(section => matchesGuideSearch(section, value)).map(section => section.id)))
+  }
 
-      {/* Intro card */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-xl p-4 mb-6 flex items-start gap-3">
-        <HelpCircle size={20} className="text-blue-600 shrink-0 mt-0.5" />
-        <div>
-          <p className="text-sm font-semibold text-blue-900 mb-1">
-            {isAdmin
-              ? 'Guía para Administradores'
-              : 'Guía para Operadores'}
-          </p>
-          <p className="text-sm text-blue-800 leading-relaxed">
-            {isAdmin
-              ? 'Esta guía cubre todos los módulos de la plataforma desde la perspectiva del administrador. Incluye cómo configurar el sistema, gestionar el equipo y monitorear el rendimiento.'
-              : 'Esta guía explica cómo usar los módulos a los que tenés acceso. Si necesitás acceder a un módulo que no ves en el menú, contactá a tu administrador para que te asigne ese sector.'}
-          </p>
-          {!isAdmin && (
-            <p className="text-xs text-blue-600 mt-2 flex items-center gap-1">
-              <ArrowRight size={11} /> Si no ves un módulo en el menú, es porque tu administrador aún no te asignó ese sector.
-            </p>
-          )}
-        </div>
-      </div>
+  function toggleSection(id: string) {
+    setExpanded(previous => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
-      <div className="flex gap-6 items-start">
-
-        {/* ── Left TOC (sticky, desktop only) ──────────────────────────────── */}
-        <nav className="hidden lg:flex flex-col gap-0.5 w-48 shrink-0 sticky top-4 self-start bg-card border border-border rounded-xl p-3 shadow-sm">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground px-2 mb-1">
-            Módulos
-          </p>
-
-          {/* Search */}
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Buscar..."
-            className="w-full text-xs px-2 py-1.5 border border-border rounded-md mb-1 outline-none focus:border-blue-300"
-          />
-
-          {visibleModules.map(mod => (
-            <TocLink key={mod.id} mod={mod} active={activeId === mod.id} />
-          ))}
-
-          {search && visibleModules.length === 0 && (
-            <p className="text-xs text-muted-foreground px-2 py-2">Sin resultados</p>
-          )}
-        </nav>
-
-        {/* ── Main content ──────────────────────────────────────────────────── */}
-        <div className="flex-1 min-w-0 space-y-3">
-
-          {/* Mobile search */}
-          <div className="lg:hidden mb-3">
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Buscar en la guía..."
-              className="w-full text-sm px-3 py-2 border border-border rounded-lg outline-none focus:border-blue-300"
-            />
-          </div>
-
-          {visibleModules.length === 0 ? (
-            <div className="py-16 text-center">
-              <HelpCircle size={40} className="mx-auto mb-3 text-gray-200" />
-              <p className="text-muted-foreground text-sm">No se encontraron módulos para "{search}"</p>
+  return <div className="mx-auto min-w-0 max-w-6xl space-y-6">
+    <PageHeader title="Guía de uso" description="Pasos prácticos para trabajar, medir resultados y resolver dudas."
+      actions={<span className="text-xs text-muted-foreground">Revisada el {GUIDE_REVIEWED_AT}</span>} />
+    {loading ? <p role="status" className="py-8 text-sm text-muted-foreground">Cargando los temas habilitados para tu cuenta…</p>
+      : error ? <p role="alert" className="rounded-lg border p-4 text-sm text-destructive">No se pudieron comprobar tus permisos. Recargá la página para consultar la guía.</p>
+      : <>
+        <div className="space-y-4 rounded-xl border bg-card p-4 sm:p-5">
+          <div className="flex items-start gap-3">
+            <BookOpen size={22} aria-hidden="true" className="mt-0.5 shrink-0 text-primary" />
+            <div>
+              <p className="font-semibold">¿Qué necesitás hacer?</p>
+              <p className="mt-1 text-sm text-muted-foreground">Buscá una función o una duda. También podés abrir un recorrido rápido o elegir un tema del índice.</p>
+              {user?.role === 'viewer' && <p className="mt-2 text-xs text-muted-foreground">Tu cuenta es de solo lectura. Los pasos de edición y envío requieren permisos adicionales.</p>}
             </div>
-          ) : (
-            visibleModules.map((mod, idx) => (
-              <ModuleSection
-                key={mod.id}
-                mod={mod}
-                defaultOpen={idx === 0}
-              />
-            ))
-          )}
-
-          {/* Footer */}
-          <div className="text-center py-8 text-xs text-muted-foreground">
-            <p>¿Tenés alguna duda que no está cubierta en esta guía?</p>
-            <p className="mt-1">
-              {isAdmin
-                ? 'Contactá al equipo de soporte técnico.'
-                : 'Consultale a tu administrador.'}
-            </p>
+          </div>
+          <label htmlFor="guide-search" className="sr-only">Buscar en la guía</label>
+          <div className="relative">
+            <Search size={17} aria-hidden="true" className="absolute left-3 top-3 text-muted-foreground" />
+            <Input id="guide-search" type="search" value={search} onChange={event => updateSearch(event.target.value)}
+              placeholder="Ej.: importar Excel, carga efectiva, plantilla, campaña pausada…" className="h-10 pl-10" />
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {shortcuts.map(shortcut => <a key={shortcut.id} href={`#${shortcut.id}`} onClick={() => revealSection(shortcut.id)}
+              className="rounded-lg border p-3 transition-colors hover:border-primary/40 hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <span className="flex items-center justify-between gap-2 text-sm font-medium">{shortcut.label}<ArrowRight size={14} aria-hidden="true" /></span>
+              <span className="mt-1 block text-xs text-muted-foreground">{shortcut.detail}</span>
+            </a>)}
           </div>
         </div>
-      </div>
-    </div>
-  )
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p role="status" className="text-xs text-muted-foreground">{search.trim() ? (visible.length === 1 ? '1 tema encontrado' : `${visible.length} temas encontrados`) : `${accessible.length} temas disponibles para tu cuenta`}</p>
+          <div className="flex flex-wrap gap-2">
+            {search && <Button variant="ghost" size="sm" onClick={() => updateSearch('')}>Limpiar búsqueda</Button>}
+            <Button variant="outline" size="sm" disabled={!visible.length} onClick={() => setExpanded(new Set(visible.map(section => section.id)))}>Expandir todo</Button>
+            <Button variant="outline" size="sm" disabled={!visible.length} onClick={() => setExpanded(new Set())}>Contraer todo</Button>
+          </div>
+        </div>
+        <div className="lg:hidden">
+          <label htmlFor="guide-topic" className="mb-1 block text-xs font-medium text-muted-foreground">Ir a un tema</label>
+          <select id="guide-topic" className="w-full rounded-lg border bg-card p-2 text-sm"
+            value={visible.some(section => section.id === activeId) ? activeId : ''}
+            onChange={event => { const id = event.target.value; if (id) { revealSection(id); window.location.hash = id } }}>
+            <option value="">Seleccioná un tema</option>
+            {visible.map(section => <option key={section.id} value={section.id}>{section.label}</option>)}
+          </select>
+        </div>
+
+        <div className="flex items-start gap-6">
+          <nav aria-label="Índice de la guía" className="sticky top-4 hidden max-h-[75vh] w-56 shrink-0 space-y-1 overflow-y-auto rounded-xl border bg-card p-3 lg:block">
+            <p className="px-2 pb-2 text-xs font-semibold text-muted-foreground">Temas de la guía</p>
+            {visible.map(section => {
+              const Icon = ICONS[section.id] ?? BookOpen
+              return <a key={section.id} href={`#${section.id}`} onClick={() => revealSection(section.id)} aria-current={activeId === section.id ? 'location' : undefined}
+                className={cn('flex items-center gap-2 rounded-md px-2 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', activeId === section.id ? 'bg-accent font-medium text-primary' : 'text-muted-foreground hover:bg-muted hover:text-foreground')}>
+                <Icon size={14} aria-hidden="true" className="shrink-0" />{section.label}
+              </a>
+            })}
+          </nav>
+          <div className="min-w-0 flex-1 space-y-3">
+            {visible.length ? visible.map(section => <GuideModule key={section.id} section={section} open={expanded.has(section.id)} onToggle={() => toggleSection(section.id)} />)
+              : <div className="rounded-xl border bg-card px-4 py-12 text-center">
+                <HelpCircle size={30} aria-hidden="true" className="mx-auto mb-3 text-muted-foreground" />
+                <p className="text-sm">No encontramos temas para “{search}”.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Probá con otra palabra, como “cargas”, “permisos” o “importar”.</p>
+                <Button variant="outline" size="sm" className="mt-4" onClick={() => updateSearch('')}>Ver todos los temas</Button>
+              </div>}
+            <p className="py-5 text-center text-xs leading-relaxed text-muted-foreground">¿Necesitás ayuda con un caso concreto? Compartí el módulo, la hora y el mensaje de error con {user?.role === 'admin' ? 'el equipo de soporte' : 'tu administrador'}.</p>
+          </div>
+        </div>
+      </>}
+  </div>
 }
