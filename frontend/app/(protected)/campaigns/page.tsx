@@ -11,6 +11,7 @@ import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 import { CloudReadiness } from '@/components/campaigns/CloudReadiness'
 import { CampaignTestSend } from '@/components/campaigns/CampaignTestSend'
+import { CampaignScheduleDialog } from '@/components/campaigns/CampaignScheduleDialog'
 import { CONTACT_NAME_VARIABLE, hasTemplateContactName, resolveTemplateContactValue } from '@/lib/campaign-personalization'
 
 interface CampaignList { id: string; name: string; contact_count: number }
@@ -24,7 +25,7 @@ interface CampaignContact {
 }
 interface Campaign {
   id: string; name: string; message: string; messages: string[]; status: string
-  scheduled_at: string; completed_at: string
+  scheduled_at: string; completed_at: string; started_at: string | null; owned_by: string | null
   total_targets: number; total_sent: number; total_delivered: number
   total_read: number; total_failed: number; total_skipped: number
   read_rate: number; delivery_rate: number
@@ -89,7 +90,7 @@ const AR_TZ = 'America/Argentina/Buenos_Aires'
 function formatAR(iso: string) {
   const d = new Date(iso)
   if (isNaN(d.getTime())) return iso
-  return `${d.toLocaleString('es-AR', { timeZone: AR_TZ })} (hora Argentina)`
+  return `${d.toLocaleString('es-AR', { timeZone: AR_TZ, hourCycle: 'h23' })} (hora Argentina)`
 }
 
 // datetime-local ("YYYY-MM-DDTHH:mm") → ISO con offset explícito de Argentina (-03:00, sin horario de verano)
@@ -224,6 +225,9 @@ export default function Campaigns() {
   const [lists, setLists]                 = useState<CampaignList[]>([])
   const [prospectLists, setProspectLists] = useState<ProspectListOption[]>([])
   const [showNew, setShowNew]             = useState(false)
+  const [scheduleToEdit, setScheduleToEdit] = useState<Campaign | null>(null)
+  const [scheduleNotice, setScheduleNotice] = useState<string | null>(null)
+  const canEditSchedule = isAdmin || ((permissions?.campaigns?.includes('update') ?? false) && (permissions?.send?.includes('send') ?? false))
   const canOpenNew = isAdmin || (permissions?.campaigns?.includes('create') ?? false)
   useEffect(() => {
     if (!canOpenNew) return
@@ -753,6 +757,8 @@ export default function Campaigns() {
 
       <CloudReadiness />
 
+      {scheduleNotice && <p role="status" className="rounded-lg border border-success/20 bg-success/10 px-4 py-2 text-sm text-success">{scheduleNotice}</p>}
+
       {/* Error de carga: no se vacía la lista ni se muestra "sin campañas" */}
       {campaignsError && (
         <div role="alert" className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-2 text-sm text-destructive flex items-center justify-between gap-3">
@@ -844,10 +850,18 @@ export default function Campaigns() {
                       </div>
                     )}
 
-                    <div className="flex flex-wrap gap-2 shrink-0">
+                    <div className="flex max-w-full flex-wrap gap-2 shrink-0">
                       <Button variant="outline" size="sm" onClick={() => openDetail(c)} aria-label={`Ver detalle de ${c.name}`}>
                         <Eye size={13} />
                       </Button>
+
+                      {c.status === 'scheduled' && c.scheduled_at && !c.started_at && !c.processor_locked_at && canEditSchedule && (isAdmin || c.owned_by === user?.id) && (
+                        <Button variant="outline" size="sm" aria-label={`Editar horario de ${c.name}`}
+                          disabled={!schedulerEnabled || sending === c.id || actioning === c.id}
+                          onClick={() => { setScheduleNotice(null); setScheduleToEdit(c) }}>
+                          <Clock size={13} /> Editar horario
+                        </Button>
+                      )}
 
                       {/* Enviar: draft, scheduled */}
                       {(c.status === 'draft' || c.status === 'scheduled') && (c.list_name || c.prospect_list_name) && (
@@ -1555,6 +1569,17 @@ export default function Campaigns() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {scheduleToEdit && <CampaignScheduleDialog key={`${scheduleToEdit.id}:${scheduleToEdit.scheduled_at}`}
+        campaign={scheduleToEdit} onClose={() => setScheduleToEdit(null)} onRefresh={loadCampaigns}
+        onSaved={scheduledAt => {
+          const id = scheduleToEdit.id
+          setCampaigns(prev => prev.map(c => c.id === id ? { ...c, scheduled_at: scheduledAt } : c))
+          setSelected(prev => prev?.id === id ? { ...prev, scheduled_at: scheduledAt } : prev)
+          setScheduleNotice(`Horario actualizado: ${formatAR(scheduledAt)}`)
+          setScheduleToEdit(null)
+          loadCampaigns()
+        }} />}
 
       {/* Modal detalle campaña */}
       <Dialog open={!!selected} onOpenChange={v => { if (!v) closeDetail() }}>

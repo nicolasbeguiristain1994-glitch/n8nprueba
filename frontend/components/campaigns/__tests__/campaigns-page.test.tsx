@@ -2,7 +2,8 @@ import { cleanup, render, screen, fireEvent, waitFor, act } from '@testing-libra
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 
 vi.mock('@/lib/fetchJson', () => ({ fetchJson: vi.fn() }))
-vi.mock('@/lib/useCurrentUser', () => ({ useCurrentUser: () => ({ user: { role: 'admin' } }) }))
+const currentUser = vi.hoisted(() => ({ value: { user: { role: 'admin', id: 'owner' }, permissions: {} as Record<string, string[]> } }))
+vi.mock('@/lib/useCurrentUser', () => ({ useCurrentUser: () => currentUser.value }))
 
 // Primitivas base-ui reemplazadas por equivalentes DOM simples para poder interactuar en happy-dom
 vi.mock('@/components/ui/dialog', async () => {
@@ -13,6 +14,7 @@ vi.mock('@/components/ui/dialog', async () => {
     DialogContent: ({ children }: P) => h('div', null, children),
     DialogHeader: ({ children }: P) => h('div', null, children),
     DialogTitle: ({ children }: P) => h('h2', null, children),
+    DialogDescription: ({ children }: P) => h('p', null, children),
   }
 })
 vi.mock('@/components/ui/select', async () => {
@@ -69,7 +71,7 @@ const TEMPLATES = [
 function makeCampaign(over: Record<string, unknown> = {}) {
   return {
     id: 'c-a', name: 'Promo Mayo', message: 'Hola', messages: ['Hola'], status: 'draft',
-    scheduled_at: null, completed_at: null,
+    scheduled_at: null as string | null, completed_at: null,
     total_targets: 0, total_sent: 0, total_delivered: 0, total_read: 0, total_failed: 0, total_skipped: 0,
     read_rate: 0, delivery_rate: 0, list_name: null, list_id: null, prospect_list_id: null, prospect_list_name: null,
     antiblock_delay_min: 3, antiblock_delay_max: 8, personalize_name: true, use_multi_line: false,
@@ -100,7 +102,7 @@ function postedBody(fetchMock: ReturnType<typeof vi.fn>) {
 }
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => { vi.clearAllMocks(); currentUser.value = { user: { role: 'admin', id: 'owner' }, permissions: {} } })
 
 describe('Campañas — plantillas', () => {
   it('vincula {{1}} al nombre de cada contacto y muestra Pablo sólo como ejemplo', async () => {
@@ -373,6 +375,85 @@ describe('Campañas — errores de carga', () => {
 })
 
 describe('Campañas — programación', () => {
+  const scheduled = (over = {}) => makeCampaign({ status: 'scheduled', scheduled_at: '2035-10-02T20:30:00.000Z', started_at: null, owned_by: 'owner', ...over })
+
+  it('edita el horario en Argentina y conserva la campaña sin iniciar envíos', async () => {
+    let campaign = scheduled()
+    routeFetchJson(() => Promise.resolve({ campaigns: [campaign], scheduler_enabled: true }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe('/api/campaigns/c-a/schedule')
+      expect(init?.method).toBe('PATCH')
+      campaign = { ...campaign, scheduled_at: '2035-10-03T22:45:00.000Z' }
+      return jsonResponse({ ok: true, scheduled_at: campaign.scheduled_at })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<Page />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Editar horario de Promo Mayo' }))
+    expect(screen.getByLabelText('Fecha de envío')).toHaveValue('2035-10-02')
+    expect(screen.getByLabelText('Hora de envío')).toHaveValue('17:30')
+    fireEvent.change(screen.getByLabelText('Fecha de envío'), { target: { value: '2035-10-03' } })
+    fireEvent.change(screen.getByLabelText('Hora de envío'), { target: { value: '19:45' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar horario' }))
+    expect(await screen.findByText(/Horario actualizado:/)).toHaveTextContent('19:45')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string)).toEqual({
+      scheduled_at: '2035-10-03T19:45:00-03:00', expected_scheduled_at: '2035-10-02T20:30:00.000Z',
+    })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByText('Programado')).toBeInTheDocument()
+  })
+
+  it('rechaza una hora pasada antes de enviar cambios', async () => {
+    routeFetchJson(() => Promise.resolve({ campaigns: [scheduled({ scheduled_at: '2020-01-01T12:00:00Z' })], scheduler_enabled: true }))
+    const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock)
+    render(<Page />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Editar horario de Promo Mayo' }))
+    fireEvent.submit(screen.getByRole('button', { name: 'Guardar horario' }).closest('form')!)
+    expect(await screen.findByRole('alert')).toHaveTextContent('fecha y hora futuras')
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('conserva el formulario y refresca la lista cuando el envío comenzó mientras se editaba', async () => {
+    let campaign = scheduled()
+    routeFetchJson(() => Promise.resolve({ campaigns: [campaign], scheduler_enabled: true }))
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      campaign = scheduled({ status: 'running', started_at: '2035-10-02T20:30:00Z' })
+      return jsonResponse({ error: 'La campaña ya empezó a enviarse' }, 409)
+    }))
+    render(<Page />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Editar horario de Promo Mayo' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar horario' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('ya empezó')
+    expect(screen.getByLabelText('Hora de envío')).toHaveValue('17:30')
+    expect(screen.queryByText(/Horario actualizado:/)).not.toBeInTheDocument()
+    await screen.findByText('Enviando')
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    expect(screen.queryByRole('button', { name: /Editar horario de/ })).not.toBeInTheDocument()
+  })
+
+  it.each<{ role: string; permissions: Record<string, string[]> }>([
+    { role: 'viewer', permissions: {} },
+    { role: 'operator', permissions: { campaigns: ['update'] } },
+  ])('oculta la edición sin permisos de edición y envío: $role', async ({ role, permissions }) => {
+    currentUser.value = { user: { role, id: 'owner' }, permissions }
+    routeFetchJson(() => Promise.resolve({ campaigns: [scheduled()], scheduler_enabled: true }))
+    render(<Page />); await screen.findByText('Promo Mayo')
+    expect(screen.queryByRole('button', { name: /Editar horario de/ })).not.toBeInTheDocument()
+  })
+
+  it('permite al operador editar solo sus campañas pendientes y deshabilita la opción sin programador', async () => {
+    currentUser.value = { user: { role: 'operator', id: 'owner' }, permissions: { campaigns: ['update'], send: ['send'] } }
+    routeFetchJson(() => Promise.resolve({ campaigns: [
+      scheduled(), scheduled({ id: 'other', name: 'Ajena', owned_by: 'other' }),
+      scheduled({ id: 'started', name: 'Iniciada', started_at: '2035-10-02T20:30:00Z' }),
+      scheduled({ id: 'locked', name: 'Bloqueada', processor_locked_at: '2035-10-02T20:30:00Z' }),
+      scheduled({ id: 'done', name: 'Completada', status: 'completed' }),
+    ], scheduler_enabled: false }))
+    render(<Page />)
+    expect(await screen.findByRole('button', { name: 'Editar horario de Promo Mayo' })).toBeDisabled()
+    expect(screen.getAllByRole('button', { name: /Editar horario de/ })).toHaveLength(1)
+  })
+
   it('envía la fecha con offset explícito de Argentina cuando el scheduler está habilitado', async () => {
     routeFetchJson(() => Promise.resolve({ campaigns: [], scheduler_enabled: true }))
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ id: 'nueva', status: 'scheduled' }))
