@@ -6,6 +6,7 @@ export interface EffectiveRecipient {
   recipient_id: string
   contact_id: string
   phone_number: string
+  cuentas_carga: { usuario: string; plataforma: string }[]
   sent_at: string
   primera_carga: string
   cargas: number
@@ -51,7 +52,7 @@ export const CAMPAIGN_EFFECTIVENESS_SQL = `
     ${CAMPAIGN_CONTACT_ACCOUNTS_SQL}
   ), deposits AS MATERIALIZED (
     SELECT DISTINCT r.campaign_id,r.recipient_id,t.id,t.fecha_hora_utc,
-      COALESCE(s.monto,t.monto) AS monto
+      COALESCE(s.monto,t.monto) AS monto,a.username_lower AS username,a.platform
     FROM recipients r JOIN accounts a ON a.contact_id=r.contact_id
     JOIN casino_transactions t ON t.platform=a.platform AND lower(t.username)=a.username_lower
     LEFT JOIN casino_financial_source_records s
@@ -66,10 +67,12 @@ export const CAMPAIGN_EFFECTIVENESS_SQL = `
       )
   ), recipient_totals AS (
     SELECT r.*,EXISTS(SELECT 1 FROM accounts a WHERE a.contact_id=r.contact_id) AS linked,
-      d.cargas,d.monto_cargado,d.primera_carga
+      d.cargas,d.monto_cargado,d.primera_carga,d.cuentas_carga
     FROM recipients r LEFT JOIN (
       SELECT recipient_id,COUNT(*)::int AS cargas,SUM(monto)::text AS monto_cargado,
-        MIN(fecha_hora_utc) AS primera_carga
+        MIN(fecha_hora_utc) AS primera_carga,
+        jsonb_agg(DISTINCT jsonb_build_object('usuario',username,'plataforma',platform)
+          ORDER BY jsonb_build_object('usuario',username,'plataforma',platform)) AS cuentas_carga
       FROM deposits WHERE fecha_hora_utc IS NOT NULL GROUP BY recipient_id
     ) d USING (recipient_id)
   )
@@ -87,6 +90,7 @@ export const CAMPAIGN_EFFECTIVENESS_SQL = `
     (SELECT COUNT(DISTINCT id)::int FROM deposits d WHERE d.campaign_id=requested.campaign_id AND d.fecha_hora_utc IS NULL) AS cargas_sin_hora,
     CASE WHEN $2::boolean THEN COALESCE(jsonb_agg(jsonb_build_object(
       'recipient_id',r.recipient_id,'contact_id',r.contact_id,'phone_number',r.phone_number,
+      'cuentas_carga',r.cuentas_carga,
       'sent_at',r.sent_at,'primera_carga',r.primera_carga,'cargas',r.cargas,'monto_cargado',r.monto_cargado
     ) ORDER BY r.primera_carga,r.recipient_id) FILTER (WHERE r.cargas>0),'[]'::jsonb) ELSE '[]'::jsonb END AS efectivos_detalle
   FROM unnest($1::uuid[]) requested(campaign_id)

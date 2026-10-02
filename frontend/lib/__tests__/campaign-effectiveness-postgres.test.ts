@@ -45,7 +45,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign effectivene
     await db.query(`INSERT INTO casino_financial_source_records VALUES(3,'bet30','importe_original',100.123456789)`)
     expect(await stats()).toMatchObject({ efectivos: 1, tasa_efectividad: '100.0', cargas_24h: 2,
       monto_cargado_24h: '300.323456789', monto_apostado_24h: null,
-      efectivos_detalle: [expect.objectContaining({ contact_id: id(100), cargas: 2, monto_cargado: '300.323456789' })] })
+      efectivos_detalle: [expect.objectContaining({ contact_id: id(100), cargas: 2, monto_cargado: '300.323456789',
+        cuentas_carga: [{ usuario: 'player', plataforma: 'bet30' }] })] })
   })
   it('excludes bonuses, withdrawals, zero amounts and the same username on another platform', async () => {
     await deposit(1, '2026-10-01T01:00:00Z')
@@ -57,10 +58,21 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign effectivene
     expect(await stats()).toMatchObject({ efectivos: 0, monto_cargado_24h: '0', cargas_24h: 0 })
   })
   it('ignores duplicate links and counts several accounts once per recipient', async () => {
-    await db.query(`INSERT INTO casino_contact_account_links VALUES('${id(100)}','bet30','player'),('${id(100)}','zeus','second')`)
+    await db.query(`INSERT INTO casino_contact_account_links VALUES
+      ('${id(100)}','bet30','player'),('${id(100)}','zeus','second'),
+      ('${id(100)}','zeus','player'),('${id(100)}','ganamos','outside'),('${id(100)}','argenbet','dateonly')`)
     await deposit(1, '2026-10-01T01:00:00Z')
     await deposit(2, '2026-10-01T01:00:00Z', '200.20', 'zeus', 'second')
-    expect(await stats()).toMatchObject({ efectivos: 1, cargas_24h: 2, monto_cargado_24h: '300.30' })
+    await deposit(3, '2026-10-01T02:00:00Z', '50', 'zeus', 'player')
+    await deposit(4, '2026-10-01T22:00:01Z', '900', 'ganamos', 'outside')
+    await deposit(5, null, '800', 'argenbet', 'dateonly')
+    const result = await stats()
+    expect(result).toMatchObject({ efectivos: 1, cargas_24h: 3, monto_cargado_24h: '350.30' })
+    expect(result.efectivos_detalle[0].cuentas_carga).toEqual([
+      { usuario: 'player', plataforma: 'bet30' },
+      { usuario: 'player', plataforma: 'zeus' },
+      { usuario: 'second', plataforma: 'zeus' },
+    ])
   })
   it('does not double-sum a transaction linked to two recipients', async () => {
     await db.query(`INSERT INTO campaign_recipients VALUES('${id(11)}','${id(1)}','${id(101)}','54922','sent','2026-09-30T23:00:00Z');

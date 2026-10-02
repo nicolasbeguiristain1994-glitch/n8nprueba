@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button'
 import { formatPesos } from '@/lib/dashboard-format'
 import type { CampaignEffectiveness, EffectiveRecipient } from '@/lib/campaign-effectiveness'
 
+const PLATFORM_LABELS: Record<string, string> = { zeus: 'Zeus', bet30: 'Bet30', ganamos: 'Ganamos', argenbet: 'Argenbet' }
+
 function dateTime(value: string) {
   return new Date(value).toLocaleString('es-AR', {
     timeZone: 'America/Argentina/Buenos_Aires', dateStyle: 'short', timeStyle: 'short',
@@ -60,7 +62,7 @@ export function CampaignEffectivenessPanel({ stats, recipients }: {
               <table className="w-full text-sm">
                 <caption className="text-left p-3 font-medium">Destinatarios efectivos</caption>
                 <thead className="bg-muted/40 text-xs text-muted-foreground">
-                  <tr>{['Contacto', 'Resultado', 'Enviado', 'Primera carga', 'Cargas', 'Monto cargado · 24 h'].map(label => (
+                  <tr>{['Contacto', 'Usuario', 'Plataforma', 'Resultado', 'Enviado', 'Primera carga', 'Cargas', 'Monto cargado · 24 h'].map(label => (
                     <th key={label} className="px-3 py-2 text-left font-medium whitespace-nowrap">{label}</th>
                   ))}</tr>
                 </thead>
@@ -68,6 +70,16 @@ export function CampaignEffectivenessPanel({ stats, recipients }: {
                   {recipients.slice(currentPage * pageSize, (currentPage + 1) * pageSize).map(recipient => (
                     <tr key={recipient.recipient_id}>
                       <td className="px-3 py-2 whitespace-nowrap">{recipient.phone_number}</td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {recipient.cuentas_carga?.length ? recipient.cuentas_carga.map(account => (
+                          <div key={`${account.plataforma}:${account.usuario}`}>{account.usuario}</div>
+                        )) : '—'}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        {recipient.cuentas_carga?.length ? recipient.cuentas_carga.map(account => (
+                          <div key={`${account.plataforma}:${account.usuario}`}>{PLATFORM_LABELS[account.plataforma] ?? account.plataforma}</div>
+                        )) : '—'}
+                      </td>
                       <td className="px-3 py-2"><Badge className="bg-success/15 text-success">Efectivo</Badge></td>
                       <td className="px-3 py-2 whitespace-nowrap">{dateTime(recipient.sent_at)}</td>
                       <td className="px-3 py-2 whitespace-nowrap">{dateTime(recipient.primera_carga)}</td>

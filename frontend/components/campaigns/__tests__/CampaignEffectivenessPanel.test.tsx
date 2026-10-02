@@ -12,6 +12,7 @@ const stats: Omit<CampaignEffectiveness, 'efectivos_detalle'> = {
 }
 const recipient: EffectiveRecipient = {
   recipient_id: 'recipient', contact_id: 'contact', phone_number: '+5491100000001',
+  cuentas_carga: [{ usuario: 'jugador_demo', plataforma: 'bet30' }, { usuario: 'jugador_zeus', plataforma: 'zeus' }],
   sent_at: '2026-10-01T15:00:00Z', primera_carga: '2026-10-01T16:00:00Z', cargas: 2, monto_cargado: '1234.56',
 }
 
@@ -21,6 +22,12 @@ describe('Campaign effectiveness panel', () => {
     expect(screen.getByText('25.0%')).toBeInTheDocument()
     expect(screen.getByText('Efectivo')).toBeInTheDocument()
     expect(screen.getByText(recipient.phone_number)).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Usuario' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'Plataforma' })).toBeInTheDocument()
+    expect(screen.getByText('jugador_demo')).toBeInTheDocument()
+    expect(screen.getByText('jugador_zeus')).toBeInTheDocument()
+    expect(screen.getByText('Bet30')).toBeInTheDocument()
+    expect(screen.getByText('Zeus')).toBeInTheDocument()
     expect(screen.getAllByText('$ 1.234,56')).toHaveLength(2)
     expect(screen.getByText('No disponible')).toBeInTheDocument()
     expect(screen.getByText(/resultado es provisional/)).toBeInTheDocument()
