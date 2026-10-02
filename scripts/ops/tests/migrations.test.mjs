@@ -38,6 +38,9 @@ test('real PostgreSQL: baseline, atomic migrations, locks and nontransactional r
    const r=await adoptBaseline(client,loadCatalog(f.root),commit);assert.equal(r.recorded,1);assert.equal((await status(client,loadCatalog(f.root))).managed,true);
    assert.equal((await client.query('SELECT status FROM app_migrations.ledger')).rows[0].status,'baseline');
   });
+  await t.test('schema changes outside the runner block deployment',async()=>{
+   await client.query('CREATE TABLE outside_runner(id integer)');await assert.rejects(status(client,loadCatalog(f.root)),/schema drift/);await client.query('DROP TABLE outside_runner');
+  });
   await t.test('concurrent migration process cannot acquire lock',async()=>{await withMigrationLock(client,async()=>{await assert.rejects(withMigrationLock(other,async()=>{}),/owns the lock/);});});
   await t.test('DDL, data and tracking roll back together',async()=>{
    f.write('002_atomic.sql','CREATE TABLE atomic_test(id integer); INSERT INTO missing_table VALUES(1);');

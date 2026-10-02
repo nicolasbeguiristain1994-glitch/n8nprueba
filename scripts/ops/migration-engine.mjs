@@ -88,7 +88,7 @@ async function initialize(client) {
   await client.query(`CREATE SCHEMA IF NOT EXISTS ${TRACKING}; REVOKE ALL ON SCHEMA ${TRACKING} FROM PUBLIC;
     CREATE TABLE IF NOT EXISTS ${TRACKING}.ledger(filename text PRIMARY KEY, checksum text NOT NULL, mode text NOT NULL,
       verification_checksum text, status text NOT NULL CHECK(status IN ('baseline','applied','running','failed')),
-      source_commit text NOT NULL, recorded_at timestamptz NOT NULL DEFAULT now());
+      source_commit text NOT NULL, schema_digest text, recorded_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE IF NOT EXISTS ${TRACKING}.baselines(digest text PRIMARY KEY, deployment_id text NOT NULL, source_commit text NOT NULL, object_hashes jsonb NOT NULL, recorded_at timestamptz NOT NULL DEFAULT now());
     CREATE TABLE IF NOT EXISTS ${TRACKING}.steps(filename text REFERENCES ${TRACKING}.ledger(filename), step integer, checksum text NOT NULL, status text NOT NULL, PRIMARY KEY(filename,step));`);
 }
@@ -108,10 +108,13 @@ export async function status(client, catalog) {
   }
   const names = new Set(rows.map(r=>r.filename));
   if (catalog.migrations.some(m => m.historical && !names.has(m.filename))) throw Error('Incomplete historical baseline');
+  const latest = await client.query(`SELECT schema_digest FROM ${TRACKING}.ledger WHERE schema_digest IS NOT NULL ORDER BY recorded_at DESC, filename DESC LIMIT 1`);
+  const original = latest.rows.length ? latest.rows[0].schema_digest : (await client.query(`SELECT digest FROM ${TRACKING}.baselines ORDER BY recorded_at DESC LIMIT 1`)).rows[0]?.digest;
+  if (!original || (await fingerprint(client)).digest !== original) throw Error('Database schema drift: review changes made outside the migration runner');
   return { managed:true, recorded:rows.length, pending:catalog.migrations.filter(m => !names.has(m.filename)).map(m=>m.filename) };
 }
 async function record(client,m,commit,state) {
-  await client.query(`INSERT INTO ${TRACKING}.ledger(filename,checksum,mode,verification_checksum,status,source_commit) VALUES($1,$2,$3,$4,$5,$6)`, [m.filename,m.checksum,m.mode,m.verificationChecksum,state,commit]);
+  await client.query(`INSERT INTO ${TRACKING}.ledger(filename,checksum,mode,verification_checksum,status,source_commit,schema_digest) VALUES($1,$2,$3,$4,$5,$6,$7)`, [m.filename,m.checksum,m.mode,m.verificationChecksum,state,commit,state==='applied'?(await fingerprint(client)).digest:null]);
 }
 export async function adoptBaseline(client,catalog,commit) {
   return withMigrationLock(client,async()=>{
@@ -154,7 +157,7 @@ export async function applyMigrations(client,catalog,commit) {
             await client.query(`UPDATE ${TRACKING}.steps SET status='applied' WHERE filename=$1 AND step=$2`,[name,i]);
           }
           await verify(client,m);
-          await client.query(`UPDATE ${TRACKING}.ledger SET status='applied' WHERE filename=$1`,[name]);
+          await client.query(`UPDATE ${TRACKING}.ledger SET status='applied',schema_digest=$2,recorded_at=clock_timestamp() WHERE filename=$1`,[name,(await fingerprint(client)).digest]);
         }catch(e){await client.query(`UPDATE ${TRACKING}.ledger SET status='failed' WHERE filename=$1`,[name]);throw e;}
       }
       applied.push(name);
@@ -172,7 +175,7 @@ export async function reconcile(client,catalog,commit,filename,manual=false){
     if(!manual&&(!rows.length||rows[0].checksum!==m.checksum||rows[0].verification_checksum!==m.verificationChecksum||!['failed','running'].includes(rows[0].status)))throw Error('No matching incomplete migration');
     await verify(client,m);
     if(manual)await record(client,m,commit,'applied');
-    else await client.query(`UPDATE ${TRACKING}.ledger SET status='applied',source_commit=$2,recorded_at=now() WHERE filename=$1`,[filename,commit]);
+    else await client.query(`UPDATE ${TRACKING}.ledger SET status='applied',source_commit=$2,schema_digest=$3,recorded_at=clock_timestamp() WHERE filename=$1`,[filename,commit,(await fingerprint(client)).digest]);
     return {reconciled:filename};
   });
 }

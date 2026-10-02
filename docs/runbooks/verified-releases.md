@@ -51,7 +51,8 @@ histórico se ejecutó: registra el esquema existente como punto de partida.
   diferente exige revisión y un punto de partida propio; nunca copiar la huella
   a ciegas. La procedencia y el commit quedan guardados.
 - `--check`: falla si falta la incorporación inicial, hay cambios en SQL ya
-  registrados, archivos ausentes o migraciones pendientes/incompletas.
+  registrados, archivos ausentes, migraciones pendientes/incompletas o cambios de esquema
+  realizados fuera del ejecutor. Cada paso confirmado guarda su huella de esquema.
 
 Las credenciales de migración deben poder crear el esquema privado; éste revoca
 el acceso de PUBLIC. Ninguna ruta de la aplicación utiliza estas tablas.
