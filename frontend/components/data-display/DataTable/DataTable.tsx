@@ -88,6 +88,7 @@ export function DataTable<TData>({
   storageKey = 'datatable',
   virtual = false,
   totalRows,
+  columnVisibility, onColumnVisibilityChange, pinnedColumns = [],
   // Paginación
   manualPagination,
   pageCount,
@@ -123,10 +124,16 @@ export function DataTable<TData>({
     getRowId,
     storageKey,
     virtual,
+    columnVisibility, onColumnVisibilityChange,
   })
 
   // Referencia para el scroll container del modo virtual
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const pinStyle = (id: string): React.CSSProperties => {
+    const visible = pinnedColumns.filter(p=>table.getColumn(p.id)?.getIsVisible())
+    const index = visible.findIndex(p=>p.id===id)
+    return index<0 ? {} : {position:'sticky',left:visible.slice(0,index).reduce((n,p)=>n+p.width,0),width:visible[index].width,minWidth:visible[index].width,maxWidth:visible[index].width,zIndex:2,background:'var(--table-row-background, var(--card))',boxShadow:'1px 0 0 var(--border)'}
+  }
   const rows = table.getRowModel().rows
 
   // ── Virtualización ──────────────────────────────────────────────────────
@@ -170,7 +177,7 @@ export function DataTable<TData>({
           role="grid"
           aria-rowcount={totalRows ?? rows.length}
           aria-colcount={table.getVisibleLeafColumns().length}
-          className="w-full text-sm"
+          className="crm-data-table w-full text-sm"
         >
           {/* Sticky header */}
           <thead className="sticky top-0 z-10 bg-muted border-b border-border">
@@ -182,7 +189,7 @@ export function DataTable<TData>({
                     scope="col"
                     aria-sort={header.column.getIsSorted() === 'asc' ? 'ascending' : header.column.getIsSorted() === 'desc' ? 'descending' : undefined}
                     colSpan={header.colSpan}
-                    style={{ width: header.getSize() !== 150 ? header.getSize() : undefined }}
+                    style={{ width: header.getSize() !== 150 ? header.getSize() : undefined, ...pinStyle(header.column.id) }}
                     className="px-4 py-2.5 text-left text-xs text-muted-foreground font-medium whitespace-nowrap"
                   >
                     {header.isPlaceholder
@@ -232,6 +239,7 @@ export function DataTable<TData>({
                 {row.getVisibleCells().map(cell => (
                   <td
                     key={cell.id}
+                    style={pinStyle(cell.column.id)}
                     className={cn('px-4', rowDensityClass)}
                   >
                     {/* Row actions: columna especial con hover invisible */}

@@ -8,8 +8,8 @@ import { OPERATOR_ACCOUNTS } from '@/lib/__tests__/fixtures/operator-accounts'
 afterEach(cleanup)
 const LABELS: Record<SyncPlatform, string> = { zeus: 'Zeus', bet30: 'Bet30', ganamos: 'Ganamos', argenbet: 'Argenbet' }
 const props = { platform: 'consolidado' as const, from: '2026-08-01', to: '2026-08-31', loading: false }
-const card = (p: SyncPlatform) => screen.getByRole('heading', { name: LABELS[p] }).closest('article') as HTMLElement
-const table = () => screen.getByRole('table')
+const card = (p: SyncPlatform) => within(screen.getByRole('table', { name: 'Comparación de movimientos por plataforma' })).getByRole('rowheader', { name: new RegExp('^' + LABELS[p]) }).closest('tr') as HTMLElement
+const table = () => screen.getByRole('table', { name: 'Movimientos por agente del período y última fecha disponible del historial' })
 const activityRow = (platform: SyncPlatform, agente: string | null, depositos = '0', movimientos = 0): PlatformActivity => ({
   platform, agente, depositos, retiros: '0', neto: depositos, bonos: '0', saldo_con_bonos: depositos,
   movimientos, cuentas: movimientos ? 1 : 0, ultima_fecha: movimientos ? '2026-08-20' : null,

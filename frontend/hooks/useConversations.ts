@@ -18,7 +18,8 @@ export function useConversations() {
   const [loadingMore, setLoadingMore]   = useState(false)
   const [selected, setSelected]         = useState<string | null>(null)
   const [messages, setMessages]         = useState<Message[]>([])
-  const [reply, setReply]               = useState('')
+  const [reply, setReplyValue]          = useState('')
+  const drafts = useRef<Record<string, string>>({})
   const [sending, setSending]           = useState(false)
   const [sendError, setSendError]       = useState<string | null>(null)
   const [filter, setFilter]             = useState<Filter>('all')
@@ -31,6 +32,14 @@ export function useConversations() {
   const [dateTo, setDateTo]             = useState('')
   const [followUpOnly, setFollowUpOnly] = useState(false)
   const selectedRef    = useRef<string | null>(null)
+  const setReply = useCallback((value: React.SetStateAction<string>) => {
+    const phone = selectedRef.current
+    if (!phone) return
+    const next = typeof value === 'function' ? value(drafts.current[phone] ?? '') : value
+    drafts.current[phone] = next
+    setReplyValue(next)
+  }, [])
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const listRequestRef = useRef(0)
   const loadedCountRef = useRef(0)
@@ -215,7 +224,7 @@ export function useConversations() {
   const realtimeStatus: RealtimeStatus = useRealTime(onRealTimeUpdate)
 
   const openConv = useCallback((phone: string) => {
-    if (selectedRef.current !== phone) { setMessages([]); setSendError(null) }
+    if (selectedRef.current !== phone) { setMessages([]); setSendError(null); setReplyValue(drafts.current[phone] ?? '') }
     setSelected(phone)
     setSelectedSnapshot(previous => convs.find(c => c.phone_number === phone) ??
       (previous?.phone_number === phone ? previous : undefined))
@@ -243,11 +252,13 @@ export function useConversations() {
     const data = await res.json().catch(() => ({}))
     // A reply may finish after the operator opens another chat. Keep that chat
     // and its draft intact, including when the previous reply fails.
+    const result = data.results?.[0]
+    const accepted = res.ok && result?.status !== 'error'
+    if (accepted && drafts.current[selected] === msgText) delete drafts.current[selected]
     if (selectedRef.current !== selected) { loadConvs(); return }
     if (!res.ok) { setSendError(data.error || `Error ${res.status}`); return }
-    const result = data.results?.[0]
     if (result?.status === 'error') { setSendError(result.error || 'El envío falló en WhatsApp'); return }
-    setReply('')
+    setReplyValue(drafts.current[selected] ?? '')
     // Actualización optimista: subir la conv al tope inmediatamente sin esperar SSE
     const now = new Date().toISOString()
     setConvs(prev => prev.map(c =>

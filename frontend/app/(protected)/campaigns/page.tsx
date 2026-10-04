@@ -246,6 +246,15 @@ export default function Campaigns() {
   const [sending, setSending]         = useState<string | null>(null)
   const [sendError, setSendError]     = useState<string | null>(null)
   const [actioning, setActioning]     = useState<string | null>(null)
+  const [createStep, setCreateStep] = useState(0)
+  const createDialogRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!showNew) return
+    const dialog = createDialogRef.current
+    dialog?.querySelector<HTMLElement>('section:not([hidden])')?.focus({ preventScroll: true })
+    if (dialog) dialog.scrollTop = 0
+  }, [createStep, showNew])
+  const [stepError, setStepError] = useState<string | null>(null)
   const [createError, setCreateError] = useState<string | null>(null)
   const [detailError, setDetailError] = useState<string | null>(null)
   const [dispatch, setDispatch]       = useState<DispatchSummary | null>(null)
@@ -735,6 +744,20 @@ export default function Campaigns() {
 
   const canCreate = !creating && !!form.name.trim() &&
     (useTemplate ? templateReady : messages.some(m => m.trim()))
+  const audience = form.audience_type === 'contacts' ? lists.find(l=>l.id===form.list_id) : prospectLists.find(l=>l.id===form.prospect_list_id)
+  const audienceCount = audience ? ('contact_count' in audience ? audience.contact_count : audience.member_count) : null
+  useEffect(()=>{ if(showNew){setCreateStep(0);setStepError(null)} },[showNew])
+  const nextCreateStep = () => {
+    let error: string | null = null
+    if(createStep===0 && (!form.name.trim() || !audience)) error='Completá el nombre y seleccioná una lista de audiencia.'
+    if(createStep===1 && !(useTemplate ? templateReady : messages.some(m=>m.trim()))) error='Completá un mensaje o todos los parámetros de la plantilla aprobada.'
+    if(createStep===1 && uploadingMedia) error='Esperá a que termine la carga de la imagen.'
+    if(createStep===2 && (![form.antiblock_delay_min,form.antiblock_delay_max].every(n=>Number.isInteger(n)&&n>=DELAY_MIN_SECONDS&&n<=DELAY_MAX_SECONDS)||form.antiblock_delay_min>form.antiblock_delay_max)) error=form.antiblock_delay_min>form.antiblock_delay_max?'La pausa mínima no puede ser mayor que la pausa máxima.':`Las pausas deben ser enteros entre ${DELAY_MIN_SECONDS} y ${DELAY_MAX_SECONDS} segundos.`
+    if(createStep===2 && schedulerEnabled && form.scheduled_at && !toArgentinaIso(form.scheduled_at)) error='Revisá la fecha y hora de programación.'
+    setStepError(error)
+    if(!error){setCreateStep(step=>Math.min(3,step+1));setCreateError(null)}
+  }
+
 
   return (
     <div className="space-y-5">
@@ -1027,7 +1050,7 @@ export default function Campaigns() {
                   )}
 
                   {/* Barra de progreso */}
-                  {c.status === 'running' && c.total_targets > 0 && (
+                  {['running','paused','completed'].includes(c.status) && c.total_targets > 0 && (
                     <div className="mt-3">
                       <div className="flex justify-between text-xs text-muted-foreground mb-1">
                         <span>Enviando…</span>
@@ -1060,11 +1083,13 @@ export default function Campaigns() {
           setUploadError(null)
         }
       }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent ref={createDialogRef} className="w-[calc(100vw-2rem)] sm:max-w-2xl max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nueva campaña</DialogTitle>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-4">
+          <nav aria-label="Pasos de nueva campaña" className="grid grid-cols-2 gap-2 sm:grid-cols-4">{['Audiencia','Contenido','Líneas y horario','Revisión'].map((label,i)=><button type="button" key={label} disabled={i>createStep||creating} aria-current={createStep===i?'step':undefined} onClick={()=>{setCreateStep(i);setStepError(null)}} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs disabled:opacity-45 ${createStep===i?'border-primary/30 bg-accent text-primary':'border-border text-muted-foreground'}`}><span className="flex size-5 shrink-0 items-center justify-center rounded-full border">{i+1}</span>{label}</button>)}</nav>
+          <div className="space-y-4">
+            <section tabIndex={-1} hidden={createStep!==0} aria-label="Audiencia de la campaña" className="campaign-step space-y-4">
             {/* Nombre de campaña */}
             <div className="col-span-2">
               <label htmlFor="campaign-name" className="text-xs font-medium text-muted-foreground mb-1 block">Nombre de campaña</label>
@@ -1075,6 +1100,81 @@ export default function Campaigns() {
               />
             </div>
 
+            <div className="col-span-2">
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Tipo de campaña</label>
+              <Select value={form.type} onValueChange={v => setForm(f => ({ ...f, type: v ?? 'promotion' }))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccioná el tipo de campaña" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="promotion">Promoción</SelectItem>
+                  <SelectItem value="retention">Retención</SelectItem>
+                  <SelectItem value="onboarding">Onboarding</SelectItem>
+                  <SelectItem value="support">Soporte</SelectItem>
+                  <SelectItem value="survey">Encuesta</SelectItem>
+                  <SelectItem value="payment">Pago</SelectItem>
+                  <SelectItem value="risk_alert">Alerta de riesgo</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Tipo de audiencia</label>
+              <div className="flex gap-2 mb-2">
+                <button
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, audience_type: 'contacts', prospect_list_id: '' }))}
+                  className={`flex-1 py-1.5 text-xs rounded-md border transition-colors font-medium ${
+                    form.audience_type === 'contacts'
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-border text-muted-foreground hover:border-input'
+                  }`}
+                >
+                  Contactos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, audience_type: 'prospects', list_id: '' }))}
+                  className={`flex-1 py-1.5 text-xs rounded-md border transition-colors font-medium ${
+                    form.audience_type === 'prospects'
+                      ? 'border-violet-500 bg-violet-50 text-violet-700'
+                      : 'border-border text-muted-foreground hover:border-input'
+                  }`}
+                >
+                  Listas de Difusión
+                </button>
+              </div>
+              {form.audience_type === 'contacts' ? (
+                <>
+                  <Select value={form.list_id} onValueChange={v => setForm(f=>({...f,list_id:v ?? ''}))}>
+                    <SelectTrigger><SelectValue placeholder="Seleccioná una lista de contactos" /></SelectTrigger>
+                    <SelectContent>
+                      {lists.map(l => <SelectItem key={l.id} value={l.id}>{l.name} ({l.contact_count} contactos)</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  {lists.length === 0 && !lookupFailures.includes('listas de contactos') && <p className="text-xs text-orange-500 mt-1">Creá primero una lista en Contactos</p>}
+                </>
+              ) : (
+                <>
+                  <Select value={form.prospect_list_id} onValueChange={v => setForm(f=>({...f,prospect_list_id:v ?? ''}))}>
+                    <SelectTrigger><SelectValue placeholder="Seleccioná una lista de difusión" /></SelectTrigger>
+                    <SelectContent>
+                      {prospectLists.map(l => <SelectItem key={l.id} value={l.id}>{l.name} ({l.member_count.toLocaleString()} prospectos)</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  {prospectLists.length === 0 && !lookupFailures.includes('listas de difusión') && <p className="text-xs text-orange-500 mt-1">Creá primero una lista en Contactos › Listas de Difusión</p>}
+                </>
+              )}
+              {lookupFailures.length > 0 && (
+                <p role="alert" className="text-xs text-destructive mt-1">
+                  No se pudieron cargar: {lookupFailures.join(', ')}.{' '}
+                  <button type="button" onClick={loadLookups} className="underline">Reintentar</button>
+                </p>
+              )}
+            </div>
+
+            </section>
+            <section tabIndex={-1} hidden={createStep!==1} aria-label="Contenido de la campaña" className="campaign-step space-y-4">
             {/* Toggle plantilla */}
             <div className="col-span-2">
               <button
@@ -1230,95 +1330,6 @@ export default function Campaigns() {
               )}
             </div>
 
-            <div className="col-span-2">
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Tipo de campaña</label>
-              <Select value={form.type} onValueChange={v => setForm(f => ({ ...f, type: v ?? 'promotion' }))}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Seleccioná el tipo de campaña" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="promotion">Promoción</SelectItem>
-                  <SelectItem value="retention">Retención</SelectItem>
-                  <SelectItem value="onboarding">Onboarding</SelectItem>
-                  <SelectItem value="support">Soporte</SelectItem>
-                  <SelectItem value="survey">Encuesta</SelectItem>
-                  <SelectItem value="payment">Pago</SelectItem>
-                  <SelectItem value="risk_alert">Alerta de riesgo</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Tipo de audiencia</label>
-              <div className="flex gap-2 mb-2">
-                <button
-                  type="button"
-                  onClick={() => setForm(f => ({ ...f, audience_type: 'contacts', prospect_list_id: '' }))}
-                  className={`flex-1 py-1.5 text-xs rounded-md border transition-colors font-medium ${
-                    form.audience_type === 'contacts'
-                      ? 'border-blue-500 bg-blue-50 text-blue-700'
-                      : 'border-border text-muted-foreground hover:border-input'
-                  }`}
-                >
-                  Contactos
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setForm(f => ({ ...f, audience_type: 'prospects', list_id: '' }))}
-                  className={`flex-1 py-1.5 text-xs rounded-md border transition-colors font-medium ${
-                    form.audience_type === 'prospects'
-                      ? 'border-violet-500 bg-violet-50 text-violet-700'
-                      : 'border-border text-muted-foreground hover:border-input'
-                  }`}
-                >
-                  Listas de Difusión
-                </button>
-              </div>
-              {form.audience_type === 'contacts' ? (
-                <>
-                  <Select value={form.list_id} onValueChange={v => setForm(f=>({...f,list_id:v ?? ''}))}>
-                    <SelectTrigger><SelectValue placeholder="Seleccioná una lista de contactos" /></SelectTrigger>
-                    <SelectContent>
-                      {lists.map(l => <SelectItem key={l.id} value={l.id}>{l.name} ({l.contact_count} contactos)</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  {lists.length === 0 && !lookupFailures.includes('listas de contactos') && <p className="text-xs text-orange-500 mt-1">Creá primero una lista en Contactos</p>}
-                </>
-              ) : (
-                <>
-                  <Select value={form.prospect_list_id} onValueChange={v => setForm(f=>({...f,prospect_list_id:v ?? ''}))}>
-                    <SelectTrigger><SelectValue placeholder="Seleccioná una lista de difusión" /></SelectTrigger>
-                    <SelectContent>
-                      {prospectLists.map(l => <SelectItem key={l.id} value={l.id}>{l.name} ({l.member_count.toLocaleString()} prospectos)</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  {prospectLists.length === 0 && !lookupFailures.includes('listas de difusión') && <p className="text-xs text-orange-500 mt-1">Creá primero una lista en Contactos › Listas de Difusión</p>}
-                </>
-              )}
-              {lookupFailures.length > 0 && (
-                <p role="alert" className="text-xs text-destructive mt-1">
-                  No se pudieron cargar: {lookupFailures.join(', ')}.{' '}
-                  <button type="button" onClick={loadLookups} className="underline">Reintentar</button>
-                </p>
-              )}
-            </div>
-
-            <div>
-              <label htmlFor="campaign-scheduled-at" className="text-xs font-medium text-muted-foreground mb-1 block">
-                <Clock size={12} className="inline mr-1"/>Programar envío (opcional, hora Argentina UTC−03:00)
-              </label>
-              <Input
-                id="campaign-scheduled-at"
-                type="datetime-local"
-                value={schedulerEnabled ? form.scheduled_at : ''}
-                disabled={!schedulerEnabled}
-                onChange={e => setForm(f=>({...f,scheduled_at:e.target.value}))}
-              />
-              {schedulerEnabled
-                ? <p className="text-xs text-muted-foreground mt-1">Se interpreta como hora de Argentina (America/Argentina/Buenos_Aires).</p>
-                : <p className="text-xs text-orange-500 mt-1">Programación automática no habilitada. Podés guardar la campaña como borrador y enviarla manualmente.</p>}
-            </div>
-
             {/* Mensajes con variantes (sólo texto; las plantillas usan sus propios parámetros) */}
             {!useTemplate && <>
             <div className="col-span-2 space-y-3">
@@ -1388,11 +1399,6 @@ export default function Campaigns() {
               )}
             </div>
             </>}
-
-            <div className="col-span-2 rounded-lg border border-primary/20 bg-accent px-4 py-3 text-sm text-accent-foreground">
-              <div className="flex items-center gap-2 font-medium"><GitBranch size={15} />Reparto automático entre líneas activas</div>
-              <p className="mt-1 text-xs">Los clientes nuevos se reparten por turnos. Cada cliente conserva su línea en próximas campañas. Si no está disponible o no tiene cupo, queda pendiente.</p>
-            </div>
 
             {!useTemplate && <>
             {/* Personalización de nombre */}
@@ -1509,6 +1515,29 @@ export default function Campaigns() {
             </div>
             </>}
 
+            </section>
+            <section tabIndex={-1} hidden={createStep!==2} aria-label="Líneas y horario" className="campaign-step space-y-4">
+            <div className="col-span-2 rounded-lg border border-primary/20 bg-accent px-4 py-3 text-sm text-accent-foreground">
+              <div className="flex items-center gap-2 font-medium"><GitBranch size={15} />Reparto automático entre líneas activas</div>
+              <p className="mt-1 text-xs">Los clientes nuevos se reparten por turnos. Cada cliente conserva su línea en próximas campañas. Si no está disponible o no tiene cupo, queda pendiente.</p>
+            </div>
+
+            <div>
+              <label htmlFor="campaign-scheduled-at" className="text-xs font-medium text-muted-foreground mb-1 block">
+                <Clock size={12} className="inline mr-1"/>Programar envío (opcional, hora Argentina UTC−03:00)
+              </label>
+              <Input
+                id="campaign-scheduled-at"
+                type="datetime-local"
+                value={schedulerEnabled ? form.scheduled_at : ''}
+                disabled={!schedulerEnabled}
+                onChange={e => setForm(f=>({...f,scheduled_at:e.target.value}))}
+              />
+              {schedulerEnabled
+                ? <p className="text-xs text-muted-foreground mt-1">Se interpreta como hora de Argentina (America/Argentina/Buenos_Aires).</p>
+                : <p className="text-xs text-orange-500 mt-1">Programación automática no habilitada. Podés guardar la campaña como borrador y enviarla manualmente.</p>}
+            </div>
+
             {/* Pausas y límites: sólo antiblock_delay_min/max, que son los que usan los procesadores de envío */}
             <div className="col-span-2 border border-indigo-100 rounded-xl p-4 space-y-4 bg-indigo-50/30">
               <div className="flex items-center gap-2">
@@ -1552,19 +1581,32 @@ export default function Campaigns() {
               </p>
             </div>
 
+<CloudReadiness/>            </section>
+            {createStep===3&&<section tabIndex={-1} aria-label="Revisión de la campaña" className="space-y-4">
+              <div className="rounded-xl border bg-muted/20 p-4"><h3 className="text-base font-semibold break-words">{form.name}</h3><dl className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                <div><dt className="text-muted-foreground">Audiencia</dt><dd className="font-medium break-words">{audience?.name || 'Sin lista seleccionada'}</dd></div>
+                <div><dt className="text-muted-foreground">Personas en la lista</dt><dd className="font-medium">{audienceCount===null?'—':audienceCount.toLocaleString('es-AR')}</dd></div>
+                <div><dt className="text-muted-foreground">Contenido</dt><dd className="font-medium">{useTemplate?`Plantilla: ${selectedTpl?.name ?? 'Sin seleccionar'}`:`Texto · ${messages.filter(m=>m.trim()).length} variantes`}</dd></div>
+                <div><dt className="text-muted-foreground">Programación</dt><dd className="font-medium">{form.scheduled_at&&schedulerEnabled?formatAR(toArgentinaIso(form.scheduled_at)!):'Borrador · envío manual posterior'}</dd></div>
+                <div><dt className="text-muted-foreground">Líneas</dt><dd>Reparto automático · conserva la línea habitual</dd></div>
+                <div><dt className="text-muted-foreground">Pausas</dt><dd>{form.antiblock_delay_min}–{form.antiblock_delay_max} segundos</dd></div>
+              </dl></div>
+              <div className="rounded-xl border p-4"><p className="mb-2 text-xs font-semibold text-muted-foreground">Vista previa del contenido · nombres de ejemplo</p><p className="whitespace-pre-wrap break-words text-sm">{useTemplate&&tplAnalysis?fillTemplatePreview(tplAnalysis.bodyText,tplBody):previewMsg}</p>{!useTemplate&&messages.filter(m=>m.trim()).length>1&&<details className="mt-3 text-xs"><summary className="cursor-pointer text-primary">Ver todas las variantes</summary>{messages.filter(m=>m.trim()).map((m,i)=><p className="mt-2 whitespace-pre-wrap break-words border-t pt-2" key={i}>{m}</p>)}</details>}</div>
+              <p className="rounded-lg border border-warning/20 bg-warning/5 p-3 text-xs text-muted-foreground">La cantidad de la lista no equivale a envíos elegibles. El sistema mantiene los controles de baja, frecuencia, plantillas, cupos y horarios al procesar la campaña; las exclusiones y fallos se muestran en su detalle.</p>
+              {form.scheduled_at&&schedulerEnabled&&<p className="text-sm font-medium">Al confirmar, la campaña queda programada para la fecha indicada.</p>}
+            </section>}
+            {stepError&&<p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{stepError}</p>}
             {createError && (
               <div role="alert" className="col-span-2 bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 text-sm text-destructive flex items-center justify-between">
                 <span>{createError}</span>
                 <button onClick={() => setCreateError(null)} className="ml-3 text-red-400 hover:text-destructive">✕</button>
               </div>
             )}
-            <div className="col-span-2 flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setShowNew(false)} disabled={creating}>Cancelar</Button>
-              <Button className="flex-1 bg-primary hover:bg-primary/90" onClick={createCampaign}
-                      disabled={!canCreate}>
-                {creating ? <Loader2 size={14} className="mr-1 animate-spin"/> : <Send size={14} className="mr-1"/>}
-                {form.scheduled_at && schedulerEnabled ? 'Programar campaña' : 'Guardar campaña'}
-              </Button>
+            <div className="sticky bottom-0 flex flex-wrap items-center gap-2 border-t bg-popover pt-4">
+              <Button variant="ghost" onClick={()=>setShowNew(false)} disabled={creating}>Cancelar</Button>
+              <span className="mr-auto text-xs text-muted-foreground">Paso {createStep+1} de 4</span>
+              {createStep>0&&<Button variant="outline" disabled={creating} onClick={()=>{setCreateStep(n=>n-1);setStepError(null)}}>Anterior</Button>}
+              {createStep<3?<Button onClick={nextCreateStep}>Continuar</Button>:<Button onClick={createCampaign} disabled={!canCreate||!audience}>{creating&&<Loader2 size={14} className="animate-spin"/>}{form.scheduled_at&&schedulerEnabled?'Programar campaña':'Guardar campaña'}</Button>}
             </div>
           </div>
         </DialogContent>

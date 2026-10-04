@@ -1,5 +1,7 @@
 'use client'
 
+import Link from 'next/link'
+import { useCurrentUser } from '@/lib/useCurrentUser'
 import { useState, useCallback, useEffect } from 'react'
 import { queryDateRange } from '@/lib/dashboard-date-range'
 import { useDashboard } from './useDashboard'
@@ -12,6 +14,7 @@ import { AddWidgetModal } from './widgets/AddWidgetModal'
 import { Toast } from './Toast'
 
 export function Dashboard() {
+  const {user} = useCurrentUser()
   const {
     layout,
     data,
@@ -106,6 +109,10 @@ export function Dashboard() {
           </button>
         </div>
       )}
+
+      {data?.crmAvailable && (user?.role==='admin'||user?.sectors?.includes('tasks')) && <Link href={user?.role==='admin'?'/tareas':'/mis-tareas'} className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border bg-card px-4 py-3 text-sm hover:border-primary/40">
+        <span className="font-semibold">Trabajo pendiente</span><span><strong className="tabular-nums">{data.kpis.tasks_pending}</strong> tareas pendientes</span><span className={data.kpis.tasks_overdue>0?'text-destructive':'text-muted-foreground'}><strong className="tabular-nums">{data.kpis.tasks_overdue}</strong> vencidas</span><span className="ml-auto text-primary">Abrir tareas →</span>
+      </Link>}
 
       {/* PlatformOverview labels "from al to" inclusively: give it the days actually queried. */}
       <PlatformOverview activity={data?.activity ?? null} platform={platform} agent={agent} from={includedDays.from} to={includedDays.to} loading={activityLoading} />

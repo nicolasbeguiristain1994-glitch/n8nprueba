@@ -107,6 +107,9 @@ export interface DataTableProps<TData> {
    * Usar un identificador único por entidad, ej: 'contacts', 'campaigns'.
    */
   storageKey?: string
+  columnVisibility?: VisibilityState
+  onColumnVisibilityChange?: (visibility: VisibilityState) => void
+  pinnedColumns?: { id: string; width: number }[]
 
   // ── Virtualización ───────────────────────────────────────────────────────
   /**

@@ -51,46 +51,38 @@ export function PlatformOverview({ activity, platform, agent, from, to, loading 
         <h2 className="text-base font-semibold">Movimientos por plataforma</h2>
         <p className="text-xs text-muted-foreground">{dateLabel(from)} al {dateLabel(to)} · ARS · Fechas de operación en Argentina{agent ? ` · Agente: ${agent}` : ''}</p>
       </div>
-      <div className={`grid grid-cols-1 gap-3 ${platform === 'consolidado' ? 'sm:grid-cols-2 xl:grid-cols-5' : ''}`}>
-        {scopes.map(({ platform: p, configured }) => {
-          const row = activity.find(item => item.platform === p && item.agente === null)
-          // Without a configured account nor observed movements a zero would read as "no activity".
-          const missing = !configured && !row
-          const money = (value: string | undefined) => missing ? '—' : formatProviderPesos(value ?? '0', p)
-          return (
-            <article key={p} className="surface p-4 space-y-3">
-              <h3 className="flex items-center gap-2 text-sm font-semibold"><span className="size-2 rounded-sm bg-primary/70" aria-hidden="true" />{LABELS[p]}</h3>
-              <dl className={platform === 'consolidado' ? 'grid grid-cols-2 gap-3 text-sm sm:grid-cols-1' : 'grid grid-cols-2 gap-x-5 gap-y-4 text-sm xl:grid-cols-4'}>
-                <div><dt className="text-xs text-muted-foreground">Depósitos sin bonos</dt><dd className="mt-1 text-lg font-semibold tracking-tight tabular-nums break-words">{money(row?.depositos)}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Retiros registrados</dt><dd className="mt-1 text-lg font-semibold tracking-tight tabular-nums break-words">{money(row?.retiros)}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">Bonos registrados</dt><dd className="mt-1 text-lg font-semibold tracking-tight tabular-nums">{money(row?.bonos)}</dd></div>
-                <div className={platform === 'consolidado' ? 'border-t pt-2' : 'xl:border-l xl:pl-5'}><dt className="text-xs text-muted-foreground">Saldo con bonos registrados</dt><dd className="mt-1 text-lg font-semibold tracking-tight tabular-nums break-words">{money(row?.saldo_con_bonos ?? row?.neto)}</dd></div>
-              </dl>
-              {missing ? <p className="text-xs text-muted-foreground">{UNCONFIGURED_ACCOUNT}.</p> : <>
-                {row?.ultima_fecha && row.ultima_fecha < to && <p className="text-xs text-warning dark:text-amber-400">Último movimiento cargado: {dateLabel(row.ultima_fecha)}. El período elegido incluye fechas posteriores sin movimientos cargados.</p>}
-                <details className="border-t pt-2 text-xs text-muted-foreground">
-                  <summary className="cursor-pointer leading-relaxed">{(row?.movimientos ?? 0).toLocaleString('es-AR')} movimientos · {(row?.cuentas ?? 0).toLocaleString('es-AR')} cuentas con movimientos</summary>
-                  <p className="pt-2">Último movimiento disponible: <strong>{dateLabel(row?.ultima_fecha ?? null)}</strong></p>
-                </details>
-                {p === 'ganamos' && !Number(row?.bonos) && <p className="text-xs text-warning dark:text-amber-400">Bonos sin detalle importado. El total puede diferir del panel de origen si los incluye.</p>}
-                {!configured && <p className="text-xs text-warning dark:text-amber-400">Hay movimientos de este agente aunque no tiene cuenta configurada en esta plataforma.</p>}
-                {!row?.movimientos && <p className="text-xs text-warning dark:text-amber-400">No hay movimientos registrados para este período y estos filtros.</p>}
-              </>}
-            </article>
-          )
-        })}
-        {platform === 'consolidado' && <article aria-label="Total de las cuatro plataformas" className="min-w-0 rounded-xl border border-primary/20 bg-accent/40 p-4 space-y-3">
-          <h3 className="font-semibold">Total</h3>
-          <dl className="space-y-2 text-sm">
-            <div><dt className="text-xs text-muted-foreground">Depósitos sin bonos</dt><dd className="font-semibold tabular-nums break-words">{totalMoney('depositos')}</dd></div>
-            <div><dt className="text-xs text-muted-foreground">Retiros registrados</dt><dd className="font-semibold tabular-nums break-words">{totalMoney('retiros')}</dd></div>
-            <div><dt className="text-xs text-muted-foreground">Bonos registrados</dt><dd className="font-semibold tabular-nums break-words">{totalMoney('bonos')}</dd></div>
-            <div className="border-t border-primary/20 pt-2"><dt className="text-xs text-muted-foreground">Saldo con bonos registrados</dt><dd className="font-semibold tabular-nums break-words">{totalMoney('saldo_con_bonos')}</dd></div>
-          </dl>
-          <p className="text-xs text-muted-foreground">{summaries.reduce((sum, row) => sum + row.movimientos, 0).toLocaleString('es-AR')} movimientos · {summaries.reduce((sum, row) => sum + row.cuentas, 0).toLocaleString('es-AR')} cuentas con movimientos</p>
-          <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">Acerca de este total</summary><p className="pt-2">Suma de los importes mostrados en las cuatro plataformas, con el período y agente seleccionados. Incluye únicamente bonos registrados.</p></details>
-        </article>}
+      <div role="group" aria-label={platform==='consolidado'?'Total de las cuatro plataformas':`Resumen ${LABELS[platform]}`} className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {([['depositos','Depósitos sin bonos'],['retiros','Retiros registrados'],['bonos','Bonos registrados'],['saldo_con_bonos','Saldo con bonos registrados']] as const).map(([field,label])=><article key={field} className="surface px-4 py-3">
+          <h3 className="text-xs font-medium text-muted-foreground">{label}</h3>
+          <p className="mt-2 break-words text-xl font-semibold tracking-tight tabular-nums">{summaries.length?totalMoney(field):'—'}</p>
+          {field==='saldo_con_bonos'&&<p className="mt-1 text-xs text-muted-foreground">No equivale a ganancia</p>}
+        </article>)}
       </div>
+      <div className="overflow-x-auto rounded-xl border bg-card">
+        <table className="w-full text-sm">
+          <caption className="sr-only">Comparación de movimientos por plataforma</caption>
+          <thead className="border-b bg-muted/50 text-xs text-muted-foreground"><tr>{['Plataforma','Depósitos sin bonos','Retiros registrados','Bonos registrados','Saldo con bonos registrados','Último movimiento'].map(label=><th key={label} scope="col" className="whitespace-nowrap px-4 py-3 text-left font-medium">{label}</th>)}</tr></thead>
+          <tbody>{scopes.map(({platform:p,configured})=>{
+            const row=activity.find(item=>item.platform===p&&item.agente===null)
+            const missing=!configured&&!row
+            const money=(value:string|undefined)=>missing?'—':formatProviderPesos(value??'0',p)
+            return <tr key={p} className="border-b last:border-0 hover:bg-muted/20">
+              <th scope="row" className="px-4 py-3 text-left font-medium">{LABELS[p]}<span className="mt-1 block whitespace-nowrap text-xs font-normal text-muted-foreground">{(row?.movimientos??0).toLocaleString('es-AR')} movimientos · {(row?.cuentas??0).toLocaleString('es-AR')} cuentas con movimientos</span></th>
+              {[row?.depositos,row?.retiros,row?.bonos,row?.saldo_con_bonos??row?.neto].map((value,i)=><td key={i} className="whitespace-nowrap px-4 py-3 tabular-nums">{money(value)}</td>)}
+              <td className="px-4 py-3 text-xs"><span className="whitespace-nowrap">{dateLabel(row?.ultima_fecha??null)}</span>
+                {missing&&<p className="mt-1 min-w-40 text-muted-foreground">{UNCONFIGURED_ACCOUNT}.</p>}
+                {!missing&&<>
+                  {row?.ultima_fecha&&row.ultima_fecha<to&&<p className="mt-1 min-w-44 text-warning">El período incluye fechas posteriores sin movimientos cargados.</p>}
+                  {p==='ganamos'&&!Number(row?.bonos)&&<p className="mt-1 min-w-44 text-warning">Bonos sin detalle importado. El total puede diferir del panel de origen si los incluye.</p>}
+                  {!configured&&<p className="mt-1 text-warning">Hay movimientos de este agente aunque no tiene cuenta configurada en esta plataforma.</p>}
+                  {!row?.movimientos&&<p className="mt-1 text-muted-foreground">No hay movimientos registrados para este período y estos filtros.</p>}
+                </>}
+              </td>
+            </tr>
+          })}</tbody>
+        </table>
+      </div>
+      <p className="text-xs text-muted-foreground">{summaries.reduce((sum,row)=>sum+row.movimientos,0).toLocaleString('es-AR')} movimientos · {summaries.reduce((sum,row)=>sum+row.cuentas,0).toLocaleString('es-AR')} cuentas con movimientos. Totales del período y agente seleccionados, con bonos registrados.</p>
       <details className="text-xs text-muted-foreground"><summary className="cursor-pointer py-1 font-medium">Cómo interpretar estos importes</summary><p className="pt-1 leading-relaxed">El saldo incluye depósitos y bonos registrados menos retiros; no equivale a ganancia. Los gráficos cuentan solamente depósitos, sin bonos. Argenbet muestra los totales originales con dos decimales truncados, como su panel; restar los importes visibles puede diferir un centavo. Los importes corresponden a movimientos cargados con plataforma identificada. La última fecha disponible abarca todo el historial y no confirma días completos ni ausencia de períodos pendientes. Una misma persona puede tener cuentas en varias plataformas.</p></details>
       <details className="rounded-xl border bg-card">
         <summary className="cursor-pointer p-3 text-sm font-medium">Ver movimientos y última fecha de cada agente ({agents.length})</summary>

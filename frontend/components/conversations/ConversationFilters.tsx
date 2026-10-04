@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { Input } from '@/components/ui/input'
-import { SlidersHorizontal, CalendarRange, Calendar, Bell, BellOff } from 'lucide-react'
+import { SlidersHorizontal, CalendarRange, Bell, BellOff } from 'lucide-react'
 import { FILTER_DEFS, LEVEL_DEFS, applyFilter, type Conv, type Filter, type CampaignOption, type LevelFilter } from '@/lib/scoring/conversation-scoring'
 import type { RealtimeStatus } from '@/hooks/useRealTime'
 
@@ -50,7 +50,7 @@ export function ConversationFilters({
   searchRef, onSearch, onFilter, onDateFrom, onDateTo, onFollowUp, onRequestNotif,
 }: Props) {
   const [showAdv, setShowAdv] = useState(false)
-  const hasAdv = !!dateFrom || !!dateTo || followUpOnly
+  const hasAdv = !!dateFrom || !!dateTo || campaign !== 'all' || level !== 'all' || !['all','unread'].includes(filter)
 
   return (
     <div className="border-b border-border p-3 space-y-3 shrink-0">
@@ -85,8 +85,46 @@ export function ConversationFilters({
         </div>
       </div>
 
+      {/* Filter pills + advanced toggle */}
+      <div className="flex flex-wrap gap-1 items-center">
+        {FILTER_DEFS.filter(item=>showAdv||['all','unread'].includes(item.key)).sort((a,b)=>(a.key==='all'?0:a.key==='unread'?1:2)-(b.key==='all'?0:b.key==='unread'?1:2)).map(({ key, label }) => {
+          const count = key === 'all' ? convs.length : applyFilter(convs, key).length
+          return (
+            <button
+              key={key}
+              onClick={() => onFilter(key)}
+              aria-pressed={filter === key}
+              className={`text-xs px-2 py-1 rounded-full border font-medium transition-colors ${
+                filter === key
+                  ? 'bg-accent text-accent-foreground border-primary/20'
+                  : 'bg-card text-muted-foreground border-border hover:border-gray-400'
+              }`}
+            >
+              {label}
+              {count > 0 && key !== 'all' && <span title="Entre los hilos cargados" className="ml-1 opacity-70">{count}</span>}
+            </button>
+          )
+        })}
+        <button onClick={()=>onFollowUp(!followUpOnly)} aria-pressed={followUpOnly} className={`rounded-md border px-2 py-1 text-xs ${followUpOnly?'border-primary/30 bg-accent text-primary':'border-border text-muted-foreground'}`}>Seguimiento</button>
+        <button
+          onClick={() => setShowAdv(v => !v)}
+          aria-label="Filtros avanzados" aria-expanded={showAdv}
+          className={`ml-auto text-xs px-1.5 py-0.5 rounded-full border font-medium transition-colors ${
+            showAdv || hasAdv
+              ? 'bg-accent text-primary border-indigo-300'
+              : 'bg-card text-muted-foreground border-border hover:border-gray-400'
+          }`}
+        >
+          <SlidersHorizontal size={9} className="inline mr-0.5" />
+          {hasAdv ? 'Filtros activos' : 'Filtros'}
+        </button>
+      </div>
+
+      {/* Advanced filters */}
+      {showAdv && (
+        <div className="space-y-1.5 pt-1 border-t border-border">
       <div className="space-y-2">
-        <label className="block text-[10px] font-medium text-muted-foreground">
+        <label className="block text-xs font-medium text-muted-foreground">
           Campaña
           <select aria-label="Filtrar por campaña" value={campaign} onChange={e => onCampaign(e.target.value)}
             className="mt-1 h-8 w-full min-w-0 rounded-md border border-border bg-card px-2 text-xs text-foreground">
@@ -95,7 +133,7 @@ export function ConversationFilters({
             {campaigns.map(item => <option key={item.id} value={item.id}>{item.name} ({item.count})</option>)}
           </select>
         </label>
-        <label className="block text-[10px] font-medium text-muted-foreground">
+        <label className="block text-xs font-medium text-muted-foreground">
           Nivel del contacto
           <select aria-label="Filtrar por nivel" value={level} onChange={e => onLevel(e.target.value as LevelFilter)}
             className="mt-1 h-8 w-full min-w-0 rounded-md border border-border bg-card px-2 text-xs text-foreground">
@@ -106,66 +144,22 @@ export function ConversationFilters({
         </label>
       </div>
 
-      {/* Filter pills + advanced toggle */}
-      <div className="flex flex-wrap gap-1 items-center">
-        {FILTER_DEFS.map(({ key, label }) => {
-          const count = key === 'all' ? convs.length : applyFilter(convs, key).length
-          return (
-            <button
-              key={key}
-              onClick={() => onFilter(key)}
-              aria-pressed={filter === key}
-              className={`text-[11px] px-2 py-1 rounded-full border font-medium transition-colors ${
-                filter === key
-                  ? 'bg-accent text-accent-foreground border-primary/20'
-                  : 'bg-card text-muted-foreground border-border hover:border-gray-400'
-              }`}
-            >
-              {label}
-              {count > 0 && key !== 'all' && <span className="ml-1 opacity-70">{count}</span>}
-            </button>
-          )
-        })}
-        <button
-          onClick={() => setShowAdv(v => !v)}
-          aria-label="Filtros avanzados" aria-expanded={showAdv}
-          className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full border font-medium transition-colors ${
-            showAdv || hasAdv
-              ? 'bg-accent text-primary border-indigo-300'
-              : 'bg-card text-muted-foreground border-border hover:border-gray-400'
-          }`}
-        >
-          <SlidersHorizontal size={9} className="inline mr-0.5" />
-          {hasAdv ? '●' : '…'}
-        </button>
-      </div>
-
-      {/* Advanced filters */}
-      {showAdv && (
-        <div className="space-y-1.5 pt-1 border-t border-border">
           <div className="flex gap-1 items-center">
             <CalendarRange size={10} className="text-muted-foreground shrink-0" />
             <input
               aria-label="Conversaciones desde" type="date" value={dateFrom} onChange={e => onDateFrom(e.target.value)}
-              className="min-w-0 flex-1 text-[10px] border border-border rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-300"
+              className="min-w-0 flex-1 text-xs border border-border rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-300"
             />
-            <span className="text-[10px] text-muted-foreground">—</span>
+            <span className="text-xs text-muted-foreground">—</span>
             <input
               aria-label="Conversaciones hasta" type="date" value={dateTo} onChange={e => onDateTo(e.target.value)}
-              className="min-w-0 flex-1 text-[10px] border border-border rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-300"
+              className="min-w-0 flex-1 text-xs border border-border rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-300"
             />
             {(dateFrom || dateTo) && (
-              <button onClick={() => { onDateFrom(''); onDateTo('') }} className="text-[10px] text-muted-foreground hover:text-muted-foreground">✕</button>
+              <button onClick={() => { onDateFrom(''); onDateTo('') }} aria-label="Limpiar fechas" className="text-xs text-muted-foreground hover:text-muted-foreground">✕</button>
             )}
           </div>
-          <label className="flex items-center gap-1.5 cursor-pointer select-none">
-            <input
-              type="checkbox" checked={followUpOnly} onChange={e => onFollowUp(e.target.checked)}
-              className="w-3 h-3 rounded accent-indigo-600"
-            />
-            <Calendar size={10} className="text-sky-500 shrink-0" />
-            <span className="text-[10px] text-muted-foreground">Solo con seguimiento programado</span>
-          </label>
+
         </div>
       )}
     </div>

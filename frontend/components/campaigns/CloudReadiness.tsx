@@ -1,5 +1,5 @@
 'use client'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Info, Loader2, ShieldCheck, XCircle } from 'lucide-react'
@@ -45,6 +45,9 @@ function isResponse(v: unknown): v is CloudReadinessResponse {
 }
 
 export function CloudReadiness() {
+  const id = useId()
+  const titleId = `${id}-title`
+  const bodyId = `${id}-body`
   const [state, setState] = useState<State>({ kind: 'idle' })
   const [expanded, setExpanded] = useState(true)
   const controllerRef = useRef<AbortController | null>(null)
@@ -78,12 +81,12 @@ export function CloudReadiness() {
   const data = state.kind === 'loaded' ? state.data : null
 
   return (
-    <section aria-labelledby="cloud-readiness-title" className="border border-border rounded-lg bg-card">
-      <div className="flex items-center justify-between gap-3 px-4 py-3">
+    <section aria-labelledby={titleId} className="border border-border rounded-lg bg-card">
+      <div className="flex items-center justify-between flex-wrap gap-3 px-4 py-3">
         <div className="flex items-center gap-2 min-w-0">
           <ShieldCheck size={16} className="text-muted-foreground shrink-0" aria-hidden="true" />
           <div className="min-w-0">
-            <h2 id="cloud-readiness-title" className="text-sm font-medium">Estado de WhatsApp API</h2>
+            <h2 id={titleId} className="text-sm font-medium">Estado de WhatsApp API</h2>
             {data && (
               <p className="text-xs text-muted-foreground">Revisado: {formatAR(data.checked_at)}</p>
             )}
@@ -93,7 +96,7 @@ export function CloudReadiness() {
           {state.kind !== 'idle' && (
             <Button
               variant="ghost" size="sm" type="button"
-              aria-expanded={expanded} aria-controls="cloud-readiness-body"
+              aria-expanded={expanded} aria-controls={bodyId}
               onClick={() => setExpanded(e => !e)}
             >
               {expanded ? <ChevronUp size={14} aria-hidden="true" /> : <ChevronDown size={14} aria-hidden="true" />}
@@ -108,7 +111,7 @@ export function CloudReadiness() {
       </div>
 
       {state.kind !== 'idle' && expanded && (
-        <div id="cloud-readiness-body" className="border-t border-border px-4 py-3 space-y-3 text-sm">
+        <div id={bodyId} className="border-t border-border px-4 py-3 space-y-3 text-sm">
           <p className="text-xs text-muted-foreground">
             Diagnóstico basado en datos almacenados en la plataforma: no consulta Meta en vivo ni autoriza envíos,
             y un resultado sin bloqueos no certifica que la línea pueda enviar.

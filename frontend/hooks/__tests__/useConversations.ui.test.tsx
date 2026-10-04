@@ -107,3 +107,43 @@ describe('Inbox loading and error states', () => {
     expect(result.current.messagesLoading).toBe(false)
   })
 })
+
+describe('Drafts scoped to each contact', () => {
+  beforeEach(() => mocks.fetch.mockResolvedValue({ conversations: [], total: 0, messages: [] }))
+  it('restores each contact draft and leaves new contacts empty', async () => {
+    const { result } = renderHook(() => useConversations())
+    act(() => { result.current.openConv('ana'); result.current.setReply('Para Ana') })
+    act(() => result.current.openConv('luis'))
+    expect(result.current.reply).toBe('')
+    act(() => result.current.setReply('Para Luis'))
+    act(() => result.current.openConv('ana'))
+    expect(result.current.reply).toBe('Para Ana')
+    act(() => result.current.openConv('luis'))
+    expect(result.current.reply).toBe('Para Luis')
+    await act(async () => {})
+  })
+  it.each(['sent', 'error'])('returning to a previous chat after %s keeps only unsent text', async status => {
+    let complete!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { complete = resolve })))
+    const { result } = renderHook(() => useConversations())
+    act(() => { result.current.openConv('ana'); result.current.setReply('Para Ana') })
+    let pending!: Promise<void>
+    act(() => { pending = result.current.sendReply() })
+    act(() => result.current.openConv('luis'))
+    await act(async () => { complete(Response.json({ results: [{ status }] })); await pending })
+    act(() => result.current.openConv('ana'))
+    expect(result.current.reply).toBe(status === 'sent' ? '' : 'Para Ana')
+    await act(async () => {})
+  })
+  it('preserves new text typed while a previous reply is sending', async () => {
+    let complete!: (response: Response) => void
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(resolve => { complete = resolve })))
+    const { result } = renderHook(() => useConversations())
+    act(() => { result.current.openConv('ana'); result.current.setReply('Primer mensaje') })
+    let pending!: Promise<void>
+    act(() => { pending = result.current.sendReply() })
+    act(() => result.current.setReply('Segundo mensaje'))
+    await act(async () => { complete(Response.json({ results: [{ status: 'sent' }] })); await pending })
+    expect(result.current.reply).toBe('Segundo mensaje')
+  })
+})

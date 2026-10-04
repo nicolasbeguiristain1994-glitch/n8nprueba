@@ -167,3 +167,24 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* Contact detail keeps the underlying working list in place. */
+.crm-contact-drawer[data-slot="dialog-content"] {
+  inset: 0 0 0 auto;
+  width: min(580px, 100vw);
+  max-width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  transform: none;
+  translate: none;
+  border-radius: 0;
+  padding: 24px;
+  display: block;
+  animation: none;
+}
+.crm-contact-drawer > * + * { margin-top: 16px; }
+@media (max-width: 640px) { .crm-contact-drawer[data-slot="dialog-content"] { padding: 20px 16px; } }
+
+.crm-data-table thead { --table-row-background: var(--muted); }
+.crm-data-table tbody tr:hover { --table-row-background: color-mix(in oklab, var(--muted) 40%, var(--card)); }
+.crm-data-table tbody tr[data-state="selected"] { --table-row-background: color-mix(in oklab, var(--primary) 5%, var(--card)); }

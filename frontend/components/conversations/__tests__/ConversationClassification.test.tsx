@@ -37,6 +37,7 @@ describe('Conversation campaign and level labels', () => {
       campaigns={[{ id: 'a', name: 'Extra Royal', count: 205 }]} onCampaign={onCampaign} onLevel={onLevel}
       dateFrom="" dateTo="" followUpOnly={false} realtimeStatus="connected" notifPermission="default"
       searchRef={createRef()} onSearch={vi.fn()} onFilter={vi.fn()} onDateFrom={vi.fn()} onDateTo={vi.fn()} onFollowUp={vi.fn()} onRequestNotif={vi.fn()} />)
+    fireEvent.click(screen.getByRole('button', { name: /Filtros avanzados/ }))
     fireEvent.change(screen.getByLabelText('Filtrar por campaña'), { target: { value: 'a' } })
     fireEvent.change(screen.getByLabelText('Filtrar por nivel'), { target: { value: 'vip_medio' } })
     expect(onCampaign).toHaveBeenCalledWith('a')
