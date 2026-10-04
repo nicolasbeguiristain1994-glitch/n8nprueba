@@ -4,16 +4,17 @@ import { Client } from 'pg'
 import { CAMPAIGN_CONTACT_ACCOUNTS_SQL } from '../campaign-contact-accounts'
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`
 
-describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('scoped campaign account identities', () => {
+describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('scoped campaign account identities', () => {
   let db: Client
   beforeAll(async () => {
-    const url = new URL(process.env.TEST_DATABASE_URL!)
+    const url = new URL((process.env.OPS_TEST_DATABASE_URL || process.env.TEST_DATABASE_URL)!)
     if (!['localhost','127.0.0.1'].includes(url.hostname)) throw Error('LOCAL_ONLY')
     db = new Client({connectionString:url.toString(),ssl:false}); await db.connect()
     await db.query(`BEGIN;
       CREATE TEMP TABLE contacts(id uuid,first_name text,last_name text,casino_accounts jsonb,deleted_at timestamptz);
-      CREATE TEMP TABLE casino_segmentation_players(id uuid,platform text,username_lower text,agente text);
-      INSERT INTO casino_segmentation_players VALUES
+      CREATE TEMP TABLE casino_players(id uuid,platform text,username_lower text,agente text);
+      CREATE TEMP TABLE casino_transactions(id bigint,platform text,username text,source_id text,agente text,fecha_hora_utc timestamptz);
+      INSERT INTO casino_players VALUES
         ('${id(101)}','bet30','shared','adminroyal'),('${id(102)}','zeus','shared','adminfara'),
         ('${id(103)}','ganamos','unique','adminbtc'),('${id(104)}','bet30','royal','adminroyal');
       INSERT INTO contacts VALUES
@@ -47,5 +48,33 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('scoped campaign acco
     expect(await links([5,6,8])).toEqual([])
     expect(await links([4])).toHaveLength(1)
     expect(await links([])).toEqual([])
+  })
+  it('preserves imported-account precedence, latest agent and ambiguity across platforms', async () => {
+    await db.query('SAVEPOINT imports')
+    try {
+      await db.query(`INSERT INTO casino_players VALUES
+        ('${id(110)}','bet30','imported','adminbtc'),
+        ('${id(111)}',NULL,'legacy','adminroyal');
+        INSERT INTO casino_transactions VALUES
+        (1,'bet30','IMPORTED','source-1','adminfara','2026-09-01T12:00:00Z'),
+        (2,'bet30','imported','source-2','adminroyal','2026-09-02T12:00:00Z'),
+        (3,'bet30','imported','source-3','adminfara','2026-09-02T12:00:00Z'),
+        (4,'zeus','unique','source-4','adminzeus','2026-09-02T12:00:00Z'),
+        (5,'bet30','legacy','source-5','adminroyal','2026-09-02T12:00:00Z'),
+        (6,'ganamos','legacy',NULL,'adminbtc','2026-09-02T12:00:00Z');
+        INSERT INTO contacts VALUES
+        ('${id(10)}',NULL,NULL,'[{"username":"imported","panel":"farabet"}]',NULL),
+        ('${id(11)}',NULL,NULL,'[{"username":"imported","panel":"betcoin"}]',NULL),
+        ('${id(12)}','imported',NULL,'[]',NULL),
+        ('${id(13)}','legacy',NULL,'[]',NULL);`)
+      expect(await links([10,11,12,13])).toEqual([
+        {contact_id:id(10),platform:'bet30',username_lower:'imported'},
+        {contact_id:id(12),platform:'bet30',username_lower:'imported'},
+        {contact_id:id(13),platform:'bet30',username_lower:'legacy'},
+      ])
+      // A newly imported namesake on another platform must invalidate name-only
+      // matching, even though no recipient explicitly names that platform.
+      expect(await links([4])).toEqual([])
+    } finally { await db.query('ROLLBACK TO SAVEPOINT imports') }
   })
 })

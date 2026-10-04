@@ -5,10 +5,10 @@ vi.mock('@/lib/db', () => ({ query: vi.fn() }))
 import { CAMPAIGN_EFFECTIVENESS_SQL, type CampaignEffectiveness } from '../campaign-effectiveness'
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
-describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign effectiveness on PostgreSQL', () => {
+describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign effectiveness on PostgreSQL', () => {
   let db: Client
   beforeAll(async () => {
-    const url = new URL(process.env.TEST_DATABASE_URL!)
+    const url = new URL((process.env.OPS_TEST_DATABASE_URL || process.env.TEST_DATABASE_URL)!)
     if (!['localhost', '127.0.0.1'].includes(url.hostname)) throw Error('LOCAL_ONLY')
     db = new Client({ connectionString: url.toString(), ssl: false })
     await db.connect()
@@ -18,9 +18,10 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign effectivene
       CREATE TEMP TABLE casino_contact_account_links(contact_id uuid,platform text,username_lower text);
       CREATE TEMP VIEW contacts AS SELECT contact_id AS id,NULL::text AS first_name,NULL::text AS last_name,NULL::timestamptz AS deleted_at,
         jsonb_agg(jsonb_build_object('username',username_lower,'platform',platform)) AS casino_accounts FROM casino_contact_account_links GROUP BY contact_id;
-      CREATE TEMP VIEW casino_segmentation_players AS SELECT DISTINCT md5(platform || ':' || username_lower)::uuid AS id,
+      CREATE TEMP VIEW casino_players AS SELECT DISTINCT md5(platform || ':' || username_lower)::uuid AS id,
         platform,username_lower,'admin'::text AS agente FROM casino_contact_account_links;
       CREATE TEMP TABLE casino_transactions(id bigint,platform text,username text,tipo text,monto numeric,fecha date,fecha_hora_utc timestamptz,raw_detalles text);
+      ALTER TABLE casino_transactions ADD source_id text, ADD agente text;
       CREATE TEMP TABLE casino_financial_source_records(transaction_id bigint,platform text,kind text,monto numeric);`)
   })
   beforeEach(async () => {
@@ -34,7 +35,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign effectivene
   const stats = async (campaign = 1, details = true) =>
     (await db.query<CampaignEffectiveness>(CAMPAIGN_EFFECTIVENESS_SQL, [[id(campaign)], details])).rows[0]
   const deposit = async (n: number, at: string | null, amount = '100.10', platform = 'bet30', username = 'PLAYER') => {
-    await db.query(`INSERT INTO casino_transactions VALUES($1,$2,$3,'carga',$4,'2026-10-01',$5,NULL)`, [n, platform, username, amount, at])
+    await db.query(`INSERT INTO casino_transactions(id,platform,username,tipo,monto,fecha,fecha_hora_utc,raw_detalles) VALUES($1,$2,$3,'carga',$4,'2026-10-01',$5,NULL)`, [n, platform, username, amount, at])
   }
   it('uses actual sends across midnight; excludes before/equal and after 24 h, includes exactly 24 h', async () => {
     await deposit(1, '2026-09-30T21:59:59Z')
@@ -128,5 +129,32 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign effectivene
     await deposit(1, '2026-10-01T01:00:00Z')
     expect(await stats()).toMatchObject({ efectivos: 1 })
     expect(await stats(2, false)).toMatchObject({ efectivos: 1, efectivos_detalle: [] })
+  })
+  it('uses bounded deposit indexes with a large unrelated and out-of-window history', async () => {
+    await db.query(`CREATE INDEX campaign_test_imports ON casino_transactions(lower(username),platform) WHERE source_id IS NOT NULL;
+      CREATE INDEX campaign_test_time ON casino_transactions(platform,lower(username),fecha_hora_utc)
+        WHERE tipo='carga' AND monto>0 AND fecha_hora_utc IS NOT NULL;
+      CREATE INDEX campaign_test_date ON casino_transactions(platform,lower(username),fecha)
+        WHERE tipo='carga' AND monto>0 AND fecha_hora_utc IS NULL;
+      INSERT INTO casino_transactions(id,platform,username,tipo,monto,fecha,fecha_hora_utc,source_id,agente)
+        SELECT n,'bet30','player','carga',10,'2025-01-01','2025-01-01T12:00:00Z',NULL,'admin'
+        FROM generate_series(100,20099) n;
+      INSERT INTO casino_transactions(id,platform,username,tipo,monto,fecha,fecha_hora_utc,source_id,agente)
+        SELECT n,'bet30','unrelated' || n,'carga',10,'2026-10-01','2026-10-01T12:00:00Z',n::text,'admin'
+        FROM generate_series(20100,40099) n;
+      ANALYZE casino_transactions;`)
+    await deposit(1, '2026-10-01T01:00:00Z')
+    await deposit(2, null)
+    expect(await stats()).toMatchObject({ efectivos: 1, cargas_24h: 1, cargas_sin_hora: 1, monto_cargado_24h: '100.10' })
+    const plan = (await db.query('EXPLAIN (ANALYZE,FORMAT JSON) ' + CAMPAIGN_EFFECTIVENESS_SQL, [[id(1)], false])).rows[0]['QUERY PLAN'][0].Plan
+    type Plan = { Plans?: Plan[]; 'Relation Name'?: string; 'Index Name'?: string; 'Actual Rows': number; 'Actual Loops': number; 'Rows Removed by Filter'?: number }
+    const nodes: Plan[] = []
+    const walk = (node: Plan) => { nodes.push(node); node.Plans?.forEach(walk) }
+    walk(plan)
+    expect(nodes.some(node => node['Index Name'] === 'campaign_test_time')).toBe(true)
+    expect(nodes.some(node => node['Index Name'] === 'campaign_test_date')).toBe(true)
+    const visited = nodes.filter(node => node['Relation Name'] === 'casino_transactions')
+      .reduce((sum,node) => sum + (node['Actual Rows'] + (node['Rows Removed by Filter'] || 0)) * node['Actual Loops'], 0)
+    expect(visited).toBeLessThan(100)
   })
 })

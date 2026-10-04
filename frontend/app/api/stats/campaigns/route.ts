@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
   const id=req.nextUrl.searchParams.get('id') || ''
   if (!range || (id && !isUUID(id))) return NextResponse.json({error:'Período o ID inválido'},{status:400})
   const owner=auth.user.role==='admin'?null:auth.user.user_id
+  const startedAt = Date.now()
   try {
     if (id) {
       const rows=await query<Record<string, unknown>>(`SELECT c.created_at,
@@ -51,7 +52,15 @@ export async function GET(req: NextRequest) {
     }
     const campaigns=await campaignStatistics(range.from,range.to,owner,req.nextUrl.searchParams.get('status')||'',req.nextUrl.searchParams.get('q')||'',true)
     return NextResponse.json({campaigns,timezone:STATS_TIMEZONE,metricScope:'campaign_recipients'})
-  } catch {
+  } catch (error) {
+    // Keep diagnostics useful without logging contact data or SQL parameters.
+    console.error('[stats/campaigns] query failed', {
+      scope: id ? 'detail' : 'list',
+      durationMs: Date.now() - startedAt,
+      timeout: error instanceof Error && /timeout|timed out/i.test(error.message),
+      code: error && typeof error === 'object' && 'code' in error ? error.code : undefined,
+      name: error instanceof Error ? error.name : 'UnknownError',
+    })
     return NextResponse.json({error:'No se pudieron cargar las estadísticas de campañas'},{status:500})
   }
 }

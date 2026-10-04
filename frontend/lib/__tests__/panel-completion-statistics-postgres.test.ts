@@ -11,10 +11,10 @@ import {GET as exportCsv} from '@/app/api/stats/export/route'
 import {GET as templates} from '@/app/api/stats/templates/route'
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`
 const req=(suffix:string)=>new NextRequest('http://localhost/api/stats/'+suffix+(suffix.includes('?')?'&':'?')+'from=2026-09-30&to=2026-09-30')
-describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('statistics metrics, scope and calendar days',()=>{
+describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('statistics metrics, scope and calendar days',()=>{
  let db:Client
  beforeAll(async()=>{
-  const url=new URL(process.env.TEST_DATABASE_URL!);if(!['127.0.0.1','localhost'].includes(url.hostname))throw Error('LOCAL_ONLY')
+  const url=new URL((process.env.OPS_TEST_DATABASE_URL || process.env.TEST_DATABASE_URL)!);if(!['127.0.0.1','localhost'].includes(url.hostname))throw Error('LOCAL_ONLY')
   db=new Client({connectionString:url.toString(),ssl:false});await db.connect()
   await db.query(`BEGIN;CREATE SCHEMA stats_completion_${process.pid};SET LOCAL search_path=stats_completion_${process.pid};
    CREATE TABLE campaigns(id uuid PRIMARY KEY,owned_by uuid,name text,type text,status text,created_at timestamptz,completed_at timestamptz);
@@ -52,8 +52,9 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('statistics metrics, sc
    UPDATE campaign_recipients SET contact_id='${id(70)}' WHERE campaign_id='${id(1)}';
    CREATE TABLE casino_contact_account_links(contact_id uuid,platform text,username_lower text);
    ALTER TABLE contacts ADD first_name text,ADD last_name text,ADD deleted_at timestamptz,ADD casino_accounts jsonb DEFAULT '[]';
-   CREATE VIEW casino_segmentation_players AS SELECT DISTINCT md5(platform || ':' || username_lower)::uuid AS id,platform,username_lower,'admin'::text AS agente FROM casino_contact_account_links;
+   CREATE VIEW casino_players AS SELECT DISTINCT md5(platform || ':' || username_lower)::uuid AS id,platform,username_lower,'admin'::text AS agente FROM casino_contact_account_links;
    CREATE TABLE casino_transactions(id bigint,platform text,username text,tipo text,monto numeric,fecha date,fecha_hora_utc timestamptz,raw_detalles text);
+   ALTER TABLE casino_transactions ADD source_id text, ADD agente text;
    CREATE TABLE casino_financial_source_records(transaction_id bigint,platform text,kind text,monto numeric);`)
   m.query.mockImplementation(async(sql,params)=>(await db.query(sql,params)).rows)
   m.auth.mockResolvedValue({ok:true,user:{role:'operator',user_id:id(10)}})
@@ -81,7 +82,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('statistics metrics, sc
   try {
    await db.query(`INSERT INTO casino_contact_account_links VALUES('${id(70)}','bet30','player');
     UPDATE contacts SET casino_accounts='[{"platform":"bet30","username":"player"}]' WHERE id='${id(70)}';
-    INSERT INTO casino_transactions VALUES(1,'bet30','player','carga',1234.56,'2026-10-01','2026-10-01T04:00:00Z',NULL)`)
+    INSERT INTO casino_transactions(id,platform,username,tipo,monto,fecha,fecha_hora_utc,raw_detalles) VALUES(1,'bet30','player','carga',1234.56,'2026-10-01','2026-10-01T04:00:00Z',NULL)`)
    const list=await(await campaigns(req('campaigns'))).json()
    expect(list.campaigns[0]).toMatchObject({efectivos:1,tasa_efectividad:'100.0',monto_cargado_24h:'1234.56'})
    const detail=await(await campaigns(req('campaigns?id='+id(1)))).json()

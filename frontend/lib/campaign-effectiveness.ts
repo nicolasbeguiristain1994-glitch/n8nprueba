@@ -54,17 +54,25 @@ export const CAMPAIGN_EFFECTIVENESS_SQL = `
     SELECT DISTINCT r.campaign_id,r.recipient_id,t.id,t.fecha_hora_utc,
       COALESCE(s.monto,t.monto) AS monto,a.username_lower AS username,a.platform
     FROM recipients r JOIN accounts a ON a.contact_id=r.contact_id
-    JOIN casino_transactions t ON t.platform=a.platform AND lower(t.username)=a.username_lower
+    -- Separate timestamped loads from date-only records so each branch can use
+    -- the existing partial (platform, username, time/date) index. An OR here
+    -- otherwise reads the full history of every matched account first.
+    JOIN LATERAL (
+      SELECT id,platform,monto,fecha_hora_utc,raw_detalles FROM casino_transactions t
+      WHERE t.platform=a.platform AND lower(t.username)=a.username_lower
+        AND t.tipo='carga' AND t.monto>0 AND t.fecha_hora_utc IS NOT NULL
+        AND t.fecha_hora_utc>r.sent_at AND t.fecha_hora_utc<=r.sent_at+interval '24 hours'
+      UNION ALL
+      SELECT id,platform,monto,fecha_hora_utc,raw_detalles FROM casino_transactions t
+      WHERE t.platform=a.platform AND lower(t.username)=a.username_lower
+        AND t.tipo='carga' AND t.monto>0 AND t.fecha_hora_utc IS NULL
+        AND t.fecha BETWEEN (r.sent_at AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+          AND ((r.sent_at+interval '24 hours') AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
+    ) t ON true
     LEFT JOIN casino_financial_source_records s
       ON s.transaction_id=t.id AND s.platform=t.platform AND s.kind='importe_original'
-    WHERE t.tipo='carga' AND t.monto>0 AND r.sent_at IS NOT NULL
+    WHERE r.sent_at IS NOT NULL
       AND NOT (t.platform IN ('zeus','bet30') AND lower(trim(COALESCE(t.raw_detalles,'')))='bono')
-      AND (
-        (t.fecha_hora_utc>r.sent_at AND t.fecha_hora_utc<=r.sent_at+interval '24 hours')
-        OR (t.fecha_hora_utc IS NULL AND t.fecha BETWEEN
-          (r.sent_at AT TIME ZONE 'America/Argentina/Buenos_Aires')::date AND
-          ((r.sent_at+interval '24 hours') AT TIME ZONE 'America/Argentina/Buenos_Aires')::date)
-      )
   ), recipient_totals AS (
     SELECT r.*,EXISTS(SELECT 1 FROM accounts a WHERE a.contact_id=r.contact_id) AS linked,
       d.cargas,d.monto_cargado,d.primera_carga,d.cuentas_carga
