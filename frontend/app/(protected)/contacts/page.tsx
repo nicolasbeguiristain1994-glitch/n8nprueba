@@ -182,7 +182,19 @@ export default function Contacts() {
 
   // ── Filtros ───────────────────────────────────────────────────────────────
   const [filtersOpen, setFiltersOpen] = useState(false)
-  const [contactColumns, setContactColumns] = useState<Record<string, boolean>>(CONTACT_COLUMNS)
+  const [contactColumns, updateContactColumns] = useState<Record<string, boolean>>(CONTACT_COLUMNS)
+  useEffect(() => {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem('contacts:cols') || 'null')
+      if (saved && typeof saved === 'object' && !Array.isArray(saved) && Object.values(saved).every(value => typeof value === 'boolean')) {
+        updateContactColumns(saved as Record<string, boolean>)
+      }
+    } catch { /* Keep default columns when browser storage is unavailable. */ }
+  }, [])
+  const setContactColumns = (columns: Record<string, boolean>) => {
+    updateContactColumns(columns)
+    try { localStorage.setItem('contacts:cols', JSON.stringify(columns)) } catch { /* The current view still works. */ }
+  }
   const [detailTab, setDetailTab] = useState('resumen')
   const [search, setSearch]                   = useState('')
   const [segments, setSegments]               = useState<string[]>([])
