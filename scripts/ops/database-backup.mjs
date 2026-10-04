@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import pg from 'pg';
 
@@ -123,7 +123,12 @@ export async function restoreDrill(localAdminUrl, directory) {
       await restored.query(`CREATE SCHEMA IF NOT EXISTS ${q(extension.schema)}`);
       await restored.query(`CREATE EXTENSION IF NOT EXISTS ${q(extension.name)} WITH SCHEMA ${q(extension.schema)}`);
     }
-    await command('pg_restore', ['--exit-on-error','--no-owner','--no-acl','--jobs=2','--dbname',database,dump], pgEnv(url.toString()), path.join(directory, 'restore.log'));
+    // template0 already provides public, also needed by pg_trgm/btree_gin.
+    // Skip only its CREATE SCHEMA entry; restore every object and data entry.
+    const toc = execFileSync(tool('pg_restore'), ['--list', dump], {encoding: 'utf8', maxBuffer: 8 * 1024 * 1024, stdio: ['ignore','pipe','pipe']});
+    const listFile = path.join(directory, `${database}.list`);
+    fs.writeFileSync(listFile, toc.split('\n').filter(line => !/^\d+; \d+ \d+ SCHEMA - public /.test(line)).join('\n'), {mode: 0o600, flag: 'wx'});
+    await command('pg_restore', ['--exit-on-error','--no-owner','--no-acl','--jobs=2','--use-list',listFile,'--dbname',database,dump], pgEnv(url.toString()), path.join(directory, 'restore.log'));
     const actual = await fingerprints(restored, await inventory(restored));
     compareTables(manifest.tables, actual);
     const integrity = (await restored.query(`SELECT count(*)::int AS invalid_indexes FROM pg_index i
