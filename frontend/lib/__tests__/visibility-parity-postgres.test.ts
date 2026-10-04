@@ -85,6 +85,12 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
     await db.query(`INSERT INTO contacts(id,phone_number,first_name,panel) VALUES($1,$4,'visible','royal'),($2,$5,'hidden','farabet'),($3,$6,'second','royal')`, [id(1),id(2),id(3),'+'+phone(1),'+'+phone(2),'+'+phone(3)])
     await db.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status) VALUES($1,'visible','inbound','received'),($2,'hidden','inbound','received'),($3,'second','inbound','received')`, [phone(1),phone(2),phone(3)])
     mocks.lines.mockResolvedValue([id(80)])
+    // Fresh/TRUNCATEd tables have no useful planner statistics. PostgreSQL's
+    // defaults overestimate the correlated visibility query enough to trigger
+    // expensive LLVM JIT on Linux CI (>780k cost for a single notification).
+    // Keep the real SQL and 5s timeout; analyze only this fixture's tiny tables.
+    const tables = (await db.query('SELECT tablename FROM pg_tables WHERE schemaname=$1', [schema])).rows
+    await db.query('ANALYZE ' + tables.map(t => `${schema}."${t.tablename}"`).join(', '))
   })
   afterAll(async () => { if(db) {await db.query('ROLLBACK');await db.query(`DROP SCHEMA ${schema} CASCADE`);await db.end()} })
   const listed = async () => (await (await list(req('contacts?select_all=true'))).json()).ids

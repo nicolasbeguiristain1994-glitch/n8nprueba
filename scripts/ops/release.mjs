@@ -5,6 +5,7 @@ import os from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { loadCatalog, sha256 } from './migration-engine.mjs';
+import { requireGithubValidation } from './github-validation.mjs';
 
 export const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const git=(root,...args)=>execFileSync('git',args,{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
@@ -77,6 +78,8 @@ async function deploy(dir){
   if(Object.keys(manifest.files).some(name=>!(name in source)&&name!=='frontend/public/release.json'))throw Error('Unexpected file in release');
  }finally{fs.rmSync(temp,{recursive:true,force:true});}
  const config=JSON.parse(fs.readFileSync(path.join(ROOT,'releases/production.json'),'utf8'));
+ const githubValidation=requireGithubValidation(config,manifest.commit);
+ console.log(JSON.stringify({githubValidation}));
  const cli=process.env.RAILWAY_CLI??'railway';const scope=['--project',config.project,'--service',config.service,'--environment',config.environment];
  const active=()=>{const rows=JSON.parse(execFileSync(cli,['deployment','list',...scope,'--limit','30','--json'],{encoding:'utf8',stdio:['ignore','pipe','pipe'],timeout:45000}));const live=rows.filter(x=>x.status==='SUCCESS');if(live.length!==1)throw Error('Cannot identify a unique active deployment');return live[0].id;};
  if(active()!==manifest.expectedActive)throw Error('Production changed since release preparation; rebase and revalidate');
@@ -86,6 +89,8 @@ async function deploy(dir){
  run(process.execPath,['scripts/ops/run-migrations.mjs','--root',dir,'--apply','--commit',manifest.commit,'--yes-i-know-this-is-production']);
  run(process.execPath,['scripts/ops/run-migrations.mjs','--root',dir,'--check']);
  if(active()!==manifest.expectedActive)throw Error('Production changed while checking migrations; deployment cancelled');
+ // Re-check after migrations: a newer failed or pending rerun must block upload.
+ requireGithubValidation(config,manifest.commit);
  verifyArtifact(dir);
  // Run inside the archive without a path argument: Railway treats an explicit
  // relative path as a different archive prefix and can fail before upload.
@@ -96,10 +101,11 @@ async function main(){
  const [cmd,...args]=process.argv.slice(2);const value=name=>{const i=args.indexOf(name);return i<0?undefined:args[i+1];};
  let result;
  if(cmd==='validate')result=validate();
+ else if(cmd==='check-ci')result=requireGithubValidation(JSON.parse(fs.readFileSync(path.join(ROOT,'releases/production.json'),'utf8')),sourceIdentity(ROOT).commit);
  else if(cmd==='prepare') {const dest=value('--output');if(!dest)throw Error('--output required');result=prepare(ROOT,path.resolve(dest),value('--expect-active'));result={commit:result.commit,digest:result.digest,files:Object.keys(result.files).length,output:path.resolve(dest)};}
  else if(cmd==='verify')result=verifyArtifact(path.resolve(value('--artifact')??'')),result={commit:result.commit,digest:result.digest,verified:true};
  else if(cmd==='deploy') {if(!value('--artifact'))throw Error('--artifact required');result=await deploy(path.resolve(value('--artifact')));}
- else throw Error('Usage: release.mjs validate | prepare --output DIR --expect-active ID | verify/deploy --artifact DIR');
+ else throw Error('Usage: release.mjs validate | check-ci | prepare --output DIR --expect-active ID | verify/deploy --artifact DIR');
  console.log(JSON.stringify(result));
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href)main().catch(e=>{console.error(e.message);process.exitCode=1;});

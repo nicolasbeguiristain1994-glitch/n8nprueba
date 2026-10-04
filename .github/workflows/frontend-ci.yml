@@ -9,15 +9,16 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_PASSWORD: local-test-only
           POSTGRES_DB: postgres
         ports: ['5432:5432']
         options: >-
-          --health-cmd pg_isready --health-interval 5s
+          --health-cmd "pg_isready -U postgres -d postgres" --health-interval 5s
           --health-timeout 5s --health-retries 10
     env:
       OPS_TEST_DATABASE_URL: postgresql://postgres:local-test-only@127.0.0.1:5432/postgres
@@ -43,3 +44,5 @@ jobs:
           name: validation-${{ github.sha }}
           path: .local-tools/release-validation.json
           include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 90

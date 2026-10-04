@@ -105,6 +105,9 @@ exports/
 .local-tools/
 release-artifact/
 release-manifest.json
+*.dump
+*.backup
+database-backups/
 
 # Also ignore dependency symlinks in isolated checkouts
 node_modules
