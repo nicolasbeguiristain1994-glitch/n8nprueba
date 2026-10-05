@@ -25,3 +25,11 @@ Las pruebas PostgreSQL comprueban límites monetarios, meses compartidos, víncu
 Ensayo en una copia aislada del respaldo del 04/10: 225.328 contactos, 24.890 perfiles vinculados, 23 cambios de nivel, 20.895 perfiles con alguna cuenta estimada, 8 con historial parcial y 5 sin actividad conocida. Preparación 6,7 s; recálculo y commit 15,5 s. No equivale a conteo actual de producción. Los valores exactos de la publicación se verifican nuevamente sobre producción.
 
 Quedan fuera de esta entrega: certificación de consentimiento histórico, perfiles monetarios independientes por plataforma y atribución causal de resultados comerciales. El origen del dato y su antigüedad permanecen visibles para evitar interpretaciones incorrectas.
+
+## Interfaz comprobada con datos ficticios
+
+![Filtros de calidad y depósitos recientes](../screenshots/segmentation-filters-20261005.png)
+
+![Explicación del perfil y su cobertura](../screenshots/segmentation-details-20261005.png)
+
+La verificación visual también corrigió el desplazamiento del drawer provocado por las utilidades de traslación del diálogo. Se comprueban su posición y ancho en escritorio y móvil. La API sobre el respaldo local devolvió HTTP 200 para los ocho filtros verificados, en 23–310 ms; no es una promesa de latencia en producción.

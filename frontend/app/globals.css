@@ -176,7 +176,7 @@
   height: 100dvh;
   max-height: 100dvh;
   transform: none;
-  translate: none;
+  translate: none !important;
   border-radius: 0;
   padding: 24px;
   display: block;
