@@ -22,8 +22,10 @@ export function connection(urlString, localOnly = false) {
 }
 function clientFor(urlString, localOnly = false) {
   const {url, local} = connection(urlString, localOnly);
+  const ca = !local && process.env.PGSSLROOTCERT && process.env.PGSSLROOTCERT !== 'system'
+    ? fs.readFileSync(process.env.PGSSLROOTCERT, 'utf8') : undefined;
   return new pg.Client({connectionString: url.toString(), connectionTimeoutMillis: 15000,
-    ssl: local ? false : {rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false'},
+    ssl: local ? false : {rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false', ...(ca ? {ca} : {})},
     application_name: 'verified-database-backup'});
 }
 function pgEnv(urlString) {

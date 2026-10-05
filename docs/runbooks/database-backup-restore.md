@@ -32,7 +32,10 @@ directorio de `pg_dump` y `pg_restore`.
    `BACKUP_DATABASE_URL`, nunca escribirla en el comando, logs o repositorio.
    Usar conexión directa o pooler de sesión, sin parámetros de URL.
 2. Mantener TLS con verificación de certificado; `PGSSLROOTCERT` permite indicar
-   el certificado CA del proveedor. `DB_SSL_REJECT_UNAUTHORIZED=false` conserva
+   el certificado CA del proveedor, tanto para Node como para las herramientas
+   PostgreSQL. Obtenerlo desde el dashboard o los certificados distribuidos en el
+   [CLI oficial de Supabase](https://github.com/supabase/cli/tree/main/apps/cli-go/internal/gen/types/templates).
+   `DB_SSL_REJECT_UNAUTHORIZED=false` conserva
    TLS pero desactiva la verificación de CA: solo usarlo si la configuración de
    conexión existente lo exige, y documentar esa limitación.
 3. Ejecutar en una carpeta nueva dentro de una ubicación privada:

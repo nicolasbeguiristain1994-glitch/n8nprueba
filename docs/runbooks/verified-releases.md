@@ -5,6 +5,12 @@ La rama parte del commit que registra exactamente los 937 archivos del despliegu
 `releases/production-baseline.json` documenta las huellas de ese punto de partida.
 Nunca publicar una carpeta de trabajo mediante `railway up` directamente.
 
+El 4 de octubre de 2026 se desconectó la fuente GitHub del servicio Railway
+`whatsapp-panel`, conservando su despliegue activo. No volver a conectar el
+despliegue automático: omitiría la comprobación de CI, el artefacto y las
+migraciones del ejecutor. Otros servicios del proyecto tienen configuración
+independiente; no sincronizar `main` sin revisar sus disparadores.
+
 ## Preparación y publicación
 
 1. Trabajar desde una rama que incluya el commit publicado. Confirmar los cambios
