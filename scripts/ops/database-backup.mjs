@@ -69,7 +69,10 @@ async function fingerprints(client, tables) {
   return result;
 }
 export function compareTables(expected, actual) {
-  if (JSON.stringify(expected) !== JSON.stringify(actual)) throw Error('Restored table inventory, row counts or data checksums differ from the source snapshot');
+  // Database collations can order identifiers differently on Linux and macOS.
+  const normalize = tables => tables.map(({schema,name,rows,checksum}) => ({schema,name,rows,checksum}))
+    .sort((a,b) => { const x = a.schema + '\0' + a.name, y = b.schema + '\0' + b.name; return x < y ? -1 : x > y ? 1 : 0; });
+  if (JSON.stringify(normalize(expected)) !== JSON.stringify(normalize(actual))) throw Error('Restored table inventory, row counts or data checksums differ from the source snapshot');
 }
 export async function createBackup(urlString, directory) {
   connection(urlString);

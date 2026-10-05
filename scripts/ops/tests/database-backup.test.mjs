@@ -11,6 +11,8 @@ test('restore refuses remote hosts and connection-string overrides', () => {
 test('restoration must match inventory, row counts AND contents', () => {
   const rows = [{schema:'public',name:'contacts',rows:'3',checksum:'12'}];
   compareTables(rows, structuredClone(rows));
+  const other = {...rows[0], name:'_backup_contacts'};
+  compareTables([...rows, other], [other, ...rows]);
   for (const actual of [[],[{...rows[0],rows:'2'}],[{...rows[0],checksum:'13'}],[{...rows[0],name:'different'}]]) {
     assert.throws(() => compareTables(rows, actual), /differ/);
   }
