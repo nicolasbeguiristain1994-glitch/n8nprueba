@@ -80,6 +80,8 @@ export async function createBackup(urlString, directory) {
   fs.mkdirSync(directory, {mode: 0o700}); // Never reuse/overwrite an existing backup.
   const client = clientFor(urlString);
   const startedAt = new Date().toISOString();
+  let keepAlive;
+  let snapshotError;
   await client.connect();
   try {
     await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY; SET LOCAL statement_timeout='10min'; SET LOCAL idle_in_transaction_session_timeout='20min'; SET LOCAL timezone='UTC'; SET LOCAL extra_float_digits=3");
@@ -90,9 +92,17 @@ export async function createBackup(urlString, directory) {
       JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname NOT IN ('plpgsql','supabase_vault') ORDER BY 1`)).rows;
     const roles = (await client.query('SELECT DISTINCT unnest(roles)::text AS name FROM pg_policies WHERE schemaname=ANY($1::text[]) ORDER BY 1', [SCHEMAS])).rows.map(r => r.name).filter(r => r !== 'public');
     const dump = path.join(directory, 'application.dump');
+    // The exporting transaction must survive slow downloads so its later
+    // checksums still use the exact same snapshot as pg_dump.
+    keepAlive = setInterval(() => {
+      client.query('SELECT 1').catch(error => { snapshotError = error; });
+    }, 30000);
+    keepAlive.unref();
     await command('pg_dump', ['--format=custom','--compress=6','--no-owner','--no-acl','--lock-wait-timeout=10s',
       ...SCHEMAS.flatMap(s => ['--schema', s]), `--snapshot=${state.snapshot}`, '--file', dump],
       {...pgEnv(urlString), PGOPTIONS: '-c default_transaction_read_only=on -c timezone=UTC -c extra_float_digits=3'}, path.join(directory, 'backup.log'));
+    clearInterval(keepAlive);
+    if (snapshotError) throw Error('Backup snapshot connection was lost; no valid manifest will be recorded');
     fs.chmodSync(dump, 0o600);
     const data = await fingerprints(client, tables);
     await client.query('COMMIT');
@@ -101,7 +111,7 @@ export async function createBackup(urlString, directory) {
       extensions, roles, tables: data, archive: {file: 'application.dump', sha256: await fileSha(dump), bytes: fs.statSync(dump).size}};
     writeJson(path.join(directory, 'manifest.json'), manifest);
     return {directory, tables: data.length, rows: data.reduce((n,t) => n + BigInt(t.rows), 0n).toString(), bytes: manifest.archive.bytes, sha256: manifest.archive.sha256};
-  } finally { await client.end(); }
+  } finally { clearInterval(keepAlive); await client.end(); }
 }
 export async function restoreDrill(localAdminUrl, directory) {
   const {url} = connection(localAdminUrl, true);
