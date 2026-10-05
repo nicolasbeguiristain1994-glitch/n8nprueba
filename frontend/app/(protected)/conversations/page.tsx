@@ -1,5 +1,5 @@
 'use client'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Card } from '@/components/ui/card'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
@@ -33,8 +33,17 @@ export default function Conversations() {
 
   const searchRef    = useRef<HTMLInputElement>(null)
   const textareaRef  = useRef<HTMLTextAreaElement>(null)
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const openedFromLink = useRef(false)
   const [showEmoji, setShowEmoji] = useState(false)
   const [mobilePanel, setMobilePanel] = useState<'list' | 'chat' | 'details'>('list')
+
+  useEffect(() => {
+    if (loading || openedFromLink.current) return
+    openedFromLink.current = true
+    const phone = new URLSearchParams(window.location.search).get('phone')
+    if (phone) { openConv(phone); setMobilePanel('chat') }
+  }, [loading, openConv])
 
   useKeyboardShortcuts([
     { key: 'F', ctrl: true, shift: true, handler: () => searchRef.current?.focus() },
@@ -69,7 +78,7 @@ export default function Conversations() {
     <div className="space-y-3">
       <PageHeader title="Conversaciones" description={`${convs.length}${totalConvs > convs.length ? ` de ${totalConvs}` : ''} hilos · ${convs.filter(c => c.last_direction === 'inbound').length} sin responder`} />
 
-      <div className={cn('grid min-h-[420px] h-[calc(100dvh-16rem)] gap-3 md:h-[calc(100dvh-13rem)] lg:grid-cols-[280px_minmax(0,1fr)]', selected && 'xl:grid-cols-[280px_minmax(0,1fr)_260px]')}>
+      <div className={cn('grid min-h-[420px] h-[calc(100dvh-16rem)] gap-3 md:h-[calc(100dvh-13rem)] lg:grid-cols-[300px_minmax(0,1fr)]', selected && detailsOpen && 'xl:grid-cols-[300px_minmax(0,1fr)_280px]')}>
 
         {/* Lista */}
         <Card className={cn("min-h-0 overflow-hidden flex-col gap-0 py-0", mobilePanel === 'list' ? 'flex' : 'hidden lg:flex')}>
@@ -89,7 +98,7 @@ export default function Conversations() {
             items={visible}
             selectedCampaign={campaign}
             selected={selected}
-            onSelect={phone => { openConv(phone); setMobilePanel('chat') }}
+            onSelect={phone => { openConv(phone); setMobilePanel('chat'); setDetailsOpen(false) }}
           />}
           {hasMore && (
             <div className="border-t px-3 py-2 shrink-0">
@@ -110,9 +119,9 @@ export default function Conversations() {
 
         {/* Chat */}
         <Card className={cn("min-h-0 flex-col gap-0 overflow-hidden py-0", mobilePanel === 'chat' ? 'flex' : mobilePanel === 'details' ? 'hidden xl:flex' : 'hidden lg:flex')}>
-          {selected && <div className="flex items-center justify-between border-b px-3 py-2 xl:hidden">
+          {selected && <div className="flex items-center justify-between border-b px-3 py-2">
             <Button size="sm" variant="ghost" onClick={() => setMobilePanel('list')} className="lg:hidden"><ArrowLeft size={14} /> Conversaciones</Button>
-            <Button size="sm" variant="ghost" onClick={() => setMobilePanel('details')} className="ml-auto"><PanelRight size={14} /> Detalles</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setDetailsOpen(v=>!v); setMobilePanel(detailsOpen?'chat':'details') }} aria-expanded={detailsOpen} className="ml-auto"><PanelRight size={14} /> Detalles</Button>
           </div>}
           {!selected
             ? (
@@ -148,6 +157,7 @@ export default function Conversations() {
 
                 {/* Input area */}
                 <div className="border-t border-border p-3 bg-card shrink-0">
+                  {reply.trim() && <p className="mb-2 text-xs text-muted-foreground" role="status">Borrador de este contacto · se conserva al cambiar de chat durante esta sesión</p>}
                   <div className="flex gap-2 items-start">
                     <QuickTemplates
                       contactName={selectedConv?.first_name}
@@ -201,9 +211,9 @@ export default function Conversations() {
         </Card>
 
         {/* Sidebar */}
-        {selected && (
+        {selected && (detailsOpen || mobilePanel === 'details') && (
           <Card className={cn("min-h-0 overflow-y-auto flex-col gap-0 py-0", mobilePanel === 'details' ? 'flex' : 'hidden xl:flex')}>
-            <div className="border-b p-2 xl:hidden"><Button size="sm" variant="ghost" onClick={() => setMobilePanel('chat')}><ArrowLeft size={14} /> Volver al chat</Button></div>
+            <div className="border-b p-2"><Button size="sm" variant="ghost" onClick={() => { setMobilePanel('chat'); setDetailsOpen(false) }}><ArrowLeft size={14} /> Volver al chat</Button></div>
             <ConversationSidebar
               phone={selected}
               conv={selectedConv}

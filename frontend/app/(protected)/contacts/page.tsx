@@ -19,6 +19,9 @@ import { useCurrentUser } from '@/lib/useCurrentUser'
 import { MovementRangeFilters } from '@/components/contacts/InactivityRangeFilter'
 import { EMPTY_INACTIVITY, inactivityParams, inactivityLabel, type InactivityRange } from '@/lib/inactivity-range'
 import { DownloadContactsModal } from '@/components/contacts/DownloadContactsModal'
+import { SavedContactViews, CONTACT_COLUMNS, DEFAULT_CONTACT_VIEW, type ContactViewState } from '@/components/contacts/SavedContactViews'
+import { ContactMessages } from '@/components/contacts/ContactMessages'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { PageHeader } from '@/components/layout/PageHeader'
 import {
   DataTable,
@@ -178,6 +181,21 @@ export default function Contacts() {
   const [loadError, setLoadError] = useState<string | null>(null)
 
   // ── Filtros ───────────────────────────────────────────────────────────────
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [contactColumns, updateContactColumns] = useState<Record<string, boolean>>(CONTACT_COLUMNS)
+  useEffect(() => {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem('contacts:cols') || 'null')
+      if (saved && typeof saved === 'object' && !Array.isArray(saved) && Object.values(saved).every(value => typeof value === 'boolean')) {
+        updateContactColumns(saved as Record<string, boolean>)
+      }
+    } catch { /* Keep default columns when browser storage is unavailable. */ }
+  }, [])
+  const setContactColumns = (columns: Record<string, boolean>) => {
+    updateContactColumns(columns)
+    try { localStorage.setItem('contacts:cols', JSON.stringify(columns)) } catch { /* The current view still works. */ }
+  }
+  const [detailTab, setDetailTab] = useState('resumen')
   const [search, setSearch]                   = useState('')
   const [segments, setSegments]               = useState<string[]>([])
   const [segmentDropdownOpen, setSegmentDropdownOpen] = useState(false)
@@ -212,7 +230,7 @@ export default function Contacts() {
   const [lists, setLists]             = useState<ContactList[]>([])
   const [filterList, setFilterList]   = useState('')
   const hasActiveFilters = !!(search || segments.length > 0 || filterGaming || filterPanel || filterLinea || filterLineaSub ||
-    filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag || filterList)
+    filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag || filterList || inactivity.min || inactivity.max)
 
   const [showListsMenu, setShowListsMenu] = useState(false)
   const [deletingListId, setDeletingListId] = useState<string | null>(null)
@@ -260,6 +278,24 @@ export default function Contacts() {
 
   // ── View contact modal ────────────────────────────────────────────────────
   const [viewContact, setViewContact]   = useState<Contact | null>(null)
+  useEffect(() => {
+    setViewContact(previous => previous ? contacts.find(contact => contact.id === previous.id) ?? previous : null)
+  }, [contacts])
+  const toolsMenuRef = useRef<HTMLDetailsElement>(null)
+  useEffect(() => {
+    const close = (event: MouseEvent | KeyboardEvent) => {
+      const menu = toolsMenuRef.current
+      if (!menu?.open) return
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== 'Escape') return
+        menu.open = false
+        menu.querySelector('summary')?.focus()
+      } else if (!menu.contains(event.target as Node)) menu.open = false
+    }
+    document.addEventListener('click', close)
+    document.addEventListener('keydown', close)
+    return () => { document.removeEventListener('click', close); document.removeEventListener('keydown', close) }
+  }, [])
   const [viewContactIdx, setViewContactIdx] = useState<number>(-1)
   const [casinoStats, setCasinoStats] = useState<{ platforms: Array<{
     platform: string | null; monto_cargas_mes: number; monto_retiros_mes: number
@@ -435,6 +471,12 @@ export default function Contacts() {
 
   // Resetear página al cambiar filtros
   const resetPage = useCallback(() => setPagination(p => ({ ...p, pageIndex: 0 })), [])
+  const viewState: ContactViewState = {search,segments,gaming:filterGaming,panel:filterPanel,linea:filterLinea,lineaSub:filterLineaSub,inactivity,actividad:filterActividad,antiguedad:filterAntiguedad,plataforma:filterPlataforma,sinMovimiento:filterSinMovimiento,tag:filterTag,list:filterList,columns:contactColumns}
+  const applyView = (v: ContactViewState) => {
+    setSearch(v.search);setSegments(v.segments);setFilterGaming(v.gaming);setFilterPanel(v.panel);setFilterLinea(v.linea);setFilterLineaSub(v.lineaSub);setInactivity(v.inactivity);setFilterActividad(v.actividad);setFilterAntiguedad(v.antiguedad);setFilterPlataforma(v.plataforma);setFilterSinMovimiento(v.sinMovimiento);setFilterTag(v.tag);setFilterList(v.list);setContactColumns(v.columns);setRowSelection({});resetPage()
+  }
+  const activeFilterLabels = [search&&`Búsqueda: ${search}`,segments.length&&`Nivel: ${segments.map(v=>NIVEL_LABEL[v]||v).join(', ')}`,filterPanel&&`Agente: ${filterPanel}`,filterLinea&&`Línea: ${filterLinea}${filterLineaSub}`,!filterLinea&&filterLineaSub&&`Variante: ${filterLineaSub}`,filterGaming&&`Juego: ${filterGaming}`,filterPlataforma&&`Plataforma: ${filterPlataforma}`,filterActividad.length&&`Actividad: ${filterActividad.join(', ')}`,filterAntiguedad.length&&`Antigüedad: ${filterAntiguedad.join(', ')}`,(inactivity.min||inactivity.max)&&inactivityLabel(inactivity),filterSinMovimiento&&'Sin movimiento',filterTag&&`Etiqueta: ${filterTag}`,filterList&&`Lista: ${lists.find(l=>l.id===filterList)?.name||'seleccionada'}`].filter(Boolean)
+
 
   // ── Inline edits ──────────────────────────────────────────────────────────
 
@@ -1229,6 +1271,9 @@ export default function Contacts() {
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             </Button>
 
+            <details ref={toolsMenuRef} className="relative group">
+              <summary className="flex h-8 cursor-pointer list-none items-center gap-2 rounded-md border bg-card px-3 text-sm hover:bg-muted">Herramientas <ChevronDown size={14}/></summary>
+              <div className="absolute right-0 top-full z-30 mt-2 flex w-[min(420px,calc(100vw-2rem))] flex-wrap items-center gap-2 rounded-xl border bg-popover p-3 shadow-lg">
             {currentUser?.can_download_contacts && (
               <Button variant="outline" size="sm"
                 onClick={() => setShowDownloadModal(true)}
@@ -1351,17 +1396,20 @@ export default function Contacts() {
               className="border-input text-foreground hover:bg-muted">
               <List size={14} className="mr-1" /> Lista por selección
             </Button>
-            {canCreateContacts && (
-              <Button size="sm" onClick={() => setShowAdd(true)} className="bg-primary hover:bg-primary/90 text-primary-foreground">
-                <UserPlus size={14} className="mr-1" /> Nuevo contacto
-              </Button>
-            )}
+
             {canCreateContacts && (
               <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-input rounded-md bg-background hover:bg-muted transition-colors font-medium">
                 <Upload size={14} /> Importar
                 <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.vcf" className="sr-only" aria-label="Importar contactos"
                   onChange={e => { const f = e.target.files?.[0]; if (f) { handleFile(f); setShowImport(true); e.target.value = '' } }} />
               </label>
+            )}
+              </div>
+            </details>
+            {canCreateContacts && (
+              <Button size="sm" onClick={() => setShowAdd(true)} className="bg-primary hover:bg-primary/90 text-primary-foreground">
+                <UserPlus size={14} className="mr-1" /> Nuevo contacto
+              </Button>
             )}
           </>
         }
@@ -1403,6 +1451,7 @@ export default function Contacts() {
         </div>
       )}
 
+      <SavedContactViews userId={currentUser?.id} state={viewState} onApply={applyView}/>
       {/* Filtros — fila 1 */}
       <div className="filter-bar">
         <div className="relative flex-1 min-w-48">
@@ -1410,6 +1459,11 @@ export default function Contacts() {
           <Input className="pl-9" aria-label="Buscar contactos" placeholder="Buscar por nombre o teléfono…" value={search}
             onChange={e => { setSearch(e.target.value); resetPage() }} />
         </div>
+        <Button variant={filtersOpen?'secondary':'outline'} onClick={()=>setFiltersOpen(v=>!v)} aria-expanded={filtersOpen} aria-controls="contact-filters"><Filter size={14}/>Filtros{activeFilterLabels.length>0?` (${activeFilterLabels.length})`:''}</Button>
+      </div>
+      {activeFilterLabels.length>0&&<div className="flex flex-wrap items-center gap-1.5" aria-label="Filtros activos">{activeFilterLabels.map(label=><span key={String(label)} className="max-w-full break-words rounded-md border bg-muted/40 px-2 py-1 text-xs">{label}</span>)}<Button variant="ghost" size="sm" onClick={()=>applyView({...DEFAULT_CONTACT_VIEW,columns:contactColumns})}>Limpiar filtros</Button></div>}
+      <div id="contact-filters" hidden={!filtersOpen} className="space-y-3 rounded-xl border bg-card p-3">
+      <div className="flex flex-wrap gap-2">
         <Select value={filterPanel} onValueChange={v => { setFilterPanel(v ?? ''); resetPage() }}>
           <SelectTrigger className="w-40"><SelectValue placeholder="Agente" /></SelectTrigger>
           <SelectContent>
@@ -1656,6 +1710,8 @@ export default function Contacts() {
         </div>
       </div>
 
+      </div>
+
       {/* Badge de lista activa */}
       {filterList && (() => {
         const active = lists.find(l => l.id === filterList)
@@ -1673,7 +1729,11 @@ export default function Contacts() {
       {/* ── DataTable ── */}
       <DataTable
         data={contacts}
-        columns={columns}
+        columns={[...columns.filter(c=>c.id==='name'),...columns.filter(c=>c.id!=='name')]}
+        columnVisibility={contactColumns}
+        onColumnVisibilityChange={setContactColumns}
+        pinnedColumns={[{id:'select',width:48},{id:'name',width:230}]}
+        onRowClick={openViewContact}
         loading={loading}
         storageKey="contacts"
         getRowId={(row) => row.id}
@@ -2036,7 +2096,7 @@ export default function Contacts() {
       </Dialog>
       {/* ── Modal ver contacto ── */}
       <Dialog open={!!viewContact} onOpenChange={v => { if (!v) setViewContact(null) }}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="crm-contact-drawer">
           <DialogHeader>
             <div className="flex items-center gap-2">
               <button
@@ -2061,8 +2121,11 @@ export default function Contacts() {
               </button>
             </div>
           </DialogHeader>
+          <p className="text-xs text-muted-foreground">Contacto {viewContactIdx+1} de {contacts.length} en esta página · tu selección se conserva</p>
           {viewContact && (
-            <div className="space-y-3">
+            <Tabs value={detailTab} onValueChange={setDetailTab} className="min-w-0">
+              <TabsList className="w-full"><TabsTrigger value="resumen">Resumen</TabsTrigger><TabsTrigger value="actividad">Actividad</TabsTrigger>{(currentUser?.role==='admin'||currentUser?.sectors?.includes('conversations'))&&<TabsTrigger value="conversacion">Conversación</TabsTrigger>}</TabsList>
+              <TabsContent value="resumen" className="space-y-4 pt-4">
               <p className="font-mono text-sm text-muted-foreground">{viewContact.phone_number}</p>
               <div className="flex flex-wrap gap-1.5">
                 {viewContact.segment  && <span className={`text-xs px-2 py-0.5 rounded-full ${SEGMENT_STYLE[viewContact.segment] ?? 'bg-muted text-muted-foreground'}`}>{NIVEL_LABEL[viewContact.segment] ?? viewContact.segment}</span>}
@@ -2089,7 +2152,17 @@ export default function Contacts() {
                   ))}
                 </div>
               )}
-              {casinoStatsError && <p role="alert" className="text-sm text-destructive">{casinoStatsError}</p>}
+              {/* Tags del contacto */}
+              {(viewContact.custom_tags?.length ?? 0) > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {viewContact.custom_tags!.map(t => (
+                    <span key={t} className="text-xs bg-accent border border-input text-foreground hover:bg-muted px-2 py-0.5 rounded-full">{t}</span>
+                  ))}
+                </div>
+              )}
+
+              </TabsContent>
+              <TabsContent value="actividad" className="space-y-4 pt-4"><h3 className="text-sm font-semibold">Historial por plataforma</h3>              {casinoStatsError && <p role="alert" className="text-sm text-destructive">{casinoStatsError}</p>}
               {!casinoStats && !casinoStatsError && <p className="text-sm text-muted-foreground">Cargando historial…</p>}
               {casinoStats?.platforms.length === 0 && <p className="text-sm text-muted-foreground">Sin historial vinculado. No permite determinar la actividad.</p>}
               {casinoStats?.platforms.map(stats => (
@@ -2109,20 +2182,13 @@ export default function Contacts() {
                   </div>
                 </div>
               ))}
-              {/* Tags del contacto */}
-              {(viewContact.custom_tags?.length ?? 0) > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {viewContact.custom_tags!.map(t => (
-                    <span key={t} className="text-xs bg-accent border border-input text-foreground hover:bg-muted px-2 py-0.5 rounded-full">{t}</span>
-                  ))}
-                </div>
-              )}
-
+</TabsContent>
+              <TabsContent value="conversacion" className="pt-4">{(currentUser?.role==='admin'||currentUser?.sectors?.includes('conversations'))&&<ContactMessages phone={viewContact.phone_number}/>}</TabsContent>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" className="flex-1" onClick={() => { setViewContact(null); openEdit(viewContact) }}>
+                <Button variant="outline" size="sm" className="flex-1" onClick={() => openEdit(viewContact)}>
                   <Pencil size={13} className="mr-1.5" /> Editar
                 </Button>
-                <Button variant="outline" size="sm" className="flex-1" onClick={() => { setViewContact(null); openTags(viewContact) }}>
+                <Button variant="outline" size="sm" className="flex-1" onClick={() => openTags(viewContact)}>
                   <Tag size={13} className="mr-1.5" /> Etiquetas
                 </Button>
                 <Button variant="outline" size="sm"
@@ -2133,7 +2199,7 @@ export default function Contacts() {
                   <Ban size={13} />
                 </Button>
               </div>
-            </div>
+            </Tabs>
           )}
         </DialogContent>
       </Dialog>

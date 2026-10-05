@@ -7,7 +7,7 @@ const props = { platform: 'consolidado' as const, agent: '', from: '2026-09-22',
 describe('PlatformOverview', () => {
   it('shows four platforms, exact cents, source dates and limitations', () => {
     render(<PlatformOverview {...props} activity={[{ platform: 'ganamos', agente: null, depositos: '100.25', retiros: '30.10', neto: '70.15', cuentas: 1, movimientos: 2, ultima_fecha: '2026-09-23' }]} />)
-    for (const name of ['Zeus', 'Bet30', 'Ganamos', 'Argenbet']) expect(screen.getByRole('heading', { name })).toBeInTheDocument()
+    for (const name of ['Zeus', 'Bet30', 'Ganamos', 'Argenbet']) expect(screen.getByRole('rowheader', { name: new RegExp('^' + name) })).toBeInTheDocument()
     expect(screen.getAllByText('$ 70,15')).toHaveLength(2)
     expect(screen.getByText('23/09/2026')).toBeInTheDocument()
     expect(screen.getByText(/no confirma días completos/)).toBeInTheDocument()
@@ -28,9 +28,9 @@ describe('PlatformOverview', () => {
     ].map(row => ({ ...row, agente: null, neto: '0', cuentas: 2, movimientos: 3, ultima_fecha: null }))
     const activity = [...rows, { ...rows[0], agente: 'royal' }]
     const { rerender } = render(<PlatformOverview {...props} agent="royal" activity={activity} />)
-    const total = within(screen.getByRole('article', { name: 'Total de las cuatro plataformas' }))
+    const total = within(screen.getByRole('group', { name: 'Total de las cuatro plataformas' }))
     for (const value of ['$ 365.521.052,42', '$ 228.166.183,58', '$ 3.251.350,20', '$ 140.606.219,03']) expect(total.getByText(value)).toBeInTheDocument()
-    expect(total.getByText('12 movimientos · 8 cuentas con movimientos')).toBeInTheDocument()
+    expect(screen.getByText(/12 movimientos · 8 cuentas con movimientos/)).toBeInTheDocument()
     rerender(<PlatformOverview {...props} platform="zeus" activity={activity} />)
     expect(screen.queryByRole('heading', { name: 'Total' })).not.toBeInTheDocument()
   })

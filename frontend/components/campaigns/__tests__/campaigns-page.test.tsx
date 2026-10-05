@@ -101,6 +101,13 @@ function postedBody(fetchMock: ReturnType<typeof vi.fn>) {
   return JSON.parse(call![1].body as string)
 }
 
+const nextStep = () => fireEvent.click(screen.getByRole('button', { name: 'Continuar' }))
+const chooseAudience = () => {
+  fireEvent.click(screen.getByRole('option', { name: /VIP/ }))
+  nextStep()
+}
+const reviewContent = () => { nextStep(); nextStep() }
+
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 beforeEach(() => { vi.clearAllMocks(); currentUser.value = { user: { role: 'admin', id: 'owner' }, permissions: {} } })
 
@@ -120,6 +127,7 @@ describe('Campañas — plantillas', () => {
     await screen.findByText('No hay campañas todavía')
     fireEvent.click(screen.getByRole('button', { name: /Nueva campaña/ }))
     fireEvent.change(screen.getByPlaceholderText(/Retención VIP Mayo/), { target: { value: 'Regalo personalizado' } })
+    chooseAudience()
     fireEvent.click(screen.getByRole('button', { name: /Usar plantilla aprobada/ }))
     fireEvent.click(await screen.findByRole('option', { name: 'regalo3000 · es_AR' }))
 
@@ -131,6 +139,7 @@ describe('Campañas — plantillas', () => {
     expect(screen.getByText('Hola Pablo 👋 ¡Tenés $3.000 de regalo para tu próxima compra! 🎁 Respondé EXTRA y te lo acreditamos en tu cuenta al instante ✅')).toBeInTheDocument()
     expect(screen.getByText('Pablo es un nombre de ejemplo. Cada contacto recibe el suyo.')).toBeInTheDocument()
 
+    reviewContent()
     fireEvent.click(screen.getByRole('button', { name: /Guardar campaña/ }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     expect(postedBody(fetchMock)).toMatchObject({
@@ -147,6 +156,7 @@ describe('Campañas — plantillas', () => {
     await screen.findByText('No hay campañas todavía')
     fireEvent.click(screen.getByRole('button', { name: /Nueva campaña/ }))
     fireEvent.change(screen.getByPlaceholderText(/Retención VIP Mayo/), { target: { value: 'Bono bienvenida' } })
+    chooseAudience()
     fireEvent.click(screen.getByRole('button', { name: /Usar plantilla aprobada/ }))
 
     const option = await screen.findByRole('option', { name: 'promo_bienvenida · es_AR' })
@@ -156,17 +166,18 @@ describe('Campañas — plantillas', () => {
 
     // El editor de texto libre / variantes no se usa como sustituto
     expect(screen.queryByText(/Agregar variante de mensaje/)).not.toBeInTheDocument()
-    const save = screen.getByRole('button', { name: /Guardar campaña/ })
-    expect(save).toBeDisabled()
+    const advance = screen.getByRole('button', { name: 'Continuar' })
+    fireEvent.click(advance)
+    expect(screen.getByText(/Completá un mensaje/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Guardar campaña/ })).not.toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText('URL del encabezado (imagen)'), { target: { value: 'https://cdn.example.com/promo.jpg' } })
     fireEvent.change(screen.getByLabelText('Parámetro {{1}} del cuerpo'), { target: { value: 'Juan' } })
     fireEvent.change(screen.getByLabelText('Parámetro {{2}} del cuerpo'), { target: { value: '$5.000' } })
     fireEvent.change(screen.getByLabelText(/Valor variable de la URL del botón "Ver promo"/), { target: { value: 'abc123' } })
     expect(screen.getByText('Hola Juan, tenés $5.000 de bono')).toBeInTheDocument()
-    expect(save).toBeEnabled()
-
-    fireEvent.click(save)
+    reviewContent()
+    fireEvent.click(screen.getByRole('button', { name: /Guardar campaña/ }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     const body = postedBody(fetchMock)
     expect(body).toMatchObject({
@@ -195,15 +206,15 @@ describe('Campañas — plantillas', () => {
     await screen.findByText('No hay campañas todavía')
     fireEvent.click(screen.getByRole('button', { name: /Nueva campaña/ }))
     fireEvent.change(screen.getByPlaceholderText(/Retención VIP Mayo/), { target: { value: 'Cupones' } })
+    chooseAudience()
     fireEvent.click(screen.getByRole('button', { name: /Usar plantilla aprobada/ }))
     fireEvent.click(await screen.findByRole('option', { name: 'cupon_codigo · es' }))
 
     const alert = screen.getByRole('alert')
     expect(alert).toHaveTextContent('Esta plantilla no se puede usar en campañas todavía')
     expect(alert).toHaveTextContent('COPY_CODE')
-    const save = screen.getByRole('button', { name: /Guardar campaña/ })
-    expect(save).toBeDisabled()
-    fireEvent.click(save)
+    nextStep()
+    expect(screen.queryByRole('button', { name: /Guardar campaña/ })).not.toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -226,16 +237,17 @@ describe('Campañas — plantillas', () => {
     await screen.findByText('No hay campañas todavía')
     fireEvent.click(screen.getByRole('button', { name: /Nueva campaña/ }))
     fireEvent.change(screen.getByPlaceholderText(/Retención VIP Mayo/), { target: { value: 'Validación' } })
+    chooseAudience()
     fireEvent.click(screen.getByRole('button', { name: /Usar plantilla aprobada/ }))
 
     fireEvent.click(await screen.findByRole('option', { name: 'hueco · es' }))
     expect(screen.getByRole('alert')).toHaveTextContent('variables no compatibles')
     expect(screen.queryByLabelText(/Parámetro \{\{3\}\} del cuerpo/)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Guardar campaña/ })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: /Guardar campaña/ })).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('option', { name: 'url_media · es' }))
     expect(screen.getByRole('alert')).toHaveTextContent('URL dinámica no compatible')
-    expect(screen.getByRole('button', { name: /Guardar campaña/ })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: /Guardar campaña/ })).not.toBeInTheDocument()
   })
 })
 
@@ -244,6 +256,8 @@ describe('Campañas — sincronizar plantillas desde Meta', () => {
     render(<Page />)
     await screen.findByText('No hay campañas todavía')
     fireEvent.click(screen.getByRole('button', { name: /Nueva campaña/ }))
+    fireEvent.change(screen.getByPlaceholderText(/Retención VIP Mayo/), { target: { value: 'Prueba plantilla' } })
+    chooseAudience()
     fireEvent.click(screen.getByRole('button', { name: /Usar plantilla aprobada/ }))
   }
   const syncCalls = (fetchMock: { mock: { calls: unknown[][] } }) =>
@@ -463,10 +477,13 @@ describe('Campañas — programación', () => {
     await screen.findByText('No hay campañas todavía')
     fireEvent.click(screen.getByRole('button', { name: /Nueva campaña/ }))
     fireEvent.change(screen.getByPlaceholderText(/Retención VIP Mayo/), { target: { value: 'Programada' } })
+    chooseAudience()
     fireEvent.change(screen.getByPlaceholderText(/tenemos una oferta especial/), { target: { value: 'Hola {{nombre}}' } })
+    nextStep()
     expect(screen.getByText(/hora de Argentina \(America\/Argentina\/Buenos_Aires\)/)).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText(/Programar envío/), { target: { value: '2026-10-01T09:30' } })
 
+    nextStep()
     fireEvent.click(screen.getByRole('button', { name: /Programar campaña/ }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     const body = postedBody(fetchMock)
@@ -482,11 +499,14 @@ describe('Campañas — programación', () => {
     render(<Page />)
     await screen.findByText('No hay campañas todavía')
     fireEvent.click(screen.getByRole('button', { name: /Nueva campaña/ }))
-    expect(screen.getByLabelText(/Programar envío/)).toBeDisabled()
-    expect(screen.getByText(/Programación automática no habilitada/)).toBeInTheDocument()
 
     fireEvent.change(screen.getByPlaceholderText(/Retención VIP Mayo/), { target: { value: 'Borrador' } })
+    chooseAudience()
     fireEvent.change(screen.getByPlaceholderText(/tenemos una oferta especial/), { target: { value: 'Hola' } })
+    nextStep()
+    expect(screen.getByLabelText(/Programar envío/)).toBeDisabled()
+    expect(screen.getByText(/Programación automática no habilitada/)).toBeInTheDocument()
+    nextStep()
     fireEvent.click(screen.getByRole('button', { name: /Guardar campaña/ }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     expect(postedBody(fetchMock).scheduled_at).toBeNull()
@@ -501,7 +521,9 @@ describe('Campañas — pausas y límites', () => {
     await screen.findByText('No hay campañas todavía')
     fireEvent.click(screen.getByRole('button', { name: /Nueva campaña/ }))
     fireEvent.change(screen.getByPlaceholderText(/Retención VIP Mayo/), { target: { value: name } })
+    chooseAudience()
     fireEvent.change(screen.getByPlaceholderText(/tenemos una oferta especial/), { target: { value: 'Hola' } })
+    nextStep()
   }
 
   it('persiste antiblock_delay_min/max sin campos legacy ni consulta de perfiles anti-ban', async () => {
@@ -522,6 +544,7 @@ describe('Campañas — pausas y límites', () => {
     expect(max).toHaveAttribute('max', '300')
     fireEvent.change(min, { target: { value: '12' } })
     fireEvent.change(max, { target: { value: '45' } })
+    nextStep()
 
     fireEvent.click(screen.getByRole('button', { name: /Guardar campaña/ }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalled())
@@ -541,7 +564,7 @@ describe('Campañas — pausas y límites', () => {
     await openTextForm('Pausas inválidas')
     fireEvent.change(screen.getByLabelText('Pausa mínima (segundos)'), { target: { value: '30' } })
     fireEvent.change(screen.getByLabelText('Pausa máxima (segundos)'), { target: { value: '10' } })
-    fireEvent.click(screen.getByRole('button', { name: /Guardar campaña/ }))
+    nextStep()
 
     expect(await screen.findByRole('alert')).toHaveTextContent('La pausa mínima no puede ser mayor que la pausa máxima')
     expect(fetchMock).not.toHaveBeenCalled()
@@ -554,7 +577,7 @@ describe('Campañas — pausas y límites', () => {
 
     await openTextForm('Pausa excesiva')
     fireEvent.change(screen.getByLabelText('Pausa máxima (segundos)'), { target: { value: '301' } })
-    fireEvent.click(screen.getByRole('button', { name: /Guardar campaña/ }))
+    nextStep()
 
     expect(await screen.findByRole('alert')).toHaveTextContent('entre 3 y 300 segundos')
     expect(fetchMock).not.toHaveBeenCalled()

@@ -43,6 +43,8 @@ export function useDataTable<TData>({
   getRowId,
   storageKey = 'datatable',
   virtual = false,
+  columnVisibility: externalVisibility,
+  onColumnVisibilityChange,
 }: Pick<
   DataTableProps<TData>,
   | 'data'
@@ -59,16 +61,25 @@ export function useDataTable<TData>({
   | 'getRowId'
   | 'storageKey'
   | 'virtual'
+  | 'columnVisibility'
+  | 'onColumnVisibilityChange'
 >) {
   // ── Estado persistido ────────────────────────────────────────────────────
   const [density, setDensity] = useLocalStorage<Density>(
     `${storageKey}:density`,
     'normal',
   )
-  const [columnVisibility, setColumnVisibility] = useLocalStorage<VisibilityState>(
+  const [storedColumnVisibility, setColumnVisibility] = useLocalStorage<VisibilityState>(
     `${storageKey}:cols`,
     {},
   )
+
+  const columnVisibility = externalVisibility ?? storedColumnVisibility
+  const updateVisibility = (update: Updater<VisibilityState>) => {
+    const next = typeof update === 'function' ? update(columnVisibility) : update
+    if (onColumnVisibilityChange) onColumnVisibilityChange(next)
+    else setColumnVisibility(next)
+  }
 
   // ── Estado interno (cuando no se controla externamente) ──────────────────
   const [internalPagination, setInternalPagination] = useState<PaginationState>({
@@ -124,7 +135,7 @@ export function useDataTable<TData>({
     onPaginationChange: handlePaginationChange,
     onSortingChange:    handleSortingChange,
     onRowSelectionChange: handleRowSelectionChange,
-    onColumnVisibilityChange: setColumnVisibility,
+    onColumnVisibilityChange: updateVisibility,
     state: {
       pagination:       paginationState,
       sorting:          sortingState,
