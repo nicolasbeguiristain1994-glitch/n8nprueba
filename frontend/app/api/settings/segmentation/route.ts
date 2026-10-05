@@ -175,7 +175,7 @@ export async function PATCH(req: NextRequest) {
   const setClauses = entries.map(([field], i) => `${field} = $${i + 1}`)
   setClauses.push(`updated_by = $${entries.length + 1}`)
   setClauses.push('updated_at = NOW()')
-  values.push(auth.user.user_id, tier, WORKSPACE)
+  values.push(auth.user.user_id, tier, WORKSPACE, currentRow.updated_at)
 
   const tierParamIdx = entries.length + 2
   const wsParamIdx   = entries.length + 3
@@ -185,14 +185,16 @@ export async function PATCH(req: NextRequest) {
     const updatedRows = await query<Record<string, unknown>>(
       `UPDATE segmentation_tiers
        SET ${setClauses.join(', ')}
-       WHERE tier = $${tierParamIdx} AND workspace_id = $${wsParamIdx}
+       WHERE tier = $${tierParamIdx} AND workspace_id = $${wsParamIdx} AND updated_at=$${wsParamIdx+1}::timestamptz
        RETURNING tier, min_days_inactive, max_days_inactive, value_score,
                  deposit_threshold_min, recontact_cooldown_days, is_active,
                  workspace_id, updated_by::text AS updated_by, updated_at::text AS updated_at`,
       values,
     )
     updatedRow = updatedRows[0]
+    if (!updatedRow) return NextResponse.json({error:'La regla cambió durante la edición. Refrescá la página.'},{status:409})
   } catch (e) {
+    if ((e as {code?:string}).code==='23514') return NextResponse.json({error:'Los umbrales mensuales deben aumentar desde Bajo (0) hasta Super VIP.'},{status:400})
     console.error('[/api/settings/segmentation PATCH] UPDATE error', e)
     return NextResponse.json({ error: 'Error al guardar los cambios' }, { status: 500 })
   }

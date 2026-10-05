@@ -18,7 +18,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const parsed  = parseBody(UpdateContactSchema, rawBody)
   if (!parsed.ok) return handleValidationError(req, parsed.error, 'contacts')
 
-  const { segment, gaming, panel, linea, linea_sub, first_name, last_name } = parsed.data
+  const { segment, segment_mode, gaming, panel, linea, linea_sub, first_name, last_name } = parsed.data
 
   if (panel !== undefined && !canAssignPanels(user, [panel])) {
     return NextResponse.json({error: 'Agente fuera de tu alcance'}, {status: 403})
@@ -32,8 +32,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ['segment', segment, '::contact_segment'], ['gaming', gaming, '::gaming_type'],
       ['first_name', first_name, ''], ['last_name', last_name, ''],
     ] as const) {
+      if (field === 'segment' && segment_mode === 'automatic') continue
       if (value !== undefined) { sets.push(`${field}=${bind(value || null)}${cast}`); changedFields.push(field) }
     }
+    if (segment_mode === 'automatic') {
+      sets.push('segment_is_manual=false', "segment=casino_monthly_value_tier((segmentation_profile->>'monthly_average')::numeric)::contact_segment")
+      changedFields.push('segment_mode')
+    } else if (segment !== undefined) { sets.push('segment_is_manual=true'); changedFields.push('segment_mode') }
     if (panel !== undefined) {
       const p = bind(panel)
       sets.push(`panel=${p}`, `panels_assigned=CASE WHEN ${p}::text IS NULL THEN panels_assigned

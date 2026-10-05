@@ -113,6 +113,7 @@ export type LoginInput = z.infer<typeof LoginSchema>
 // ── Contact schemas ───────────────────────────────────────────────────────────
 
 export const UpdateContactSchema = z.object({
+  segment_mode: z.enum(['manual','automatic']).optional(),
   segment:    z.enum(['bajo', 'medio', 'vip', 'vip_medio', 'vip_alto', 'super_vip']).nullable().optional(),
   gaming:     z.enum(['slots', 'deportivas', 'ambas']).nullable().optional(),
   panel:      z.enum(['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas']).nullable().optional(),

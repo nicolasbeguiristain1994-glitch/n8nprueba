@@ -1,3 +1,4 @@
+import { POST as dispatchDynamic } from '../dispatch/route'
 import { campaignAudienceError } from '@/lib/campaign-audience'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
@@ -24,7 +25,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // ── Fetch campaign ─────────────────────────────────────────────────────────
   let campaign: CampaignRow | undefined
   try {
-    const rows = await query<CampaignRow>('SELECT * FROM campaigns WHERE id = $1', [id])
+    const rows = await query<CampaignRow>('SELECT c.*,l.is_dynamic FROM campaigns c LEFT JOIN contact_lists l ON l.id=c.list_id WHERE c.id = $1', [id])
     campaign = rows[0]
   } catch (e) {
     console.error('[campaign send] fetch error:', e instanceof Error ? e.message : e)
@@ -52,6 +53,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!RESUMABLE.includes(campaign.status)) {
     return NextResponse.json({ error: `Campaign is already ${campaign.status}` }, { status: 409 })
   }
+
+  if ((campaign as CampaignRow & {is_dynamic?:boolean}).is_dynamic) return dispatchDynamic(req,{params:Promise.resolve({id})})
 
   const isProspectList = !!campaign.prospect_list_id
 

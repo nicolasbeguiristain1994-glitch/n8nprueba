@@ -31,7 +31,7 @@ const FIELD_LABELS: Record<EditableField, string> = {
   min_days_inactive:       'Inactividad mín',
   max_days_inactive:       'Inactividad máx',
   value_score:             'Score de valor',
-  deposit_threshold_min:   'Depósito mín ($)',
+  deposit_threshold_min:   'Promedio mensual mín ($)',
   recontact_cooldown_days: 'Cooldown (días)',
 }
 const TIER_LABELS: Record<TierName, string> = { super_vip: 'Super Vip', vip_alto: 'Vip Alto', vip_medio: 'Vip Medio', vip: 'Vip Bajo', medio: 'Medio', bajo: 'Bajo' }
@@ -317,7 +317,8 @@ export function SegmentationTab() {
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Tiers de Segmentación</CardTitle>
+          <CardTitle className="text-base">Nivel mensual y reglas de prioridad</CardTitle>
+          <p className="text-xs text-muted-foreground">El nivel usa pesos por mes con depósitos reales y se comparte con Contactos y Dashboard. Las ventanas y el cooldown se aplican a Prioridades.</p>
           {!isAdmin && (
             <p className="text-xs text-muted-foreground mt-1">Solo los administradores pueden modificar estos valores.</p>
           )}

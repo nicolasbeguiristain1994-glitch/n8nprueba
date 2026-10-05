@@ -3,23 +3,9 @@
 // Shared by contact imports and the daily CLI. No database connection is opened here.
 const AGENTS = ['bigwin','ofizeus','betcoin','royal','farabet','zeus','zeusroyal','btcuno','btcdos','imperio','adminroyal','adminfara','adminbtc','adminzeus','admbigwin','adminbigwin','adminimperio','lasvegas','royalauto','horus','hades','generalfranqui','peaky']
 
-function amountSQL(value) {
-  return `CASE WHEN ${value} IS NULL THEN NULL
-    WHEN ${value} >= 3200000 THEN 'super_vip' WHEN ${value} >= 1500000 THEN 'vip_alto'
-    WHEN ${value} >= 1000000 THEN 'vip_medio' WHEN ${value} >= 500000 THEN 'vip'
-    WHEN ${value} >= 100000 THEN 'medio' ELSE 'bajo' END`
-}
+function amountSQL(value) { return `casino_monthly_value_tier(${value})` }
 function activitySQL(first, last, count) {
-  first = `(${first})`; last = `(${last})`; count = `(${count})`
-  return `CASE WHEN ${last} IS NULL OR ${last} > CURRENT_DATE THEN NULL
-    WHEN CURRENT_DATE - ${last} > 180 THEN 'perdido'
-    WHEN CURRENT_DATE - ${last} > 60 THEN 'inactivo'
-    WHEN CURRENT_DATE - ${last} > 30 THEN 'en_riesgo'
-    WHEN ${first} IS NULL OR ${first} > ${last} THEN NULL
-    WHEN CURRENT_DATE - ${first} BETWEEN 0 AND 30 THEN 'nuevo'
-    WHEN ${count}::numeric / GREATEST((CURRENT_DATE - ${first})::numeric / 7, 1) >= 3 THEN 'frecuente'
-    WHEN ${count}::numeric / GREATEST((CURRENT_DATE - ${first})::numeric / 7, 1) >= 1 THEN 'regular'
-    ELSE 'ocasional' END`
+  return `casino_deposit_activity((${first})::date,(${last})::date,(${count})::int,CURRENT_DATE)`
 }
 
 /** Caller owns a transaction on a single connection; all snapshots disappear at commit/rollback. */
@@ -58,7 +44,7 @@ async function prepareSegmentation(client, { contactIds = null, importedOnly = f
   await client.query('ANALYZE seg_account_links')
   await client.query(`CREATE TEMP TABLE seg_transactions ON COMMIT DROP AS
     SELECT p.id AS player_id, ct.fecha, ct.tipo, ct.monto
-    FROM seg_sources p JOIN casino_transactions ct ON lower(ct.username)=p.username_lower
+    FROM seg_sources p JOIN casino_cash_movements ct ON ct.username_lower=p.username_lower
       AND ct.platform IS NOT DISTINCT FROM p.platform
     WHERE ct.fecha <= CURRENT_DATE`)
   await client.query('CREATE INDEX ON seg_transactions(player_id)')
@@ -67,20 +53,28 @@ async function prepareSegmentation(client, { contactIds = null, importedOnly = f
     WITH tx AS (
       SELECT player_id, SUM(monto) FILTER (WHERE tipo='carga') AS amount,
         COUNT(*) FILTER (WHERE tipo='carga')::int AS deposits,
+        COUNT(*) FILTER (WHERE tipo='bono')::int AS bonuses,
         COUNT(*) FILTER (WHERE tipo='retiro')::int AS withdrawals,
         MIN(fecha) FILTER (WHERE tipo='carga') AS first_date,
-        MAX(fecha) FILTER (WHERE tipo='carga') AS last_date
+        MAX(fecha) FILTER (WHERE tipo='carga') AS last_date,
+        SUM(monto) FILTER (WHERE tipo='carga' AND fecha>=CURRENT_DATE-29) AS amount_30d,
+        SUM(monto) FILTER (WHERE tipo='carga' AND fecha>=CURRENT_DATE-89) AS amount_90d,
+        COUNT(*) FILTER (WHERE tipo='carga' AND fecha>=CURRENT_DATE-29)::int AS deposits_30d,
+        COUNT(*) FILTER (WHERE tipo='carga' AND fecha>=CURRENT_DATE-89)::int AS deposits_90d
       FROM seg_transactions GROUP BY player_id
     )
     SELECT p.id, p.username_lower, p.platform, p.agente,
-      CASE WHEN tx.deposits > 0 THEN tx.amount ELSE p.total_cargas END AS total_cargas,
-      GREATEST(p.known_count, tx.deposits, 0) AS cant_cargas,
-      GREATEST(p.known_withdrawals, tx.withdrawals, 0) AS cant_retiros,
-      LEAST(p.known_first, tx.first_date) AS fecha_primera,
-      GREATEST(p.known_last, tx.last_date) AS fecha_ultima,
-      COALESCE(tx.deposits, 0) = 0 AS estimated,
-      COALESCE(tx.deposits > 0 AND tx.amount < p.known_amount, false) AS partial_history,
-      p.seg_actividad AS stored_activity
+      CASE WHEN tx.player_id IS NOT NULL THEN COALESCE(tx.amount,0) ELSE p.total_cargas END AS total_cargas,
+      CASE WHEN tx.player_id IS NOT NULL THEN GREATEST(tx.deposits,p.known_count-tx.bonuses) ELSE COALESCE(p.known_count,0) END AS cant_cargas,
+      CASE WHEN tx.player_id IS NOT NULL THEN tx.withdrawals ELSE COALESCE(p.known_withdrawals,0) END AS cant_retiros,
+      CASE WHEN tx.player_id IS NOT NULL THEN CASE WHEN p.known_count>tx.deposits+tx.bonuses THEN LEAST(p.known_first,tx.first_date) ELSE tx.first_date END ELSE p.known_first END AS fecha_primera,
+      CASE WHEN tx.player_id IS NOT NULL THEN tx.last_date ELSE p.known_last END AS fecha_ultima,
+      tx.player_id IS NULL AS estimated,
+      COALESCE(tx.player_id IS NOT NULL AND p.known_count > tx.deposits + tx.bonuses, false) AS partial_history,
+      p.seg_actividad AS stored_activity,
+      CASE WHEN tx.player_id IS NOT NULL THEN COALESCE(tx.amount_30d,0) END AS amount_30d,
+      CASE WHEN tx.player_id IS NOT NULL THEN COALESCE(tx.amount_90d,0) END AS amount_90d,
+      tx.deposits_30d,tx.deposits_90d
     FROM seg_sources p LEFT JOIN tx ON tx.player_id=p.id`)
   await client.query('CREATE UNIQUE INDEX ON seg_players(id)')
   await client.query('ANALYZE seg_players')
@@ -102,13 +96,17 @@ async function prepareSegmentation(client, { contactIds = null, importedOnly = f
         MIN(p.fecha_primera) AS first_date, MAX(p.fecha_ultima) AS last_date,
         SUM(p.cant_cargas)::int AS deposits, SUM(p.cant_retiros)::int AS withdrawals,
         BOOL_OR(p.estimated) AS estimated, BOOL_OR(p.partial_history) AS partial_history,
+        CASE WHEN NOT BOOL_OR(p.estimated) THEN SUM(p.amount_30d) END AS amount_30d,
+        CASE WHEN NOT BOOL_OR(p.estimated) THEN SUM(p.amount_90d) END AS amount_90d,
+        CASE WHEN NOT BOOL_OR(p.estimated) THEN SUM(p.deposits_30d) END AS deposits_30d,
+        CASE WHEN NOT BOOL_OR(p.estimated) THEN SUM(p.deposits_90d) END AS deposits_90d,
         BOOL_AND(COALESCE(p.total_cargas=0,false) OR EXISTS (SELECT 1 FROM seg_months m WHERE m.player_id=p.id)) AS has_periods
       FROM seg_account_links l JOIN seg_players p ON p.id=l.player_id GROUP BY l.contact_id
     ), months AS (
       SELECT l.contact_id, COUNT(DISTINCT m.month) AS n
       FROM seg_account_links l JOIN seg_months m ON m.player_id=l.player_id GROUP BY l.contact_id
     ), metrics AS (
-      SELECT t.*, CASE WHEN t.has_periods THEN t.amount / NULLIF(m.n,0) END AS monthly_average
+      SELECT t.*, COALESCE(m.n,0)::int AS active_months, CASE WHEN t.has_periods THEN t.amount / NULLIF(m.n,0) END AS monthly_average
       FROM totals t LEFT JOIN months m ON m.contact_id=t.contact_id
     )
     SELECT *, ${amountSQL('monthly_average')} AS segment,
@@ -148,16 +146,25 @@ async function applySegmentation(client, { skipActivity = false, updatePlayers =
       freq_semanal=ROUND(p.cant_cargas::numeric/GREATEST((CURRENT_DATE-p.fecha_primera)::numeric/7,1),2),
       updated_at=NOW()
     FROM metrics p WHERE cp.username_lower=p.username_lower AND cp.platform IS NOT DISTINCT FROM p.platform`, skipActivity ? [] : [preserveActivityPlatforms])
-  await client.query(`UPDATE contacts c SET segment=p.segment::contact_segment,
+  await client.query(`CREATE TEMP TABLE seg_sync_status ON COMMIT DROP AS
+    SELECT platform,max(finished_at) last_sync_at FROM casino_sync_runs WHERE status='success' GROUP BY platform`)
+  await client.query('CREATE UNIQUE INDEX ON seg_sync_status(platform)')
+  await client.query(`UPDATE contacts c SET segment=CASE WHEN c.segment_is_manual THEN c.segment ELSE p.segment::contact_segment END,
+    segmentation_profile=to_jsonb(p)-'contact_id'-'segment'-'activity'-'has_periods' || jsonb_build_object(
+      'calculated_at',NOW(),'as_of',CURRENT_DATE,
+      'accounts',(SELECT jsonb_agg(jsonb_build_object('platform',l.platform,'username',l.username_lower,
+        'last_sync_at',(SELECT r.last_sync_at FROM seg_sync_status r WHERE r.platform=l.platform)))
+        FROM seg_account_links l WHERE l.contact_id=p.contact_id)),
     total_deposits=p.deposits,total_withdrawals=p.withdrawals,
     last_deposit_at=p.last_date::timestamptz,updated_at=NOW()
     FROM seg_contact_profile p WHERE c.id=p.contact_id`)
   // Remove unsupported derived levels and all exclusive tag families in the same transaction.
   await client.query(`UPDATE contacts c SET
-      segment=CASE WHEN c.segment::text IN ('bajo','medio','vip','vip_medio','vip_alto','super_vip') THEN NULL ELSE c.segment END,
+      segmentation_profile=NULL,
+      segment=CASE WHEN NOT c.segment_is_manual AND c.segment::text IN ('bajo','medio','vip','vip_medio','vip_alto','super_vip') THEN NULL ELSE c.segment END,
       last_deposit_at=NULL,total_deposits=NULL,total_withdrawals=NULL,updated_at=NOW()
     FROM seg_scope s WHERE c.id=s.id
-      AND (c.segment::text IN ('bajo','medio','vip','vip_medio','vip_alto','super_vip')
+      AND (c.segmentation_profile IS NOT NULL OR c.segment::text IN ('bajo','medio','vip','vip_medio','vip_alto','super_vip')
         OR EXISTS (SELECT 1 FROM contact_tags t WHERE t.contact_id=c.id AND t.tag LIKE 'casino:%'))
       AND NOT EXISTS (SELECT 1 FROM seg_contact_profile p WHERE p.contact_id=c.id)`)
   await client.query(`DELETE FROM contact_tags t USING seg_scope s WHERE t.contact_id=s.id

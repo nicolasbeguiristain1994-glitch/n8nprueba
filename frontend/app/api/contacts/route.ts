@@ -1,3 +1,4 @@
+import { segmentationSQL } from '@/lib/contact-segmentation'
 import { canAssignPanels, grantCreatedContacts } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
 import { query, withTransaction } from '@/lib/db'
@@ -36,16 +37,15 @@ export async function GET(req: NextRequest) {
     }
     const limit = download ? 100000 : 50
     const offset = (download ? from : 0) + (page - 1) * limit
+    const profile = segmentationSQL()
     const rows = await contactRead(`
       SELECT id, phone_number, first_name, last_name, email,
-        status, opt_in_marketing AS opt_in, created_at, segment, panel, gaming::text AS gaming, linea, linea_sub,
+        status, opt_in_marketing AS opt_in, created_at, ${profile.segment} AS segment, segment_is_manual, segmentation_profile, ${profile.quality} AS data_quality, panel, gaming::text AS gaming, linea, linea_sub,
         last_deposit_at, total_deposits, total_withdrawals, casino_accounts,
-        (SELECT REPLACE(tag, 'casino:actividad:', '') FROM contact_tags
-         WHERE contact_id = contacts.id AND tag LIKE 'casino:actividad:%' ORDER BY added_at DESC, tag LIMIT 1) AS actividad,
-        (SELECT REPLACE(tag, 'casino:valor_riesgo:', '') FROM contact_tags
-         WHERE contact_id = contacts.id AND tag LIKE 'casino:valor_riesgo:%' ORDER BY added_at DESC, tag LIMIT 1) AS valor_riesgo,
-        (SELECT REPLACE(tag, 'casino:antiguedad:', '') FROM contact_tags
-         WHERE contact_id = contacts.id AND tag LIKE 'casino:antiguedad:%' ORDER BY added_at DESC, tag LIMIT 1) AS antiguedad,
+        ${profile.activity} AS actividad, ${profile.tenure} AS antiguedad,
+        CASE WHEN ${profile.activity} IN ('perdido','inactivo','en_riesgo') THEN
+          CASE WHEN ${profile.segment} IN ('super_vip','vip_alto','vip_medio','vip') THEN 'critico'
+          WHEN ${profile.segment}='medio' THEN 'medio' WHEN ${profile.segment}='bajo' THEN 'bajo' END END AS valor_riesgo,
         platforms,
         COALESCE((SELECT ARRAY_AGG(tag ORDER BY tag) FROM contact_tags
           WHERE contact_id = contacts.id AND tag NOT LIKE 'casino:%'), '{}') AS custom_tags
@@ -93,8 +93,8 @@ export async function POST(req: NextRequest) {
       const {rows: [created]} = await client.query<{ id: string }>(
       `INSERT INTO contacts
          (external_id, phone_number, first_name, last_name, segment, panel, gaming, linea, linea_sub, status,
-          opt_in_marketing, opt_in_sms, platform_source, created_at, updated_at)
-       VALUES (gen_random_uuid()::text, $1, $2, $3, $4::contact_segment, $5, $6::gaming_type, $7, $8, 'active', true, true, 'manual', NOW(), NOW())
+          opt_in_marketing, opt_in_sms, platform_source, created_at, updated_at, segment_is_manual)
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4::contact_segment, $5, $6::gaming_type, $7, $8, 'active', true, true, 'manual', NOW(), NOW(), $4::text IS NOT NULL)
        ON CONFLICT (phone_number) DO NOTHING
        RETURNING id`,
       [phone_clean, first_name, last_name, segment || null, panel || null, gaming || null, lineaVal, lineaSubVal]

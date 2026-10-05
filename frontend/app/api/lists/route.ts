@@ -1,3 +1,5 @@
+import { resolveSavedAudience, savedAudienceParams } from '@/lib/dynamic-audiences'
+import { ContactFilterError } from '@/lib/contact-filters'
 import { contactScope } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
 import { query, withTransaction } from '@/lib/db'
@@ -26,7 +28,7 @@ export async function GET(req: NextRequest) {
 
     const scope = contactScope(session, params.length, 'c')
     const lists = await query(`
-      SELECT cl.id, cl.name, cl.description, cl.filters, cl.created_at,
+      SELECT cl.id, cl.name, cl.description, cl.filters, cl.created_at, cl.is_dynamic, cl.refreshed_at,
              cl.owned_by,
              COUNT(c.id)::int AS contact_count
       FROM contact_lists cl
@@ -39,6 +41,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ lists })
   } catch (e) {
     if (e instanceof Response) return e
+    if (e instanceof ContactFilterError) return NextResponse.json({error:e.message},{status:400})
     console.error('[/api/lists GET]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
@@ -52,6 +55,7 @@ export async function POST(req: NextRequest) {
   let body: {
     name?: string
     description?: string
+    is_dynamic?: boolean
     filters?: unknown
     contact_ids?: string[]
     criteria?: { panel?: string; gaming?: string; segment?: string; tags?: string[] }
@@ -62,8 +66,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { name, description, filters, contact_ids, criteria } = body
+  const { name, description, filters, contact_ids, criteria, is_dynamic } = body
 
+  if(is_dynamic!==undefined && typeof is_dynamic!=='boolean') return NextResponse.json({error:'Tipo de lista inválido'},{status:400})
   const nameStr = clampStr(name, 255)
   if (!nameStr) return NextResponse.json({ error: 'name es requerido y no puede estar vacío' }, { status: 400 })
 
@@ -75,54 +80,28 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    if (is_dynamic && (contact_ids || criteria)) throw new ContactFilterError('Una lista dinámica usa los filtros actuales, no una selección fija')
+    const dynamicFilters = is_dynamic ? Object.fromEntries(savedAudienceParams(filters)) : null
+    const dynamicIds = is_dynamic ? await resolveSavedAudience(dynamicFilters, session) : null
+    let criteriaIds: string[] | null = null
+    if (criteria && !contact_ids?.length) {
+      const shared: Record<string,string> = {panel:criteria.panel||'',gaming:criteria.gaming||'',segment:criteria.segment||''}
+      for (const tag of criteria.tags||[]) {
+        const match=/^casino:(actividad|antiguedad):([a-z_]+)$/.exec(tag)
+        if (!match) throw new ContactFilterError('Criterio de segmentación inválido')
+        shared[match[1]]=[shared[match[1]],match[2]].filter(Boolean).join(',')
+      }
+      criteriaIds=await resolveSavedAudience(shared,session)
+    }
     const result = await withTransaction(async (client) => {
       const { rows: listRows } = await client.query<{ id: string }>(
-        `INSERT INTO contact_lists (name, description, filters, owned_by, updated_by)
-         VALUES ($1, $2, $3, $4, $4) RETURNING id`,
-        [nameStr, description || null, JSON.stringify(filters || criteria || {}), session.user_id]
+        `INSERT INTO contact_lists (name, description, filters, owned_by, updated_by, is_dynamic, refreshed_at)
+         VALUES ($1, $2, $3, $4, $4, $5, NOW()) RETURNING id`,
+        [nameStr, description || null, JSON.stringify(dynamicFilters || filters || criteria || {}), session.user_id, is_dynamic===true]
       )
       const list = listRows[0]
 
-      let ids: string[] = Array.isArray(contact_ids) ? contact_ids : []
-
-      // Si vienen criterios, resolver los contactos que coinciden
-      if (criteria && !contact_ids?.length) {
-        const { panel, gaming, segment, tags } = criteria as {
-          panel?: string; gaming?: string; segment?: string; tags?: string[]
-        }
-
-        if (tags?.length) {
-          const scope = contactScope(session, 4, 'c')
-          // Filtrar por tags de casino (contactos que tienen TODOS los tags indicados)
-          const { rows } = await client.query<{ id: string }>(
-            `SELECT c.id
-             FROM contacts c
-             WHERE ${scope.sql} AND ($1 = '' OR c.panel = $1)
-               AND ($2 = '' OR c.gaming::text = $2)
-               AND ($3 = '' OR c.segment::text = $3)
-               AND NOT EXISTS (
-                 -- garantiza que el contacto tiene TODOS los tags requeridos
-                 SELECT 1 FROM unnest($4::text[]) AS required_tag
-                 WHERE NOT EXISTS (
-                   SELECT 1 FROM contact_tags ct
-                   WHERE ct.contact_id = c.id AND ct.tag = required_tag
-                 )
-               )`,
-            [panel || '', gaming || '', segment || '', tags, ...scope.params]
-          )
-          ids = rows.map(r => r.id)
-        } else {
-          const scope = contactScope(session, 3)
-          const { rows } = await client.query<{ id: string }>(
-            `SELECT id FROM contacts
-             WHERE ${scope.sql} AND ($1 = '' OR panel = $1)
-               AND ($2 = '' OR gaming::text = $2)
-               AND ($3 = '' OR segment::text = $3)`,
-            [panel || '', gaming || '', segment || '', ...scope.params]
-          )
-          ids = rows.map(r => r.id)
-        }
-      }
+      let ids: string[] = dynamicIds ?? criteriaIds ?? (Array.isArray(contact_ids) ? contact_ids : [])
 
       ids = [...new Set(ids)]
       if (ids.length > 0) {
@@ -144,6 +123,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ id: result.id, name: nameStr, total: result.total })
   } catch (e) {
     if (e instanceof Response) return e
+    if (e instanceof ContactFilterError) return NextResponse.json({error:e.message},{status:400})
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[/api/lists POST]', msg)
     if (msg.includes('contact_lists_name_unique')) {
