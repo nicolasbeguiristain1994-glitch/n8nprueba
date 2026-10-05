@@ -67,7 +67,7 @@ export function PlatformOverview({ activity, platform, agent, from, to, loading 
             const missing=!configured&&!row
             const money=(value:string|undefined)=>missing?'—':formatProviderPesos(value??'0',p)
             return <tr key={p} className="border-b last:border-0 hover:bg-muted/20">
-              <th scope="row" className="px-4 py-3 text-left font-medium">{LABELS[p]}<span className="mt-1 block whitespace-nowrap text-xs font-normal text-muted-foreground">{(row?.movimientos??0).toLocaleString('es-AR')} movimientos · {(row?.cuentas??0).toLocaleString('es-AR')} cuentas con movimientos</span></th>
+              <th scope="row" className="px-4 py-3 text-left font-medium">{LABELS[p]}<span className="mt-1 block text-xs font-normal text-muted-foreground">{(row?.movimientos??0).toLocaleString('es-AR')} movimientos · {(row?.cuentas??0).toLocaleString('es-AR')} cuentas con movimientos</span></th>
               {[row?.depositos,row?.retiros,row?.bonos,row?.saldo_con_bonos??row?.neto].map((value,i)=><td key={i} className="whitespace-nowrap px-4 py-3 tabular-nums">{money(value)}</td>)}
               <td className="px-4 py-3 text-xs"><span className="whitespace-nowrap">{dateLabel(row?.ultima_fecha??null)}</span>
                 {missing&&<p className="mt-1 min-w-40 text-muted-foreground">{UNCONFIGURED_ACCOUNT}.</p>}
