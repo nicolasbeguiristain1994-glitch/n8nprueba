@@ -1,5 +1,4 @@
 -- Additive profile storage; no contact or historical campaign is removed.
-BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 ALTER TABLE public.contacts ADD COLUMN IF NOT EXISTS segmentation_profile jsonb;
@@ -89,4 +88,3 @@ DO $$ DECLARE r text; BEGIN
     END IF;
   END LOOP;
 END $$;
-COMMIT;
