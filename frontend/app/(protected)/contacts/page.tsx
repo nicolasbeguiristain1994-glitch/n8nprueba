@@ -1,4 +1,6 @@
 'use client'
+import { SegmentationDetails } from '@/components/contacts/SegmentationDetails'
+import { QUALITY_LABELS, type SegmentationProfile } from '@/lib/contact-segmentation'
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import dynamic from 'next/dynamic'
@@ -46,12 +48,13 @@ const ProspectListsTab = dynamic(() => import('@/components/prospects/ProspectLi
 interface Contact {
   id: string; phone_number: string; first_name: string; last_name: string
   email: string; status: string; opt_in: boolean; created_at: string; segment: string; panel: string; gaming: string; linea: number | null; linea_sub: string | null
+  segmentation_profile?: SegmentationProfile | null; data_quality?: string; segment_is_manual?: boolean
   actividad?: string; valor_riesgo?: string; antiguedad?: string
   last_deposit_at?: string | null; total_deposits?: number; total_withdrawals?: number
   platforms?: string[]; casino_accounts?: Array<{ panel: string; username: string }>; custom_tags?: string[]
 }
 interface ImportRow   { phone: string; name?: string; segment?: string }
-interface ContactList { id: string; name: string; contact_count: number; created_at: string }
+interface ContactList { is_dynamic?: boolean; refreshed_at?: string; id: string; name: string; contact_count: number; created_at: string }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constantes de dominio
@@ -97,14 +100,8 @@ const ANTIGUEDAD_DESC: Record<string, string> = {
   reciente:    'Entre 1 y 3 meses como cliente',
   nuevo:       'Menos de 1 mes como cliente',
 }
-const NIVEL_DESC: Record<string, string> = {
-  super_vip: 'Super Vip — depósitos >= $3.200.000/mes activo',
-  vip_alto:  'Vip Alto — depósitos desde $1.500.000 y menos de $3.200.000/mes activo',
-  vip_medio: 'Vip Medio — depósitos desde $1.000.000 y menos de $1.500.000/mes activo',
-  vip:       'Vip Bajo — depósitos $500.000 – $999.999/mes activo',
-  medio:     'Medio — depósitos $100.000 – $499.999/mes activo',
-  bajo:      'Bajo — depósitos < $100.000/mes activo',
-}
+const NIVEL_ORDER = ['super_vip','vip_alto','vip_medio','vip','medio','bajo']
+
 const VALOR_RIESGO_STYLE: Record<string, string> = {
   critico: 'bg-destructive/15 text-destructive', medio: 'bg-orange-100 text-orange-700',
   bajo: 'bg-yellow-100 text-yellow-700',
@@ -181,6 +178,9 @@ export default function Contacts() {
   const [loadError, setLoadError] = useState<string | null>(null)
 
   // ── Filtros ───────────────────────────────────────────────────────────────
+  const [filterQuality, setFilterQuality] = useState('')
+  const [filterRecent, setFilterRecent] = useState('')
+  const [dynamicList, setDynamicList] = useState(true)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [contactColumns, updateContactColumns] = useState<Record<string, boolean>>(CONTACT_COLUMNS)
   useEffect(() => {
@@ -230,7 +230,7 @@ export default function Contacts() {
   const [lists, setLists]             = useState<ContactList[]>([])
   const [filterList, setFilterList]   = useState('')
   const hasActiveFilters = !!(search || segments.length > 0 || filterGaming || filterPanel || filterLinea || filterLineaSub ||
-    filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag || filterList || inactivity.min || inactivity.max)
+    filterQuality || filterRecent || filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag || filterList || inactivity.min || inactivity.max)
 
   const [showListsMenu, setShowListsMenu] = useState(false)
   const [deletingListId, setDeletingListId] = useState<string | null>(null)
@@ -395,9 +395,9 @@ export default function Contacts() {
     q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
     linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
     linea_sub: filterLineaSub, list_id: filterList, plataforma: filterPlataforma,
-    sin_movimiento: String(filterSinMovimiento), tag: filterTag, ...inactivityParams(inactivity),
+    sin_movimiento: String(filterSinMovimiento), tag: filterTag, calidad: filterQuality, depositos_recientes: filterRecent, ...inactivityParams(inactivity),
   }), [search, segments, filterGaming, filterPanel, filterLinea, filterActividad,
-    filterAntiguedad, filterLineaSub, filterList, filterPlataforma, filterSinMovimiento, filterTag, inactivity])
+    filterAntiguedad, filterLineaSub, filterList, filterPlataforma, filterSinMovimiento, filterTag, inactivity, filterQuality, filterRecent])
 
   const audienceKey = buildContactParams().toString()
   const activeAudience = useRef(audienceKey)
@@ -471,11 +471,11 @@ export default function Contacts() {
 
   // Resetear página al cambiar filtros
   const resetPage = useCallback(() => setPagination(p => ({ ...p, pageIndex: 0 })), [])
-  const viewState: ContactViewState = {search,segments,gaming:filterGaming,panel:filterPanel,linea:filterLinea,lineaSub:filterLineaSub,inactivity,actividad:filterActividad,antiguedad:filterAntiguedad,plataforma:filterPlataforma,sinMovimiento:filterSinMovimiento,tag:filterTag,list:filterList,columns:contactColumns}
+  const viewState: ContactViewState = {quality:filterQuality,recent:filterRecent,search,segments,gaming:filterGaming,panel:filterPanel,linea:filterLinea,lineaSub:filterLineaSub,inactivity,actividad:filterActividad,antiguedad:filterAntiguedad,plataforma:filterPlataforma,sinMovimiento:filterSinMovimiento,tag:filterTag,list:filterList,columns:contactColumns}
   const applyView = (v: ContactViewState) => {
-    setSearch(v.search);setSegments(v.segments);setFilterGaming(v.gaming);setFilterPanel(v.panel);setFilterLinea(v.linea);setFilterLineaSub(v.lineaSub);setInactivity(v.inactivity);setFilterActividad(v.actividad);setFilterAntiguedad(v.antiguedad);setFilterPlataforma(v.plataforma);setFilterSinMovimiento(v.sinMovimiento);setFilterTag(v.tag);setFilterList(v.list);setContactColumns(v.columns);setRowSelection({});resetPage()
+    setFilterQuality(v.quality||'');setFilterRecent(v.recent||'');setSearch(v.search);setSegments(v.segments);setFilterGaming(v.gaming);setFilterPanel(v.panel);setFilterLinea(v.linea);setFilterLineaSub(v.lineaSub);setInactivity(v.inactivity);setFilterActividad(v.actividad);setFilterAntiguedad(v.antiguedad);setFilterPlataforma(v.plataforma);setFilterSinMovimiento(v.sinMovimiento);setFilterTag(v.tag);setFilterList(v.list);setContactColumns(v.columns);setRowSelection({});resetPage()
   }
-  const activeFilterLabels = [search&&`Búsqueda: ${search}`,segments.length&&`Nivel: ${segments.map(v=>NIVEL_LABEL[v]||v).join(', ')}`,filterPanel&&`Agente: ${filterPanel}`,filterLinea&&`Línea: ${filterLinea}${filterLineaSub}`,!filterLinea&&filterLineaSub&&`Variante: ${filterLineaSub}`,filterGaming&&`Juego: ${filterGaming}`,filterPlataforma&&`Plataforma: ${filterPlataforma}`,filterActividad.length&&`Actividad: ${filterActividad.join(', ')}`,filterAntiguedad.length&&`Antigüedad: ${filterAntiguedad.join(', ')}`,(inactivity.min||inactivity.max)&&inactivityLabel(inactivity),filterSinMovimiento&&'Sin movimiento',filterTag&&`Etiqueta: ${filterTag}`,filterList&&`Lista: ${lists.find(l=>l.id===filterList)?.name||'seleccionada'}`].filter(Boolean)
+  const activeFilterLabels = [filterQuality&&QUALITY_LABELS[filterQuality],filterRecent&&`Depósitos ${filterRecent}d (último cálculo)`,search&&`Búsqueda: ${search}`,segments.length&&`Nivel: ${segments.map(v=>NIVEL_LABEL[v]||v).join(', ')}`,filterPanel&&`Agente: ${filterPanel}`,filterLinea&&`Línea: ${filterLinea}${filterLineaSub}`,!filterLinea&&filterLineaSub&&`Variante: ${filterLineaSub}`,filterGaming&&`Juego: ${filterGaming}`,filterPlataforma&&`Plataforma: ${filterPlataforma}`,filterActividad.length&&`Actividad: ${filterActividad.join(', ')}`,filterAntiguedad.length&&`Antigüedad: ${filterAntiguedad.join(', ')}`,(inactivity.min||inactivity.max)&&inactivityLabel(inactivity),filterSinMovimiento&&'12 meses sin depósitos registrados',filterTag&&`Etiqueta: ${filterTag}`,filterList&&`Lista: ${lists.find(l=>l.id===filterList)?.name||'seleccionada'}`].filter(Boolean)
 
 
   // ── Inline edits ──────────────────────────────────────────────────────────
@@ -721,6 +721,8 @@ export default function Contacts() {
     let body: object
     if (listMode === 'selection') {
       body = { name: newListName, contact_ids: selectedIds }
+    } else if (listMode === 'filters' && dynamicList) {
+      body = {name:newListName,is_dynamic:true,filters:Object.fromEntries(buildContactParams())}
     } else if (listMode === 'filters') {
       try {
         const q = buildContactParams()
@@ -821,7 +823,7 @@ export default function Contacts() {
       panel:      editPanel  || null,
       linea:      editLinea  ? Number(editLinea) : null,
       linea_sub:  editLinea  ? (editLineaSub || null) : null,
-      segment:    editSegment || null,
+      ...(editSegment!==(editContact.segment||'') ? {segment:editSegment||null} : {}),
       gaming:     editGaming  || null,
     }
     try {
@@ -1082,10 +1084,10 @@ export default function Contacts() {
     {
       id: 'segment',
       accessorKey: 'segment',
-      header: 'Nivel',
+      header: 'Nivel global',
       enableSorting: false,
       cell: ({ row }) => (
-        <EditableCell
+        <div className="space-y-1"><EditableCell
           value={row.original.segment || ''}
           options={[
             { value: 'super_vip', label: 'Super Vip' },
@@ -1096,10 +1098,10 @@ export default function Contacts() {
             { value: 'bajo',      label: 'Bajo' },
           ]}
           activeClass={SEGMENT_STYLE[row.original.segment] ?? 'bg-muted text-muted-foreground'}
-          placeholder="— sin nivel"
+          placeholder="Sin nivel calculado"
           ariaLabel={`Editar Nivel de ${row.original.first_name || row.original.phone_number}`}
           onChange={v => updateField(row.original.id, 'segment', v || null)}
-        />
+        /><p className="text-[10px] text-muted-foreground">{row.original.segment_is_manual?'Elección manual':QUALITY_LABELS[row.original.data_quality||'sin_datos']}</p></div>
       ),
       meta: { mobileLabel: 'Nivel' },
     },
@@ -1322,7 +1324,7 @@ export default function Contacts() {
                       <Users size={13} className="text-muted-foreground shrink-0" />
                       <div className="flex-1 min-w-0">
                         <p className={`text-sm truncate ${filterList === l.id ? 'font-semibold text-primary' : 'text-foreground'}`}>{l.name}</p>
-                        <p className="text-[11px] text-muted-foreground">{l.contact_count.toLocaleString()} contactos</p>
+                        <p className="text-[11px] text-muted-foreground">{l.contact_count.toLocaleString()} contactos · {l.is_dynamic ? "Dinámica · se actualiza al preparar cada campaña" : "Lista fija"}</p>
                       </div>
                       {filterList === l.id && <Filter size={11} className="text-indigo-500 shrink-0" />}
                       <button
@@ -1525,7 +1527,7 @@ export default function Contacts() {
                   Limpiar selección
                 </button>
               )}
-              {(Object.keys(NIVEL_DESC) as string[]).map(v => (
+              {NIVEL_ORDER.map(v => (
                 <label
                   key={v}
                   className="flex items-center gap-2.5 px-2 py-1.5 rounded-sm hover:bg-accent cursor-pointer text-sm"
@@ -1654,6 +1656,17 @@ export default function Contacts() {
           </Button>
         )}
 
+        <label className="text-xs text-muted-foreground">Calidad de datos
+          <select aria-label="Calidad de datos" className="ml-2 h-8 rounded-md border bg-card px-2 text-sm" value={filterQuality} onChange={e=>{setFilterQuality(e.target.value);resetPage()}}>
+            <option value="">Todas</option>{Object.entries(QUALITY_LABELS).map(([key,label])=><option key={key} value={key}>{label}</option>)}
+          </select>
+        </label>
+        <label className="text-xs text-muted-foreground">Actividad reciente
+          <select aria-label="Depósitos recientes" className="ml-2 h-8 rounded-md border bg-card px-2 text-sm" value={filterRecent} onChange={e=>{setFilterRecent(e.target.value);resetPage()}}>
+            <option value="">Cualquier período</option><option value="30">Con depósitos en 30 días</option><option value="90">Con depósitos en 90 días</option>
+          </select>
+        </label>
+        <span className="text-xs text-muted-foreground">Los períodos recientes corresponden al último cálculo. El nivel es global entre plataformas.</span>
         {/* ── Filtro plataforma ── */}
         <div className="flex max-w-full flex-wrap items-center gap-1 border rounded-lg p-0.5 bg-muted/40">
           {(['', 'zeus', 'bet30', 'ganamos', 'argenbet', 'otros'] as const).map(v => (
@@ -1686,7 +1699,7 @@ export default function Contacts() {
               : 'border-zinc-300 text-zinc-500 hover:border-zinc-500 hover:text-zinc-700'
           }`}
         >
-          Sin movimiento
+          12 meses sin depósitos registrados
         </button>
 
         {/* ── Filtro por etiqueta ── */}
@@ -1977,12 +1990,16 @@ export default function Contacts() {
                       {filterGaming && <span className="text-xs bg-pink-100 text-pink-700 px-2 py-0.5 rounded-full">Juego: {filterGaming}</span>}
                       {filterLinea && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Línea: {filterLinea}</span>}
                       {filterLineaSub && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Variante: {filterLineaSub}</span>}
-                      {filterSinMovimiento && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">Sin movimiento</span>}
+                      {filterSinMovimiento && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">12 meses sin depósitos registrados</span>}
                     </div>
                   </>
                 )}
               </div>
             )}
+            {listMode === 'filters' && <label className="flex items-start gap-2 rounded-md border p-3 text-sm">
+              <Checkbox checked={dynamicList} onCheckedChange={v=>setDynamicList(!!v)} />
+              <span>Actualizar automáticamente con estos filtros<span className="block text-xs text-muted-foreground">Se evalúan antes de cada campaña y la audiencia queda fija al iniciarla. Quitá el filtro de lista para usar esta opción.</span></span>
+            </label>}
             {listMode === 'criteria' && (
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">Se incluirán todos los contactos que cumplan los criterios elegidos.</p>
@@ -2140,6 +2157,11 @@ export default function Contacts() {
                   </span>
                 )}
               </div>
+              <SegmentationDetails profile={viewContact.segmentation_profile} quality={viewContact.data_quality} manual={viewContact.segment_is_manual} onAutomatic={async()=>{
+                const res=await fetch(`/api/contacts/${viewContact.id}`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({segment_mode:'automatic'})})
+                if(!res.ok){const body=await res.json().catch(()=>({}));throw new Error(body.error||'No se pudo recuperar el nivel calculado')}
+                load()
+              }} />
               {/* Cuentas de casino por agente */}
               {(viewContact.casino_accounts?.length ?? 0) > 0 && (
                 <div className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 space-y-1">
@@ -2485,7 +2507,7 @@ export default function Contacts() {
                 {filterLinea && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Línea: {filterLinea}</span>}
                 {filterLineaSub && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Variante: {filterLineaSub}</span>}
                 {filterGaming && <span className="text-xs bg-pink-100 text-pink-700 px-2 py-0.5 rounded-full">Juego: {filterGaming}</span>}
-                {filterSinMovimiento && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">Sin movimiento</span>}
+                {filterSinMovimiento && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">12 meses sin depósitos registrados</span>}
               </div>
             )}
             {confirmBulk?.action === 'delete' && (

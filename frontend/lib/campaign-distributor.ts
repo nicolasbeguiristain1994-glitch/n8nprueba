@@ -1,3 +1,4 @@
+import { ensureCampaignAudienceSnapshot, campaignMembershipSQL } from './dynamic-audiences'
 import { complianceRepository } from './cloud-api/repositories/compliance.repository'
 import { conversationRepository } from './cloud-api/repositories/conversation.repository'
 import { OptOutError, ConversationWindowError } from './cloud-api/errors'
@@ -368,12 +369,13 @@ export async function createDispatchUnits(
   campaignId: string,
   listId: string,
 ): Promise<{ total: number; queued: number }> {
+  await ensureCampaignAudienceSnapshot(campaignId,listId)
   await query(
     `INSERT INTO campaign_recipients (campaign_id, contact_id, phone_number)
      SELECT $1, c.id, c.phone_number
      FROM contacts c
-     JOIN contact_list_members clm ON clm.contact_id = c.id
-     WHERE clm.list_id        = $2
+     JOIN (${campaignMembershipSQL}) clm ON clm.contact_id = c.id
+     WHERE c.deleted_at IS NULL
        AND c.opt_in_marketing = true
        AND c.do_not_contact   = false
        AND c.status           = 'active'

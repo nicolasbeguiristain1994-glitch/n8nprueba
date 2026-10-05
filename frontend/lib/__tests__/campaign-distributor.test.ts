@@ -22,6 +22,7 @@ import {
 } from '@/lib/campaign-distributor'
 
 // ── Mock DB ────────────────────────────────────────────────────────────────────
+vi.mock('@/lib/dynamic-audiences', async importOriginal => ({ ...await importOriginal<object>(), ensureCampaignAudienceSnapshot: vi.fn().mockResolvedValue(undefined) }))
 vi.mock('@/lib/db', () => ({
   query:           vi.fn(),
   withTransaction: vi.fn(),

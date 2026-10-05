@@ -37,7 +37,7 @@ describe('Contact audience parity', () => {
   })
   it('normalizes CSV and repeated segments without dropping a filter',()=>{
     const f=contactFilters(new URLSearchParams('segment=vip, medio&segment=super_vip&actividad=inactivo, perdido'),{role:'admin',user_id:'a'})
-    expect(f.params).toEqual([['vip','medio','super_vip'],['casino:actividad:inactivo','casino:actividad:perdido']])
+    expect(f.params).toEqual([['vip','medio','super_vip'],['inactivo','perdido']])
   })
   it('rejects invalid list IDs rather than broadening the audience',async()=>{
     expect((await GET(new NextRequest('http://localhost/api/contacts?select_all=true&list_id=invalid'))).status).toBe(400)

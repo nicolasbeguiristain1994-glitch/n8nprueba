@@ -28,13 +28,14 @@ describe('Contact segmentation with real PostgreSQL', { skip: !connection }, () 
         segment contact_segment,updated_at timestamptz,total_deposits int,total_withdrawals int,last_deposit_at timestamptz);
       CREATE TABLE contact_tags(id uuid,contact_id uuid,tag text,added_by text,added_at timestamptz,UNIQUE(contact_id,tag));`)
     await c.query(fs.readFileSync('db/migrations/126_casino_excel_import.sql','utf8'))
+    await require('./helpers/segmentation-profile-schema.cjs').install(c,schema)
   })
-  beforeEach(async () => { await c.query('TRUNCATE contacts,contact_tags,casino_transactions,casino_players') })
+  beforeEach(async () => { await c.query('TRUNCATE contacts,contact_tags,casino_transactions,casino_players CASCADE') })
   after(async () => { if (c) { await c.query('ROLLBACK'); await c.query(`DROP SCHEMA ${schema} CASCADE`); await c.end() } })
   const contact = async (name, accounts = []) => (await c.query('INSERT INTO contacts(first_name,casino_accounts) VALUES ($1,$2) RETURNING id',[name,JSON.stringify(accounts)])).rows[0].id
   const tx = async (username, amount, { platform='zeus', days=2, imported=false } = {}) => {
     await c.query(`INSERT INTO casino_transactions(username,agente,tipo,monto,fecha,platform,source_id,fecha_hora_utc)
-      VALUES($1,'royal','carga',$2,current_date-$3::int,$4,$5,now())`,[username,amount,days,platform,imported ? username+'-'+platform+'-'+days : null])
+      VALUES($1,'royal','carga',$2,current_date-$3::int,$4,$5,((current_date-$3::int)+time '12:00') AT TIME ZONE 'America/Argentina/Buenos_Aires')`,[username,amount,days,platform,imported ? username+'-'+platform+'-'+days : null])
   }
   const player = async (username, { amount=6000000, days=2, firstDays=180, count=180 } = {}) => {
     await c.query(`INSERT INTO casino_players(username,agente,platform,total_cargas,cant_cargas,fecha_primera,fecha_ultima)
@@ -150,5 +151,36 @@ describe('Contact segmentation with real PostgreSQL', { skip: !connection }, () 
     assert.equal(a.segment,'vip');assert.ok(a.tags.includes('casino:actividad:en_riesgo'));assert.ok(a.tags.includes('casino:antiguedad:reciente'));assert.ok(a.tags.includes('casino:valor_riesgo:critico'));assert.ok(!a.tags.includes('casino:actividad:perdido'));
     assert.ok(b.tags.includes('casino:actividad:frecuente'));assert.ok(!b.tags.includes('casino:actividad:perdido'));
   })
+
+  it('excludes bonuses and preserves the original cash amount in the persisted explanation',async()=>{
+    const id=await contact('cashplayer',[{username:'cashplayer',platform:'zeus'}]);
+    await tx('cashplayer',100,{imported:true});await tx('cashplayer',9000000,{days:3,imported:true});
+    await c.query("UPDATE casino_transactions SET raw_detalles=' Bono ' WHERE monto=9000000");
+    await c.query("INSERT INTO casino_financial_source_records(transaction_id,platform,kind,monto) SELECT id,platform,'importe_original',500000.25 FROM casino_transactions WHERE monto=100");
+    await run();const {rows:[row]}=await c.query('SELECT segment,segmentation_profile p FROM contacts WHERE id=$1',[id]);
+    assert.equal(row.segment,'vip');assert.equal(row.p.amount,500000.25);assert.equal(row.p.deposits,1);
+    assert.equal(row.p.amount_30d,500000.25);assert.equal(row.p.deposits_90d,1);assert.equal(row.p.estimated,false);
+  });
+  it('does not invent a value or deposit date for an account with bonuses only',async()=>{
+    const id=await contact('bonusonly',[{username:'bonusonly',platform:'zeus'}]);await tx('bonusonly',9999999,{imported:true});
+    await c.query("UPDATE casino_transactions SET raw_detalles='bono'");await run();
+    const {rows:[row]}=await c.query('SELECT segment,last_deposit_at,segmentation_profile p FROM contacts WHERE id=$1',[id]);
+    assert.equal(row.segment,null);assert.equal(row.last_deposit_at,null);assert.equal(row.p.deposits,0);
+  });
+  it('keeps a manual level while updating the calculated explanation',async()=>{
+    const id=await contact('manual',[{username:'manual',platform:'zeus'}]);await tx('manual',1000,{imported:true});
+    await c.query("UPDATE contacts SET segment='vip_alto',segment_is_manual=true WHERE id=$1",[id]);await run();
+    const {rows:[row]}=await c.query("SELECT segment,casino_monthly_value_tier((segmentation_profile->>'monthly_average')::numeric) automatic FROM contacts WHERE id=$1",[id]);
+    assert.equal(row.segment,'vip_alto');assert.equal(row.automatic,'bajo');
+  });
+  it('updates inactivity with elapsed days without needing a new import',async()=>{
+    const result=(await c.query("SELECT casino_deposit_activity(current_date-100,current_date-30,10,current_date) today,casino_deposit_activity(current_date-100,current_date-30,10,current_date+1) tomorrow")).rows[0];
+    assert.equal(result.today,'ocasional');assert.equal(result.tomorrow,'en_riesgo');
+  });
+  it('enforces ordered monthly thresholds and never turns unknown into low value',async()=>{
+    assert.equal((await c.query('SELECT casino_monthly_value_tier(NULL) tier')).rows[0].tier,null);
+    await assert.rejects(c.query("UPDATE segmentation_tiers SET deposit_threshold_min=10 WHERE tier='super_vip'"),{code:'23514'});
+    assert.equal((await c.query('SELECT casino_monthly_value_tier(3200000) tier')).rows[0].tier,'super_vip');
+  });
 
 })

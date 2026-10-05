@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Client } from 'pg'
+import {createRequire} from 'node:module'
 import { NextRequest } from 'next/server'
 import type { SessionUser } from '@/lib/auth'
 const mocks = vi.hoisted(() => ({query: vi.fn(), poolQuery: vi.fn(), transaction: vi.fn(), client: vi.fn(), session: null as SessionUser | null, lines: vi.fn()}))
@@ -72,13 +73,15 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
       CREATE TABLE casino_contact_account_links(contact_id uuid,player_id uuid);
       CREATE TABLE mv_player_ltv(casino_player_id uuid,username text,agente text,seg_monto text,ngr_total numeric,arpu numeric,dias_activo int,ltv_percentil numeric,ltv_score numeric,tier_ltv text,calculado_en timestamptz);
     `)
+    await db.query("CREATE TABLE casino_transactions(id bigint,platform text,username text,agente text,fecha date,fecha_hora_utc timestamptz,tipo text,monto numeric,raw_detalles text)")
+    await createRequire(import.meta.url)('../../../tests/helpers/segmentation-profile-schema.cjs').install(db,schema)
     mocks.query.mockImplementation(async (sql, params) => (await db.query(sql, params)).rows)
     mocks.poolQuery.mockImplementation((sql, params) => db.query(sql, params))
     mocks.client.mockImplementation(async () => ({query: db.query.bind(db), end: async () => {}}))
     mocks.transaction.mockImplementation(async fn => {await db.query('BEGIN'); try {const r=await fn(db);await db.query('COMMIT');return r} catch(e) {await db.query('ROLLBACK');throw e}})
   })
   beforeEach(async () => {
-    await db.query(`TRUNCATE campaign_recipients,prospects,prospect_list_members,contact_lists,contact_list_members,contacts,operator_contact_visibility,contact_tags,users,campaigns,whatsapp_messages,cloud_numbers,cloud_conversations,cloud_messages,conversation_notes,conversation_state,notifications,notification_preferences,casino_contact_account_links,mv_player_ltv`)
+    await db.query(`TRUNCATE campaign_recipients,prospects,prospect_list_members,contact_lists,contact_list_members,contacts,operator_contact_visibility,contact_tags,users,campaigns,whatsapp_messages,cloud_numbers,cloud_conversations,cloud_messages,conversation_notes,conversation_state,notifications,notification_preferences,casino_contact_account_links,mv_player_ltv CASCADE`)
     mocks.session = {user_id: id(900),role: 'operator',sectors: ['contacts','conversations'],allowed_agents: ['royal'],session_version: 1,email: 'test@example.invalid',name: 'Test'} as SessionUser
     await db.query(`INSERT INTO users(id,role,sectors,allowed_agents) VALUES($1,'operator',ARRAY['contacts','conversations'],ARRAY['royal']);
     `, [id(900)])
@@ -192,6 +195,13 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
     await db.query("UPDATE contacts SET panel='farabet' WHERE id=$1",[id(3)])
     expect((await (await lists(req('lists'))).json()).lists[0].contact_count).toBe(1)
     expect((await campaignAudienceError(mocks.session!,{list_id:made.id}))?.status).toBe(403)
+  })
+  it('preserves a chosen level and restores the calculated level even for legacy clients',async()=>{
+    await db.query(`UPDATE contacts SET segmentation_profile='{"monthly_average":500000}' WHERE id=$1`,[id(1)])
+    expect((await edit(req('contacts/id',{segment:'super_vip'},'PATCH'),contact(1))).status).toBe(200)
+    expect((await db.query('SELECT segment,segment_is_manual FROM contacts WHERE id=$1',[id(1)])).rows[0]).toEqual({segment:'super_vip',segment_is_manual:true})
+    expect((await edit(req('contacts/id',{segment:'bajo',segment_mode:'automatic'},'PATCH'),contact(1))).status).toBe(200)
+    expect((await db.query('SELECT segment,segment_is_manual FROM contacts WHERE id=$1',[id(1)])).rows[0]).toEqual({segment:'vip',segment_is_manual:false})
   })
   it('denies NULL agents and mixed aliases rather than treating NULL as visible', async () => {
     await db.query('UPDATE contacts SET panel=NULL WHERE id=$1',[id(1)])

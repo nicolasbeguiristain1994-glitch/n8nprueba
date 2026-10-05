@@ -7,16 +7,17 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { EMPTY_INACTIVITY, type InactivityRange } from '@/lib/inactivity-range'
 
 export interface ContactViewState {
+  quality?: string; recent?: string
   search: string; segments: string[]; gaming: string; panel: string; linea: string; lineaSub: string
   inactivity: InactivityRange; actividad: string[]; antiguedad: string[]; plataforma: string
   sinMovimiento: boolean; tag: string; list: string; columns: Record<string, boolean>
 }
 export const CONTACT_COLUMNS = { gaming: false, casino: false, created_at: false, opt_in: false }
-export const DEFAULT_CONTACT_VIEW: ContactViewState = { search:'', segments:[], gaming:'', panel:'', linea:'', lineaSub:'', inactivity:EMPTY_INACTIVITY, actividad:[], antiguedad:[], plataforma:'', sinMovimiento:false, tag:'', list:'', columns:CONTACT_COLUMNS }
+export const DEFAULT_CONTACT_VIEW: ContactViewState = { quality:'', recent:'', search:'', segments:[], gaming:'', panel:'', linea:'', lineaSub:'', inactivity:EMPTY_INACTIVITY, actividad:[], antiguedad:[], plataforma:'', sinMovimiento:false, tag:'', list:'', columns:CONTACT_COLUMNS }
 export function isContactView(value: unknown): value is ContactViewState {
   if (!value || typeof value !== 'object') return false
   const v = value as ContactViewState
-  return ['search','gaming','panel','linea','lineaSub','plataforma','tag','list'].every(k=>typeof v[k as keyof ContactViewState]==='string') &&
+  return (v.quality===undefined||typeof v.quality==='string') && (v.recent===undefined||typeof v.recent==='string') && ['search','gaming','panel','linea','lineaSub','plataforma','tag','list'].every(k=>typeof v[k as keyof ContactViewState]==='string') &&
     [v.segments,v.actividad,v.antiguedad].every(a=>Array.isArray(a)&&a.every(x=>typeof x==='string')) &&
     typeof v.sinMovimiento==='boolean' && !!v.inactivity && typeof v.inactivity.min==='string' && typeof v.inactivity.max==='string' && (v.inactivity.mode===undefined || v.inactivity.mode==='period') &&
     !!v.columns && typeof v.columns==='object' && !Array.isArray(v.columns) && Object.values(v.columns).every(x=>typeof x==='boolean')

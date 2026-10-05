@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 // @vitest-environment node
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Client } from 'pg'
@@ -38,11 +39,12 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
       CREATE TABLE contact_tags(id uuid,contact_id uuid,tag text,added_by text,added_at timestamptz,UNIQUE(contact_id,tag));
       CREATE TABLE contact_list_members(contact_id uuid,list_id uuid);`)
     await c.query(readFileSync('../db/migrations/126_casino_excel_import.sql','utf8'))
+    await createRequire(import.meta.url)('../../../tests/helpers/segmentation-profile-schema.cjs').install(c,schema)
     await c.query(readFileSync('../db/migrations/133_contact_movement_lookup.sql','utf8').split('-- Run outside')[0])
     db.query.mockImplementation(async (sql, params) => (await c.query(sql, params)).rows)
     db.getLongRunningClient.mockImplementation(async () => ({ query: c.query.bind(c), end: async () => {} }))
   })
-  beforeEach(async () => { await c.query('TRUNCATE contacts,contact_tags,contact_list_members,casino_players,casino_transactions') })
+  beforeEach(async () => { await c.query('TRUNCATE contacts,contact_tags,contact_list_members,casino_players,casino_transactions CASCADE') })
   afterAll(async () => { if (c) { await c.query('ROLLBACK'); await c.query(`DROP SCHEMA ${schema} CASCADE`); await c.end() } })
   const request = (body: object) => new NextRequest('http://localhost/api/contacts/import',{ method:'POST',body:JSON.stringify(body) })
   const transaction = (username: string, platform: string, amount: number) => c.query(`INSERT INTO casino_transactions(username,platform,agente,tipo,monto,fecha,source_id)
