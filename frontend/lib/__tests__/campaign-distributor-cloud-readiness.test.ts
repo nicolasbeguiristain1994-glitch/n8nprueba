@@ -201,6 +201,17 @@ describe('manual Cloud reply guards', () => {
     expect(mocks.send).not.toHaveBeenCalled()
   })
 
+  it('retains sticker replies on the same number when campaigns are disabled', async () => {
+    mocks.query.mockImplementation(sql => {
+      if (sql.includes('sending_enabled') || sql.includes('allowed_types')) return Promise.resolve([])
+      if (sql.includes('UPDATE whatsapp_lines wl')) return Promise.resolve([{ id: line.id }])
+      return successfulDb(sql)
+    })
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ id: 'reply-sticker' }), { status: 200 }))
+    await sendViaCloud(line, unit.phone_number, { kind: 'sticker', data: 'data:image/webp;base64,dGVzdA==' }, undefined, options)
+    expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ phoneNumberId: line.phone_number_id, type: 'sticker', sticker: { id: 'reply-sticker' } }))
+  })
+
   it('refuses a reply when another request takes the last quota slot', async () => {
     await expect(sendViaCloud(line, unit.phone_number, reply, undefined, options)).rejects.toThrow('capacidad para responder')
     expect(mocks.send).not.toHaveBeenCalled()
@@ -360,3 +371,21 @@ describe('template campaign dispatch selection', () => {
     expect(mocks.delay).toHaveBeenCalledWith(expect.objectContaining({ minSeconds: 3, maxSeconds: 8, burstProbability: 0, microJitterMs: { min: 0, max: 0 } }), expect.any(AbortSignal))
   })
 })
+
+ it('uploads the sticker to the same Cloud number and sends its media ID',async()=>{
+  vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({id:'media-1'}),{status:200}))
+  await sendViaCloud(line,unit.phone_number,{kind:'sticker',data:'data:image/webp;base64,dGVzdA=='})
+  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('/'+line.phone_number_id+'/media')
+  expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({type:'sticker',sticker:{id:'media-1'},phoneNumberId:line.phone_number_id}))
+ })
+ it('does not upload or send a sticker outside the service window',async()=>{
+  mocks.window.mockResolvedValue(null)
+  await expect(sendViaCloud(line,unit.phone_number,{kind:'sticker',data:'data:image/webp;base64,dGVzdA=='})).rejects.toBeInstanceOf(ConversationWindowError)
+  expect(fetch).not.toHaveBeenCalled();expect(mocks.send).not.toHaveBeenCalled()
+ })
+ it('does not upload or send a sticker to an opted-out customer',async()=>{
+  mocks.optedOut.mockResolvedValue(true)
+  await expect(sendViaCloud(line,unit.phone_number,{kind:'sticker',data:'data:image/webp;base64,dGVzdA=='})).rejects.toBeInstanceOf(OptOutError)
+  expect(fetch).not.toHaveBeenCalled();expect(mocks.send).not.toHaveBeenCalled()
+ })

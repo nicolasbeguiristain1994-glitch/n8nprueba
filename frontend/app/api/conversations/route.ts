@@ -20,15 +20,15 @@ export async function GET(req: NextRequest) {
     if (phoneRaw) {
       const phone = normalize(phoneRaw)
       const scope = scopedConversationMessages(auth.user, 2)
-      const messages = await query(`
+      const messages = await query<{id:string;phone_number:string;message_body:string;direction:string;status:string;created_at:string;evolution_message_id:string;metadata:Record<string,unknown>}> (`
         ${scope.sql}
-        SELECT * FROM (
+        SELECT recent.*, COALESCE(to_jsonb(wm)->'metadata','{}'::jsonb) AS metadata FROM (
           SELECT id,phone_number,message_body,direction,status,created_at,evolution_message_id
           FROM conversation_messages WHERE REPLACE(phone_number,'+','')=$2
           ORDER BY created_at DESC,id DESC LIMIT 200
-        ) recent ORDER BY created_at ASC,id ASC
+        ) recent LEFT JOIN whatsapp_messages wm ON wm.id=recent.id ORDER BY recent.created_at ASC,recent.id ASC
       `, [lineIds,phone, ...scope.params])
-      return NextResponse.json({ messages })
+      return NextResponse.json({ messages:messages.map(({metadata,...m})=>({...m,media_type:metadata?.media_type,sticker_preview:metadata?.sticker_preview})) })
     }
 
     const offsetRaw = req.nextUrl.searchParams.get('offset')
@@ -42,15 +42,17 @@ export async function GET(req: NextRequest) {
     if (!['all', 'none', ...LEVEL_DEFS.map(item => item.key)].includes(level)) {
       return NextResponse.json({ error: 'Nivel inválido' }, { status: 400 })
     }
-    const scope = scopedConversationMessages(auth.user, 5)
+    const agent = (req.nextUrl.searchParams.get('agent') || 'all').trim().toLowerCase()
+    if (agent.length > 100) return NextResponse.json({error:'Agente inválido'}, {status:400})
+    const scope = scopedConversationMessages(auth.user, 6)
     const params = [lineIds, campaign.toLowerCase(), level]
 
     // Count, campaign options and page share one snapshot and one inbox scan.
     // Filter before pagination, then enrich only the requested page.
-    const [{ total, campaigns, conversations }] = await query<{
-      total: string; campaigns: CampaignOption[]; conversations: Record<string, unknown>[]
+    const [{ total, campaigns, agents, conversations }] = await query<{
+      total: string; campaigns: CampaignOption[]; agents: {name:string;count:number}[]; conversations: Record<string, unknown>[]
     }>(`
-      ${conversationInboxCte(scope.sql)}, enriched_page AS (
+      ${conversationInboxCte(scope.sql, 6)}, enriched_page AS (
       SELECT page.*,
           COALESCE(cs.is_escalated, false)         AS is_escalated,
           cs.escalation_reason,
@@ -83,16 +85,17 @@ export async function GET(req: NextRequest) {
         COALESCE((SELECT jsonb_agg(options ORDER BY options.name, options.id) FROM (
           SELECT id, name, COUNT(*)::int AS count FROM campaign_threads GROUP BY id, name
         ) options), '[]'::jsonb) AS campaigns,
+        COALESCE((SELECT jsonb_agg(options ORDER BY options.name) FROM (SELECT agent AS name, COUNT(*)::int AS count FROM inbox WHERE agent IS NOT NULL GROUP BY agent) options), '[]'::jsonb) AS agents,
         COALESCE((SELECT jsonb_agg(p ORDER BY p.last_at DESC, p.phone_number)
           FROM enriched_page p), '[]'::jsonb) AS conversations
-    `, [...params, PAGE_SIZE, offset, ...scope.params])
+    `, [...params, PAGE_SIZE, offset, agent, ...scope.params])
     const totalCount = parseInt(total, 10)
 
     return NextResponse.json({
       conversations: conversations.map(row => ({ ...row,
         last_at: row.last_at == null ? null : new Date(String(row.last_at)).toISOString(),
       })),
-      campaigns,
+      campaigns, agents,
       total:    totalCount,
       has_more: offset + PAGE_SIZE < totalCount,
     })

@@ -1,3 +1,4 @@
+import { uploadCloudSticker } from './cloud-api/infrastructure/sticker-media'
 import { ensureCampaignAudienceSnapshot, campaignMembershipSQL } from './dynamic-audiences'
 import { complianceRepository } from './cloud-api/repositories/compliance.repository'
 import { conversationRepository } from './cloud-api/repositories/conversation.repository'
@@ -132,6 +133,7 @@ export type CampaignForDispatch = {
 // Payload discriminado para sendViaCloud — separa texto de plantilla
 // sin sobrecargar la firma con parámetros opcionales ambiguos.
 type CloudSendPayload =
+  | { kind: 'sticker'; data: string }
   | { kind: 'text';     body: string; mediaUrl: string | null }
   | { kind: 'template'; content: TemplateContent; wabaId: string; templateId: string }
 
@@ -549,6 +551,7 @@ export async function sendViaEvolution(
   phone: string,
   message: string,
   mediaUrl?: string | null,
+  mediaType?: 'sticker',
 ): Promise<{ messageId: string | null }> {
   // Prefer EVOLUTION_GLOBAL_API_KEY (shared admin key) over per-instance key.
   // QR routes use this same fallback pattern — keep them in sync.
@@ -564,7 +567,9 @@ export async function sendViaEvolution(
   const formattedPhone = phone.startsWith('+') ? phone.slice(1) : phone
 
   let body: Record<string, unknown>
-  if (mediaUrl) {
+  if (mediaType === 'sticker' && mediaUrl) {
+    body = {number:formattedPhone,sticker:mediaUrl}
+  } else if (mediaUrl) {
     body = {
       number: formattedPhone,
       mediaMessage: {
@@ -577,7 +582,7 @@ export async function sendViaEvolution(
     body = { number: formattedPhone, text: message }
   }
 
-  const url = `${evoUrl}/message/sendText/${line.evolution_instance}`
+  const url = `${evoUrl}/message/${mediaType === 'sticker' ? 'sendSticker' : 'sendText'}/${line.evolution_instance}`
   const res = await fetch(url, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json', apikey: apiKey },
@@ -630,7 +635,7 @@ export async function sendViaCloud(
   const phoneNumberId = line.phone_number_id
   if (!phoneNumberId) throw new Error(`No phone_number_id for cloud line ${line.id}`)
   const isReply = options.purpose === 'conversation_reply'
-  if (isReply && (campaignId || payload.kind !== 'text')) throw new CloudApiError('La respuesta manual no admite campañas ni plantillas.')
+  if (isReply && (campaignId || payload.kind === 'template')) throw new CloudApiError('La respuesta manual no admite campañas ni plantillas.')
   const eligibility = isReply ? cloudReplyEligibleExpr('wl') : cloudEligibleExpr('wl')
   const unavailable = () => isReply
     ? new CloudApiError('La línea de la conversación ya no está conectada o no tiene capacidad para responder.')
@@ -643,6 +648,8 @@ export async function sendViaCloud(
   let req: SendMessageRequest
   if (payload.kind === 'template') {
     req = { phoneNumberId, to, type: 'template', template: payload.content, campaignId }
+  } else if (payload.kind === 'sticker') {
+    req = {phoneNumberId,to,type:'sticker',sticker:{id:'pending-upload'},campaignId}
   } else if (payload.mediaUrl) {
     req = { phoneNumberId, to, type: 'image', image: { link: payload.mediaUrl, caption: payload.body }, campaignId }
   } else {
@@ -688,6 +695,7 @@ export async function sendViaCloud(
       [line.id, phoneNumberId, current.waba_id])
     if (!reserved.length) throw unavailable()
   }
+  if (payload.kind === 'sticker') req.sticker = {id:await uploadCloudSticker(phoneNumberId,accessToken,payload.data)}
   const sender = new MessageSenderService(accessToken, phoneNumberId)
   try {
     const { wamid } = await sender.send(req)

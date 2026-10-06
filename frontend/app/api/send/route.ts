@@ -1,3 +1,4 @@
+import { verifyStickerToken, stickerPreview } from '@/lib/conversation-stickers'
 import { contactPhoneScope } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
@@ -11,6 +12,7 @@ import { getAccessibleLineIds } from '@/lib/line-visibility'
 import { findConversationReplyLine } from '@/lib/conversation-reply-line'
 
 type LogEntry = {
+  metadata?: Record<string,unknown>
   phone_number:         string
   message_body:         string
   status:               'sent' | 'failed'
@@ -58,7 +60,14 @@ export async function POST(req: NextRequest) {
   const rawBody = await req.json().catch(() => null)
   const parsed  = parseBody(SendSchema, rawBody)
   if (!parsed.ok) return handleValidationError(req, parsed.error, 'send')
-  const { phones: rawPhones, message: messageStr, campaign_id, media_url } = parsed.data
+  const { phones: rawPhones, message: messageStr, campaign_id, media_url, media_type, sticker_token, sticker_data } = parsed.data
+
+  const sticker = media_type === 'sticker'
+  if (sticker && (rawPhones.length !== 1 || campaign_id || !sticker_data || !sticker_data.startsWith('data:image/webp;base64,') || !verifyStickerToken(sticker_token, sticker_data, session.user_id))) {
+    return NextResponse.json({error:'Volvé a cargar el sticker antes de enviarlo.'}, {status:400})
+  }
+
+  const preview = sticker ? await stickerPreview(sticker_data!) : undefined
 
   // Normalize: strip spaces, dashes, parentheses then ensure + prefix for E.164.
   const normalizedPhones = rawPhones.map(p => {
@@ -108,16 +117,19 @@ export async function POST(req: NextRequest) {
       const replyLine = await findConversationReplyLine(phone, accessibleLineIds, isManualReply ? manualReplyLines : eligibleLines)
       if (!replyLine && eligibleLines.length === 0) throw new Error('No hay líneas de WhatsApp disponibles para iniciar esta conversación.')
       const line = replyLine ?? await getOrAssignLine(phone, eligibleLines)
-      const payload = { kind: 'text' as const, body: messageStr, mediaUrl: media_url || null }
+      const payload = sticker
+        ? { kind: 'sticker' as const, data: sticker_data! }
+        : { kind: 'text' as const, body: messageStr, mediaUrl: media_url || null }
       const { messageId } = await (isManualReply && replyLine
         ? sendViaCloud(line, phone, payload, undefined, { purpose: 'conversation_reply', reserveCapacity: true })
         : line.line_type === 'cloud'
           ? sendViaCloud(line, phone, payload, campaign_id ?? undefined)
-          : sendViaEvolution(line, phone, messageStr, media_url || null))
+          : sendViaEvolution(line, phone, messageStr, sticker ? sticker_data!.replace(/^data:image\/webp;base64,/,'') : media_url || null, sticker ? 'sticker' : undefined))
 
       logs.push({
         phone_number:         phone,
-        message_body:         messageStr,
+        message_body:         sticker ? '[Sticker]' : messageStr,
+        metadata: {media_type:sticker?'sticker':media_url?'image':'text',sticker_preview:preview},
         status:               'sent',
         evolution_message_id: messageId ?? '',
         campaign_id:          campaign_id ?? '',
@@ -145,7 +157,7 @@ export async function POST(req: NextRequest) {
       await query(
         `INSERT INTO whatsapp_messages
            (phone_number, message_body, direction, status, evolution_message_id,
-            campaign_id, sent_at, failed_at, error_detail, created_at, updated_at)
+            campaign_id, sent_at, failed_at, error_detail, created_at, updated_at, metadata)
          SELECT
            x.phone_number,
            x.message_body,
@@ -156,10 +168,10 @@ export async function POST(req: NextRequest) {
            CASE WHEN x.status = 'sent'   THEN NOW() ELSE NULL END,
            CASE WHEN x.status = 'failed' THEN NOW() ELSE NULL END,
            NULLIF(x.error_detail, ''),
-           NOW(), NOW()
+           NOW(), NOW(), COALESCE(x.metadata,'{}'::jsonb)
          FROM jsonb_to_recordset($1::jsonb)
               AS x(phone_number text, message_body text, status text,
-                   evolution_message_id text, campaign_id text, error_detail text)`,
+                   evolution_message_id text, campaign_id text, error_detail text, metadata jsonb)`,
         [JSON.stringify(logs)]
       )
 

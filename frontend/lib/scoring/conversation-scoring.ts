@@ -36,6 +36,7 @@ export interface Conv {
   contact_id?:        string | null
   first_name?:        string | null
   last_name?:         string | null
+  agent?:             string | null
   segment?:           Segment
   actividad?:         string | null
   valor_riesgo?:      string | null
@@ -46,6 +47,8 @@ export interface Conv {
 }
 
 export interface Message {
+  media_type?: string
+  sticker_preview?: string
   id: string
   phone_number: string
   message_body: string

@@ -3,7 +3,7 @@ import { CONVERSATION_MESSAGES_CTE } from './conversation-messages'
 // Only successful campaign messages establish membership. Replies and manual
 // sends keep that history; queued/failed campaigns never label a conversation.
 // Use the same visible, deduplicated message source as the inbox itself.
-export const conversationInboxCte = (messages = CONVERSATION_MESSAGES_CTE) => `${messages},
+export const conversationInboxCte = (messages = CONVERSATION_MESSAGES_CTE, agentParam?: number) => `${messages},
   campaign_threads AS (
     SELECT REPLACE(m.phone_number, '+', '') AS phone_number,
       cp.id, cp.name, MAX(m.created_at) AS last_sent_at
@@ -25,7 +25,7 @@ export const conversationInboxCte = (messages = CONVERSATION_MESSAGES_CTE) => `$
     ORDER BY REPLACE(phone_number, '+', ''), created_at DESC, id DESC
   ), inbox AS (
     SELECT DISTINCT ON (lm.phone_number) lm.*, c.id AS contact_id, c.first_name, c.last_name,
-      c.segment::text AS segment, COALESCE(ch.campaigns, '[]'::jsonb) AS campaigns
+      c.segment::text AS segment, NULLIF(lower(trim(c.panel)), '') AS agent, COALESCE(ch.campaigns, '[]'::jsonb) AS campaigns
     FROM latest_messages lm
     LEFT JOIN contacts c ON REPLACE(c.phone_number, '+', '') = lm.phone_number
     LEFT JOIN campaign_history ch ON ch.phone_number = lm.phone_number
@@ -36,6 +36,7 @@ export const conversationInboxCte = (messages = CONVERSATION_MESSAGES_CTE) => `$
       OR ($2 = 'none' AND jsonb_array_length(i.campaigns) = 0)
       OR EXISTS (SELECT 1 FROM campaign_threads ct WHERE ct.phone_number = i.phone_number AND ct.id::text = $2))
       AND ($3::text = 'all' OR ($3 = 'none' AND i.segment IS NULL) OR i.segment = $3)
+      ${agentParam ? `AND ($${agentParam}::text = 'all' OR ($${agentParam} = 'none' AND i.agent IS NULL) OR i.agent = $${agentParam})` : ''}
   )`
 
 export const CONVERSATION_INBOX_CTE = conversationInboxCte()
