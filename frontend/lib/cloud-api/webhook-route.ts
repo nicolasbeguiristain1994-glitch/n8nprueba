@@ -105,11 +105,16 @@ async function dispatch(
       const phoneNumberId = change.field === 'message_template_status_update' ? undefined : change.value.metadata?.phone_number_id
 
       try {
-        if (change.field !== 'message_template_status_update') {
-          if (!phoneNumberId) continue
-          const number = await cloudNumberRepository.findByPhoneNumberId(phoneNumberId)
-          if (!number || number.wabaId !== entry.id) continue
+        if (change.field === 'message_template_status_update') {
+          await handleTemplateStatusUpdate(
+            change.value as unknown as WebhookTemplateStatusUpdate, correlationId,
+            { wabaId: entry.id, includeLegacy: app.legacy },
+          )
+          continue
         }
+        if (!phoneNumberId) continue
+        const number = await cloudNumberRepository.findByPhoneNumberId(phoneNumberId)
+        if (!number || number.wabaId !== entry.id) continue
         switch (change.field) {
 
           case 'messages':
@@ -138,13 +143,6 @@ async function dispatch(
             await handleCoexistenceSyncEvent(
               phoneNumberId, 'history' as SmbSyncType,
               change.value as unknown as WebhookSyncEvent, correlationId,
-            )
-            break
-
-          case 'message_template_status_update':
-            await handleTemplateStatusUpdate(
-              change.value as unknown as WebhookTemplateStatusUpdate, correlationId,
-              { wabaId: entry.id, includeLegacy: app.legacy },
             )
             break
 
