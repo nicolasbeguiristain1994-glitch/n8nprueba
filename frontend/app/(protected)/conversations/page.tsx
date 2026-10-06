@@ -14,6 +14,7 @@ import { ConversationHeader }     from '@/components/conversations/ConversationH
 import { MessageBubble }          from '@/components/conversations/MessageBubble'
 import { QuickTemplates }         from '@/components/conversations/QuickTemplates'
 import { ConversationSidebar }    from '@/components/conversations/ConversationSidebar'
+import { CloudWindowIndicator } from '@/components/conversations/CloudWindowIndicator'
 import { StickerPicker } from '@/components/conversations/StickerPicker'
 import { EmojiPicker }            from '@/components/conversations/EmojiPicker'
 
@@ -136,6 +137,7 @@ export default function Conversations() {
             ) : (
               <>
                 <ConversationHeader phone={selected} conv={selectedConv} selectedCampaign={campaign} />
+                <CloudWindowIndicator key={selected} phone={selected} />
 
                 {/* Área de mensajes */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-background">

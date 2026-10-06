@@ -4,13 +4,9 @@ import type { EligibleLine } from '@/lib/campaign-distributor'
 // A customer service window belongs to a recipient AND a business number.
 // Use the latest inbound message visible to this operator, including button
 // replies. Never rotate to another sender if the originating line is unavailable.
-export async function findConversationReplyLine(
-  phone: string,
-  accessibleLineIds: string[] | null,
-  eligibleLines: EligibleLine[],
-): Promise<EligibleLine | null> {
-  const [origin] = await query<{ line_id: string; phone_number_id: string; display_name: string }>(
-    `SELECT cn.whatsapp_line_id AS line_id, cm.phone_number_id,
+export async function findConversationReplyOrigin(phone: string, accessibleLineIds: string[] | null) {
+  const [origin] = await query<{ line_id: string; phone_number_id: string; display_name: string; window_expires_at: string | null }>(
+    `SELECT cn.whatsapp_line_id AS line_id, cm.phone_number_id, cc.window_expires_at,
        COALESCE(wl.display_name, wl.line_key) AS display_name
      FROM cloud_messages cm
      JOIN cloud_conversations cc ON cc.id=cm.conversation_id AND cc.phone_number_id=cm.phone_number_id
@@ -22,6 +18,11 @@ export async function findConversationReplyLine(
      ORDER BY COALESCE(cm.sent_at,cm.created_at) DESC,cm.created_at DESC,cm.id DESC LIMIT 1`,
     [phone.replace(/\D/g, ''), accessibleLineIds],
   )
+  return origin ?? null
+}
+
+export async function findConversationReplyLine(phone: string, accessibleLineIds: string[] | null, eligibleLines: EligibleLine[]): Promise<EligibleLine | null> {
+  const origin = await findConversationReplyOrigin(phone, accessibleLineIds)
   if (!origin) return null
   const line = eligibleLines.find(item => item.id === origin.line_id && item.phone_number_id === origin.phone_number_id)
   if (!line) throw new Error(`La conversación corresponde a "${origin.display_name}", pero esa línea no está disponible para responder. Revisá su estado y sus límites.`)
