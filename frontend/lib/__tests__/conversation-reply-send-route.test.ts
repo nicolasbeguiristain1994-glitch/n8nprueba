@@ -9,6 +9,8 @@ vi.mock('@/lib/line-visibility', () => ({ getAccessibleLineIds: mocks.visible })
 vi.mock('@/lib/campaign-distributor', () => ({ getEligibleLines: mocks.eligible, sendViaCloud: mocks.cloud, sendViaEvolution: mocks.evolution, selectLine: mocks.select }))
 vi.mock('@/lib/audit', () => ({ audit: vi.fn() }))
 vi.mock('@/lib/sse-events', () => ({ sseEmitter: { emit: vi.fn() } }))
+import sharp from 'sharp'
+import { signStickerToken } from '@/lib/conversation-stickers'
 import { POST } from '@/app/api/send/route'
 
 const lineA = { id: 'a', line_type: 'cloud', phone_number_id: '10001' }
@@ -69,3 +71,19 @@ describe('manual replies preserve the incoming business number', () => {
     expect(mocks.cloud).not.toHaveBeenCalled()
   })
 })
+
+ it('sends a validated sticker through the inbound Cloud line with the correct type',async()=>{
+  vi.stubEnv('AUTH_SECRET','unit-only-secret')
+  const bytes=await sharp({create:{width:512,height:512,channels:4,background:'#ff0000'}}).webp().toBuffer()
+  const url='data:image/webp;base64,'+bytes.toString('base64')
+  const res=await POST(new NextRequest('https://panel.test/api/send',{method:'POST',body:JSON.stringify({phones:['5491100000001'],message:'[Sticker]',sticker_data:url,media_type:'sticker',sticker_token:signStickerToken(url,'operator')})}))
+  expect(res.status).toBe(200)
+  expect(mocks.cloud).toHaveBeenCalledWith(lineA,'+5491100000001',{kind:'sticker',data:url},undefined)
+  const log=mocks.query.mock.calls.find(([sql])=>sql.includes('INSERT INTO whatsapp_messages'))
+  expect(JSON.parse(log![1][0])[0]).toMatchObject({message_body:'[Sticker]',metadata:{media_type:'sticker',sticker_preview:expect.stringContaining('data:image/webp;base64,')}})
+  vi.unstubAllEnvs()
+ })
+ it('rejects an unvalidated sticker URL before any provider call',async()=>{
+  const res=await POST(new NextRequest('https://panel.test/api/send',{method:'POST',body:JSON.stringify({phones:['5491100000001'],message:'[Sticker]',media_url:'http://untrusted.test/image',media_type:'sticker'})}))
+  expect(res.status).toBe(400);expect(mocks.cloud).not.toHaveBeenCalled()
+ })

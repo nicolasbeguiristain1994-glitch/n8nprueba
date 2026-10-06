@@ -1,3 +1,4 @@
+import { AgentBadge } from './AgentBadge'
 import { AlertCircle, UserPlus } from 'lucide-react'
 import { displayName, fmtPhone, avatarCls, initials, type Conv } from '@/lib/scoring/conversation-scoring'
 import { SegmentBadge } from './PriorityBadge'
@@ -19,7 +20,7 @@ export function ConversationHeader({ phone, conv, selectedCampaign }: Props) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <p className="text-sm font-semibold">{conv ? displayName(conv) : fmtPhone(phone)}</p>
-          <SegmentBadge segment={conv?.segment ?? null} />
+          <SegmentBadge segment={conv?.segment ?? null} /><AgentBadge agent={conv?.agent} />
         </div>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
           <p className="text-xs text-muted-foreground font-mono">{fmtPhone(phone)}</p>

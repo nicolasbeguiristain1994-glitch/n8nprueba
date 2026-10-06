@@ -127,6 +127,8 @@ export type UpdateContactInput = z.infer<typeof UpdateContactSchema>
 // ── Send schemas ──────────────────────────────────────────────────────────────
 
 export const SendSchema = z.object({
+  sticker_data: z.string().max(700000).optional(),
+  sticker_token: z.string().max(4096).optional(),
   phones:      z.array(z.string().min(1))
                  .min(1,   'phones debe tener al menos 1 número')
                  .max(100, 'phones no puede tener más de 100 números'),

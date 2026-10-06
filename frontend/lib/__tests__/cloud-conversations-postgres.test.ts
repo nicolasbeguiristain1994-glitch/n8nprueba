@@ -28,7 +28,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
    CREATE TEMP TABLE whatsapp_lines(id uuid,display_name text,line_key text);
    CREATE TEMP TABLE cloud_conversations(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number_id text,contact_phone text,window_opens_at timestamptz,window_expires_at timestamptz,window_type text,last_message_at timestamptz,last_message_preview text,unread_count int DEFAULT 0,status text,updated_at timestamptz,UNIQUE(phone_number_id,contact_phone));
    CREATE TEMP TABLE cloud_messages(id uuid DEFAULT gen_random_uuid(),conversation_id uuid,phone_number_id text,wamid text UNIQUE,direction text,message_type text,content jsonb,status text,sent_at timestamptz,created_at timestamptz DEFAULT NOW(),campaign_id uuid);
-   CREATE TEMP TABLE contacts(id uuid,phone_number text,first_name text,last_name text,segment text,deleted_at timestamptz);
+   CREATE TEMP TABLE contacts(id uuid,phone_number text,first_name text,last_name text,segment text,deleted_at timestamptz,panel text);
    CREATE TEMP TABLE contact_tags(contact_id uuid,tag text);
    CREATE TEMP TABLE conversation_state(phone_number text,is_escalated bool,escalation_reason text,current_flow text,resolved_at timestamptz);
    CREATE TEMP TABLE blacklist(phone_number_normalized text,removed_at timestamptz);
@@ -43,7 +43,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   await db.query(`INSERT INTO whatsapp_lines VALUES($1,'Difusion 1','a'),($2,'Difusion 2','b')`,[id(10),id(11)])
   await db.query(`INSERT INTO cloud_conversations(id,phone_number_id,contact_phone,last_message_preview) VALUES('${id(1)}','10001','+${phone}','[button]'),('${id(2)}','10002','+5491100000002','hidden');`)
   await db.query(`INSERT INTO whatsapp_messages(id,phone_number,message_body,direction,status,created_at,evolution_message_id) VALUES($1,$2,'[template:test]','outbound','delivered',NOW()-interval '2 minutes','wamid.out')`,[id(100),phone])
-  await db.query(`INSERT INTO contacts VALUES('${id(20)}','+${phone}','Prueba',NULL,NULL,NULL);`)
+  await db.query(`INSERT INTO contacts VALUES('${id(20)}','+${phone}','Prueba',NULL,NULL,NULL,'royal');`)
   await db.query(`INSERT INTO cloud_messages(conversation_id,phone_number_id,wamid,direction,message_type,content,status,sent_at) VALUES
    ($1,'10001','wamid.button','inbound','button','{"type":"button","button":{"text":"Mas información","payload":"info"}}','delivered',NOW()-interval '1 minute'),
    ($2,'10002','wamid.hidden','inbound','text','{"text":{"body":"private"}}','delivered',NOW());`,[id(1),id(2)])
@@ -97,6 +97,11 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   const all=await (await GET(request())).json()
   expect(all.total).toBe(206);expect(all.conversations).toHaveLength(200);expect(all.has_more).toBe(true)
   expect(all.campaigns).toEqual([{id:id(301),name:'Older campaign',count:1}])
+  expect(all.agents).toEqual([{name:'royal',count:1}])
+  const agentOnly=await(await GET(request('?agent=royal&level=vip_medio'))).json()
+  expect(agentOnly.total).toBe(1);expect(agentOnly.conversations[0].agent).toBe('royal')
+  expect((await(await GET(request('?agent=none'))).json()).total).toBe(205)
+  expect((await(await GET(request('?agent=ofizeus'))).json()).total).toBe(0)
   const page=await (await GET(request('?offset=200'))).json()
   expect(page.conversations).toHaveLength(6);expect(page.has_more).toBe(false)
   const filtered=await (await GET(request('?campaign='+id(301)+'&level=vip_medio'))).json()
@@ -110,7 +115,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect(body.total).toBe(1);expect(body.conversations[0].segment).toBe(level)
  })
  it('keeps one thread per normalized phone if contacts exist with and without the plus prefix',async()=>{
-  await db.query(`INSERT INTO contacts VALUES($1,$2,'Duplicate',NULL,'bajo',NULL)`,[id(21),phone])
+  await db.query(`INSERT INTO contacts VALUES($1,$2,'Duplicate',NULL,'bajo',NULL,'royal')`,[id(21),phone])
   const body=await (await GET(request())).json()
   expect(body.total).toBe(1);expect(body.conversations).toHaveLength(1)
   expect(body.conversations[0].first_name).toBe('Prueba')

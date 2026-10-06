@@ -309,3 +309,21 @@ describe('template campaign dispatch selection', () => {
     expect(mocks.delay).toHaveBeenCalledWith(expect.objectContaining({ minSeconds: 3, maxSeconds: 8, burstProbability: 0, microJitterMs: { min: 0, max: 0 } }), expect.any(AbortSignal))
   })
 })
+
+ it('uploads the sticker to the same Cloud number and sends its media ID',async()=>{
+  vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({id:'media-1'}),{status:200}))
+  await sendViaCloud(line,unit.phone_number,{kind:'sticker',data:'data:image/webp;base64,dGVzdA=='})
+  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(String(vi.mocked(fetch).mock.calls[0][0])).toContain('/'+line.phone_number_id+'/media')
+  expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({type:'sticker',sticker:{id:'media-1'},phoneNumberId:line.phone_number_id}))
+ })
+ it('does not upload or send a sticker outside the service window',async()=>{
+  mocks.window.mockResolvedValue(null)
+  await expect(sendViaCloud(line,unit.phone_number,{kind:'sticker',data:'data:image/webp;base64,dGVzdA=='})).rejects.toBeInstanceOf(ConversationWindowError)
+  expect(fetch).not.toHaveBeenCalled();expect(mocks.send).not.toHaveBeenCalled()
+ })
+ it('does not upload or send a sticker to an opted-out customer',async()=>{
+  mocks.optedOut.mockResolvedValue(true)
+  await expect(sendViaCloud(line,unit.phone_number,{kind:'sticker',data:'data:image/webp;base64,dGVzdA=='})).rejects.toBeInstanceOf(OptOutError)
+  expect(fetch).not.toHaveBeenCalled();expect(mocks.send).not.toHaveBeenCalled()
+ })
