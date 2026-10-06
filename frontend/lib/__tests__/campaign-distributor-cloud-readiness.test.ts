@@ -178,7 +178,7 @@ describe('Cloud campaign template and send guards', () => {
 })
 
 describe('manual Cloud reply guards', () => {
-  const reply = { kind: 'text' as const, body: 'Recibido' }
+  const reply = { kind: 'text' as const, body: 'Recibido', mediaUrl: null }
   const options = { purpose: 'conversation_reply' as const, reserveCapacity: true }
 
   it('sends a reply and reserves capacity without requiring campaign opt-in', async () => {
