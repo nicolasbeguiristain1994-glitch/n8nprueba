@@ -180,7 +180,6 @@ export default function Contacts() {
   const [loadError, setLoadError] = useState<string | null>(null)
 
   // ── Filtros ───────────────────────────────────────────────────────────────
-  const [filterQuality, setFilterQuality] = useState('')
   const [filterRecent, setFilterRecent] = useState('')
   const [broadcast, setBroadcast] = useState(EMPTY_BROADCAST)
   const [dynamicList, setDynamicList] = useState(true)
@@ -233,7 +232,7 @@ export default function Contacts() {
   const [lists, setLists]             = useState<ContactList[]>([])
   const [filterList, setFilterList]   = useState('')
   const hasActiveFilters = !!(search || segments.length > 0 || filterGaming || filterPanel || filterLinea || filterLineaSub ||
-    broadcast.mode || filterQuality || filterRecent || filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag || filterList || inactivity.min || inactivity.max)
+    broadcast.mode || filterRecent || filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag || filterList || inactivity.min || inactivity.max)
 
   const [showListsMenu, setShowListsMenu] = useState(false)
   const [deletingListId, setDeletingListId] = useState<string | null>(null)
@@ -398,9 +397,9 @@ export default function Contacts() {
     q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
     linea: filterLinea, actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
     linea_sub: filterLineaSub, list_id: filterList, plataforma: filterPlataforma,
-    sin_movimiento: String(filterSinMovimiento), tag: filterTag, calidad: filterQuality, depositos_recientes: filterRecent, ...inactivityParams(inactivity), ...broadcastParams(broadcast),
+    sin_movimiento: String(filterSinMovimiento), tag: filterTag, depositos_recientes: filterRecent, ...inactivityParams(inactivity), ...broadcastParams(broadcast),
   }), [search, segments, filterGaming, filterPanel, filterLinea, filterActividad,
-    filterAntiguedad, filterLineaSub, filterList, filterPlataforma, filterSinMovimiento, filterTag, inactivity, filterQuality, filterRecent, broadcast])
+    filterAntiguedad, filterLineaSub, filterList, filterPlataforma, filterSinMovimiento, filterTag, inactivity, filterRecent, broadcast])
 
   const audienceKey = buildContactParams().toString()
   const activeAudience = useRef(audienceKey)
@@ -474,11 +473,11 @@ export default function Contacts() {
 
   // Resetear página al cambiar filtros
   const resetPage = useCallback(() => setPagination(p => ({ ...p, pageIndex: 0 })), [])
-  const viewState: ContactViewState = {broadcast,quality:filterQuality,recent:filterRecent,search,segments,gaming:filterGaming,panel:filterPanel,linea:filterLinea,lineaSub:filterLineaSub,inactivity,actividad:filterActividad,antiguedad:filterAntiguedad,plataforma:filterPlataforma,sinMovimiento:filterSinMovimiento,tag:filterTag,list:filterList,columns:contactColumns}
+  const viewState: ContactViewState = {broadcast,quality:'',recent:filterRecent,search,segments,gaming:filterGaming,panel:filterPanel,linea:filterLinea,lineaSub:filterLineaSub,inactivity,actividad:filterActividad,antiguedad:filterAntiguedad,plataforma:filterPlataforma,sinMovimiento:filterSinMovimiento,tag:filterTag,list:filterList,columns:contactColumns}
   const applyView = (v: ContactViewState) => {
-    setBroadcast(v.broadcast || EMPTY_BROADCAST);setFilterQuality(v.quality||'');setFilterRecent(v.recent||'');setSearch(v.search);setSegments(v.segments);setFilterGaming(v.gaming);setFilterPanel(v.panel);setFilterLinea(v.linea);setFilterLineaSub(v.lineaSub);setInactivity(v.inactivity);setFilterActividad(v.actividad);setFilterAntiguedad(v.antiguedad);setFilterPlataforma(v.plataforma);setFilterSinMovimiento(v.sinMovimiento);setFilterTag(v.tag);setFilterList(v.list);setContactColumns(v.columns);setRowSelection({});resetPage()
+    setBroadcast(v.broadcast || EMPTY_BROADCAST);setFilterRecent(v.recent||'');setSearch(v.search);setSegments(v.segments);setFilterGaming(v.gaming);setFilterPanel(v.panel);setFilterLinea(v.linea);setFilterLineaSub(v.lineaSub);setInactivity(v.inactivity);setFilterActividad(v.actividad);setFilterAntiguedad(v.antiguedad);setFilterPlataforma(v.plataforma);setFilterSinMovimiento(v.sinMovimiento);setFilterTag(v.tag);setFilterList(v.list);setContactColumns(v.columns);setRowSelection({});resetPage()
   }
-  const activeFilterLabels = [broadcast.mode&&broadcastLabel(broadcast),filterQuality&&QUALITY_LABELS[filterQuality],filterRecent&&`Depósitos ${filterRecent}d (último cálculo)`,search&&`Búsqueda: ${search}`,segments.length&&`Nivel: ${segments.map(v=>NIVEL_LABEL[v]||v).join(', ')}`,filterPanel&&`Agente: ${filterPanel}`,filterLinea&&`Línea: ${filterLinea}${filterLineaSub}`,!filterLinea&&filterLineaSub&&`Variante: ${filterLineaSub}`,filterGaming&&`Juego: ${filterGaming}`,filterPlataforma&&`Plataforma: ${filterPlataforma}`,filterActividad.length&&`Actividad: ${filterActividad.join(', ')}`,filterAntiguedad.length&&`Antigüedad: ${filterAntiguedad.join(', ')}`,(inactivity.min||inactivity.max)&&inactivityLabel(inactivity),filterSinMovimiento&&'12 meses sin depósitos registrados',filterTag&&`Etiqueta: ${filterTag}`,filterList&&`Lista: ${lists.find(l=>l.id===filterList)?.name||'seleccionada'}`].filter(Boolean)
+  const activeFilterLabels = [broadcast.mode&&broadcastLabel(broadcast),filterRecent&&`Depósitos ${filterRecent}d (último cálculo)`,search&&`Búsqueda: ${search}`,segments.length&&`Nivel: ${segments.map(v=>NIVEL_LABEL[v]||v).join(', ')}`,filterPanel&&`Agente: ${filterPanel}`,filterLinea&&`Línea: ${filterLinea}${filterLineaSub}`,!filterLinea&&filterLineaSub&&`Variante: ${filterLineaSub}`,filterGaming&&`Juego: ${filterGaming}`,filterPlataforma&&`Plataforma: ${filterPlataforma}`,filterActividad.length&&`Actividad: ${filterActividad.join(', ')}`,filterAntiguedad.length&&`Antigüedad: ${filterAntiguedad.join(', ')}`,(inactivity.min||inactivity.max)&&inactivityLabel(inactivity),filterSinMovimiento&&'12 meses sin depósitos registrados',filterTag&&`Etiqueta: ${filterTag}`,filterList&&`Lista: ${lists.find(l=>l.id===filterList)?.name||'seleccionada'}`].filter(Boolean)
 
 
   // ── Inline edits ──────────────────────────────────────────────────────────
@@ -1661,11 +1660,6 @@ export default function Contacts() {
           </Button>
         )}
 
-        <label className="text-xs text-muted-foreground">Calidad de datos
-          <select aria-label="Calidad de datos" className="ml-2 h-8 rounded-md border bg-card px-2 text-sm" value={filterQuality} onChange={e=>{setFilterQuality(e.target.value);resetPage()}}>
-            <option value="">Todas</option>{Object.entries(QUALITY_LABELS).map(([key,label])=><option key={key} value={key}>{label}</option>)}
-          </select>
-        </label>
         <label className="text-xs text-muted-foreground">Actividad reciente
           <select aria-label="Depósitos recientes" className="ml-2 h-8 rounded-md border bg-card px-2 text-sm" value={filterRecent} onChange={e=>{setFilterRecent(e.target.value);resetPage()}}>
             <option value="">Cualquier período</option><option value="30">Con depósitos en 30 días</option><option value="90">Con depósitos en 90 días</option>
