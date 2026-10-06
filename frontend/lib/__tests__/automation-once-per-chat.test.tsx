@@ -55,12 +55,21 @@ describe('once-per-chat automation setting', () => {
   it('preserves directory routing when the introduction is edited', async () => {
     mocks.fetch.mockImplementation(async (_url, init) => init?.method ? {ok:true} : {automations:[{...rule,action_config:{message:'Tu línea:',contact_line_directory:'ofizeus'}}]})
     render(<Page />); await screen.findByText('Bono EXTRA'); fireEvent.click(screen.getByTitle('Editar'))
-    expect(screen.getByText(/Esta respuesta agrega automáticamente/)).toBeInTheDocument()
+    expect(screen.getByText(/donde quieras mostrar el número/)).toBeInTheDocument()
     fireEvent.change(screen.getByPlaceholderText(/Hola \{\{nombre\}\}/), {target:{value:'Hola, esta es tu línea:'}})
     fireEvent.click(screen.getByRole('button',{name:'Guardar cambios'}))
     await waitFor(()=>expect(mocks.fetch.mock.calls.some(([,init])=>init?.method==='PATCH')).toBe(true))
     const saved=JSON.parse(mocks.fetch.mock.calls.find(([,init])=>init?.method==='PATCH')![1].body)
     expect(saved.action_config).toEqual({message:'Hola, esta es tu línea:',contact_line_directory:'ofizeus'})
+  })
+  it('enables the directory when adding {{2}} to an ordinary reply and previews only the number', async()=>{
+    render(<Page/>);await screen.findByText('Bono EXTRA');fireEvent.click(screen.getByTitle('Editar'))
+    fireEvent.change(screen.getByPlaceholderText(/Hola \{\{nombre\}\}/),{target:{value:'Lines designada: {{2}}'}})
+    expect(screen.getByLabelText('Vista previa de línea asignada')).toHaveTextContent('Lines designada: 549 | 1124 | 915455')
+    fireEvent.click(screen.getByRole('button',{name:'Guardar cambios'}))
+    await waitFor(()=>expect(mocks.fetch.mock.calls.some(([,init])=>init?.method==='PATCH')).toBe(true))
+    const saved=JSON.parse(mocks.fetch.mock.calls.find(([,init])=>init?.method==='PATCH')![1].body)
+    expect(saved.action_config).toEqual({message:'Lines designada: {{2}}',contact_line_directory:'ofizeus'})
   })
   it('rejects non-boolean values instead of silently making the reply repeatable', () => {
     expect(CreateAutomationSchema.safeParse({ ...rule, trigger_config: { once_per_chat: 'true' } }).success).toBe(false)
