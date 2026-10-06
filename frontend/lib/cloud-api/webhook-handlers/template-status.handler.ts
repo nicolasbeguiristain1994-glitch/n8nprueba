@@ -15,6 +15,7 @@ const STATUS_MAP: Record<WebhookTemplateStatusUpdate['event'], string> = {
 export async function handleTemplateStatusUpdate(
   update:        WebhookTemplateStatusUpdate,
   correlationId: string,
+  scope: { wabaId: string; includeLegacy: boolean },
 ): Promise<void> {
   const log = createLogger({ correlationId, operation: 'template_status_update' })
   const internalStatus = STATUS_MAP[update.event] ?? 'EN_REVISION'
@@ -23,6 +24,7 @@ export async function handleTemplateStatusUpdate(
     update.message_template_id,
     internalStatus,
     update.reason ?? null,
+    scope,
   )
 
   cloudMetrics.templateStatusUpdated(update.message_template_name, update.event)

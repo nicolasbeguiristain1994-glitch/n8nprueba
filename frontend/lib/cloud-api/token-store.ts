@@ -18,6 +18,7 @@ import { query } from '@/lib/db'
 import { TokenExpiredError, CloudApiError } from './errors'
 import { generateLongLivedToken } from './infrastructure/meta-http.gateway'
 import { createLogger } from './infrastructure/logger'
+import { metaApps } from './app-config'
 
 const REFRESH_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000  // renovar si vence en < 7 días
 const tokenStoreLog = createLogger({ correlationId: 'system', operation: 'token_store' })
@@ -38,7 +39,7 @@ function getEncryptionKey(): string {
 export async function getTokenForNumber(phoneNumberId: string, allowPending = false): Promise<string> {
   const encKey = getEncryptionKey()
 
-  type Row = { token_enc: string | null; token_plain: string | null; expires_at: Date | null }
+  type Row = { token_enc: string | null; token_plain: string | null; expires_at: Date | null; waba_id: string }
   const rows = await query<Row>(
     `SELECT
        CASE WHEN access_token_enc IS NOT NULL
@@ -46,7 +47,7 @@ export async function getTokenForNumber(phoneNumberId: string, allowPending = fa
             ELSE NULL
        END AS token_enc,
        CASE WHEN access_token_enc IS NULL THEN access_token ELSE NULL END AS token_plain,
-       token_expires_at AS expires_at
+       token_expires_at AS expires_at, waba_id
      FROM cloud_numbers
      WHERE phone_number_id = $2 AND (status = 'active' OR ($3 AND status IN ('pending','code_sent','verified')))`,
     [encKey, phoneNumberId, allowPending],
@@ -67,7 +68,7 @@ export async function getTokenForNumber(phoneNumberId: string, allowPending = fa
 
   // Renovar si vence pronto
   if (row.expires_at && shouldRefresh(row.expires_at)) {
-    return refreshToken(phoneNumberId, token, encKey)
+    return refreshToken(phoneNumberId, row.waba_id, token, encKey)
   }
 
   return token
@@ -143,15 +144,15 @@ async function migrateToEncrypted(
 
 async function refreshToken(
   phoneNumberId: string,
+  wabaId:        string,
   currentToken:  string,
   encKey:        string,
 ): Promise<string> {
-  const appId     = process.env.META_APP_ID
-  const appSecret = process.env.META_APP_SECRET
-  if (!appId || !appSecret) return currentToken
+  const app = metaApps().find(candidate => candidate.permitsWaba(wabaId))
+  if (!app?.appId || !app.appSecret) return currentToken
 
   try {
-    const { accessToken, expiresIn } = await generateLongLivedToken(appId, appSecret, currentToken)
+    const { accessToken, expiresIn } = await generateLongLivedToken(app.appId, app.appSecret, currentToken)
     const expiresAt = expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000) : null
 
     await query(
@@ -161,8 +162,8 @@ async function refreshToken(
       [accessToken, encKey, expiresAt, phoneNumberId],
     )
     return accessToken
-  } catch (err) {
-    tokenStoreLog.logWarn('token refresh failed', { phoneNumberId, error: String(err) })
+  } catch {
+    tokenStoreLog.logWarn('token refresh failed', { phoneNumberId })
     return currentToken
   }
 }

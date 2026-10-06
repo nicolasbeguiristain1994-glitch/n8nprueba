@@ -11,13 +11,14 @@ vi.mock('@/lib/cloud-api/webhook-handlers/echo-message.handler',()=>({handleEcho
 vi.mock('@/lib/cloud-api/webhook-handlers/template-status.handler',()=>({handleTemplateStatusUpdate:mocks.template}))
 vi.mock('@/lib/cloud-api/webhook-handlers/coexistence-sync.handler',()=>({handleCoexistenceSyncEvent:mocks.sync}))
 import { POST, GET } from '@/app/api/cloud/webhook/route'
+import { POST as appPOST, GET as appGET } from '@/app/api/cloud/webhook/[appId]/route'
 const message={id:'wamid.test',from:'5491100000000',timestamp:'1780000000',type:'text',text:{body:'Hola'}}
 const change={field:'messages',value:{metadata:{phone_number_id:'34567'},messages:[message]}}
 function request(changes:unknown[]=[change],signature=true,waba='23456'){
  const body=JSON.stringify({object:'whatsapp_business_account',entry:[{id:waba,changes}]})
  return new NextRequest('https://panel.test/api/cloud/webhook',{method:'POST',body,headers:{'x-hub-signature-256':signature?'sha256='+createHmac('sha256','secret-test').update(body).digest('hex'):'sha256=bad'}})
 }
-beforeEach(()=>{vi.resetAllMocks();vi.stubEnv('META_APP_SECRET','secret-test');mocks.find.mockResolvedValue({wabaId:'23456'});mocks.query.mockResolvedValue([])})
+beforeEach(()=>{vi.resetAllMocks();vi.stubEnv('META_APP_ID','12345');vi.stubEnv('META_ADDITIONAL_APPS_JSON','');vi.stubEnv('META_APP_SECRET','secret-test');mocks.find.mockResolvedValue({wabaId:'23456'});mocks.query.mockResolvedValue([])})
 afterEach(()=>vi.unstubAllEnvs())
 it('rejects unsigned events without dispatching',async()=>{expect((await POST(request([change],false))).status).toBe(401);expect(mocks.inbound).not.toHaveBeenCalled()})
 it('processes template updates without phone metadata',async()=>{expect((await POST(request([{field:'message_template_status_update',value:{message_template_id:'42',event:'APPROVED'}}]))).status).toBe(200);expect(mocks.template).toHaveBeenCalledTimes(1)})
@@ -29,3 +30,72 @@ it('does not acknowledge before the message is stored',async()=>{
 it('ignores a phone from another WABA',async()=>{expect((await POST(request([change],true,'other'))).status).toBe(200);expect(mocks.inbound).not.toHaveBeenCalled();expect(mocks.query).not.toHaveBeenCalled()})
 it('rejects verification when no secret is configured',async()=>{vi.stubEnv('META_WEBHOOK_VERIFY_TOKEN','');expect((await GET(new NextRequest('https://panel.test/api/cloud/webhook?hub.mode=subscribe&hub.verify_token=&hub.challenge=123'))).status).toBe(403)})
 it('echo events never dispatch as inbound messages',async()=>{expect((await POST(request([{field:'smb_message_echoes',value:{metadata:{phone_number_id:'34567'},message_echoes:[{...message,to:'5491100000001'}]}}]))).status).toBe(200);expect(mocks.echo).toHaveBeenCalledTimes(1);expect(mocks.inbound).not.toHaveBeenCalled()})
+
+const nexusContext = { params: Promise.resolve({ appId: '98765' }) }
+function configureAdditionalApp() {
+ vi.stubEnv('META_ADDITIONAL_APPS_JSON',JSON.stringify([{appId:'98765',name:'Nexus',appSecret:'nexus-secret-test',verifyToken:'nexus-verify-test',wabaIds:['87654']}]))
+ vi.stubEnv('META_WEBHOOK_VERIFY_TOKEN','legacy-verify-test')
+ mocks.find.mockResolvedValue({wabaId:'87654'})
+}
+function signedEntries(entries:unknown[],secret='nexus-secret-test') {
+ const body=JSON.stringify({object:'whatsapp_business_account',entry:entries})
+ return new NextRequest('https://panel.test/api/cloud/webhook/98765',{method:'POST',body,headers:{'x-hub-signature-256':'sha256='+createHmac('sha256',secret).update(body).digest('hex')}})
+}
+it('processes an additional app event with its own signature and WABA',async()=>{
+ configureAdditionalApp()
+ expect((await appPOST(signedEntries([{id:'87654',changes:[change]}]),nexusContext)).status).toBe(200)
+ expect(mocks.inbound).toHaveBeenCalledTimes(1)
+ expect(mocks.query).toHaveBeenCalledTimes(1)
+})
+it('rejects a legacy signature on the additional app callback',async()=>{
+ configureAdditionalApp()
+ expect((await appPOST(signedEntries([{id:'87654',changes:[change]}],'secret-test'),nexusContext)).status).toBe(401)
+ expect(mocks.inbound).not.toHaveBeenCalled()
+})
+it('rejects an additional app signature on the legacy callback',async()=>{
+ configureAdditionalApp()
+ expect((await POST(signedEntries([{id:'23456',changes:[change]}]))).status).toBe(401)
+ expect(mocks.inbound).not.toHaveBeenCalled()
+})
+it('rejects the entire signed mixed-WABA batch before any handler or database call',async()=>{
+ configureAdditionalApp()
+ expect((await appPOST(signedEntries([{id:'87654',changes:[change]},{id:'23456',changes:[change]}]),nexusContext)).status).toBe(403)
+ expect(mocks.inbound).not.toHaveBeenCalled();expect(mocks.find).not.toHaveBeenCalled();expect(mocks.query).not.toHaveBeenCalled()
+})
+it('prevents the legacy app from dispatching a WABA assigned to an additional app',async()=>{
+ configureAdditionalApp()
+ expect((await POST(request([change],true,'87654'))).status).toBe(403)
+ expect(mocks.inbound).not.toHaveBeenCalled()
+})
+it('scopes template updates to the additional WABA without allowing legacy rows',async()=>{
+ configureAdditionalApp()
+ const update={message_template_id:'42',event:'APPROVED',metadata:{phone_number_id:'unrelated-phone'}}
+ expect((await appPOST(signedEntries([{id:'87654',changes:[{field:'message_template_status_update',value:update}]}]),nexusContext)).status).toBe(200)
+ expect(mocks.template).toHaveBeenCalledWith(update,expect.any(String),{wabaId:'87654',includeLegacy:false})
+ expect(mocks.query).not.toHaveBeenCalled()
+})
+it('preserves the legacy WABA and unscoped template compatibility',async()=>{
+ const update={message_template_id:'42',event:'APPROVED'}
+ expect((await POST(request([{field:'message_template_status_update',value:update}]))).status).toBe(200)
+ expect(mocks.template).toHaveBeenCalledWith(update,expect.any(String),{wabaId:'23456',includeLegacy:true})
+})
+it('keeps retry semantics for an additional app persistence failure',async()=>{
+ configureAdditionalApp();mocks.inbound.mockRejectedValue(new Error('DB unavailable'))
+ expect((await appPOST(signedEntries([{id:'87654',changes:[change]}]),nexusContext)).status).toBe(503)
+})
+it('uses separate challenge tokens and rejects unknown app routes',async()=>{
+ configureAdditionalApp()
+ const challenge=(token:string)=>new NextRequest(`https://panel.test/api/cloud/webhook/98765?hub.mode=subscribe&hub.verify_token=${token}&hub.challenge=challenge`)
+ expect(await (await appGET(challenge('nexus-verify-test'),nexusContext)).text()).toBe('challenge')
+ expect((await appGET(challenge('legacy-verify-test'),nexusContext)).status).toBe(403)
+ expect((await GET(challenge('nexus-verify-test'))).status).toBe(403)
+ expect(await (await GET(challenge('legacy-verify-test'))).text()).toBe('challenge')
+ for (const appId of ['99999','12345']) expect((await appPOST(request(),{params:Promise.resolve({appId})})).status).toBe(404)
+})
+it('fails closed for both callbacks when the server registry is malformed',async()=>{
+ vi.stubEnv('META_ADDITIONAL_APPS_JSON','{"secret":"do-not-expose"')
+ const result=await POST(request())
+ expect(result.status).toBe(503);expect(await result.text()).not.toContain('do-not-expose')
+ expect((await appPOST(request(),nexusContext)).status).toBe(503)
+ expect(mocks.inbound).not.toHaveBeenCalled()
+})
