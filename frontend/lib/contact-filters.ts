@@ -1,3 +1,4 @@
+import { contactBroadcastClause } from './contact-broadcast'
 import { segmentationSQL } from './contact-segmentation'
 import { getLongRunningClient } from '@/lib/db'
 import { contactMovementQuery } from '@/lib/contact-movement-query'
@@ -57,6 +58,11 @@ export function contactFilters(sp: URLSearchParams, user: {
   const recent = sp.get('depositos_recientes') || ''
   if (recent && !['30','90'].includes(recent)) throw new ContactFilterError('Período inválido')
   if (recent) where.push(`(contacts.segmentation_profile->>'deposits_${recent}d')::integer > 0`)
+
+  try {
+    const broadcast = contactBroadcastClause(sp, bind)
+    if (broadcast) where.push(broadcast)
+  } catch (error) { throw new ContactFilterError((error as Error).message) }
 
   const vis = contactScope(user, params.length)
   params.push(...vis.params)

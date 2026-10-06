@@ -7,7 +7,7 @@ vi.mock('@/lib/app-settings', () => ({ getAppSetting: async () => true }))
 vi.mock('@/lib/audit', () => ({ audit: vi.fn() }))
 import { GET } from '@/app/api/contacts/route'
 import { contactFilters } from '@/lib/contact-filters'
-const criteria = 'tag=prioridad&list_id=11111111-1111-4111-8111-111111111111&segment=vip,medio&actividad=inactivo,perdido&antiguedad=leal&plataforma=zeus&linea=1&linea_sub=a&panel=royal&q=Ana&inactividad_dias=61'
+const criteria = 'tag=prioridad&list_id=11111111-1111-4111-8111-111111111111&segment=vip,medio&actividad=inactivo,perdido&antiguedad=leal&plataforma=zeus&linea=1&linea_sub=a&panel=royal&q=Ana&inactividad_dias=61&difusion=not_sent&difusion_dias=7'
 beforeEach(() => { q.mockReset().mockImplementation(async (sql: string) => sql.includes('COUNT(*)') ? [{ count: '0' }] : []) })
 describe('Contact audience parity', () => {
   it('uses identical conditions and parameters for list, count and select-all', async () => {
