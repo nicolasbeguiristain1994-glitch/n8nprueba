@@ -56,7 +56,7 @@ import {
   flushExpiredBlacklist,
 } from '@/lib/proxy-manager'
 import { ContactFrequencyEngine } from '@/lib/contact-frequency/ContactFrequencyEngine'
-import { lineEligibleExpr, cloudEligibleExpr } from '@/lib/line-eligibility'
+import { lineEligibleExpr, cloudEligibleExpr, cloudReplyEligibleExpr } from '@/lib/line-eligibility'
 import { enforceRateLimit } from '@/lib/cloud-api/rate-limiter'
 import { getTokenForNumber } from '@/lib/cloud-api/token-store'
 import { MessageSenderService, buildMessagePayload } from '@/lib/cloud-api/infrastructure/message-sender.service'
@@ -295,6 +295,14 @@ function isNetworkError(err: unknown): boolean {
  * (called from WF-013). This function reads current counter values only.
  */
 export async function getEligibleLines(operatorId?: string | null): Promise<EligibleLine[]> {
+  return getLinesMatching(operatorId, `(${lineEligibleExpr('wl')} OR (${cloudEligibleExpr('wl')} AND cn.id IS NOT NULL))`)
+}
+
+export async function getEligibleReplyLines(operatorId?: string | null): Promise<EligibleLine[]> {
+  return getLinesMatching(operatorId, `(${cloudReplyEligibleExpr('wl')} AND cn.id IS NOT NULL)`)
+}
+
+async function getLinesMatching(operatorId: string | null | undefined, eligibility: string): Promise<EligibleLine[]> {
   const { clause, params } = distributorVisibilityClause(operatorId, 1, 'wl')
   // Table alias 'wl' is required to avoid column ambiguity with the cloud_numbers JOIN.
   // Visibility clause uses wl.id so it doesn't collide with cn.id.
@@ -315,7 +323,7 @@ export async function getEligibleLines(operatorId?: string | null): Promise<Elig
     FROM whatsapp_lines wl
     LEFT JOIN cloud_numbers cn
       ON cn.whatsapp_line_id = wl.id AND cn.status = 'active'
-    WHERE (${lineEligibleExpr('wl')} OR (${cloudEligibleExpr('wl')} AND cn.id IS NOT NULL))
+    WHERE ${eligibility}
       ${clause}
     ORDER BY
       (wl.msg_per_day - wl.msgs_sent_today) DESC,
@@ -617,10 +625,16 @@ export async function sendViaCloud(
   phone:     string,
   payload:   CloudSendPayload,
   campaignId?: string,
-  options: { reserveCapacity?: boolean } = {},
+  options: { reserveCapacity?: boolean; purpose?: 'conversation_reply' } = {},
 ): Promise<{ messageId: string | null }> {
   const phoneNumberId = line.phone_number_id
   if (!phoneNumberId) throw new Error(`No phone_number_id for cloud line ${line.id}`)
+  const isReply = options.purpose === 'conversation_reply'
+  if (isReply && (campaignId || payload.kind !== 'text')) throw new CloudApiError('La respuesta manual no admite campañas ni plantillas.')
+  const eligibility = isReply ? cloudReplyEligibleExpr('wl') : cloudEligibleExpr('wl')
+  const unavailable = () => isReply
+    ? new CloudApiError('La línea de la conversación ya no está conectada o no tiene capacidad para responder.')
+    : new CampaignLineUnavailableError()
 
   // Cloud API expects E.164 format (with leading +)
   const to = phone.startsWith('+') ? phone : `+${phone}`
@@ -644,15 +658,15 @@ export async function sendViaCloud(
   await enforceRateLimit(phoneNumberId)
   const accessToken = await getTokenForNumber(phoneNumberId)
 
-  // The loop caches eligible lines. Re-read the kill switch and quotas immediately
-  // before the provider request so a disabled/capped cached line cannot keep sending.
+  // Re-read connection and quotas immediately before sending. Only campaigns
+  // require campaign opt-in; a customer reply remains on its receiving number.
   const [current] = await query<{ waba_id: string }>(
     `SELECT cn.waba_id FROM whatsapp_lines wl
      JOIN cloud_numbers cn ON cn.whatsapp_line_id = wl.id AND cn.status = 'active'
-     WHERE wl.id = $1 AND cn.phone_number_id = $2 AND ${cloudEligibleExpr('wl')}`,
+     WHERE wl.id = $1 AND cn.phone_number_id = $2 AND ${eligibility}`,
     [line.id, phoneNumberId],
   )
-  if (!current) throw new CampaignLineUnavailableError()
+  if (!current) throw unavailable()
   if (payload.kind === 'template') {
     if (!payload.wabaId || current.waba_id !== payload.wabaId) throw new CloudApiError('La plantilla no pertenece a la WABA de la línea.')
     const [template] = await query<{ id: string }>(
@@ -662,17 +676,17 @@ export async function sendViaCloud(
     )
     if (!template) throw new CloudApiError('La plantilla no está aprobada para esta WABA, nombre e idioma.')
   }
-  // Standalone tests reserve capacity atomically before touching Meta. These
+  // Standalone tests and replies reserve capacity atomically before touching Meta. These
   // attempts count toward line limits even if Meta's response is uncertain.
   if (options.reserveCapacity) {
     const reserved = await query(
       `UPDATE whatsapp_lines wl SET msgs_sent_hour=msgs_sent_hour+1,
          msgs_sent_today=msgs_sent_today+1, updated_at=NOW()
-       WHERE wl.id=$1 AND ${cloudEligibleExpr('wl')}
+       WHERE wl.id=$1 AND ${eligibility}
          AND EXISTS (SELECT 1 FROM cloud_numbers cn WHERE cn.whatsapp_line_id=wl.id
            AND cn.phone_number_id=$2 AND cn.waba_id=$3 AND cn.status='active') RETURNING wl.id`,
       [line.id, phoneNumberId, current.waba_id])
-    if (!reserved.length) throw new CampaignLineUnavailableError()
+    if (!reserved.length) throw unavailable()
   }
   const sender = new MessageSenderService(accessToken, phoneNumberId)
   try {
