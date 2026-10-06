@@ -1,6 +1,6 @@
 /** Active Ofizeus destinations provided by the operator on 2026-10-06.
  * Main lines have no variant. Never substitute a main line for an unknown variant.
- * These are destination links, not sending credentials or Cloud sender IDs.
+ * These are displayed destinations, not sending credentials or Cloud sender IDs.
  */
 export const OFIZEUS_LINES = [
   [1,'','ZEUS 1','5491125489456'],[1,'a','OFI 1A','5491164598463'],
@@ -20,5 +20,6 @@ export function ofizeusReply(contacts: RoutingContact[], prefix:string): {messag
   const c=contacts[0],variant=(c.linea_sub??'').trim().toLowerCase()
   const line=OFIZEUS_LINES.find(([n,v])=>c.linea!==null && Number(c.linea)===n && variant===v)
   if (!line) return {message:ADVISOR_FALLBACK,handoff:true}
-  return {message:`${prefix.trim()}\n\n${line[2]}\n+${line[3]}\nhttps://wa.me/${line[3]}`,handoff:false}
+  const formatted = `${line[3].slice(0,3)} | ${line[3].slice(3,7)} | ${line[3].slice(7)}`
+  return {message:`${prefix.trim()}\n\n${line[2]} ${formatted}`,handoff:false}
 }

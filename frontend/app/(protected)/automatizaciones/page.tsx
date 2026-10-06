@@ -625,7 +625,7 @@ export default function AutomatizacionesPage() {
 
               {form.type === 'reply' && (
                 <div>
-                  {(editTarget?.action_config as ReplyActionConfig)?.contact_line_directory === 'ofizeus' && <p className="mb-3 rounded-md border p-3 text-sm">Esta respuesta agrega automáticamente el nombre, número y enlace de la línea activa del agente ofizeus, respetando la variante. Si falta una asignación activa, avisa que lo atenderá un asesor y deriva la conversación. El texto siguiente es la introducción al número.</p>}
+                  {(editTarget?.action_config as ReplyActionConfig)?.contact_line_directory === 'ofizeus' && <p className="mb-3 rounded-md border p-3 text-sm">Esta respuesta agrega automáticamente el nombre y número separado por barras de la línea activa del agente ofizeus, respetando la variante. Si falta una asignación activa, avisa que lo atenderá un asesor y deriva la conversación. El texto siguiente es la introducción al número.</p>}
                   <label className="block text-xs text-muted-foreground mb-1">Mensaje de respuesta *</label>
                   <textarea
                     className="w-full border border-input rounded-md text-sm px-3 py-2 h-28 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"

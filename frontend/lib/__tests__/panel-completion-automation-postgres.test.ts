@@ -79,7 +79,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3,linea_sub='a';UPDATE automations SET trigger_type='keyword',trigger_config='{"keywords":["Más info"]}',action_config='{"message":"Hola {{nombre}}, esta es tu línea:","contact_line_directory":"ofizeus"}'`)
   await Promise.all([evaluateAutomations(phone,'Más info','routing-a',source),evaluateAutomations(phone,'Más info','routing-a',source)])
   expect(m.send).toHaveBeenCalledTimes(1)
-  expect(m.send.mock.calls[0][0].request.text.body).toBe('Hola Ana, esta es tu línea:\n\nOFI 3A\n+5491124915455\nhttps://wa.me/5491124915455')
+  expect(m.send.mock.calls[0][0].request.text.body).toBe('Hola Ana, esta es tu línea:\n\nOFI 3A 549 | 1124 | 915455')
   expect(m.send.mock.calls[0][0].request.phoneNumberId).toBe('phone-a')
  })
  it('hands unknown variants to an advisor without substituting the primary line',async()=>{
@@ -95,7 +95,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3;INSERT INTO automations VALUES('${id(8)}','Routing','reply','keyword','{"keywords":["Mas info"]}','{"message":"Tu línea:","contact_line_directory":"ofizeus"}','${id(1)}',true,1,NOW())`)
   await evaluateAutomations(phone,'Más info','info-after-extra',source)
   expect(m.send).toHaveBeenCalledTimes(2)
-  expect(m.send.mock.calls[1][0].request.text.body).toContain('https://wa.me/5491154726043')
+  expect(m.send.mock.calls[1][0].request.text.body).toContain('ZEUS 3 549 | 1154 | 726043')
  })
  it('does not send Ofizeus destinations to other agents',async()=>{
   await pool.query(`UPDATE contacts SET panel='royal',linea=3;UPDATE automations SET action_config='{"message":"Tu línea:","contact_line_directory":"ofizeus"}'`)
