@@ -12,6 +12,12 @@ export async function GET(req: NextRequest) {
     for (const table of ['cloud_conversations','cloud_messages','cloud_opt_outs','cloud_stop_keywords','cloud_consent_log','cloud_sync_state']) await query(`SELECT 1 FROM ${table} LIMIT 0`)
     database = true
   } catch { /* report readiness without database internals */ }
-  const config = cloudConfiguration()
-  return NextResponse.json({ ...config, checks: { ...config.checks, database, redis: !!process.env.REDIS_URL }, webhookPath: '/api/cloud/webhook' }, { headers: { 'Cache-Control': 'no-store' } })
+  const headers = { 'Cache-Control': 'no-store' }
+  try {
+    const config = cloudConfiguration()
+    const shared = { database, redis: !!process.env.REDIS_URL }
+    return NextResponse.json({ ...config, checks: { ...config.checks, ...shared }, apps: config.apps.map(app => ({ ...app, checks: { ...app.checks, ...shared } })) }, { headers })
+  } catch {
+    return NextResponse.json({ error: 'Revisá la configuración de aplicaciones Meta adicionales en el servidor.' }, { status: 503, headers })
+  }
 }

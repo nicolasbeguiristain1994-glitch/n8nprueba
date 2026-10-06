@@ -85,6 +85,42 @@ Used by `scripts/ops/run-migrations.mjs` — note the different prefix:
 
 ### Messaging
 
+#### Independent Meta applications
+
+The existing `META_APP_ID`, `META_APP_SECRET`, `META_WEBHOOK_VERIFY_TOKEN` and
+`TOKEN_ENCRYPTION_KEY` remain unchanged. Direct Cloud API connections can use an
+additional application configured through the **server-only secret**
+`META_ADDITIONAL_APPS_JSON` (unset or `[]` keeps the existing single-app behavior).
+
+Its value is a JSON array of objects with `appId`, `name`, `appSecret`,
+`verifyToken` and `wabaIds`. Each `wabaIds` array must explicitly list the WABAs
+authorized for that app. IDs must be numeric, app IDs and WABA assignments must
+be unique, and each app needs its own secret and verification token of at least
+16 characters. Never place real values in source control, browser storage, logs
+or a `NEXT_PUBLIC_` variable.
+
+The onboarding screen lists configured apps and displays the corresponding
+callback: `/api/cloud/webhook/<appId>` for additional apps, `/api/cloud/webhook`
+for the original app. Each callback verifies only its own HMAC-SHA256 signature
+and rejects WABAs assigned to another app before processing any event. Token
+validation and refresh also use the assigned app. Embedded Signup/coexistence
+continues to use the original app; additional apps use direct onboarding.
+
+Configure the registry only after confirming asset ownership and authorization
+in Meta. Adding a WABA reserves it to that app, so do not reassign an existing
+line during onboarding. Keep entries while their lines remain connected; removing
+an entry does not migrate its tokens or subscriptions. Malformed or duplicate
+configuration fails closed for **all** Cloud webhook callbacks and connections;
+validate the JSON before deployment. The authenticated config API returns IDs,
+names, WABA assignments, callback paths and readiness flags, never credentials.
+
+No database migration or encryption-key rotation is needed for this setting.
+Configure the app's webhook in Meta, subscribe `messages` (and
+`message_template_status_update` for template status), then validate its system
+user token and phone membership through `/lines/cloud-onboard`. Verify real
+inbound events, an authorized test send and delivery status separately from SMS
+verification, display-name review and number registration.
+
 | Variable | Description |
 |---|---|
 | `N8N_URL` | Server-side URL for n8n webhook calls (e.g. `https://n8n.yourdomain.com`) |

@@ -3,6 +3,7 @@ import { withTransaction } from '@/lib/db'
 import { MetaHttpGateway } from './infrastructure/meta-http.gateway'
 import { PhoneNumberService } from './infrastructure/phone-number.service'
 import { CloudApiError } from './errors'
+import { appChecks, metaApp, metaApps, publicAppConfiguration } from './app-config'
 
 const metaId = z.string().regex(/^\d{5,30}$/)
 export const DirectConnectionSchema = z.object({
@@ -13,22 +14,16 @@ export const DirectConnectionSchema = z.object({
 }).strict().refine(v => !v.register || !!v.pin, { message: 'El registro requiere el PIN de seis dígitos.', path: ['pin'] })
 
 export function cloudConfiguration() {
-  return {
-    appId: process.env.META_APP_ID || '',
-    checks: {
-      appId: /^\d+$/.test(process.env.META_APP_ID || ''),
-      appSecret: !!process.env.META_APP_SECRET && process.env.META_APP_SECRET !== 'replace-me',
-      verifyToken: !!process.env.META_WEBHOOK_VERIFY_TOKEN && !process.env.META_WEBHOOK_VERIFY_TOKEN.startsWith('replace-'),
-      encryptionKey: (process.env.TOKEN_ENCRYPTION_KEY?.length ?? 0) >= 32 && !process.env.TOKEN_ENCRYPTION_KEY?.startsWith('replace-'),
-    },
-  }
+  const apps = metaApps().map(publicAppConfiguration)
+  return { ...apps[0], apps }
 }
 
 // Validate the supplied token against this app and prove phone membership in the WABA.
 export async function validateCloudAssets(token: string, appId: string, wabaId: string, phoneNumberId: string) {
-  const appSecret = process.env.META_APP_SECRET
-  if (!appSecret || appId !== process.env.META_APP_ID) throw new CloudApiError('El App ID debe coincidir con la aplicación configurada en el servidor.')
-  const debug = await new MetaHttpGateway(`${appId}|${appSecret}`).get<{ data: {
+  const app = metaApp(appId)
+  if (!app?.appSecret) throw new CloudApiError('El App ID debe coincidir con una aplicación configurada en el servidor.')
+  if (!app.permitsWaba(wabaId)) throw new CloudApiError('La WABA no está asignada a la aplicación seleccionada.')
+  const debug = await new MetaHttpGateway(`${appId}|${app.appSecret}`).get<{ data: {
     is_valid: boolean; app_id: string; scopes?: string[]; expires_at?: number; data_access_expires_at?: number
   } }>(`/debug_token?input_token=${encodeURIComponent(token)}`)
   const info = debug.data
@@ -56,7 +51,8 @@ export async function validateCloudAssets(token: string, appId: string, wabaId: 
 }
 
 export async function connectDirectNumber(input: z.infer<typeof DirectConnectionSchema>, userId: string) {
-  if (!Object.values(cloudConfiguration().checks).every(Boolean)) throw new CloudApiError('Falta completar la configuración de Meta y cifrado en el servidor.')
+  const app = metaApp(input.appId)
+  if (!app || !Object.values(appChecks(app)).every(Boolean)) throw new CloudApiError('Falta completar la configuración de la aplicación Meta y cifrado en el servidor.')
   const expiresAt = await validateCloudAssets(input.accessToken, input.appId, input.wabaId, input.phoneNumberId)
   const svc = new PhoneNumberService(input.accessToken)
   let phone = await svc.getInfo(input.phoneNumberId)
