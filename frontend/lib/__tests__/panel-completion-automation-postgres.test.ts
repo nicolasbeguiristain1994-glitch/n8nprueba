@@ -82,6 +82,13 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   expect(m.send.mock.calls[0][0].request.text.body).toBe('Hola Ana, esta es tu línea:\n\nOFI 3A 549 | 1124 | 915455')
   expect(m.send.mock.calls[0][0].request.phoneNumberId).toBe('phone-a')
  })
+ it('renders the number variable before persisting and sending the reply',async()=>{
+  await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3,linea_sub='a';UPDATE automations SET action_config='{"message":"Hola {{nombre}}!\\nLines designada: {{2}}","contact_line_directory":"ofizeus"}'`)
+  await evaluateAutomations(phone,'información','variable-number',source)
+  const expected='Hola Ana!\nLines designada: 549 | 1124 | 915455'
+  expect(m.send.mock.calls[0][0].request.text.body).toBe(expected)
+  expect((await pool.query('SELECT body FROM automation_message_jobs')).rows[0].body).toBe(expected)
+ })
  it('hands unknown variants to an advisor without substituting the primary line',async()=>{
   await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3,linea_sub='b';UPDATE automations SET action_config='{"message":"Tu línea:","contact_line_directory":"ofizeus"}'`)
   await evaluateAutomations(phone,'información','routing-b',source)

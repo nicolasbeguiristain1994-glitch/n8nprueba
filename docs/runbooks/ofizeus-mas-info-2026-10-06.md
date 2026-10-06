@@ -11,3 +11,9 @@ Sólo usa contactos no eliminados y el agente primario. Dos registros con el mis
 Los pasos se persisten antes del envío y se conserva el control de resultados inciertos. Las pruebas simulan al proveedor: no disparan mensajes a clientes reales. No requiere cambios de esquema. Antes de activar: respaldar automatizaciones, publicar por el ejecutor y CI, verificar identidad, crear únicamente la regla revisada y revalidar configuración. No reproducir clics históricos ni reactivar trabajos anteriores.
 
 Recuperación: pausar exclusivamente la nueva regla. Conservar logs y trabajos; la automatización anterior no se modifica. Revertir aplicación requiere un commit nuevo por el ejecutor verificado.
+
+## Variable editable
+
+La respuesta admite `{{2}}` (también con espacios internos), reemplazado por el número agrupado de la línea correspondiente. Sólo inserta el número en cada aparición, sin nombre de línea ni pie adicional. Conserva saltos de línea, emojis y las variables existentes. Los mensajes de la versión anterior sin `{{2}}` conservan su pie automático hasta ser editados.
+
+En Automatizaciones, agregar `{{2}}` a una respuesta activa el directorio Ofizeus al guardar. Se muestra una vista previa etiquetada como ejemplo de línea 3A. La automatización existente de Más info permanece activa; se actualiza su mensaje con el ejemplo exacto del usuario, respaldando primero su configuración. No se alteran desencadenantes, frecuencia, prioridad ni las otras reglas.

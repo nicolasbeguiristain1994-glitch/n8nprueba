@@ -1,3 +1,5 @@
+import { hasAssignedLineVariable, replaceAssignedLineVariable } from './assigned-line-variable'
+
 /** Active Ofizeus destinations provided by the operator on 2026-10-06.
  * Main lines have no variant. Never substitute a main line for an unknown variant.
  * These are displayed destinations, not sending credentials or Cloud sender IDs.
@@ -21,5 +23,10 @@ export function ofizeusReply(contacts: RoutingContact[], prefix:string): {messag
   const line=OFIZEUS_LINES.find(([n,v])=>c.linea!==null && Number(c.linea)===n && variant===v)
   if (!line) return {message:ADVISOR_FALLBACK,handoff:true}
   const formatted = `${line[3].slice(0,3)} | ${line[3].slice(3,7)} | ${line[3].slice(7)}`
-  return {message:`${prefix.trim()}\n\n${line[2]} ${formatted}`,handoff:false}
+  // Preserve the earlier append behavior for already configured messages. A
+  // variable inserts only the number in place, without adding another footer.
+  const message = hasAssignedLineVariable(prefix)
+    ? replaceAssignedLineVariable(prefix.trim(), formatted)
+    : `${prefix.trim()}\n\n${line[2]} ${formatted}`
+  return {message,handoff:false}
 }

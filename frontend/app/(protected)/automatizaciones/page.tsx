@@ -1,5 +1,6 @@
 'use client'
 
+import { hasAssignedLineVariable, replaceAssignedLineVariable } from '@/lib/assigned-line-variable'
 import { useEffect, useState, useCallback } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -216,7 +217,7 @@ export default function AutomatizacionesPage() {
     let action_config: ActionConfig
     if (form.type === 'reply') {
       if (!form.message.trim()) { setSaveError('El mensaje de respuesta es requerido'); return }
-      action_config = { message: form.message.trim(), ...((editTarget?.action_config as ReplyActionConfig)?.contact_line_directory === 'ofizeus' ? { contact_line_directory: 'ofizeus' as const } : {}) }
+      action_config = { message: form.message.trim(), ...(((editTarget?.action_config as ReplyActionConfig)?.contact_line_directory === 'ofizeus' || hasAssignedLineVariable(form.message)) ? { contact_line_directory: 'ofizeus' as const } : {}) }
     } else if (form.type === 'flow') {
       const steps = form.flow_steps.split('\n').map(l => l.trim()).filter(Boolean).map(l => ({ message: l }))
       if (steps.length === 0) { setSaveError('Ingresá al menos un paso'); return }
@@ -625,7 +626,7 @@ export default function AutomatizacionesPage() {
 
               {form.type === 'reply' && (
                 <div>
-                  {(editTarget?.action_config as ReplyActionConfig)?.contact_line_directory === 'ofizeus' && <p className="mb-3 rounded-md border p-3 text-sm">Esta respuesta agrega automáticamente el nombre y número separado por barras de la línea activa del agente ofizeus, respetando la variante. Si falta una asignación activa, avisa que lo atenderá un asesor y deriva la conversación. El texto siguiente es la introducción al número.</p>}
+                  <p className="mb-3 rounded-md border p-3 text-sm">Usá <code>{'{{2}}'}</code> donde quieras mostrar el número de la línea asignada de Ofizeus, separado por barras. Respeta la línea y variante del contacto. Si falta una asignación activa, avisa que lo atenderá un asesor y deriva la conversación.</p>
                   <label className="block text-xs text-muted-foreground mb-1">Mensaje de respuesta *</label>
                   <textarea
                     className="w-full border border-input rounded-md text-sm px-3 py-2 h-28 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"
@@ -636,10 +637,16 @@ export default function AutomatizacionesPage() {
                   <p className="text-xs text-muted-foreground mt-1">
                     Variables disponibles: <code className="bg-muted px-1 rounded">{'{{nombre}}'}</code>{' '}
                     <code className="bg-muted px-1 rounded">{'{{empresa}}'}</code>{' '}
-                    <code className="bg-muted px-1 rounded">{'{{fecha}}'}</code>
+                    <code className="bg-muted px-1 rounded">{'{{fecha}}'}</code>{' '}
+                    <code className="bg-muted px-1 rounded">{'{{2}}'}</code> (línea de Ofizeus)
                   </p>
                 </div>
               )}
+
+              {form.type === 'reply' && hasAssignedLineVariable(form.message) && <div className="rounded-md bg-muted/40 p-3" aria-label="Vista previa de línea asignada">
+                <p className="mb-2 text-xs font-medium text-muted-foreground">Ejemplo: contacto de Ofizeus, línea 3A</p>
+                <p className="whitespace-pre-wrap break-words text-sm">{replaceAssignedLineVariable(form.message, '549 | 1124 | 915455')}</p>
+              </div>}
 
               {form.type === 'flow' && (
                 <div>
