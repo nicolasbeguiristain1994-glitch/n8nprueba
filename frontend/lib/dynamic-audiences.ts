@@ -2,7 +2,7 @@ import { query, withTransaction } from './db'
 import { resolvedContactFilters, ContactFilterError } from './contact-filters'
 import { contactScope, type ContactAccessUser } from './contact-visibility'
 
-const KEYS = new Set(['q','segment','gaming','panel','linea','linea_sub','actividad','antiguedad','plataforma','sin_movimiento','tag','inactividad_desde','inactividad_hasta','movimiento_modo','calidad','depositos_recientes'])
+const KEYS = new Set(['q','segment','gaming','panel','linea','linea_sub','actividad','antiguedad','plataforma','sin_movimiento','tag','inactividad_desde','inactividad_hasta','movimiento_modo','calidad','depositos_recientes','difusion','difusion_dias','difusion_desde','difusion_hasta'])
 export function savedAudienceParams(value: unknown): URLSearchParams {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ContactFilterError('Filtros de audiencia inválidos')
   const result = new URLSearchParams()
