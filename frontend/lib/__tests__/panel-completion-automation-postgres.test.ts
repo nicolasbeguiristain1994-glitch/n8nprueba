@@ -22,17 +22,17 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
    CREATE TABLE conversation_state(phone_number text,is_escalated boolean,escalated_at timestamptz,escalation_reason text,resolved_at timestamptz,updated_at timestamptz);
    CREATE UNIQUE INDEX active_conversation ON conversation_state(phone_number) WHERE resolved_at IS NULL;
    CREATE TABLE blacklist(phone_number_normalized text,removed_at timestamptz);
-   CREATE TABLE contacts(phone_number text,first_name text,panel text);
+   CREATE TABLE contacts(phone_number text,first_name text,panel text,linea int,linea_sub text,deleted_at timestamptz);
    CREATE TABLE cloud_numbers(phone_number_id text,whatsapp_line_id uuid,status text);
    CREATE TABLE whatsapp_lines(id uuid,status text,is_connected boolean,sending_enabled boolean);
-   INSERT INTO users VALUES('${id(1)}',true,'admin');INSERT INTO contacts VALUES('${phone}','Ana','Panel');
+   INSERT INTO users VALUES('${id(1)}',true,'admin');INSERT INTO contacts(phone_number,first_name,panel) VALUES('${phone}','Ana','Panel');
    INSERT INTO whatsapp_lines VALUES('${id(2)}','active',true,true);INSERT INTO cloud_numbers VALUES('phone-a','${id(2)}','active'),('phone-b','${id(2)}','active');`)
   await pool.query(readFileSync('../db/migrations/134_automation_delivery_jobs.sql','utf8'))
   m.query.mockImplementation(async(sql,params)=>(await pool.query(sql,params)).rows)
   m.tx.mockImplementation(async fn=>{const db=await pool.connect();try{await db.query('BEGIN');const r=await fn(db);await db.query('COMMIT');return r}catch(e){await db.query('ROLLBACK');throw e}finally{db.release()}})
  })
  beforeEach(async()=>{
-  await pool.query(`TRUNCATE automation_message_jobs,automation_inbound_receipts,automations,automation_logs,conversation_state,blacklist;UPDATE users SET is_active=true;UPDATE whatsapp_lines SET sending_enabled=true;
+  await pool.query(`TRUNCATE automation_message_jobs,automation_inbound_receipts,automations,automation_logs,conversation_state,blacklist;UPDATE contacts SET panel='Panel',linea=NULL,linea_sub=NULL,deleted_at=NULL;UPDATE users SET is_active=true;UPDATE whatsapp_lines SET sending_enabled=true;
    INSERT INTO automations VALUES('${id(3)}','Reply','reply','contains','{"keywords":["información"]}','{"message":"Hola {{nombre}}"}','${id(1)}',true,1,NOW())`)
   m.send.mockReset().mockResolvedValue({status:'sent',wamid:'fake'});m.emit.mockClear()
  })
@@ -74,6 +74,33 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   await pool.query(`UPDATE automations SET type='handoff',action_config='{}'`)
   await evaluateAutomations(phone,'informacion','event-7',source);expect(m.send).not.toHaveBeenCalled()
   expect((await pool.query('SELECT is_escalated FROM conversation_state')).rows[0].is_escalated).toBe(true)
+ })
+ it('routes Ofizeus More info to the exact variant once per inbound event',async()=>{
+  await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3,linea_sub='a';UPDATE automations SET trigger_type='keyword',trigger_config='{"keywords":["Más info"]}',action_config='{"message":"Hola {{nombre}}, esta es tu línea:","contact_line_directory":"ofizeus"}'`)
+  await Promise.all([evaluateAutomations(phone,'Más info','routing-a',source),evaluateAutomations(phone,'Más info','routing-a',source)])
+  expect(m.send).toHaveBeenCalledTimes(1)
+  expect(m.send.mock.calls[0][0].request.text.body).toBe('Hola Ana, esta es tu línea:\n\nOFI 3A\n+5491124915455\nhttps://wa.me/5491124915455')
+  expect(m.send.mock.calls[0][0].request.phoneNumberId).toBe('phone-a')
+ })
+ it('hands unknown variants to an advisor without substituting the primary line',async()=>{
+  await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3,linea_sub='b';UPDATE automations SET action_config='{"message":"Tu línea:","contact_line_directory":"ofizeus"}'`)
+  await evaluateAutomations(phone,'información','routing-b',source)
+  expect(m.send).toHaveBeenCalledTimes(1)
+  expect(m.send.mock.calls[0][0].request.text.body).toContain('Un asesor te atenderá')
+  expect(m.send.mock.calls[0][0].request.text.body).not.toContain('wa.me')
+  expect((await pool.query('SELECT is_escalated FROM conversation_state')).rows[0].is_escalated).toBe(true)
+ })
+ it('responds to More info even when EXTRA just sent its separate reply',async()=>{
+  await evaluateAutomations(phone,'información','extra-before-info',source)
+  await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3;INSERT INTO automations VALUES('${id(8)}','Routing','reply','keyword','{"keywords":["Mas info"]}','{"message":"Tu línea:","contact_line_directory":"ofizeus"}','${id(1)}',true,1,NOW())`)
+  await evaluateAutomations(phone,'Más info','info-after-extra',source)
+  expect(m.send).toHaveBeenCalledTimes(2)
+  expect(m.send.mock.calls[1][0].request.text.body).toContain('https://wa.me/5491154726043')
+ })
+ it('does not send Ofizeus destinations to other agents',async()=>{
+  await pool.query(`UPDATE contacts SET panel='royal',linea=3;UPDATE automations SET action_config='{"message":"Tu línea:","contact_line_directory":"ofizeus"}'`)
+  await evaluateAutomations(phone,'información','routing-other',source)
+  expect(m.send).not.toHaveBeenCalled()
  })
  it('validates step limits and accents in keyword matching',()=>{
   expect(automationMatches({trigger_type:'keyword',trigger_config:{keywords:['Información']}},'informacion')).toBe(true)
