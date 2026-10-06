@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Client } from 'pg'
-import { campaignLineEligibleExpr } from '@/lib/line-eligibility'
+import { campaignLineEligibleExpr, cloudReplyEligibleExpr } from '@/lib/line-eligibility'
 import { effectivePermissions } from '@/lib/permissions'
 
 it('includes effective permissions for all three independently assigned modules', () => {
@@ -21,15 +21,24 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('line eligibility for
     await db.query(`BEGIN;
       CREATE TEMP TABLE cloud_numbers(whatsapp_line_id int,status text);
       CREATE TEMP TABLE audit_lines(id int,line_type text,status text,is_connected bool,sending_enabled bool,msgs_sent_hour int,msg_per_hour int,msgs_sent_today int,msg_per_day int,allowed_types jsonb);
-      INSERT INTO audit_lines SELECT n,CASE WHEN n=1 THEN 'evolution' ELSE 'cloud' END,'active',true,true,0,10,0,100,'["campaign"]' FROM generate_series(1,7)n;
-      INSERT INTO cloud_numbers VALUES(2,'active'),(3,'pending'),(4,'active'),(5,'active'),(6,'active');
+      INSERT INTO audit_lines SELECT n,CASE WHEN n=1 THEN 'evolution' ELSE 'cloud' END,'active',true,true,0,10,0,100,'["campaign"]' FROM generate_series(1,10)n;
+      INSERT INTO cloud_numbers VALUES(2,'active'),(3,'pending'),(4,'active'),(5,'active'),(6,'active'),(8,'active'),(9,'active'),(10,'active');
       UPDATE audit_lines SET sending_enabled=false WHERE id=4;
       UPDATE audit_lines SET msgs_sent_today=msg_per_day WHERE id=5;
-      UPDATE audit_lines SET allowed_types='["manual"]' WHERE id=6;`)
+      UPDATE audit_lines SET allowed_types='["manual"]' WHERE id=6;
+      UPDATE audit_lines SET status='paused' WHERE id=8;
+      UPDATE audit_lines SET is_connected=false WHERE id=9;
+      UPDATE audit_lines SET msgs_sent_hour=msg_per_hour WHERE id=10;`)
   })
   afterAll(async () => { if (db) { await db.query('ROLLBACK'); await db.end() } })
   it('shows Evolution and registered Cloud lines as eligible, respecting kill switch, quotas and allowed traffic', async () => {
     const rows = (await db.query(`SELECT id,${campaignLineEligibleExpr('l')} AS eligible FROM audit_lines l ORDER BY id`)).rows
-    expect(rows.map(r=>r.eligible)).toEqual([true,true,false,false,false,false,false])
+    expect(rows.map(r=>r.eligible)).toEqual([true,true,false,false,false,false,false,false,false,false])
+  })
+  it('allows Cloud replies independently of campaigns, while retaining registration, connection and quotas', async () => {
+    const rows = (await db.query(`SELECT id,(${cloudReplyEligibleExpr('l')}
+      AND EXISTS(SELECT 1 FROM cloud_numbers cn WHERE cn.whatsapp_line_id=l.id AND cn.status='active')) AS eligible
+      FROM audit_lines l ORDER BY id`)).rows
+    expect(rows.map(r=>r.eligible)).toEqual([false,true,false,true,false,true,false,false,false,false])
   })
 })

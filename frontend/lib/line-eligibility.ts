@@ -42,6 +42,15 @@ export function cloudEligibleExpr(tableAlias?: string): string {
     AND (${p}allowed_types IS NULL OR ${p}allowed_types @> '["campaign"]'::jsonb))`
 }
 
+/** Customer replies use the receiving Cloud number, independently of campaign opt-in. */
+export function cloudReplyEligibleExpr(tableAlias: string): string {
+  return `(${tableAlias}.line_type = 'cloud'
+    AND ${tableAlias}.status = 'active'
+    AND ${tableAlias}.is_connected = true
+    AND ${tableAlias}.msgs_sent_hour < ${tableAlias}.msg_per_hour
+    AND ${tableAlias}.msgs_sent_today < ${tableAlias}.msg_per_day)`
+}
+
 /** Same local eligibility used by distribution, including active Cloud registration. */
 export function campaignLineEligibleExpr(tableAlias: string): string {
   return `(${lineEligibleExpr(tableAlias)} OR (${cloudEligibleExpr(tableAlias)}

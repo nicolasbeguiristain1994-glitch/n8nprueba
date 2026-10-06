@@ -177,6 +177,68 @@ describe('Cloud campaign template and send guards', () => {
   })
 })
 
+describe('manual Cloud reply guards', () => {
+  const reply = { kind: 'text' as const, body: 'Recibido', mediaUrl: null }
+  const options = { purpose: 'conversation_reply' as const, reserveCapacity: true }
+
+  it('sends a reply and reserves capacity without requiring campaign opt-in', async () => {
+    mocks.query.mockImplementation(sql => {
+      if (sql.includes('sending_enabled') || sql.includes('allowed_types')) return Promise.resolve([])
+      if (sql.includes('UPDATE whatsapp_lines wl')) return Promise.resolve([{ id: line.id }])
+      return successfulDb(sql)
+    })
+    await expect(sendViaCloud(line, unit.phone_number, reply, undefined, options)).resolves.toEqual({ messageId: 'wamid.test' })
+    expect(mocks.window).toHaveBeenCalledWith(line.phone_number_id, unit.phone_number)
+    expect(mocks.token).toHaveBeenCalledWith(line.phone_number_id)
+    expect(mocks.rate).toHaveBeenCalledWith(line.phone_number_id)
+    const reservation = mocks.query.mock.calls.findIndex(([sql]) => sql.includes('UPDATE whatsapp_lines wl'))
+    expect(mocks.query.mock.invocationCallOrder[reservation]).toBeLessThan(mocks.send.mock.invocationCallOrder[0])
+  })
+
+  it('refuses a reply when the original number becomes unavailable before sending', async () => {
+    mocks.query.mockResolvedValue([])
+    await expect(sendViaCloud(line, unit.phone_number, reply, undefined, options)).rejects.toThrow('capacidad para responder')
+    expect(mocks.send).not.toHaveBeenCalled()
+  })
+
+  it('retains sticker replies on the same number when campaigns are disabled', async () => {
+    mocks.query.mockImplementation(sql => {
+      if (sql.includes('sending_enabled') || sql.includes('allowed_types')) return Promise.resolve([])
+      if (sql.includes('UPDATE whatsapp_lines wl')) return Promise.resolve([{ id: line.id }])
+      return successfulDb(sql)
+    })
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ id: 'reply-sticker' }), { status: 200 }))
+    await sendViaCloud(line, unit.phone_number, { kind: 'sticker', data: 'data:image/webp;base64,dGVzdA==' }, undefined, options)
+    expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ phoneNumberId: line.phone_number_id, type: 'sticker', sticker: { id: 'reply-sticker' } }))
+  })
+
+  it('refuses a reply when another request takes the last quota slot', async () => {
+    await expect(sendViaCloud(line, unit.phone_number, reply, undefined, options)).rejects.toThrow('capacidad para responder')
+    expect(mocks.send).not.toHaveBeenCalled()
+  })
+
+  it('does not allow campaign sends or templates to opt into reply eligibility', async () => {
+    await expect(sendViaCloud(line, unit.phone_number, reply, campaign.id, options)).rejects.toThrow('no admite campañas')
+    await expect(sendViaCloud(line, unit.phone_number, templatePayload(), undefined, options)).rejects.toThrow('no admite campañas')
+    expect(mocks.send).not.toHaveBeenCalled()
+    expect(mocks.token).not.toHaveBeenCalled()
+  })
+
+  it('enforces opt-out before sending a manual reply', async () => {
+    mocks.optedOut.mockResolvedValue(true)
+    await expect(sendViaCloud(line, unit.phone_number, reply, undefined, options)).rejects.toBeInstanceOf(OptOutError)
+    expect(mocks.send).not.toHaveBeenCalled()
+    expect(mocks.query).not.toHaveBeenCalled()
+  })
+
+  it('enforces an open service window before sending a manual reply', async () => {
+    mocks.window.mockResolvedValue(null)
+    await expect(sendViaCloud(line, unit.phone_number, reply, undefined, options)).rejects.toBeInstanceOf(ConversationWindowError)
+    expect(mocks.send).not.toHaveBeenCalled()
+    expect(mocks.query).not.toHaveBeenCalled()
+  })
+})
+
 describe('campaign recipient fences and outcomes', () => {
   it('never calls Meta if the durable queued fence cannot be written', async () => {
     mocks.query.mockImplementation(sql => sql.includes('INSERT INTO whatsapp_messages') ? Promise.reject(new Error('storage unavailable')) : successfulDb(sql))

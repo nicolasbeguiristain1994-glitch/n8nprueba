@@ -6,7 +6,7 @@ import { isE164 } from '@/lib/validate'
 import { checkPermissionWithUser, isOwnerOrAdmin } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { parseBody, handleValidationError, SendSchema } from '@/lib/schema'
-import { getEligibleLines, selectLine, sendViaEvolution, sendViaCloud, type EligibleLine } from '@/lib/campaign-distributor'
+import { getEligibleLines, getEligibleReplyLines, selectLine, sendViaEvolution, sendViaCloud, type EligibleLine } from '@/lib/campaign-distributor'
 import { sseEmitter } from '@/lib/sse-events'
 import { getAccessibleLineIds } from '@/lib/line-visibility'
 import { findConversationReplyLine } from '@/lib/conversation-reply-line'
@@ -98,11 +98,13 @@ export async function POST(req: NextRequest) {
 
   // Visibility includes temporarily unavailable lines: a reply must not silently
   // move to another business number when its original sender has no capacity.
-  const [eligibleLines, accessibleLineIds] = await Promise.all([
+  const isManualReply = !campaign_id && uniquePhones.length === 1
+  const [eligibleLines, manualReplyLines, accessibleLineIds] = await Promise.all([
     getEligibleLines(session.is_super_admin ? undefined : session.user_id),
+    isManualReply ? getEligibleReplyLines(session.is_super_admin ? undefined : session.user_id) : Promise.resolve([]),
     getAccessibleLineIds(session),
   ])
-  if (eligibleLines.length === 0) {
+  if (eligibleLines.length === 0 && manualReplyLines.length === 0) {
     return NextResponse.json({ error: 'No hay líneas de WhatsApp disponibles' }, { status: 503 })
   }
 
@@ -112,11 +114,17 @@ export async function POST(req: NextRequest) {
   // Send sequentially (antiblock) — collect results in memory
   for (const phone of uniquePhones) {
     try {
-      const line = await findConversationReplyLine(phone, accessibleLineIds, eligibleLines)
-        ?? await getOrAssignLine(phone, eligibleLines)
-      const { messageId } = await (line.line_type === 'cloud'
-        ? sendViaCloud(line, phone, sticker ? {kind:'sticker',data:sticker_data!} : { kind: 'text', body: messageStr, mediaUrl: media_url || null }, campaign_id ?? undefined)
-        : sendViaEvolution(line, phone, messageStr, sticker ? sticker_data!.replace(/^data:image\/webp;base64,/,'') : media_url || null, sticker ? 'sticker' : undefined))
+      const replyLine = await findConversationReplyLine(phone, accessibleLineIds, isManualReply ? manualReplyLines : eligibleLines)
+      if (!replyLine && eligibleLines.length === 0) throw new Error('No hay líneas de WhatsApp disponibles para iniciar esta conversación.')
+      const line = replyLine ?? await getOrAssignLine(phone, eligibleLines)
+      const payload = sticker
+        ? { kind: 'sticker' as const, data: sticker_data! }
+        : { kind: 'text' as const, body: messageStr, mediaUrl: media_url || null }
+      const { messageId } = await (isManualReply && replyLine
+        ? sendViaCloud(line, phone, payload, undefined, { purpose: 'conversation_reply', reserveCapacity: true })
+        : line.line_type === 'cloud'
+          ? sendViaCloud(line, phone, payload, campaign_id ?? undefined)
+          : sendViaEvolution(line, phone, messageStr, sticker ? sticker_data!.replace(/^data:image\/webp;base64,/,'') : media_url || null, sticker ? 'sticker' : undefined))
 
       logs.push({
         phone_number:         phone,
