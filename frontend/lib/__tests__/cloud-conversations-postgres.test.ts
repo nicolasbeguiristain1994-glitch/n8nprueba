@@ -6,6 +6,7 @@ const mocks=vi.hoisted(()=>({query:vi.fn(),transaction:vi.fn(),auth:vi.fn(),line
 vi.mock('@/lib/db',()=>({query:mocks.query,withTransaction:mocks.transaction}))
 vi.mock('@/lib/permissions',()=>({checkPermissionWithUser:mocks.auth}))
 vi.mock('@/lib/line-visibility',()=>({getAccessibleLineIds:mocks.lines}))
+import { GET as windowGET } from '@/app/api/conversations/window/route'
 import { GET } from '@/app/api/conversations/route'
 import { cloudMessageText,cloudMessageTextSql } from '../cloud-api/message-content'
 import { conversationRepository } from '../cloud-api/repositories/conversation.repository'
@@ -188,4 +189,18 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   const a={id:id(10),phone_number_id:'10001'} as EligibleLine
   expect(await findConversationReplyLine(phone,[a.id],[a])).toBeNull()
  })
+ it('shows the window of the same latest visible Cloud line used for replies',async()=>{
+   await db.query("UPDATE cloud_conversations SET window_expires_at=NOW()+interval '2 hours' WHERE id=$1",[id(1)])
+   const response=await windowGET(request('?phone='+phone));expect(response.status).toBe(200)
+   const data=await response.json();expect(data.window.lineName).toBe('Difusion 1')
+   expect(Date.parse(data.window.expiresAt)-Date.parse(data.serverNow)).toBeGreaterThan(7190000)
+   mocks.lines.mockResolvedValue([])
+   expect((await (await windowGET(request('?phone='+phone))).json()).window).toBeNull()
+ })
+ it('shows closed windows and rejects deleted contacts',async()=>{
+   expect((await (await windowGET(request('?phone='+phone))).json()).window.expiresAt).toBeNull()
+   await db.query('UPDATE contacts SET deleted_at=NOW()')
+   expect((await windowGET(request('?phone='+phone))).status).toBe(403)
+ })
+
 })
