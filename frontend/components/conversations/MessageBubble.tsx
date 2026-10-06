@@ -6,7 +6,7 @@ const IMG_URL_RE = /^https?:\/\/\S+\.(jpg|jpeg|png|gif|webp)(\?[^\s]*)?$/i
 export function MessageBubble({ m }: { m: Message }) {
   const out    = m.direction === 'outbound'
   const failed = m.status === 'failed'
-  const imgUrl = IMG_URL_RE.test(m.message_body.trim()) ? m.message_body.trim() : null
+  const imgUrl = m.media_type==='sticker' && m.sticker_preview?.startsWith('data:image/webp;base64,') ? m.sticker_preview : IMG_URL_RE.test(m.message_body.trim()) ? m.message_body.trim() : null
 
   return (
     <div className={`flex ${out ? 'justify-end' : 'justify-start'}`}>
@@ -17,7 +17,7 @@ export function MessageBubble({ m }: { m: Message }) {
           : 'bg-card border border-border text-foreground rounded-bl-sm shadow-sm'
       }`}>
         {imgUrl
-          ? <img src={imgUrl} alt="media" className="rounded-lg max-w-full max-h-52 object-cover mb-1" />
+          ? <img src={imgUrl} alt={m.media_type==='sticker'?'Sticker':'Imagen'} className="rounded-lg max-w-full max-h-52 object-contain mb-1" />
           : <p className="leading-relaxed whitespace-pre-wrap break-words">{m.message_body}</p>
         }
         <div className={`flex items-center justify-end gap-1 text-[10px] mt-1 ${

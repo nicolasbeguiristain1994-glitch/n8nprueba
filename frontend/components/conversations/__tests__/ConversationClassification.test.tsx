@@ -15,9 +15,10 @@ describe('Conversation campaign and level labels', () => {
     ['vip', 'VIP bajo'], ['medio', 'Medio'], ['bajo', 'Bajo'], [null, 'Sin nivel'],
     ['casual', 'Casual'], ['regular', 'Regular'], ['whale', 'Whale'],
   ])('shows %s consistently in the chat list and header', (segment, label) => {
-    const conv = { ...base, segment }
+    const conv = { ...base, segment,agent:'royal' }
     render(<><ConversationItem conv={conv} isSelected={false} onClick={vi.fn()} /><ConversationHeader phone={conv.phone_number} conv={conv} /></>)
     expect(screen.getAllByText(label)).toHaveLength(2)
+    expect(screen.getAllByTitle('Agente: royal')).toHaveLength(2)
     expect(screen.getAllByText('Sin campaña')).toHaveLength(2)
   })
 
@@ -32,11 +33,13 @@ describe('Conversation campaign and level labels', () => {
   })
 
   it('offers independent campaign and exact level filters', () => {
-    const onCampaign = vi.fn(), onLevel = vi.fn()
+    const onCampaign = vi.fn(), onLevel = vi.fn(), onAgent=vi.fn()
     render(<ConversationFilters convs={[]} search="" filter="all" campaign="all" level="all"
-      campaigns={[{ id: 'a', name: 'Extra Royal', count: 205 }]} onCampaign={onCampaign} onLevel={onLevel}
+      agent="all" agents={[{name:'royal',count:205}]} onAgent={onAgent} campaigns={[{ id: 'a', name: 'Extra Royal', count: 205 }]} onCampaign={onCampaign} onLevel={onLevel}
       dateFrom="" dateTo="" followUpOnly={false} realtimeStatus="connected" notifPermission="default"
       searchRef={createRef()} onSearch={vi.fn()} onFilter={vi.fn()} onDateFrom={vi.fn()} onDateTo={vi.fn()} onFollowUp={vi.fn()} onRequestNotif={vi.fn()} />)
+    fireEvent.change(screen.getByLabelText('Filtrar por agente'), {target:{value:'royal'}})
+    expect(onAgent).toHaveBeenCalledWith('royal')
     fireEvent.click(screen.getByRole('button', { name: /Filtros avanzados/ }))
     fireEvent.change(screen.getByLabelText('Filtrar por campaña'), { target: { value: 'a' } })
     fireEvent.change(screen.getByLabelText('Filtrar por nivel'), { target: { value: 'vip_medio' } })

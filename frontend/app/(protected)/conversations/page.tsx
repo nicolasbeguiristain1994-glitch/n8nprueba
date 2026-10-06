@@ -14,6 +14,7 @@ import { ConversationHeader }     from '@/components/conversations/ConversationH
 import { MessageBubble }          from '@/components/conversations/MessageBubble'
 import { QuickTemplates }         from '@/components/conversations/QuickTemplates'
 import { ConversationSidebar }    from '@/components/conversations/ConversationSidebar'
+import { StickerPicker } from '@/components/conversations/StickerPicker'
 import { EmojiPicker }            from '@/components/conversations/EmojiPicker'
 
 export default function Conversations() {
@@ -22,12 +23,12 @@ export default function Conversations() {
     convs, visible, selected, selectedConv, messages, messagesEndRef,
     reply, setReply, sending, sendError, setSendError,
     filter, setFilter, search, setSearch,
-    campaign, setCampaign, campaigns, level, setLevel,
+    campaign, setCampaign, campaigns, level, setLevel, agent, setAgent, agents,
     dateFrom, setDateFrom, dateTo, setDateTo,
     followUpOnly, setFollowUpOnly,
     realtimeStatus,
     notifPermission, requestNotif,
-    openConv, sendReply,
+    openConv, sendReply, sendSticker,
     totalConvs, hasMore, loadingMore, loadMoreConvs,
   } = useConversations()
 
@@ -47,7 +48,7 @@ export default function Conversations() {
 
   useKeyboardShortcuts([
     { key: 'F', ctrl: true, shift: true, handler: () => searchRef.current?.focus() },
-    { key: 'Escape', handler: () => { setSearch(''); setFilter('all'); setCampaign('all'); setLevel('all'); setDateFrom(''); setDateTo(''); setFollowUpOnly(false); setShowEmoji(false) } },
+    { key: 'Escape', handler: () => { setSearch(''); setFilter('all'); setCampaign('all'); setLevel('all'); setAgent('all'); setDateFrom(''); setDateTo(''); setFollowUpOnly(false); setShowEmoji(false) } },
     { key: 'V', ctrl: true, shift: true,
       handler: async () => {
         if (!selectedConv?.contact_id) return
@@ -85,7 +86,7 @@ export default function Conversations() {
           <ConversationFilters
             convs={convs} search={search} filter={filter}
             campaign={campaign} campaigns={campaigns} onCampaign={setCampaign}
-            level={level} onLevel={setLevel}
+            level={level} onLevel={setLevel} agent={agent} agents={agents} onAgent={setAgent}
             dateFrom={dateFrom} dateTo={dateTo} followUpOnly={followUpOnly}
             realtimeStatus={realtimeStatus} notifPermission={notifPermission}
             searchRef={searchRef}
@@ -159,6 +160,7 @@ export default function Conversations() {
                 <div className="border-t border-border p-3 bg-card shrink-0">
                   {reply.trim() && <p className="mb-2 text-xs text-muted-foreground" role="status">Borrador de este contacto · se conserva al cambiar de chat durante esta sesión</p>}
                   <div className="flex gap-2 items-start">
+                    <StickerPicker key={selected} disabled={sending} onSend={sendSticker} />
                     <QuickTemplates
                       contactName={selectedConv?.first_name}
                       onSelect={setReply}

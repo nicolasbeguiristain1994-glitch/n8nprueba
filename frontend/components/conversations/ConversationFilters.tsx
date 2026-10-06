@@ -22,6 +22,9 @@ interface Props {
   filter:         Filter
   campaign:       string
   campaigns:      CampaignOption[]
+  agent?: string
+  agents?: {name:string;count:number}[]
+  onAgent?: (value:string)=>void
   level:          LevelFilter
   onCampaign:     (v: string) => void
   onLevel:        (v: LevelFilter) => void
@@ -46,11 +49,11 @@ const BELL_TITLE: Record<NotificationPermission, string> = {
 }
 
 export function ConversationFilters({
-  convs, search, filter, campaign, campaigns, level, onCampaign, onLevel, dateFrom, dateTo, followUpOnly, realtimeStatus, notifPermission,
+  convs, search, filter, campaign, campaigns, level, agent='all', agents=[], onAgent, onCampaign, onLevel, dateFrom, dateTo, followUpOnly, realtimeStatus, notifPermission,
   searchRef, onSearch, onFilter, onDateFrom, onDateTo, onFollowUp, onRequestNotif,
 }: Props) {
   const [showAdv, setShowAdv] = useState(false)
-  const hasAdv = !!dateFrom || !!dateTo || campaign !== 'all' || level !== 'all' || !['all','unread'].includes(filter)
+  const hasAdv = agent !== 'all' || !!dateFrom || !!dateTo || campaign !== 'all' || level !== 'all' || !['all','unread'].includes(filter)
 
   return (
     <div className="border-b border-border p-3 space-y-3 shrink-0">
@@ -84,6 +87,13 @@ export function ConversationFilters({
           />
         </div>
       </div>
+
+      <label className="block text-xs font-medium text-muted-foreground">Agente
+        <select aria-label="Filtrar por agente" value={agent} onChange={e=>onAgent?.(e.target.value)} className="mt-1 h-8 w-full rounded-md border border-border bg-card px-2 text-xs text-foreground">
+          <option value="all">Todos los agentes</option><option value="none">Sin agente</option>
+          {agents.map(item=><option key={item.name} value={item.name}>{item.name} ({item.count})</option>)}
+        </select>
+      </label>
 
       {/* Filter pills + advanced toggle */}
       <div className="flex flex-wrap gap-1 items-center">

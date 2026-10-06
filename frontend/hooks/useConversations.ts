@@ -24,6 +24,8 @@ export function useConversations() {
   const [sendError, setSendError]       = useState<string | null>(null)
   const [filter, setFilter]             = useState<Filter>('all')
   const [campaign, setCampaign]         = useState('all')
+  const [agent, setAgent] = useState('all')
+  const [agents, setAgents] = useState<{name:string;count:number}[]>([])
   const [level, setLevel]               = useState<LevelFilter>('all')
   const [campaigns, setCampaigns]       = useState<CampaignOption[]>([])
   const [selectedSnapshot, setSelectedSnapshot] = useState<Conv>()
@@ -47,6 +49,7 @@ export function useConversations() {
   const messagesInFlight = useRef<{ phone: string; controller: AbortController; queued: boolean; queuedScroll: boolean } | null>(null)
   const scope = new URLSearchParams()
   if (campaign !== 'all') scope.set('campaign', campaign)
+  if (agent !== 'all') scope.set('agent', agent)
   if (level !== 'all') scope.set('level', level)
   const scopeKey = scope.toString()
   const scopeRef = useRef(scopeKey)
@@ -73,7 +76,7 @@ export function useConversations() {
     // Poll every loaded page, so refreshing does not discard paginated results.
     const pages = Math.max(1, Math.ceil(loadedCountRef.current / 200))
     void Promise.all(Array.from({ length: pages }, (_, i) =>
-      fetchJson<{ conversations: Conv[]; total: number; campaigns?: CampaignOption[] }>(listUrl(i * 200), { signal: pending.controller.signal })
+      fetchJson<{ conversations: Conv[]; total: number; campaigns?: CampaignOption[]; agents?: {name:string;count:number}[] }>(listUrl(i * 200), { signal: pending.controller.signal })
     ))
       .then(results => {
         if (!isCurrent()) return
@@ -84,6 +87,7 @@ export function useConversations() {
         loadedCountRef.current = merged.length
         setTotalConvs(d.total || 0)
         setCampaigns(d.campaigns || [])
+        setAgents(d.agents || [])
       })
       .catch(() => { if (isCurrent()) setLoadError('No se pudieron cargar las conversaciones.') })
       .finally(() => {
@@ -232,8 +236,23 @@ export function useConversations() {
     loadMessages(phone, true)
   }, [loadMessages, convs])
 
+  const sendingRef=useRef(false)
+  const sendSticker = async (url:string, token:string):Promise<boolean> => {
+    const phone=selectedRef.current
+    if(!phone || sendingRef.current)return false
+    sendingRef.current=true;setSending(true);setSendError(null)
+    try {
+      const response=await fetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phones:[phone],message:'[Sticker]',media_type:'sticker',sticker_data:url,sticker_token:token})})
+      const data=await response.json()
+      if(!response.ok || data.results?.[0]?.status!=='sent')throw new Error(data.error || data.results?.[0]?.error || 'No se pudo confirmar el envío del sticker.')
+      if(selectedRef.current===phone)loadMessages(phone,true)
+      loadConvs();return true
+    }catch(e){if(selectedRef.current===phone)setSendError(e instanceof Error?e.message:'Error al enviar');return false}
+    finally{sendingRef.current=false;setSending(false)}
+  }
   const sendReply = async () => {
-    if (!selected || !reply.trim()) return
+    if (!selected || !reply.trim() || sendingRef.current) return
+    sendingRef.current=true
     setSending(true); setSendError(null)
     const msgText = reply
     let res: Response
@@ -244,11 +263,11 @@ export function useConversations() {
         body:    JSON.stringify({ phones: [selected], message: msgText }),
       })
     } catch {
-      setSending(false)
+      sendingRef.current=false;setSending(false)
       if (selectedRef.current === selected) setSendError('Error de red al enviar')
       return
     }
-    setSending(false)
+    sendingRef.current=false;setSending(false)
     const data = await res.json().catch(() => ({}))
     // A reply may finish after the operator opens another chat. Keep that chat
     // and its draft intact, including when the previous reply fails.
@@ -300,12 +319,12 @@ export function useConversations() {
     convs, visible, selected, selectedConv, messages, messagesEndRef,
     reply, setReply, sending, sendError, setSendError,
     filter, setFilter, search, setSearch,
-    campaign, setCampaign, campaigns, level, setLevel,
+    campaign, setCampaign, campaigns, level, setLevel, agent, setAgent, agents,
     dateFrom, setDateFrom, dateTo, setDateTo,
     followUpOnly, setFollowUpOnly,
     realtimeStatus,
     notifPermission, requestNotif,
-    openConv, sendReply,
+    openConv, sendReply, sendSticker,
     totalConvs, hasMore, loadingMore, loadMoreConvs,
   }
 }
