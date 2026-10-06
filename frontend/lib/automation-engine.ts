@@ -1,10 +1,11 @@
+import { isOfizeus, ofizeusReply, type RoutingContact } from '@/lib/contact-line-directory'
 import { query, withTransaction } from '@/lib/db'
 import { sendMessageUseCase } from '@/lib/cloud-api/use-cases/send-message.use-case'
 import { sseEmitter } from '@/lib/sse-events'
 
 export type AutomationSource = { provider: 'cloud'; phoneNumberId: string } | { provider: 'evolution'; instance: string }
 type Rule = { id: string; name: string; type: 'reply'|'flow'|'handoff'; trigger_type: string;
-  trigger_config: { keywords?: string[]; once_per_chat?: boolean }; action_config: { message?: string; steps?: { message: string; delay_sec?: number }[] } }
+  trigger_config: { keywords?: string[]; once_per_chat?: boolean }; action_config: { contact_line_directory?: 'ofizeus'; message?: string; steps?: { message: string; delay_sec?: number }[] } }
 type Job = { id: string; event_key: string; automation_id: string; automation_name: string; phone: string;
   provider: 'cloud'|'evolution'; source_id: string; body: string; step: number; handoff: boolean; legacy_message_id: string|null }
 const digits = (phone: string) => phone.replace(/\D/g,'')
@@ -43,8 +44,17 @@ export async function evaluateAutomations(phone: string, messageText: string, me
     if (blocked.rows.length) return
     const rules=await db.query<Rule>(`SELECT a.id,a.name,a.type,a.trigger_type,a.trigger_config,a.action_config
       FROM automations a JOIN users u ON u.id=a.created_by
-      WHERE a.is_active=true AND u.is_active=true AND u.role='admin' ORDER BY a.priority,a.created_at,a.id`)
-    const rule=rules.rows.find(r=>automationMatches(r,messageText))
+      WHERE a.is_active=true AND u.is_active=true AND u.role='admin' ORDER BY a.priority,CASE WHEN a.action_config->>'contact_line_directory'='ofizeus' THEN 0 ELSE 1 END,a.created_at,a.id`)
+    const matches=rules.rows.filter(r=>automationMatches(r,messageText))
+    // Only the directory mode reads assignment fields; generic rules keep their
+    // existing behavior. Two matching phone records are ambiguous, never guessed.
+    let routingContacts: RoutingContact[] = []
+    if (matches.some(r=>r.action_config.contact_line_directory==='ofizeus')) {
+      routingContacts=(await db.query<RoutingContact>(`SELECT first_name,panel,linea,linea_sub FROM contacts
+        WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND deleted_at IS NULL LIMIT 2`,[number])).rows
+    }
+    const rule=matches.find(r=>!r.action_config.contact_line_directory ||
+      (r.action_config.contact_line_directory==='ofizeus' && (!routingContacts.length || routingContacts.some(isOfizeus))))
     if (!rule) return
     if (rule.type==='reply' && rule.trigger_config.once_per_chat===true) {
       // Chats in the inbox are keyed by phone, even across lines/providers.
@@ -59,7 +69,8 @@ export async function evaluateAutomations(phone: string, messageText: string, me
       }
     }
     const recent=await db.query(`SELECT 1 FROM automation_message_jobs WHERE phone=$1 AND provider=$2 AND source_id=$3
-      AND created_at>NOW()-interval '10 seconds' AND status IN ('queued','processing','sent') LIMIT 1`,[number,provider,sourceId])
+      AND created_at>NOW()-interval '10 seconds' AND status IN ('queued','processing','sent')
+      AND ($4::uuid IS NULL OR automation_id=$4) LIMIT 1`,[number,provider,sourceId,rule.action_config.contact_line_directory ? rule.id : null])
     if (recent.rows.length) return
     const contact=await db.query<{first_name:string|null;panel:string|null}>(`SELECT first_name,panel FROM contacts WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 LIMIT 1`,[number])
     const resolve=(message:string)=>message.replace(/\{\{nombre\}\}/gi,contact.rows[0]?.first_name?.trim()||'Cliente')
@@ -69,7 +80,17 @@ export async function evaluateAutomations(phone: string, messageText: string, me
     try { steps=automationSteps(rule) } catch {
       await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details) VALUES($1,$2,$3,'error','Configuración de pasos inválida')`,[rule.id,rule.name,number]);return
     }
-    if (rule.type==='handoff') {
+    let handoff=rule.type==='handoff'
+    if (rule.action_config.contact_line_directory) {
+      if (rule.type!=='reply' || rule.action_config.contact_line_directory!=='ofizeus') return
+      const routed=ofizeusReply(routingContacts,rule.action_config.message??'Esta es tu línea asignada:')
+      if (routed.message.length>4096) {
+        await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details) VALUES($1,$2,$3,'error','La respuesta con la línea supera 4096 caracteres')`,[rule.id,rule.name,number]);return
+      }
+      steps=[{message:routed.message,delay_sec:0}]
+      handoff=routed.handoff
+    }
+    if (handoff) {
       await db.query(`INSERT INTO conversation_state(phone_number,is_escalated,escalated_at,escalation_reason)
         VALUES($1,true,NOW(),$2) ON CONFLICT(phone_number) WHERE resolved_at IS NULL
         DO UPDATE SET is_escalated=true,escalated_at=NOW(),escalation_reason=EXCLUDED.escalation_reason,updated_at=NOW()`,[number,`Automatización: ${rule.name}`])
@@ -80,7 +101,7 @@ export async function evaluateAutomations(phone: string, messageText: string, me
       delay+=steps[i].delay_sec
       await db.query(`INSERT INTO automation_message_jobs(event_key,automation_id,automation_name,phone,provider,source_id,body,step,handoff,legacy_message_id,run_at)
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW()+($11*interval '1 second'))`,
-        [eventKey,rule.id,rule.name,number,provider,sourceId,resolve(steps[i].message),i,rule.type==='handoff',provider==='evolution'?messageId:null,delay])
+        [eventKey,rule.id,rule.name,number,provider,sourceId,resolve(steps[i].message),i,handoff,provider==='evolution'?messageId:null,delay])
     }
   })
   await processAutomationJobs(eventKey)

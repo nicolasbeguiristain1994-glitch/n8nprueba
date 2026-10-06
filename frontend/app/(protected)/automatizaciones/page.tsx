@@ -17,7 +17,7 @@ type AutomationType  = 'reply' | 'flow' | 'handoff'
 type TriggerType     = 'keyword' | 'contains' | 'any_inbound'
 
 interface TriggerConfig { keywords?: string[]; once_per_chat?: boolean }
-interface ReplyActionConfig { message: string }
+interface ReplyActionConfig { message: string; contact_line_directory?: 'ofizeus' }
 interface FlowStep { message: string; delay_sec?: number }
 interface FlowActionConfig { steps: FlowStep[] }
 interface HandoffActionConfig { message?: string }
@@ -216,7 +216,7 @@ export default function AutomatizacionesPage() {
     let action_config: ActionConfig
     if (form.type === 'reply') {
       if (!form.message.trim()) { setSaveError('El mensaje de respuesta es requerido'); return }
-      action_config = { message: form.message.trim() }
+      action_config = { message: form.message.trim(), ...((editTarget?.action_config as ReplyActionConfig)?.contact_line_directory === 'ofizeus' ? { contact_line_directory: 'ofizeus' as const } : {}) }
     } else if (form.type === 'flow') {
       const steps = form.flow_steps.split('\n').map(l => l.trim()).filter(Boolean).map(l => ({ message: l }))
       if (steps.length === 0) { setSaveError('Ingresá al menos un paso'); return }
@@ -625,6 +625,7 @@ export default function AutomatizacionesPage() {
 
               {form.type === 'reply' && (
                 <div>
+                  {(editTarget?.action_config as ReplyActionConfig)?.contact_line_directory === 'ofizeus' && <p className="mb-3 rounded-md border p-3 text-sm">Esta respuesta agrega automáticamente el nombre y número separado por barras de la línea activa del agente ofizeus, respetando la variante. Si falta una asignación activa, avisa que lo atenderá un asesor y deriva la conversación. El texto siguiente es la introducción al número.</p>}
                   <label className="block text-xs text-muted-foreground mb-1">Mensaje de respuesta *</label>
                   <textarea
                     className="w-full border border-input rounded-md text-sm px-3 py-2 h-28 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"

@@ -52,6 +52,16 @@ describe('once-per-chat automation setting', () => {
     const saved = JSON.parse(mocks.fetch.mock.calls.find(([, init]) => init?.method === 'PATCH')![1].body)
     expect(saved.trigger_config.once_per_chat).toBe(true)
   })
+  it('preserves directory routing when the introduction is edited', async () => {
+    mocks.fetch.mockImplementation(async (_url, init) => init?.method ? {ok:true} : {automations:[{...rule,action_config:{message:'Tu línea:',contact_line_directory:'ofizeus'}}]})
+    render(<Page />); await screen.findByText('Bono EXTRA'); fireEvent.click(screen.getByTitle('Editar'))
+    expect(screen.getByText(/Esta respuesta agrega automáticamente/)).toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText(/Hola \{\{nombre\}\}/), {target:{value:'Hola, esta es tu línea:'}})
+    fireEvent.click(screen.getByRole('button',{name:'Guardar cambios'}))
+    await waitFor(()=>expect(mocks.fetch.mock.calls.some(([,init])=>init?.method==='PATCH')).toBe(true))
+    const saved=JSON.parse(mocks.fetch.mock.calls.find(([,init])=>init?.method==='PATCH')![1].body)
+    expect(saved.action_config).toEqual({message:'Hola, esta es tu línea:',contact_line_directory:'ofizeus'})
+  })
   it('rejects non-boolean values instead of silently making the reply repeatable', () => {
     expect(CreateAutomationSchema.safeParse({ ...rule, trigger_config: { once_per_chat: 'true' } }).success).toBe(false)
     expect(UpdateAutomationSchema.safeParse({ trigger_config: { once_per_chat: 'false' } }).success).toBe(false)
