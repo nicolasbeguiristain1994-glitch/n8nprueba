@@ -97,6 +97,38 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
     expect(listed.total).toBe(1);expect(listed.contacts.map((r:{id:string})=>r.id)).toEqual([id('match')])
     expect(selected.ids).toEqual([id('match')])
   })
+  it('unions selected lines while intersecting variant, panel, segment and tag for list/count/download/selection', async () => {
+    const { rows } = await c.query(`INSERT INTO contacts(first_name,phone_number,linea,linea_sub,panel,segment,segment_is_manual) VALUES
+      ('line-one','+5491111111201',1,'a','royal','vip',true),
+      ('line-two','+5491111111202',2,'a','royal','vip',true),
+      ('other-variant','+5491111111203',2,'b','royal','vip',true),
+      ('other-panel','+5491111111204',2,'a','farabet','vip',true),
+      ('other-line','+5491111111205',3,'a','royal','vip',true),
+      ('no-line','+5491111111206',NULL,NULL,'royal','vip',true),
+      ('other-segment','+5491111111207',1,'a','royal','medio',true),
+      ('no-tag','+5491111111208',1,'a','royal','vip',true),
+      ('deleted','+5491111111209',2,'a','royal','vip',true) RETURNING id,first_name`)
+    await c.query("INSERT INTO contact_tags(contact_id,tag) SELECT id,'target' FROM contacts WHERE first_name<>'no-tag'")
+    await c.query("UPDATE contacts SET deleted_at=NOW() WHERE first_name='deleted'")
+    const expected = rows.filter(r => ['line-one','line-two'].includes(r.first_name)).map(r => r.id).sort()
+    for (const lines of ['linea=1,2','linea=1&linea=2','linea=2,1,2&linea=1']) {
+      const criteria = `${lines}&linea_sub=A&panel=royal&segment=vip&tag=target`
+      const listed = await (await list(new NextRequest(`http://localhost/api/contacts?${criteria}`))).json()
+      const downloaded = await (await list(new NextRequest(`http://localhost/api/contacts?download=true&${criteria}`))).json()
+      const selected = await (await list(new NextRequest(`http://localhost/api/contacts?select_all=true&${criteria}`))).json()
+      expect(listed.total).toBe(2)
+      expect(listed.contacts.map((r: {id:string}) => r.id).sort()).toEqual(expected)
+      expect(downloaded.contacts).toEqual(listed.contacts)
+      expect(downloaded.total).toBe(2)
+      expect(selected.ids.sort()).toEqual(expected)
+      expect(selected.phones.sort()).toEqual(['+5491111111201','+5491111111202'])
+    }
+    const single = await (await list(new NextRequest('http://localhost/api/contacts?linea=1&linea_sub=a&panel=royal&segment=vip&tag=target'))).json()
+    expect(single.contacts.map((r: {first_name:string}) => r.first_name)).toEqual(['line-one'])
+    const cleared = await (await list(new NextRequest('http://localhost/api/contacts?linea=&linea=%20,'))).json()
+    expect(cleared.total).toBe(8)
+    expect(cleared.contacts.some((r: {first_name:string}) => r.first_name === 'no-line')).toBe(true)
+  })
   it.each(['', '&movimiento_modo=periodo'])('preserves movement range parity across list/count/download/selection %s', async mode => {
     await c.query(`INSERT INTO casino_transactions(username,platform,agente,tipo,monto,fecha,source_id) VALUES
       ('old','zeus','royal','carga',100,current_date-20,'old'),

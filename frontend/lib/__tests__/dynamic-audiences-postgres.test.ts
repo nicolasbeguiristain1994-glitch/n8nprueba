@@ -16,7 +16,7 @@ describe.skipIf(!url)('Dynamic audiences on local PostgreSQL',()=>{
   db=new Client({connectionString:url});await db.connect();await db.query(`CREATE SCHEMA ${schema};SET search_path=${schema},public`)
   await db.query(readFileSync('../db/migrations/028_casino_transactions.sql','utf8'))
   await db.query(`ALTER TABLE casino_transactions ADD platform text,ADD fecha_hora_utc timestamptz;
-    CREATE TABLE contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number text,first_name text,last_name text,segment text,panel text,panels_assigned text[] DEFAULT '{}',deleted_at timestamptz,last_deposit_at timestamptz,platforms text[] DEFAULT '{}');
+    CREATE TABLE contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number text,first_name text,last_name text,segment text,panel text,linea smallint,linea_sub text,panels_assigned text[] DEFAULT '{}',deleted_at timestamptz,last_deposit_at timestamptz,platforms text[] DEFAULT '{}');
     CREATE TABLE contact_lists(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owned_by uuid,filters jsonb);
     CREATE TABLE campaigns(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owned_by uuid,list_id uuid);
     CREATE TABLE contact_list_members(list_id uuid,contact_id uuid,UNIQUE(list_id,contact_id));
@@ -79,5 +79,29 @@ describe.skipIf(!url)('Dynamic audiences on local PostgreSQL',()=>{
   await expect(ensureCampaignAudienceSnapshot(next,l)).rejects.toThrow('responsable')
   expect(await members(next,l)).toEqual([royal]) // no snapshot: the historical preview is unchanged
   expect((await db.query('SELECT audience_snapshot_at FROM campaigns WHERE id=$1',[next])).rows[0].audience_snapshot_at).toBeNull()
+ })
+ it('keeps the selected line union and variant in saved audiences and frozen campaign membership', async () => {
+  const one=await person(500000),two=await person(500000),otherLine=await person(500000),otherVariant=await person(500000),hidden=await person(500000,'farabet'),unassigned=await person(500000)
+  await db.query("UPDATE contacts SET linea=2,linea_sub='a'")
+  await db.query('UPDATE contacts SET linea=1 WHERE id=$1',[one])
+  await db.query('UPDATE contacts SET linea=3 WHERE id=$1',[otherLine])
+  await db.query("UPDATE contacts SET linea_sub='b' WHERE id=$1",[otherVariant])
+  await db.query("UPDATE users SET role='operator',allowed_agents=ARRAY['royal'] WHERE id=$1",[admin])
+  await db.query('INSERT INTO operator_contact_visibility(operator_id,contact_id) SELECT $1,unnest($2::uuid[])',[admin,[one,two,otherLine,otherVariant,hidden]])
+  const filters={linea:'1,2,2',linea_sub:'A',segment:'vip'}
+  const expected=[one,two].sort()
+  expect(savedAudienceParams(filters).get('linea')).toBe('1,2,2')
+  expect(await resolveSavedAudience(filters,{role:'operator',user_id:admin,allowed_agents:['royal']})).toEqual(expected)
+  const l=await list(filters),first=await campaign(l)
+  await ensureCampaignAudienceSnapshot(first,l)
+  expect(await members(first,l)).toEqual(expected)
+  expect(await members(first,l)).not.toContain(unassigned)
+  await db.query('UPDATE contacts SET linea=3 WHERE id=$1',[two])
+  await ensureCampaignAudienceSnapshot(first,l)
+  expect(await members(first,l)).toEqual(expected)
+  const next=await campaign(l)
+  await ensureCampaignAudienceSnapshot(next,l)
+  expect(await members(next,l)).toEqual([one])
+  expect(await members(first,l)).toEqual(expected)
  })
 })

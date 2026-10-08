@@ -20,9 +20,9 @@ export function contactFilters(sp: URLSearchParams, user: {
   const params: unknown[] = []
   const where = ['TRUE']
   const bind = (value: unknown) => { params.push(value); return `$${params.length}` }
-  const csv = (key: string, allowed: Set<string>) => {
+  const csv = (key: string, allowed?: Set<string>) => {
     const values = [...new Set(sp.getAll(key).flatMap(v => v.split(',')).map(v => v.trim()).filter(Boolean))]
-    if (values.some(v => !allowed.has(v))) throw new ContactFilterError(`Filtro ${key} inválido`)
+    if (allowed && values.some(v => !allowed.has(v))) throw new ContactFilterError(`Filtro ${key} inválido`)
     return values
   }
   const q = sp.get('q')?.trim()
@@ -32,10 +32,16 @@ export function contactFilters(sp: URLSearchParams, user: {
   }
   const segments = csv('segment', SEGMENTS)
   if (segments.length) where.push(`${profile.segment} = ANY(${bind(segments)}::text[])`)
-  for (const key of ['panel', 'gaming', 'linea', 'linea_sub'] as const) {
+  for (const key of ['panel', 'gaming'] as const) {
     const value = sp.get(key)?.trim()
-    if (value) where.push(`contacts.${key}::text = ${bind(key === 'linea_sub' ? value.toLowerCase() : value)}`)
+    if (value) where.push(`contacts.${key}::text = ${bind(value)}`)
   }
+  // A selection is the union of its lines, still intersected with every other
+  // filter and the user's visibility scope. Single-line URLs keep their meaning.
+  const lines = csv('linea')
+  if (lines.length) where.push(`contacts.linea::text = ANY(${bind(lines)}::text[])`)
+  const lineVariant = sp.get('linea_sub')?.trim().toLowerCase()
+  if (lineVariant) where.push(`contacts.linea_sub::text = ${bind(lineVariant)}`)
   for (const [key, allowed] of [['actividad', ACTIVITY], ['antiguedad', TENURE]] as const) {
     const values = csv(key, allowed)
     if (values.length) where.push(`${key === 'actividad' ? profile.activity : profile.tenure} = ANY(${bind(values)}::text[])`)

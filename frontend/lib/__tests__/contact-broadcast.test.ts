@@ -4,6 +4,7 @@ import { Client } from 'pg'
 import { contactBroadcastClause } from '../contact-broadcast'
 import { readBroadcastRange, broadcastParams } from '../broadcast-range'
 import { savedAudienceParams } from '../dynamic-audiences'
+import { contactFilters } from '../contact-filters'
 
 const sp = (s:string) => new URLSearchParams(s)
 describe('Broadcast period validation',()=>{
@@ -25,10 +26,10 @@ describe.skipIf(!url)('Broadcast history on PostgreSQL',()=>{
     c=new Client({host:u.hostname,port:Number(u.port||5432),user:u.username,password:u.password,database:u.pathname.slice(1)})
     await c.connect()
     await c.query(`CREATE SCHEMA ${schema}; SET search_path=${schema};
-      CREATE TABLE contacts(id integer,phone_number text);
+      CREATE TABLE contacts(id integer,phone_number text,linea smallint,linea_sub text,deleted_at timestamptz);
       CREATE TABLE whatsapp_messages(phone_number text,campaign_id integer,direction text,status text,sent_at timestamptz,created_at timestamptz);
       CREATE TABLE campaign_recipients(phone_number text,campaign_id integer,status text,sent_at timestamptz);
-      INSERT INTO contacts SELECT n,'+54911000000'||lpad(n::text,2,'0') FROM generate_series(1,12) n;
+      INSERT INTO contacts(id,phone_number) SELECT n,'+54911000000'||lpad(n::text,2,'0') FROM generate_series(1,12) n;
       INSERT INTO whatsapp_messages SELECT phone_number,1,'outbound',CASE id WHEN 2 THEN 'failed' WHEN 3 THEN 'queued' WHEN 4 THEN 'read' ELSE 'sent' END,
         CASE id WHEN 5 THEN '2026-10-06 02:59:59Z'::timestamptz WHEN 6 THEN '2026-10-07 03:00:00Z'::timestamptz ELSE '2026-10-06 03:00:00Z'::timestamptz END,'2026-10-06 03:00:00Z'
         FROM contacts WHERE id<=6;
@@ -46,6 +47,18 @@ describe.skipIf(!url)('Broadcast history on PostgreSQL',()=>{
   })
   it('not sent is the exact complement, including never sent, without NULL poisoning',async()=>{
     expect(await ids('difusion=not_sent&difusion_desde=2026-10-06&difusion_hasta=2026-10-06')).toEqual([2,3,5,6,7,10,11,12])
+  })
+  it('intersects broadcast history with the union of selected lines and the selected variant', async () => {
+    await c.query('BEGIN')
+    try {
+      await c.query("UPDATE contacts SET linea=CASE WHEN id IN (1,2) THEN 1 WHEN id IN (4,8) THEN 2 ELSE 3 END,linea_sub=CASE WHEN id=8 THEN 'b' ELSE 'a' END")
+      const audience = async (mode: string) => {
+        const filter = contactFilters(sp(`linea=1,2&linea_sub=A&difusion=${mode}&difusion_desde=2026-10-06&difusion_hasta=2026-10-06`), {role:'admin',user_id:'test'})
+        return (await c.query(`SELECT id FROM contacts WHERE ${filter.sql} ORDER BY id`,filter.params)).rows.map(r=>r.id)
+      }
+      expect(await audience('sent')).toEqual([1,4])
+      expect(await audience('not_sent')).toEqual([2])
+    } finally { await c.query('ROLLBACK') }
   })
   it('rolling seven days includes the lower boundary and excludes older/future sends',async()=>{
     await c.query('BEGIN')

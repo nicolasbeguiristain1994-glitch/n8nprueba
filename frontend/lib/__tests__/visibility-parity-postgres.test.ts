@@ -114,6 +114,25 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
     expect((await notes(req('conversations/phone/notes'),conv(3))).status).toBe(403)
     expect((await note(req('conversations/phone/notes',{content:'allowed'}),conv(1))).status).toBe(200)
   })
+  it('intersects a multi-line union with agent access, deletion and explicit assignments on every contact read', async () => {
+    await db.query("UPDATE contacts SET linea=CASE WHEN id=$1 THEN 1 ELSE 2 END,linea_sub='a'", [id(1)])
+    await db.query("INSERT INTO contacts(id,phone_number,first_name,panel,linea,linea_sub,deleted_at) VALUES($1,$2,'deleted','royal',1,'a',NOW()),($3,$4,'third-line','royal',3,'a',NULL)", [id(4),'+'+phone(4),id(5),'+'+phone(5)])
+    const check = async (expected: string[]) => {
+      const criteria = 'linea=1,2&linea=2&linea_sub=A'
+      const listed = await (await list(req(`contacts?${criteria}`))).json()
+      const selected = await (await list(req(`contacts?select_all=true&${criteria}`))).json()
+      const downloaded = await (await list(req(`contacts?download=true&${criteria}`))).json()
+      expect(listed.total).toBe(expected.length)
+      expect(listed.contacts.map((r: {id:string}) => r.id).sort()).toEqual(expected)
+      expect(selected.ids.sort()).toEqual(expected)
+      expect(downloaded.contacts).toEqual(listed.contacts)
+      expect(downloaded.total).toBe(expected.length)
+    }
+    await check([id(1),id(3)])
+    // Even an explicit assignment cannot grant access to a different agent.
+    await db.query('INSERT INTO operator_contact_visibility VALUES($1,$2,$1),($1,$3,$1)', [id(900),id(2),id(3)])
+    await check([id(3)])
+  })
   it.each(['update','panels_only','skip'])('rejects a mixed import atomically in %s mode', async conflict_mode => {
     const result=await imported(2,{conflict_mode,contacts:[{phone:'+'+phone(4),name:'new'},{phone:'+'+phone(2),name:'hidden change'}]})
     expect(result.status).toBe(403)
