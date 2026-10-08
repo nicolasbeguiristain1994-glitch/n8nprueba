@@ -283,21 +283,6 @@ export default function Contacts() {
   useEffect(() => {
     setViewContact(previous => previous ? contacts.find(contact => contact.id === previous.id) ?? previous : null)
   }, [contacts])
-  const toolsMenuRef = useRef<HTMLDetailsElement>(null)
-  useEffect(() => {
-    const close = (event: MouseEvent | KeyboardEvent) => {
-      const menu = toolsMenuRef.current
-      if (!menu?.open) return
-      if (event instanceof KeyboardEvent) {
-        if (event.key !== 'Escape') return
-        menu.open = false
-        menu.querySelector('summary')?.focus()
-      } else if (!menu.contains(event.target as Node)) menu.open = false
-    }
-    document.addEventListener('click', close)
-    document.addEventListener('keydown', close)
-    return () => { document.removeEventListener('click', close); document.removeEventListener('keydown', close) }
-  }, [])
   const [viewContactIdx, setViewContactIdx] = useState<number>(-1)
   const [casinoStats, setCasinoStats] = useState<{ platforms: Array<{
     platform: string | null; monto_cargas_mes: number; monto_retiros_mes: number
@@ -1275,141 +1260,6 @@ export default function Contacts() {
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             </Button>
 
-            <details ref={toolsMenuRef} className="relative group">
-              <summary className="flex h-8 cursor-pointer list-none items-center gap-2 rounded-md border bg-card px-3 text-sm hover:bg-muted">Herramientas <ChevronDown size={14}/></summary>
-              <div className="absolute right-0 top-full z-30 mt-2 flex w-[min(420px,calc(100vw-2rem))] flex-wrap items-center gap-2 rounded-xl border bg-popover p-3 shadow-lg">
-            {currentUser?.can_download_contacts && (
-              <Button variant="outline" size="sm"
-                onClick={() => setShowDownloadModal(true)}
-                className="border-input text-foreground hover:bg-muted">
-                <Download size={14} className="mr-1" /> Descargar
-              </Button>
-            )}
-
-            <Button size="sm" variant="outline" onClick={selectAllFiltered} disabled={selectingAll}
-              className="border-input text-foreground hover:bg-muted">
-              <CheckSquare size={14} className="mr-1" />
-              {selectingAll ? 'Seleccionando…' : 'Seleccionar todos'}
-            </Button>
-            {/* Botón Listas — dropdown con todas las listas */}
-            <div className="relative" ref={listsMenuRef}>
-              <Button
-                size="sm" variant="outline"
-                onClick={() => setShowListsMenu(v => !v)}
-                className={`border-input text-foreground hover:bg-muted hover:bg-accent ${filterList ? 'bg-accent border-indigo-400' : ''}`}
-              >
-                <List size={14} className="mr-1" />
-                {filterList ? (lists.find(l => l.id === filterList)?.name ?? 'Lista') : 'Listas'}
-                {filterList && <X size={11} className="ml-1.5 opacity-60 hover:opacity-100" onClick={e => { e.stopPropagation(); setFilterList(''); resetPage() }} />}
-                {!filterList && <ChevronDown size={12} className="ml-1 opacity-60" />}
-              </Button>
-              {showListsMenu && (
-                <div className="absolute left-0 top-full mt-1 bg-card border border-border rounded-xl shadow-lg z-30 w-72 py-1 max-h-80 overflow-y-auto">
-                  <div className="px-3 py-2 border-b border-border flex items-center justify-between">
-                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Mis listas</span>
-                    <button
-                      className="text-xs text-primary hover:text-accent-foreground font-medium"
-                      onClick={() => { setShowListsMenu(false); setListMode('criteria'); setShowList(true) }}
-                    >
-                      + Nueva lista
-                    </button>
-                  </div>
-                  {lists.length === 0 && (
-                    <p className="text-xs text-muted-foreground px-3 py-4 text-center">No hay listas creadas</p>
-                  )}
-                  {lists.map(l => (
-                    <div
-                      key={l.id}
-                      className={`flex items-center gap-2 px-3 py-2.5 hover:bg-background cursor-pointer group ${filterList === l.id ? 'bg-accent' : ''}`}
-                      onClick={() => { setFilterList(l.id); resetPage(); setShowListsMenu(false) }}
-                    >
-                      <Users size={13} className="text-muted-foreground shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-sm truncate ${filterList === l.id ? 'font-semibold text-primary' : 'text-foreground'}`}>{l.name}</p>
-                        <p className="text-[11px] text-muted-foreground">{l.contact_count.toLocaleString()} contactos · {l.is_dynamic ? "Dinámica · se actualiza al preparar cada campaña" : "Lista fija"}</p>
-                      </div>
-                      {filterList === l.id && <Filter size={11} className="text-indigo-500 shrink-0" />}
-                      <button
-                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground/60 hover:text-teal-500 p-0.5 rounded"
-                        title="Descargar lista"
-                        onClick={e => { e.stopPropagation(); setDownloadList(l); setShowListsMenu(false) }}
-                      >
-                        <Download size={13} />
-                      </button>
-                      <button
-                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground/60 hover:text-indigo-500 p-0.5 rounded"
-                        title="Dividir lista"
-                        onClick={e => { e.stopPropagation(); openSplitModal(l) }}
-                      >
-                        <Scissors size={13} />
-                      </button>
-                      <button
-                        className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground/60 hover:text-red-500 p-0.5 rounded"
-                        title="Eliminar lista"
-                        disabled={deletingListId === l.id}
-                        onClick={e => { e.stopPropagation(); deleteList(l.id, l.name) }}
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  ))}
-                  {currentUser?.role === 'admin' && (
-                    <div className="border-t border-border px-3 py-2 mt-1">
-                      <button
-                        className="text-xs text-violet-600 hover:text-violet-800 font-medium flex items-center gap-1 disabled:opacity-50"
-                        disabled={repopulating}
-                        onClick={() => { repopularListas(); setShowListsMenu(false) }}
-                      >
-                        <DatabaseZap size={12} /> {repopulating ? 'Repoblando…' : 'Repoblar listas casino'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-            {contacts.length > 0 && (
-              <Button size="sm" variant="outline"
-                onClick={() => openViewContact(contacts[0])}
-                className="border-input text-foreground hover:bg-muted">
-                <Compass size={14} className="mr-1" /> Explorar
-              </Button>
-            )}
-            {(selectedCount > 0 || hasActiveFilters) && (
-              <>
-                <Button size="sm" variant="outline"
-                  onClick={blacklistSelected}
-                  disabled={blacklistSaving}
-                  className="border-orange-200 text-orange-700 hover:bg-orange-50">
-                  <Ban size={14} className="mr-1" /> Blacklist ({selectedCount > 0 ? selectedCount : total.toLocaleString()})
-                </Button>
-                <Button size="sm" variant="outline"
-                  onClick={deleteSelected}
-                  className="border-destructive/30 text-destructive hover:bg-destructive/10">
-                  <Trash2 size={14} className="mr-1" /> Eliminar ({selectedCount > 0 ? selectedCount : total.toLocaleString()})
-                </Button>
-              </>
-            )}
-            {hasActiveFilters && (
-              <Button size="sm" variant="outline"
-                onClick={() => { setListMode('filters'); setShowList(true) }}
-                className="border-input text-foreground hover:bg-muted">
-                <List size={14} className="mr-1" /> Crear lista ({total.toLocaleString()})
-              </Button>
-            )}
-            <Button size="sm" variant="outline" onClick={() => { setListMode('selection'); setShowList(true) }}
-              className="border-input text-foreground hover:bg-muted">
-              <List size={14} className="mr-1" /> Lista por selección
-            </Button>
-
-            {canCreateContacts && (
-              <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-input rounded-md bg-background hover:bg-muted transition-colors font-medium">
-                <Upload size={14} /> Importar
-                <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.vcf" className="sr-only" aria-label="Importar contactos"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) { handleFile(f); setShowImport(true); e.target.value = '' } }} />
-              </label>
-            )}
-              </div>
-            </details>
             {canCreateContacts && (
               <Button size="sm" onClick={() => setShowAdd(true)} className="bg-primary hover:bg-primary/90 text-primary-foreground">
                 <UserPlus size={14} className="mr-1" /> Nuevo contacto
@@ -1418,6 +1268,143 @@ export default function Contacts() {
           </>
         }
       />
+
+      <div
+        role="group"
+        aria-label="Herramientas de contactos"
+        className="relative flex flex-wrap items-center gap-2 rounded-xl border bg-card p-3"
+      >
+        {currentUser?.can_download_contacts && (
+          <Button variant="outline" size="sm"
+            onClick={() => setShowDownloadModal(true)}
+            className="border-input text-foreground hover:bg-muted">
+            <Download size={14} className="mr-1" /> Descargar
+          </Button>
+        )}
+
+        <Button size="sm" variant="outline" onClick={selectAllFiltered} disabled={selectingAll}
+          className="border-input text-foreground hover:bg-muted">
+          <CheckSquare size={14} className="mr-1" />
+          {selectingAll ? 'Seleccionando…' : 'Seleccionar todos'}
+        </Button>
+        {/* Botón Listas — dropdown con todas las listas */}
+        <div className="static sm:relative" ref={listsMenuRef}>
+          <Button
+            size="sm" variant="outline"
+            onClick={() => setShowListsMenu(v => !v)}
+            className={`border-input text-foreground hover:bg-muted hover:bg-accent ${filterList ? 'bg-accent border-indigo-400' : ''}`}
+          >
+            <List size={14} className="mr-1" />
+            {filterList ? (lists.find(l => l.id === filterList)?.name ?? 'Lista') : 'Listas'}
+            {filterList && <X size={11} className="ml-1.5 opacity-60 hover:opacity-100" onClick={e => { e.stopPropagation(); setFilterList(''); resetPage() }} />}
+            {!filterList && <ChevronDown size={12} className="ml-1 opacity-60" />}
+          </Button>
+          {showListsMenu && (
+            <div className="absolute inset-x-3 top-full mt-1 bg-card border border-border rounded-xl shadow-lg z-30 py-1 max-h-80 overflow-y-auto sm:inset-x-auto sm:left-0 sm:w-72">
+              <div className="px-3 py-2 border-b border-border flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Mis listas</span>
+                <button
+                  className="text-xs text-primary hover:text-accent-foreground font-medium"
+                  onClick={() => { setShowListsMenu(false); setListMode('criteria'); setShowList(true) }}
+                >
+                  + Nueva lista
+                </button>
+              </div>
+              {lists.length === 0 && (
+                <p className="text-xs text-muted-foreground px-3 py-4 text-center">No hay listas creadas</p>
+              )}
+              {lists.map(l => (
+                <div
+                  key={l.id}
+                  className={`flex items-center gap-2 px-3 py-2.5 hover:bg-background cursor-pointer group ${filterList === l.id ? 'bg-accent' : ''}`}
+                  onClick={() => { setFilterList(l.id); resetPage(); setShowListsMenu(false) }}
+                >
+                  <Users size={13} className="text-muted-foreground shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm truncate ${filterList === l.id ? 'font-semibold text-primary' : 'text-foreground'}`}>{l.name}</p>
+                    <p className="text-[11px] text-muted-foreground">{l.contact_count.toLocaleString()} contactos · {l.is_dynamic ? "Dinámica · se actualiza al preparar cada campaña" : "Lista fija"}</p>
+                  </div>
+                  {filterList === l.id && <Filter size={11} className="text-indigo-500 shrink-0" />}
+                  <button
+                    className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground/60 hover:text-teal-500 p-0.5 rounded"
+                    title="Descargar lista"
+                    onClick={e => { e.stopPropagation(); setDownloadList(l); setShowListsMenu(false) }}
+                  >
+                    <Download size={13} />
+                  </button>
+                  <button
+                    className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground/60 hover:text-indigo-500 p-0.5 rounded"
+                    title="Dividir lista"
+                    onClick={e => { e.stopPropagation(); openSplitModal(l) }}
+                  >
+                    <Scissors size={13} />
+                  </button>
+                  <button
+                    className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground/60 hover:text-red-500 p-0.5 rounded"
+                    title="Eliminar lista"
+                    disabled={deletingListId === l.id}
+                    onClick={e => { e.stopPropagation(); deleteList(l.id, l.name) }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+              {currentUser?.role === 'admin' && (
+                <div className="border-t border-border px-3 py-2 mt-1">
+                  <button
+                    className="text-xs text-violet-600 hover:text-violet-800 font-medium flex items-center gap-1 disabled:opacity-50"
+                    disabled={repopulating}
+                    onClick={() => { repopularListas(); setShowListsMenu(false) }}
+                  >
+                    <DatabaseZap size={12} /> {repopulating ? 'Repoblando…' : 'Repoblar listas casino'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        {contacts.length > 0 && (
+          <Button size="sm" variant="outline"
+            onClick={() => openViewContact(contacts[0])}
+            className="border-input text-foreground hover:bg-muted">
+            <Compass size={14} className="mr-1" /> Explorar
+          </Button>
+        )}
+        {(selectedCount > 0 || hasActiveFilters) && (
+          <>
+            <Button size="sm" variant="outline"
+              onClick={blacklistSelected}
+              disabled={blacklistSaving}
+              className="border-orange-200 text-orange-700 hover:bg-orange-50">
+              <Ban size={14} className="mr-1" /> Blacklist ({selectedCount > 0 ? selectedCount : total.toLocaleString()})
+            </Button>
+            <Button size="sm" variant="outline"
+              onClick={deleteSelected}
+              className="border-destructive/30 text-destructive hover:bg-destructive/10">
+              <Trash2 size={14} className="mr-1" /> Eliminar ({selectedCount > 0 ? selectedCount : total.toLocaleString()})
+            </Button>
+          </>
+        )}
+        {hasActiveFilters && (
+          <Button size="sm" variant="outline"
+            onClick={() => { setListMode('filters'); setShowList(true) }}
+            className="border-input text-foreground hover:bg-muted">
+            <List size={14} className="mr-1" /> Crear lista ({total.toLocaleString()})
+          </Button>
+        )}
+        <Button size="sm" variant="outline" onClick={() => { setListMode('selection'); setShowList(true) }}
+          className="border-input text-foreground hover:bg-muted">
+          <List size={14} className="mr-1" /> Lista por selección
+        </Button>
+
+        {canCreateContacts && (
+          <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 text-sm border border-input rounded-md bg-background hover:bg-muted transition-colors font-medium">
+            <Upload size={14} /> Importar
+            <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.vcf" className="sr-only" aria-label="Importar contactos"
+              onChange={e => { const f = e.target.files?.[0]; if (f) { handleFile(f); setShowImport(true); e.target.value = '' } }} />
+          </label>
+        )}
+      </div>
 
       {/* Errores inline */}
       {loadError && (
