@@ -1,9 +1,11 @@
 'use client'
+import { PriorityBroadcastComposer, broadcastRequest, type BroadcastContact } from '@/components/priorities/PriorityBroadcastComposer'
+import { PriorityBroadcastProgress } from '@/components/priorities/PriorityBroadcastProgress'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   TrendingUp, RefreshCw, ChevronLeft, ChevronRight,
-  Filter, AlertCircle, CheckCircle2, RotateCcw, HelpCircle,
+  Filter, AlertCircle, Send, RotateCcw, HelpCircle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -30,6 +32,8 @@ interface PrioritizedContact {
   valueTier:           string
   daysInactive:        number | null
   daysSinceLastMessage: number | null
+  broadcastState?:     string | null
+  broadcastBusy?:      boolean
   isBroadcasted:       boolean
   broadcastedAt:       string | null
   broadcastedBy:       string | null
@@ -117,7 +121,7 @@ function ScoringHelpModal({ open, onClose }: { open: boolean; onClose: () => voi
         <p>La urgencia disminuye a medida que pasan los días dentro de la ventana configurada para ese nivel. Se toma la fecha de actividad más reciente disponible entre los movimientos importados y el historial del contacto.</p>
         <p>Se excluyen contactos borrados, bloqueados, sin consentimiento, fuera de su ventana o contactados recientemente. Los permisos del operador también limitan la lista.</p>
         <p>La fecha del último cálculo indica cuándo se generó la lista. Los movimientos disponibles dependen de la última sincronización de cada plataforma.</p>
-        <p>Marcar como difundido sólo registra el estado de gestión; no envía mensajes.</p>
+        <p>Seleccioná contactos, elegí una plantilla aprobada y confirmá el envío. Sólo los envíos confirmados por WhatsApp pasan automáticamente a Difundidos. Los fallidos permanecen para revisión y reintento en la misma difusión.</p>
       </div>
     </DialogContent>
   </Dialog>
@@ -137,8 +141,16 @@ function formatDate(iso: string | null) {
 // ── Componente ────────────────────────────────────────────────────────────────
 
 export default function PrioridadesPage() {
-  const { user } = useCurrentUser()
+  const { user, permissions } = useCurrentUser()
   const isAdmin  = user?.role === 'admin'
+
+  const canSend = isAdmin || (!!permissions.contacts?.includes('read') && !!permissions.campaigns?.includes('create') && !!permissions.send?.includes('send'))
+  const canReadCampaigns = isAdmin || !!permissions.campaigns?.includes('read')
+  const canManageCampaigns = isAdmin || !!permissions.campaigns?.includes('update')
+  const [selected, setSelected] = useState<Map<string,BroadcastContact>>(new Map())
+  const [compose, setCompose] = useState<BroadcastContact[]|null>(null)
+  const [broadcastVersion, setBroadcastVersion] = useState(0)
+  const [broadcastNotice, setBroadcastNotice] = useState<string|null>(null)
 
   const [tab, setTab]                     = useState<Tab>('pending')
   const [platform, setPlatform]           = useState<Platform>('todas')
@@ -175,7 +187,11 @@ export default function PrioridadesPage() {
       if (ag  !== 'todos') params.set('agent', ag)
       if (plt !== 'todas') params.set('platform', plt)
       const data = await fetchJson<PaginatedResult>(`/api/contacts/prioritized?${params}`)
-      if (sequence === loadSequence.current) setResult(data)
+      if (sequence === loadSequence.current) {
+        setResult(data)
+        setSelected(old=>{const next=new Map(old);data.data.forEach(c=>{if(c.broadcastBusy||c.isBroadcasted)next.delete(c.id)});return next})
+        if(!data.data.length&&data.total>0&&p>data.totalPages)setPage(Math.max(1,data.totalPages))
+      }
     } catch (err) {
       if (sequence === loadSequence.current) {
         setResult(null); setLoadError(err instanceof Error ? err.message : 'No se pudieron cargar las prioridades')
@@ -188,15 +204,15 @@ export default function PrioridadesPage() {
   useEffect(() => { void load(); return () => { loadSequence.current++ } }, [load])
 
   const switchTab = (t: Tab) => {
-    setTab(t); setPage(1)
+    setSelected(new Map()); setTab(t); setPage(1)
   }
 
   const switchPlatform = (plt: Platform) => {
-    setPlatform(plt); setPage(1)
+    setSelected(new Map()); setPlatform(plt); setPage(1)
   }
 
   const handleFilter = (newSeg: string, newTier: string, newAgent: string) => {
-    setPage(1); setSegment(newSeg); setTier(newTier); setAgent(newAgent)
+    setSelected(new Map()); setPage(1); setSegment(newSeg); setTier(newTier); setAgent(newAgent)
   }
 
   const handleRecompute = async () => {
@@ -229,11 +245,32 @@ export default function PrioridadesPage() {
     }
   }
 
+  useEffect(()=>{if(!canSend){setSelected(new Map());setCompose(null)}},[canSend])
+  const eligiblePage = (result?.data??[]).filter(c=>!c.broadcastBusy&&!c.isBroadcasted)
+  const allSelected = eligiblePage.length>0&&eligiblePage.every(c=>selected.has(c.id))
+  const toggleSelection=(contact:BroadcastContact)=>{
+    setSelected(old=>{const next=new Map(old);if(next.has(contact.id))next.delete(contact.id);else if(next.size<200)next.set(contact.id,contact);return next})
+  }
+  const selectPage=()=>setSelected(old=>{
+    const next=new Map(old);eligiblePage.forEach(c=>{if(allSelected)next.delete(c.id);else if(next.size<200)next.set(c.id,c)});return next
+  })
+  const refreshBroadcasts=useCallback(()=>setRefreshVersion(v=>v+1),[])
+  async function startBroadcast(id:string) {
+    setCompose(null);setSelected(new Map());setBroadcastNotice('Difusión preparada. Iniciando envío…');setActionError(null)
+    try {
+      await broadcastRequest(`/api/campaigns/${id}/dispatch`)
+      setBroadcastNotice('Difusión iniciada. Podés seguir trabajando; el progreso se actualiza aquí.')
+    } catch(e) {
+      setBroadcastNotice(null);setActionError(`${e instanceof Error?e.message:'No se pudo iniciar el envío'}. La selección quedó guardada en Mis difusiones; podés continuar desde allí.`)
+    } finally {setBroadcastVersion(v=>v+1);setRefreshVersion(v=>v+1)}
+  }
+
   const hasFilters = segment !== 'todos' || tier !== 'todos' || agent !== 'todos'
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
 
+      {compose&&canSend&&<PriorityBroadcastComposer contacts={compose} onClose={()=>{setCompose(null);setBroadcastVersion(v=>v+1)}} onPrepared={id=>void startBroadcast(id)} />}
       <ScoringHelpModal open={showHelp} onClose={() => setShowHelp(false)} />
 
       {/* Header */}
@@ -266,6 +303,9 @@ export default function PrioridadesPage() {
         {result.computedAt && Date.now() - Date.parse(result.computedAt) > 36 * 3600000 && <span className="ml-3 text-warning">El cálculo tiene más de 36 horas. Actualizalo para incorporar movimientos recientes.</span>}
       </div>}
       {actionError && <p role="alert" className="rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">{actionError}</p>}
+
+      {broadcastNotice&&<p role="status" className="rounded-xl bg-primary/10 p-3 text-sm text-primary">{broadcastNotice}</p>}
+      {canReadCampaigns&&<PriorityBroadcastProgress version={broadcastVersion} onChanged={refreshBroadcasts} canSend={canSend} canManage={canManageCampaigns} />}
 
       {/* Tab principal: A difundir / Difundidos */}
       <div className="flex w-fit max-w-full gap-1 rounded-xl border border-border bg-card p-1">
@@ -369,6 +409,14 @@ export default function PrioridadesPage() {
         )}
       </div>
 
+      {tab==='pending'&&canSend&&<div className="surface sticky top-0 z-10 flex flex-wrap items-center gap-3 p-3 shadow-sm">
+        <Button variant="outline" size="sm" onClick={selectPage} disabled={loading||!eligiblePage.length}>{allSelected?'Quitar selección de página':'Seleccionar esta página'}</Button>
+        <span className="text-sm text-muted-foreground" role="status">{selected.size} seleccionados · máximo 200</span>
+        {selected.size>0&&<button className="text-sm underline text-muted-foreground" onClick={()=>setSelected(new Map())}>Limpiar selección</button>}
+        <Button className="gap-2 sm:ml-auto" disabled={!selected.size||loading} onClick={()=>setCompose([...selected.values()])}><Send size={16}/> Difundir seleccionados {selected.size>0?`(${selected.size})`:''}</Button>
+        <p className="basis-full text-xs text-muted-foreground">La selección se conserva al cambiar de página y se limpia al cambiar los filtros. Los contactos con una difusión pendiente se gestionan desde Mis difusiones.</p>
+      </div>}
+
       {/* Tabla */}
       <div className="min-w-0 flex-1 overflow-auto">
         {loading ? (
@@ -398,7 +446,7 @@ export default function PrioridadesPage() {
               <>
                 <p className="text-muted-foreground text-sm font-medium">Aún no hay contactos difundidos</p>
                 <p className="text-muted-foreground text-xs max-w-sm">
-                  Marcá contactos como difundidos desde la pestaña "A difundir".
+                  Los contactos aparecen aquí automáticamente cuando se confirma el envío desde "A difundir".
                 </p>
               </>
             )}
@@ -408,6 +456,7 @@ export default function PrioridadesPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/50 text-xs font-semibold text-muted-foreground">
+                  {tab==='pending'&&canSend&&<th className="px-3 py-3 w-10"><input type="checkbox" aria-label="Seleccionar contactos de esta página" checked={allSelected} onChange={selectPage} disabled={!eligiblePage.length} className="h-4 w-4 accent-primary" /></th>}
                   <th className="px-4 py-3 text-right w-16">Score</th>
                   <th className="px-4 py-3 text-left">Contacto</th>
                   <th className="px-4 py-3 text-left w-24">Agente</th>
@@ -424,7 +473,8 @@ export default function PrioridadesPage() {
               </thead>
               <tbody className="divide-y divide-border">
                 {result.data.map(c => (
-                  <tr key={c.id} className="hover:bg-background transition-colors">
+                  <tr key={c.id} className={selected.has(c.id)?'bg-primary/5':'hover:bg-background transition-colors'}>
+                    {tab==='pending'&&canSend&&<td className="px-3 py-3"><input type="checkbox" aria-label={`Seleccionar ${contactName(c)}`} checked={selected.has(c.id)} onChange={()=>toggleSelection(c)} disabled={!!c.broadcastBusy||(!selected.has(c.id)&&selected.size>=200)} className="h-4 w-4 accent-primary" /></td>}
                     <td className="px-4 py-3 text-right">
                       <span className="font-semibold text-foreground tabular-nums">
                         {Math.round(c.priorityScore)}
@@ -434,6 +484,7 @@ export default function PrioridadesPage() {
                     <td className="px-4 py-3">
                       <div className="font-medium text-foreground">{contactName(c)}</div>
                       <div className="text-xs text-muted-foreground">{c.phoneNumber}</div>
+                      {tab==='pending'&&c.broadcastState&&c.broadcastState!=='cancelled'&&c.broadcastState!=='sent'&&<span className="mt-1 inline-flex rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">{{pending:'En difusión',failed:'Falló · revisar difusión',skipped:'Omitido · revisar difusión',review:'Pendiente de confirmación'}[c.broadcastState]||'Revisar difusión'}</span>}
                     </td>
 
                     <td className="px-4 py-3">
@@ -497,29 +548,9 @@ export default function PrioridadesPage() {
                     )}
 
                     <td className="px-4 py-3 text-right">
-                      {user?.role === 'viewer' ? null : tab === 'pending' ? (
-                        <button
-                          onClick={() => toggleBroadcasted(c.id, true)}
-                          disabled={pendingAction === c.id}
-                          title="Marcar como difundido"
-                          className="p-1.5 rounded-lg text-muted-foreground hover:text-success hover:bg-success/10 transition-colors disabled:opacity-40"
-                        >
-                          {pendingAction === c.id
-                            ? <RefreshCw size={14} className="animate-spin" />
-                            : <CheckCircle2 size={14} />
-                          }
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => toggleBroadcasted(c.id, false)}
-                          disabled={pendingAction === c.id}
-                          title="Volver a A difundir"
-                          className="p-1.5 rounded-lg text-muted-foreground hover:text-amber-600 hover:bg-warning/10 transition-colors disabled:opacity-40"
-                        >
-                          {pendingAction === c.id
-                            ? <RefreshCw size={14} className="animate-spin" />
-                            : <RotateCcw size={14} />
-                          }
+                      {tab==='pending' ? (canSend&&<Button size="sm" variant="outline" className="gap-2" disabled={!!c.broadcastBusy} onClick={()=>setCompose([c])}><Send size={14}/> Difundir</Button>) : isAdmin&&(
+                        <button onClick={()=>toggleBroadcasted(c.id,false)} disabled={pendingAction===c.id} title="Volver a A difundir" aria-label={`Volver a difundir a ${contactName(c)}`} className="p-1.5 rounded-lg text-muted-foreground hover:text-amber-600 hover:bg-warning/10 disabled:opacity-40">
+                          {pendingAction===c.id?<RefreshCw size={14} className="animate-spin"/>:<RotateCcw size={14}/>}
                         </button>
                       )}
                     </td>

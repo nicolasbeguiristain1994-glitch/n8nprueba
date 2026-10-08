@@ -81,6 +81,8 @@ export interface PrioritizedContact {
   isBroadcasted:       boolean
   broadcastedAt:       Date | null
   broadcastedBy:       string | null
+  broadcastState?:     string | null
+  broadcastBusy?:      boolean
   ltvScore:            number | null
   ltvTier:             import('./config').ValueTier | null
 }

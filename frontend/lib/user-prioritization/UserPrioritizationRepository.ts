@@ -1,3 +1,4 @@
+import { PRIORITY_BUSY_SQL, PRIORITY_BATCH_JOINS } from './broadcasts'
 import { Client } from 'pg'
 import { priorityAccess, type PriorityAccess } from './access'
 import { getLongRunningClient, query } from '@/lib/db'
@@ -47,6 +48,8 @@ interface PrioritizedDbRow {
   is_broadcasted:          boolean
   broadcasted_at:          Date | null
   broadcasted_by:          string | null
+  broadcast_state:         string | null
+  broadcast_busy:          boolean
   ltv_score:               string | null
   ltv_tier:                string | null
 }
@@ -125,7 +128,7 @@ export class UserPrioritizationRepository {
         c.total_deposits,
         c.total_deposit_amount,
         c.last_deposit_amount,
-        (c.do_not_contact OR EXISTS (SELECT 1 FROM blacklist b WHERE b.phone_number_normalized=c.phone_number AND b.removed_at IS NULL)) AS do_not_contact,
+        (c.do_not_contact OR EXISTS (SELECT 1 FROM blacklist b WHERE b.phone_number_normalized IN (c.phone_number,regexp_replace(c.phone_number,'[^0-9]','','g')) AND b.removed_at IS NULL)) AS do_not_contact,
         c.opt_in_marketing,
         c.deleted_at
       FROM contacts c
@@ -305,11 +308,11 @@ export class UserPrioritizationRepository {
 
     const broadcasted = filters.broadcasted ?? false
     const conditions: string[] = [
-      'cps.is_eligible = true',
+      ...(broadcasted ? [] : ['cps.is_eligible = true']),
       'c.deleted_at IS NULL',
       "c.status IN ('active','inactive')",
       'c.opt_in_marketing = true AND c.do_not_contact = false',
-      'NOT EXISTS (SELECT 1 FROM blacklist b WHERE b.phone_number_normalized=c.phone_number AND b.removed_at IS NULL)',
+      "NOT EXISTS (SELECT 1 FROM blacklist b WHERE b.phone_number_normalized IN (c.phone_number,regexp_replace(c.phone_number,'[^0-9]','','g')) AND b.removed_at IS NULL)",
       `cps.is_broadcasted = ${broadcasted}`,
     ]
     const params: unknown[]    = []
@@ -339,7 +342,7 @@ export class UserPrioritizationRepository {
       conditions.push(`cps.days_inactive <= $${p++}`)
       params.push(filters.maxDaysInactive)
     }
-    if (filters.runId) {
+    if (filters.runId && !broadcasted) {
       conditions.push(`cps.run_id = $${p++}`)
       params.push(filters.runId)
     }
@@ -398,6 +401,25 @@ export class UserPrioritizationRepository {
       LIMIT $${p++} OFFSET $${p++}
     `
     const rows = await this.query<PrioritizedDbRow>(dataSql, [...params, pageSize, offset])
+    // Fetch queue state only for this page, never for the entire scored audience.
+    if(rows.length) {
+      const states=await this.query<{id:string;state:string|null;busy:boolean}>(`
+        SELECT c.id,latest_broadcast.state,COALESCE(latest_broadcast.busy,false) AS busy
+        FROM contacts c
+      LEFT JOIN LATERAL (
+        SELECT CASE WHEN bm.status='queued' AND br.status='failed' THEN 'review'
+          WHEN br.status='failed' THEN 'failed' WHEN br.status='skipped' THEN 'skipped'
+          WHEN bc.status='cancelled' AND NOT ${PRIORITY_BUSY_SQL} THEN 'cancelled'
+          WHEN br.status='sent' THEN 'sent' ELSE 'pending' END AS state,
+          ${PRIORITY_BUSY_SQL} AS busy
+        FROM priority_broadcasts pb ${PRIORITY_BATCH_JOINS}
+        WHERE ba.contact_id=c.id ORDER BY pb.created_at DESC LIMIT 1
+      ) latest_broadcast ON true
+        WHERE c.id=ANY($1::uuid[])`,[rows.map(row=>row.id)])
+      const stateById=new Map(states.map(row=>[row.id,row]))
+      rows.forEach(row=>{row.broadcast_state=stateById.get(row.id)?.state??null;row.broadcast_busy=stateById.get(row.id)?.busy??false})
+    }
+
 
     const [job] = await this.query<{ computed_at: Date | null; is_running: boolean }>(
       `SELECT last_success_at AS computed_at, is_running FROM system_jobs WHERE job_name='prioritization_recompute'`)
@@ -612,7 +634,7 @@ export class UserPrioritizationRepository {
     const scope = priorityAccess(access, 2)
     const rows = await this.query<{ contact_id: string }>(
       `UPDATE contact_priority_scores cps
-       SET is_broadcasted = true, broadcasted_at = NOW(), broadcasted_by = $2
+       SET is_broadcasted = true, broadcasted_at = NOW(), broadcasted_by = $2, broadcast_campaign_id = NULL
        FROM contacts c
        WHERE cps.contact_id = $1 AND c.id=cps.contact_id AND cps.is_eligible = true AND c.deleted_at IS NULL${scope.sql}
        RETURNING cps.contact_id`,
@@ -625,7 +647,7 @@ export class UserPrioritizationRepository {
     const scope = priorityAccess(access, 1)
     const rows = await this.query<{ contact_id: string }>(
       `UPDATE contact_priority_scores cps
-       SET is_broadcasted = false, broadcasted_at = NULL, broadcasted_by = NULL
+       SET is_broadcasted = false, broadcasted_at = NULL, broadcasted_by = NULL, broadcast_campaign_id = NULL
        FROM contacts c
        WHERE cps.contact_id = $1 AND c.id=cps.contact_id AND c.deleted_at IS NULL${scope.sql}
        RETURNING cps.contact_id`,
@@ -700,6 +722,8 @@ function mapPrioritized(row: PrioritizedDbRow): PrioritizedContact {
     isBroadcasted:       row.is_broadcasted,
     broadcastedAt:       row.broadcasted_at ? new Date(row.broadcasted_at) : null,
     broadcastedBy:       row.broadcasted_by ?? null,
+    broadcastState:      row.broadcast_state ?? null,
+    broadcastBusy:       row.broadcast_busy ?? false,
     ltvScore:            row.ltv_score != null ? Number(row.ltv_score) : null,
     ltvTier:             (row.ltv_tier as ValueTier | null) ?? null,
   }

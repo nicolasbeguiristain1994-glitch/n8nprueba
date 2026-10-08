@@ -58,7 +58,7 @@ export function validate(root=ROOT){
   [process.execPath,['--test','tests/contacts-segmentation.integration.cjs'],root,{...process.env,CONTACTS_TEST_DATABASE_URL:process.env.OPS_TEST_DATABASE_URL}],
   [process.execPath,['--test',...fs.readdirSync(path.join(root,'scripts/ops/tests')).filter(f=>f.endsWith('.test.mjs')).map(f=>`scripts/ops/tests/${f}`)],root],
   ['npm',['test'],path.join(root,'frontend'),{...process.env,CONTACTS_TEST_DATABASE_URL:process.env.OPS_TEST_DATABASE_URL}],
-  [process.execPath,['node_modules/vitest/vitest.mjs','run','lib/__tests__/cloud-conversations-postgres.test.ts','lib/__tests__/sticker-favorites-postgres.test.ts'],path.join(root,'frontend'),{...process.env,RUN_CAMPAIGN_PG_TESTS:'1',DATABASE_URL:process.env.OPS_TEST_DATABASE_URL}],
+  [process.execPath,['node_modules/vitest/vitest.mjs','run','lib/__tests__/cloud-conversations-postgres.test.ts','lib/__tests__/sticker-favorites-postgres.test.ts','lib/__tests__/priority-broadcasts-postgres.test.ts'],path.join(root,'frontend'),{...process.env,RUN_CAMPAIGN_PG_TESTS:'1',DATABASE_URL:process.env.OPS_TEST_DATABASE_URL}],
   [process.execPath,['node_modules/vitest/vitest.mjs','run','lib/__tests__/missing-contacts-postgres.test.ts'],path.join(root,'frontend'),{...process.env,RUN_MISSING_CONTACTS_PG_TESTS:'1',DATABASE_URL:process.env.OPS_TEST_DATABASE_URL}],
   [process.execPath,['node_modules/next/dist/bin/next','typegen'],path.join(root,'frontend')],
   [process.execPath,['node_modules/typescript/bin/tsc','--noEmit','--incremental','false'],path.join(root,'frontend')],

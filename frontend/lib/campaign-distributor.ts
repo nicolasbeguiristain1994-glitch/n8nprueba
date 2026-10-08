@@ -1,3 +1,4 @@
+import { priorityRecipientAllowed } from './user-prioritization/broadcasts'
 import { uploadCloudSticker } from './cloud-api/infrastructure/sticker-media'
 import { ensureCampaignAudienceSnapshot, campaignMembershipSQL } from './dynamic-audiences'
 import { complianceRepository } from './cloud-api/repositories/compliance.repository'
@@ -128,6 +129,7 @@ export type CampaignForDispatch = {
   template_params:   CampaignTemplateParams | null
   template_waba_id?: string | null
   template_status?: string | null
+  is_priority_broadcast?: boolean
 }
 
 // Payload discriminado para sendViaCloud — separa texto de plantilla
@@ -388,7 +390,7 @@ export async function createDispatchUnits(
      WHERE c.deleted_at IS NULL
        AND c.opt_in_marketing = true
        AND c.do_not_contact   = false
-       AND c.status           = 'active'
+       AND (c.status = 'active' OR (c.status='inactive' AND EXISTS(SELECT 1 FROM campaigns pc WHERE pc.id=$1 AND pc.is_priority_broadcast=true)))
        AND NOT EXISTS (
          SELECT 1 FROM blacklist bl
          WHERE bl.phone_number_normalized = regexp_replace(c.phone_number, '[^0-9]', '', 'g')
@@ -1112,6 +1114,17 @@ export async function sendOneUnit(
   }
   if (!unit) return 'no-unit'
 
+  if (campaign.is_priority_broadcast) {
+    let allowed=false
+    try { allowed=!!unit.contact_id && await priorityRecipientAllowed(campaignId,unit.contact_id,unit.phone_number) }
+    catch { /* A failed authorization read cannot authorize an external send. */ }
+    if(!allowed) {
+      await query(`UPDATE campaign_recipients SET status='skipped',locked_at=NULL,
+        error_detail='[priority-access] Revisar permisos, consentimiento o datos del contacto',updated_at=NOW() WHERE id=$1`,[unit.id])
+      return 'skipped'
+    }
+  }
+
   // ── Frequency gate ──────────────────────────────────────────────────────────
   //
   // Evalúa los límites por contacto (1/día, 2/semana, 48h cooldown) y reserva
@@ -1157,6 +1170,11 @@ export async function sendOneUnit(
         contactId:   unit.contact_id,
         error:       freqErr instanceof Error ? freqErr.message : String(freqErr),
       })
+      if(campaign.is_priority_broadcast) {
+        await query(`UPDATE campaign_recipients SET status='failed',locked_at=NULL,
+          error_detail='frequency-check-unavailable-no-send',updated_at=NOW() WHERE id=$1`,[unit.id])
+        return 'failed'
+      }
       opts.onFreqFailOpen?.()
     }
   }

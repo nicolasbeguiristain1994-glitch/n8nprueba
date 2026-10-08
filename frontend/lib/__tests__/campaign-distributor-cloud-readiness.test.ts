@@ -2,9 +2,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-  query: vi.fn(), send: vi.fn(), rate: vi.fn(), token: vi.fn(), optedOut: vi.fn(), window: vi.fn(),
+  priorityAllowed: vi.fn(), frequency: vi.fn(), query: vi.fn(), send: vi.fn(), rate: vi.fn(), token: vi.fn(), optedOut: vi.fn(), window: vi.fn(),
   updateActivity: vi.fn(), delay: vi.fn(), personality: vi.fn(), loadedPersonality: vi.fn(), activeNow: vi.fn(),
 }))
+vi.mock('@/lib/user-prioritization/broadcasts',()=>({priorityRecipientAllowed:mocks.priorityAllowed}))
 vi.mock('@/lib/db', () => ({ query: mocks.query, withTransaction: vi.fn() }))
 vi.mock('@/lib/cloud-api/rate-limiter', () => ({ enforceRateLimit: mocks.rate }))
 vi.mock('@/lib/cloud-api/token-store', () => ({ getTokenForNumber: mocks.token }))
@@ -14,7 +15,7 @@ vi.mock('@/lib/cloud-api/infrastructure/message-sender.service', async importOri
   ...await importOriginal<typeof import('@/lib/cloud-api/infrastructure/message-sender.service')>(),
   MessageSenderService: class { send = mocks.send },
 }))
-vi.mock('@/lib/contact-frequency/ContactFrequencyEngine', () => ({ ContactFrequencyEngine: { atomicEvaluateAndRecord: vi.fn() } }))
+vi.mock('@/lib/contact-frequency/ContactFrequencyEngine', () => ({ ContactFrequencyEngine: { atomicEvaluateAndRecord: mocks.frequency } }))
 vi.mock('@/lib/campaign-logger', () => ({ clog: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), critical: vi.fn() } }))
 vi.mock('@/lib/line-personality', () => ({
   updateLastActiveAt: mocks.updateActivity, getLoadedLineIds: () => [], getLoadedPersonality: mocks.loadedPersonality,
@@ -59,6 +60,8 @@ function successfulDb(sql: string) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.priorityAllowed.mockResolvedValue(true)
+  mocks.frequency.mockResolvedValue({decision:'ALLOW',reason:''})
   mocks.query.mockImplementation(successfulDb)
   mocks.optedOut.mockResolvedValue(false)
   mocks.window.mockResolvedValue({ windowExpiresAt: new Date(Date.now() + 60000) })
@@ -240,6 +243,21 @@ describe('manual Cloud reply guards', () => {
 })
 
 describe('campaign recipient fences and outcomes', () => {
+  it.each([false, 'error'])('blocks priority sends if contact access cannot be confirmed (%s)',async result=>{
+    mocks.query.mockImplementation(sql=>sql.includes('WITH claimed AS')?Promise.resolve([{...unit,contact_id:'contact-1',prospect_id:null}]):successfulDb(sql))
+    if(result==='error')mocks.priorityAllowed.mockRejectedValueOnce(Error('DB unavailable'))
+    else mocks.priorityAllowed.mockResolvedValueOnce(false)
+    expect(await sendOneUnit(campaign.id,line,{...campaign,is_priority_broadcast:true},3)).toBe('skipped')
+    expect(mocks.send).not.toHaveBeenCalled()
+    expect(mocks.frequency).not.toHaveBeenCalled()
+  })
+  it('fails closed when the frequency check for a priority send fails',async()=>{
+    mocks.query.mockImplementation(sql=>sql.includes('WITH claimed AS')?Promise.resolve([{...unit,contact_id:'contact-1',prospect_id:null}]):successfulDb(sql))
+    mocks.frequency.mockRejectedValueOnce(Error('DB unavailable'))
+    expect(await sendOneUnit(campaign.id,line,{...campaign,is_priority_broadcast:true},3)).toBe('failed')
+    expect(mocks.send).not.toHaveBeenCalled()
+  })
+
   it('never calls Meta if the durable queued fence cannot be written', async () => {
     mocks.query.mockImplementation(sql => sql.includes('INSERT INTO whatsapp_messages') ? Promise.reject(new Error('storage unavailable')) : successfulDb(sql))
     expect(await sendOneUnit(campaign.id, line, campaign, 3)).toBe('failed')
