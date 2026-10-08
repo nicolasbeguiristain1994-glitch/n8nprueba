@@ -47,7 +47,7 @@ export function PriorityBroadcastProgress({version,onChanged,canSend,canManage}:
         {canSend&&['draft','paused'].includes(b.status)&&<Button size="sm" variant="outline" disabled={!!busy} onClick={()=>action(b.id,'resume')}>{busy===b.id?'Procesando…':'Continuar envío'}</Button>}
         {canSend&&['completed','paused'].includes(b.status)&&b.failed+b.skipped>0&&<Button size="sm" variant="outline" disabled={!!busy} onClick={()=>action(b.id,'retry')}>Reintentar fallidos</Button>}
         {canManage&&b.status==='running'&&<Button size="sm" variant="outline" disabled={!!busy} onClick={()=>action(b.id,'pause')}>Pausar</Button>}
-        {canManage&&['draft','paused'].includes(b.status)&&<Button size="sm" variant="outline" disabled={!!busy} onClick={()=>action(b.id,'cancel')}>Cancelar difusión</Button>}
+        {canManage&&(['draft','paused'].includes(b.status)||(b.status==='completed'&&b.failed+b.skipped>0))&&<Button size="sm" variant="outline" disabled={!!busy} onClick={()=>action(b.id,'cancel')}>{b.status==='completed'?'Cerrar pendientes':'Cancelar difusión'}</Button>}
         <a className="text-sm text-primary underline self-center" href={`/campaigns?campaign=${b.id}`}>Ver detalle</a>
       </div>
     </div>)}</div>

@@ -33,6 +33,17 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks() })
 
 describe('campaign status controls', () => {
+  it('allows closing completed priority batches without reviving or resetting recipients',async()=>{
+    mocks.query.mockResolvedValueOnce([{status:'completed',owned_by:user.user_id,is_priority_broadcast:true}]).mockResolvedValueOnce([{id}])
+    expect((await PATCH(req('',{status:'cancelled'}),params())).status).toBe(200)
+    expect(mocks.query.mock.calls[1][1]).toEqual(['cancelled',id,user.user_id,'completed',user.user_id])
+    expect(mocks.fetch).not.toHaveBeenCalled()
+  })
+  it('preserves the completed status policy for ordinary campaigns',async()=>{
+    mocks.query.mockResolvedValueOnce([{status:'completed',owned_by:user.user_id,is_priority_broadcast:false}])
+    expect((await PATCH(req('',{status:'cancelled'}),params())).status).toBe(409)
+  })
+
   it.each(['completed', 'cancelled'])('does not revive %s through PATCH', async status => {
     mocks.query.mockResolvedValueOnce([{ status, owned_by: user.user_id }])
     expect((await PATCH(req('', { status: 'draft' }), params())).status).toBe(409)

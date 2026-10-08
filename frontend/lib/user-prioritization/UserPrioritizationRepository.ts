@@ -308,12 +308,14 @@ export class UserPrioritizationRepository {
 
     const broadcasted = filters.broadcasted ?? false
     const conditions: string[] = [
-      ...(broadcasted ? [] : ['cps.is_eligible = true']),
       'c.deleted_at IS NULL',
-      "c.status IN ('active','inactive')",
-      'c.opt_in_marketing = true AND c.do_not_contact = false',
-      "NOT EXISTS (SELECT 1 FROM blacklist b WHERE b.phone_number_normalized IN (c.phone_number,regexp_replace(c.phone_number,'[^0-9]','','g')) AND b.removed_at IS NULL)",
       `cps.is_broadcasted = ${broadcasted}`,
+      ...(broadcasted ? [] : [
+        'cps.is_eligible = true',
+        "c.status IN ('active','inactive')",
+        'c.opt_in_marketing = true AND c.do_not_contact = false',
+        "NOT EXISTS (SELECT 1 FROM blacklist b WHERE b.phone_number_normalized IN (c.phone_number,regexp_replace(c.phone_number,'[^0-9]','','g')) AND b.removed_at IS NULL)",
+      ]),
     ]
     const params: unknown[]    = []
     let   p = 1

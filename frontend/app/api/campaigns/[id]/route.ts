@@ -21,15 +21,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { status } = parsed.data
 
   try {
-    const [row] = await query<{ owned_by: string | null; status: string }>(
-      'SELECT owned_by, status FROM campaigns WHERE id = $1', [id]
+    const [row] = await query<{ owned_by: string | null; status: string; is_priority_broadcast?: boolean }>(
+      'SELECT owned_by, status, is_priority_broadcast FROM campaigns WHERE id = $1', [id]
     )
     if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     if (!isCampaignOwnerOrAdmin(session, row.owned_by))
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     const allowedFrom = {
       paused: ['scheduled', 'running', 'paused'],
-      cancelled: ['draft', 'scheduled', 'running', 'paused', 'cancelled'],
+      cancelled: ['draft', 'scheduled', 'running', 'paused', 'cancelled', ...(row.is_priority_broadcast ? ['completed'] : [])],
       draft: ['draft', 'scheduled'],
     }
     if (!allowedFrom[status].includes(row.status)) {
