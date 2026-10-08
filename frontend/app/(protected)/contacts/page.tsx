@@ -42,6 +42,7 @@ import type { ColumnDef, RowSelectionState, PaginationState } from '@/components
 const tabLoading = () => <p role="status" className="py-6 text-sm text-muted-foreground">Cargando…</p>
 const ProspectsTab = dynamic(() => import('@/components/prospects/ProspectsTab').then(m => m.ProspectsTab), { loading: tabLoading })
 const ProspectListsTab = dynamic(() => import('@/components/prospects/ProspectListsTab').then(m => m.ProspectListsTab), { loading: tabLoading })
+const MissingPhoneTab = dynamic(() => import('@/components/contacts/MissingPhoneTab').then(m => m.MissingPhoneTab), { loading: tabLoading })
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos
@@ -171,7 +172,7 @@ function detectClientPlatforms(first: string | null, last: string | null): strin
 
 export default function Contacts() {
   // ── Tab activo ────────────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<'contacts' | 'prospects' | 'prospect-lists'>('contacts')
+  const [activeTab, setActiveTab] = useState<'contacts' | 'prospects' | 'prospect-lists' | 'missing-phone'>('contacts')
 
   // ── Datos ─────────────────────────────────────────────────────────────────
   const [contacts, setContacts] = useState<Contact[]>([])
@@ -1225,6 +1226,14 @@ export default function Contacts() {
           Contactos
         </button>
         <button
+          onClick={() => setActiveTab('missing-phone')}
+          className={`shrink-0 px-3 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'missing-phone' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          Usuarios sin número
+        </button>
+        <button
           onClick={() => setActiveTab('prospects')}
           className={`shrink-0 px-3 py-2.5 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'prospects'
@@ -1248,6 +1257,7 @@ export default function Contacts() {
 
       {activeTab === 'prospects' && <ProspectsTab />}
       {activeTab === 'prospect-lists' && <ProspectListsTab />}
+      {activeTab === 'missing-phone' && <MissingPhoneTab onImported={() => { void load() }} />}
 
       {activeTab === 'contacts' && <>
       <PageHeader
