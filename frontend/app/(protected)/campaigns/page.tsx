@@ -394,7 +394,7 @@ export default function Campaigns() {
   }
 
   const resetFreq = async (campaign: Campaign) => {
-    if (!confirm(`¿Reiniciar los destinatarios sin envío de "${campaign.name}"?\n\nEl historial se conservará. Si hay mensajes aceptados o pendientes de confirmación, el reinicio se bloqueará: creá una campaña nueva para un nuevo envío.`)) return
+    if (!confirm(`¿Reiniciar los destinatarios sin envío de "${campaign.name}"?\n\nEl historial se conservará y la campaña quedará pausada. Para iniciar el envío después, presioná Reanudar.\n\nSi hay mensajes aceptados o pendientes de confirmación, el reinicio se bloqueará: creá una campaña nueva para un nuevo envío.`)) return
     setFreqResetting(campaign.id)
     try {
       const res = await fetch(`/api/campaigns/${campaign.id}/freq-reset`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm_reset: true }) })
@@ -844,7 +844,7 @@ export default function Campaigns() {
                       )}
 
                       {/* Reinicio de destinatarios sin envío; conserva el historial */}
-                      {isAdmin && ['completed','paused','cancelled'].includes(c.status) && !c.processor_locked_at && (c.total_sent > 0 || c.total_skipped > 0 || c.total_failed > 0) && (
+                      {isAdmin && ['completed','paused','cancelled'].includes(c.status) && !c.processor_locked_at && (c.status === 'cancelled' || c.total_sent > 0 || c.total_skipped > 0 || c.total_failed > 0) && (
                         <Button size="sm" variant="outline"
                                 className="border-orange-200 text-orange-500 hover:bg-orange-50"
                                 title="Reiniciar destinatarios sin envío confirmado (admin)"

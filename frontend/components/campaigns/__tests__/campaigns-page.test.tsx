@@ -583,3 +583,82 @@ describe('Campañas — pausas y límites', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
+
+describe('Campañas — reiniciar una cancelada sin envíos', () => {
+  const cancelled = (over: Record<string, unknown> = {}) => makeCampaign({
+    status: 'cancelled', owned_by: 'owner', list_id: 'l1', list_name: 'VIP', use_multi_line: true,
+    ...over,
+  })
+
+  it('ofrece Reiniciar con todos los contadores en cero y no cambia nada si se rechaza la confirmación', async () => {
+    routeFetchJson(() => Promise.resolve({ campaigns: [cancelled()], scheduler_enabled: true }))
+    const fetchMock = vi.fn()
+    const confirmMock = vi.fn().mockReturnValue(false)
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('confirm', confirmMock)
+
+    render(<Page />)
+    const restart = await screen.findByRole('button', { name: 'Reiniciar' })
+    expect(restart).toBeEnabled()
+    expect(screen.getByText('Cancelado')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reanudar' })).not.toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    fireEvent.click(restart)
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+    expect(confirmMock).toHaveBeenCalledWith(expect.stringContaining('pausada'))
+    expect(confirmMock).toHaveBeenCalledWith(expect.stringContaining('Reanudar'))
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(screen.getByText('Cancelado')).toBeInTheDocument()
+  })
+
+  it('confirma sólo el reinicio y muestra Reanudar tras recargar, sin iniciar envíos automáticamente', async () => {
+    let campaign = cancelled()
+    routeFetchJson(() => Promise.resolve({ campaigns: [campaign], scheduler_enabled: true }))
+    const confirmMock = vi.fn().mockReturnValue(true)
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe('/api/campaigns/c-a/freq-reset')
+      expect(init?.method).toBe('DELETE')
+      campaign = cancelled({ status: 'paused', pause_reason: 'manual' })
+      return jsonResponse({ ok: true, deleted_history: 0, reset_recipients: 0 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('confirm', confirmMock)
+
+    render(<Page />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Reiniciar' }))
+
+    expect(await screen.findByRole('button', { name: 'Reanudar' })).toBeEnabled()
+    expect(screen.getByText('Pausado')).toBeInTheDocument()
+    expect(screen.queryByText('Cancelado')).not.toBeInTheDocument()
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]).toEqual([
+      '/api/campaigns/c-a/freq-reset',
+      { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm_reset: true }) },
+    ])
+    expect(fetchMock.mock.calls.some(([url]) => /\/(dispatch|send|retry-failed)$/.test(url))).toBe(false)
+    expect(vi.mocked(fetchJson).mock.calls.filter(([url]) => String(url) === '/api/campaigns')).toHaveLength(2)
+  })
+
+  it.each([
+    { role: 'viewer', status: 'cancelled', lock: null },
+    { role: 'operator', status: 'cancelled', lock: null },
+    { role: 'admin', status: 'cancelled', lock: '2026-10-08T23:00:00Z' },
+    { role: 'admin', status: 'draft', lock: null },
+    { role: 'admin', status: 'scheduled', lock: null },
+    { role: 'admin', status: 'running', lock: null },
+  ])('conserva las restricciones de rol y estado: $role / $status / lock=$lock', async ({ role, status, lock }) => {
+    currentUser.value = { user: { role, id: 'owner' }, permissions: {} }
+    routeFetchJson(() => Promise.resolve({
+      campaigns: [cancelled({ status, processor_locked_at: lock })], scheduler_enabled: true,
+    }))
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<Page />)
+    await screen.findByText('Promo Mayo')
+    expect(screen.queryByRole('button', { name: 'Reiniciar' })).not.toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
