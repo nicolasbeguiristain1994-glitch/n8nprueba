@@ -13,6 +13,7 @@ vi.mock('@/lib/contact-frequency/ContactFrequencyEngine', () => ({ ContactFreque
 import { getCampaignTestSnapshot, sendCampaignTest } from '@/lib/campaign-test-sends'
 import { CloudSendOutcomeUnknownError, getDispatchSummary } from '@/lib/campaign-distributor'
 import { CloudApiError, OptOutError } from '@/lib/cloud-api/errors'
+import { recordCampaignTestDelivery } from '@/lib/campaign-test-delivery'
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`
 const campaignId = id(1), recipientId = id(2), lineId = id(3), templateId = id(4), userId = id(5)
@@ -47,6 +48,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign test sends 
     const migration = readFileSync(new URL('../../../db/migrations/136_campaign_test_sends.sql', import.meta.url), 'utf8')
     await db.query(migration)
     await db.query(migration)
+    await db.query(readFileSync(new URL('../../../db/migrations/146_campaign_test_delivery.sql', import.meta.url), 'utf8'))
     mocks.query.mockImplementation(async (sql, params) => (await db.query(sql, params)).rows)
     mocks.transaction.mockImplementation(async fn => {
       const client = await db.connect()
@@ -58,7 +60,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign test sends 
   beforeEach(async () => {
     mocks.send.mockReset().mockResolvedValue({ messageId: 'wamid.test' })
     mocks.frequency.mockReset().mockRejectedValue(new Error('Contact frequency must not be invoked for test sends'))
-    await db.query(`TRUNCATE campaign_test_sends, campaign_test_recipients, users, campaigns, whatsapp_lines,
+    await db.query(`TRUNCATE campaign_test_delivery_receipts, campaign_test_sends, campaign_test_recipients, users, campaigns, whatsapp_lines,
       whatsapp_templates, cloud_numbers, blacklist, contacts, contact_send_history, campaign_recipients CASCADE`)
     await db.query('INSERT INTO users VALUES ($1)', [userId])
     await db.query(`INSERT INTO campaigns(id,message_type,template_id,template_params) VALUES ($1,'template',$2,'{"body":["{{first_name}}"]}')`, [campaignId, templateId])
@@ -128,6 +130,21 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign test sends 
     await sendCampaignTest(campaignId, input(), userId)
     expect(mocks.send).toHaveBeenCalledTimes(1)
   })
+  it('returns an early confirmed delivery failure instead of overwriting it with HTTP acceptance or resending', async () => {
+    mocks.send.mockImplementationOnce(async () => {
+      await recordCampaignTestDelivery('123456789', {
+        id: 'wamid.early', status: 'failed', timestamp: '1791490000', recipient_id: '541112345678',
+        errors: [{ code: 141006, title: 'Payment configuration required' }],
+      })
+      return { messageId: 'wamid.early' }
+    })
+    expect(await sendCampaignTest(campaignId, input(), userId)).toMatchObject({
+      status: 'failed', delivery_error_code: 141006, error: '[meta:141006] Payment configuration required',
+    })
+    expect((await getCampaignTestSnapshot(campaignId)).attempts[0].status).toBe('failed')
+    expect((await sendCampaignTest(campaignId, input(), userId)).status).toBe('failed')
+    expect(mocks.send).toHaveBeenCalledTimes(1)
+  })
   it('also blocks rapid duplicate clicks that carry different request keys', async () => {
     const results = await Promise.allSettled([sendCampaignTest(campaignId, input(10), userId), sendCampaignTest(campaignId, input(11), userId)])
     expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1)
@@ -173,7 +190,10 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign test sends 
     expect(mocks.send).toHaveBeenCalledTimes(1)
   })
   it('leaves a durable fence if storing the final status fails after Meta accepted', async () => {
-    mocks.query.mockRejectedValueOnce(new Error('synthetic storage failure'))
+    mocks.send.mockImplementationOnce(async () => {
+      mocks.transaction.mockRejectedValueOnce(new Error('synthetic storage failure'))
+      return { messageId: 'wamid.test' }
+    })
     expect((await sendCampaignTest(campaignId, input(), userId)).status).toBe('uncertain')
     expect((await sendCampaignTest(campaignId, input(), userId)).status).toBe('sending')
     expect(mocks.send).toHaveBeenCalledTimes(1)

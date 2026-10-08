@@ -6,6 +6,7 @@ import { buildTemplatePayload, sendViaCloud, CloudSendOutcomeUnknownError } from
 import { CloudApiError } from '@/lib/cloud-api/errors'
 import type { CampaignForDispatch } from '@/lib/campaign-distributor'
 import type { CampaignTestAttempt, CampaignTestLine, CampaignTestRecipient, CampaignTestSnapshot } from '@/lib/campaign-test-types'
+import { CAMPAIGN_TEST_ATTEMPT_COLUMNS as ATTEMPT_COLUMNS, completeCampaignTestAttempt } from '@/lib/campaign-test-delivery'
 
 export const RegisterTestRecipientSchema = z.object({
   first_name: z.string().trim().min(1).max(100),
@@ -20,8 +21,6 @@ export class CampaignTestError extends Error {
 
 type Reader = typeof query
 type TestCampaign = CampaignForDispatch & { template_components: unknown }
-const ATTEMPT_COLUMNS = `id, campaign_id, recipient_id, line_id, first_name, phone_number,
-  line_name, status, provider_message_id, error, created_at`
 
 async function loadCampaign(id: string, read: Reader = query): Promise<TestCampaign> {
   const [campaign] = await read<TestCampaign>(
@@ -91,10 +90,10 @@ export async function sendCampaignTest(
     const content = buildTemplatePayload(campaign, recipient)
     const [attempt] = await read<CampaignTestAttempt>(
       `INSERT INTO campaign_test_sends
-       (id, campaign_id, recipient_id, line_id, sent_by, first_name, phone_number, line_name, template_payload)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb) RETURNING ${ATTEMPT_COLUMNS}`,
+       (id, campaign_id, recipient_id, line_id, sent_by, first_name, phone_number, line_name, template_payload, phone_number_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10) RETURNING ${ATTEMPT_COLUMNS}`,
       [input.request_id, campaignId, recipient.id, line.id, userId === 'bootstrap' ? null : userId,
-        recipient.first_name, recipient.phone_number, line.display_name, JSON.stringify(content)])
+        recipient.first_name, recipient.phone_number, line.display_name, JSON.stringify(content), line.phone_number_id])
     return { attempt, line, content, campaign }
   })
   if (!claim.line || !claim.content || !claim.campaign) return claim.attempt
@@ -116,11 +115,7 @@ export async function sendCampaignTest(
       : err.message.slice(0, 500)
   }
   try {
-    const [attempt] = await query<CampaignTestAttempt>(
-      `UPDATE campaign_test_sends SET status=$2, provider_message_id=$3, error=$4, updated_at=now()
-       WHERE id=$1 RETURNING ${ATTEMPT_COLUMNS}`, [input.request_id, status, providerId, error])
-    if (!attempt) throw new Error('Missing test attempt')
-    return attempt
+    return await completeCampaignTestAttempt(input.request_id, claim.line.phone_number_id, status, providerId, error)
   } catch {
     // The durable 'sending' record remains a fence even if Meta accepted the send.
     return { ...claim.attempt, status: 'uncertain', provider_message_id: providerId,

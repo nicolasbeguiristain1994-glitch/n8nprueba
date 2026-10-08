@@ -6,7 +6,8 @@ import { Input } from '@/components/ui/input'
 import { FlaskConical, Loader2, RefreshCw, Trash2 } from 'lucide-react'
 import type { CampaignTestAttempt, CampaignTestSnapshot } from '@/lib/campaign-test-types'
 
-const STATUS = { sending: 'En procesamiento', sent: 'Aceptado por Meta', failed: 'Falló', uncertain: 'Sin confirmar' }
+const STATUS = { sending: 'En procesamiento', sent: 'Aceptado por Meta', delivered: 'Entregado', read: 'Leído', failed: 'Falló', uncertain: 'Sin confirmar' }
+const STATUS_COLOR = { sending: 'text-muted-foreground', sent: 'text-muted-foreground', delivered: 'text-success', read: 'text-success', failed: 'text-destructive', uncertain: 'text-muted-foreground' }
 type PendingRequest = { request_id: string; recipient_id: string; line_id: string }
 
 export function CampaignTestSend({ campaignId }: { campaignId: string }) {
@@ -33,6 +34,7 @@ export function CampaignTestSend({ campaignId }: { campaignId: string }) {
       if (!res.ok) throw new Error(body.error || 'No se pudieron cargar las pruebas.')
       const snapshot = body as CampaignTestSnapshot
       setData(snapshot)
+      setResult(prev => prev ? snapshot.attempts.find(attempt => attempt.id === prev.id) ?? prev : prev)
       setRecipientId(prev => snapshot.recipients.some(r => r.id === prev) ? prev : snapshot.recipients[0]?.id || '')
       setLineId(prev => snapshot.lines.some(l => l.id === prev) ? prev : snapshot.lines[0]?.id || '')
     } catch (err) { setError(err instanceof Error ? err.message : 'No se pudieron cargar las pruebas.') }
@@ -148,15 +150,15 @@ export function CampaignTestSend({ campaignId }: { campaignId: string }) {
           </Button>
         </div>
       </>}
-      {result && <p role="status" className={`text-sm ${result.status === 'sent' ? 'text-success' : 'text-muted-foreground'}`}>
+      {result && <p role="status" className={`text-sm ${STATUS_COLOR[result.status]}`}>
         {STATUS[result.status]} · {result.first_name} ({result.phone_number}). {result.error}
-        {result.status === 'sent' && ' La entrega se confirma en el WhatsApp destinatario.'}
+        {result.status === 'sent' && ' Todavía no hay confirmación de entrega.'}
       </p>}
       {!!data?.attempts.length && <div className="space-y-2">
         <p className="text-xs font-medium">Últimas pruebas de esta campaña</p>
         {data.attempts.map(a => <div key={a.id} className="text-xs border-t pt-2">
-          <p>{a.first_name} · {a.phone_number} · {a.line_name} · {STATUS[a.status]}</p>
-          <p className="text-muted-foreground">{new Date(a.created_at).toLocaleString('es-AR')}</p>
+          <p className={STATUS_COLOR[a.status]}>{a.first_name} · {a.phone_number} · {a.line_name} · {STATUS[a.status]}</p>
+          <p className="text-muted-foreground">{new Date(a.created_at).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour12: false })}</p>
           {a.error && <p className="text-destructive">{a.error}</p>}
         </div>)}
       </div>}

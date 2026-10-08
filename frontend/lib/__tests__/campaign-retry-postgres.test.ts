@@ -13,6 +13,7 @@ import { prepareCampaignRetry } from '../campaign-retry'
 import { ContactSendHistoryRepository } from '../contact-frequency/repositories/ContactSendHistoryRepository'
 import { ContactFrequencyEngine } from '../contact-frequency/ContactFrequencyEngine'
 import { handleDeliveryStatus } from '../cloud-api/webhook-handlers/delivery-status.handler'
+vi.mock('@/lib/campaign-test-delivery', () => ({ recordCampaignTestDelivery: vi.fn() }))
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`
 const campaign=id(100), contact=id(200)
 

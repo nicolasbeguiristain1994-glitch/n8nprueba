@@ -1,4 +1,5 @@
 import { query } from '@/lib/db'
+import { recordCampaignTestDelivery } from '@/lib/campaign-test-delivery'
 // Handler: actualización de estado de entrega (sent/delivered/read/failed).
 
 import { messageRepository }    from '../repositories/conversation.repository'
@@ -17,6 +18,8 @@ export async function handleDeliveryStatus(
   const failureDetail = status.status === 'failed'
     ? `[meta:${error?.code ?? 'unknown'}] ${details ?? 'Meta informó un fallo de entrega.'}`.slice(0,2000)
     : null
+
+  await recordCampaignTestDelivery(phoneNumberId, status)
 
   await messageRepository.updateStatus(status.id, status.status, {
     errorCode:       status.errors?.[0]?.code ?? null,

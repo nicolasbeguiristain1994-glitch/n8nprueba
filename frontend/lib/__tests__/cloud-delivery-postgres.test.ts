@@ -3,6 +3,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Client } from 'pg'
 const mocks = vi.hoisted(() => ({ query: vi.fn(), status: vi.fn() }))
 vi.mock('@/lib/db', () => ({ query: mocks.query }))
+// This suite isolates legacy campaign delivery; the test ledger has its own real-Postgres suite.
+vi.mock('@/lib/campaign-test-delivery', () => ({ recordCampaignTestDelivery: vi.fn() }))
 vi.mock('@/lib/cloud-api/repositories/conversation.repository', () => ({ messageRepository: { updateStatus: mocks.status } }))
 vi.mock('@/lib/cloud-api/infrastructure/metrics', () => ({ cloudMetrics: { deliveryStatus: vi.fn() } }))
 vi.mock('@/lib/cloud-api/infrastructure/logger', () => ({ createLogger: () => ({ logInfo: vi.fn() }) }))

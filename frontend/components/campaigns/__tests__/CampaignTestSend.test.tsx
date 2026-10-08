@@ -5,7 +5,7 @@ import { CampaignTestSend } from '../CampaignTestSend'
 const recipient = { id: 'recipient', first_name: 'Pablo', phone_number: '+5491112345678' }
 const line = { id: 'line', display_name: 'Solbatt', phone_number_id: '12345' }
 const snapshot = { recipients: [recipient], lines: [line], attempts: [] }
-const attempt = { ...recipient, id: 'attempt', line_name: 'Solbatt', status: 'sent', error: null }
+const attempt = { ...recipient, id: 'attempt', line_name: 'Solbatt', status: 'sent', error: null, created_at: '2026-10-08T22:07:04.000Z' }
 const response = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
 const fetchMock = vi.fn()
 beforeEach(() => { vi.resetAllMocks(); vi.stubGlobal('fetch', fetchMock) })
@@ -48,7 +48,45 @@ describe('test send panel', () => {
     expect(payload).not.toHaveProperty('phone_number')
     await act(async () => resolveSend(response({ attempt })))
     expect(screen.getByRole('status')).toHaveTextContent('Aceptado por Meta')
-    expect(screen.getByRole('status')).toHaveTextContent('La entrega se confirma en el WhatsApp destinatario')
+    expect(screen.getByRole('status')).toHaveTextContent('Todavía no hay confirmación de entrega')
+    expect(screen.getByRole('status')).not.toHaveClass('text-success')
+  })
+  it.each([
+    { status: 'failed', label: 'Falló', color: 'text-destructive', error: '[meta:141006] Payment method required.' },
+    { status: 'delivered', label: 'Entregado', color: 'text-success', error: null },
+    { status: 'read', label: 'Leído', color: 'text-success', error: null },
+  ])('updates the highlighted result and history to $status when refreshed', async ({ status, label, color, error }) => {
+    let sent = false
+    let currentAttempt = { ...attempt, error: null as string | null }
+    fetchMock.mockImplementation((_url, init) => {
+      if (init?.method === 'POST') { sent = true; return Promise.resolve(response({ attempt })) }
+      return Promise.resolve(response({ ...snapshot, attempts: sent
+        ? [{ ...attempt, id: 'other-attempt', first_name: 'Ana', status: 'uncertain' }, currentAttempt] : [] }))
+    })
+    await open()
+    fireEvent.click(screen.getByRole('button', { name: 'Enviar prueba a este número' }))
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent('Aceptado por Meta')
+      expect(screen.getByRole('button', { name: 'Actualizar pruebas' })).toBeEnabled()
+    })
+
+    currentAttempt = { ...attempt, status, error }
+    fireEvent.click(screen.getByRole('button', { name: 'Actualizar pruebas' }))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(label))
+    expect(screen.getByRole('status')).toHaveClass(color)
+    expect(screen.getByText(`Pablo · +5491112345678 · Solbatt · ${label}`)).toHaveClass(color)
+    expect(screen.queryByText(/Aceptado por Meta/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Todavía no hay confirmación de entrega/)).not.toBeInTheDocument()
+    if (error) {
+      expect(screen.getByRole('status')).toHaveTextContent(error)
+      expect(screen.getByText(error)).toBeInTheDocument()
+    }
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
+  })
+  it('shows history timestamps in Argentina time using 24 hours', async () => {
+    fetchMock.mockResolvedValue(response({ ...snapshot, attempts: [attempt] }))
+    await open()
+    expect(screen.getByText('8/10/2026, 19:07:04')).toBeInTheDocument()
   })
   it('reuses the same request after a lost response and locks destination changes', async () => {
     let posts = 0

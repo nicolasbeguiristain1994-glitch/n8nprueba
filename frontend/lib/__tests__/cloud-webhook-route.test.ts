@@ -23,6 +23,12 @@ afterEach(()=>vi.unstubAllEnvs())
 it('rejects unsigned events without dispatching',async()=>{expect((await POST(request([change],false))).status).toBe(401);expect(mocks.inbound).not.toHaveBeenCalled()})
 it('processes template updates without phone metadata',async()=>{expect((await POST(request([{field:'message_template_status_update',value:{message_template_id:'42',event:'APPROVED'}}]))).status).toBe(200);expect(mocks.template).toHaveBeenCalledTimes(1)})
 it('returns 503 on persistence failure so Meta retries',async()=>{mocks.inbound.mockRejectedValue(new Error('DB unavailable'));expect((await POST(request())).status).toBe(503)})
+it('returns 503 when a delivery receipt cannot be persisted so Meta retries', async () => {
+ mocks.status.mockRejectedValue(new Error('Receipt storage unavailable'))
+ const status = {id:'wamid.test',status:'failed',timestamp:'1780000000',recipient_id:'5491100000000'}
+ expect((await POST(request([{field:'messages',value:{metadata:{phone_number_id:'34567'},statuses:[status]}}]))).status).toBe(503)
+ expect(mocks.status).toHaveBeenCalledWith('34567',status,expect.any(String))
+})
 it('does not acknowledge before the message is stored',async()=>{
  let resolve!:()=>void;mocks.inbound.mockImplementation(()=>new Promise<void>(r=>{resolve=r}));let done=false
  const pending=POST(request()).then(r=>{done=true;return r});await vi.waitFor(()=>expect(mocks.inbound).toHaveBeenCalled());expect(done).toBe(false);resolve();expect((await pending).status).toBe(200)
