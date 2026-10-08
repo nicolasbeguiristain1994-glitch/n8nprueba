@@ -1,5 +1,7 @@
 'use client'
 
+import { PageHeader } from '@/components/layout/PageHeader'
+
 import { hasAssignedLineVariable, replaceAssignedLineVariable } from '@/lib/assigned-line-variable'
 import { useEffect, useState, useCallback } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
@@ -291,23 +293,13 @@ export default function AutomatizacionesPage() {
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-6 space-y-5">
+    <div className="space-y-5">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-violet-100 flex items-center justify-center">
-            <Bot size={18} className="text-violet-600" />
-          </div>
-          <div>
-            <h1 className="page-title text-foreground">Automatizaciones</h1>
-            <p className="text-sm text-muted-foreground">Bots y respuestas automáticas para conversaciones</p>
-          </div>
-        </div>
-        <Button size="sm" onClick={openCreate} className="gap-2 bg-violet-600 hover:bg-violet-700 text-white">
-          <Plus size={14} />
-          Nueva automatización
+      <PageHeader title="Automatizaciones" description="Bots y respuestas automáticas para conversaciones" className="mb-0">
+        <Button size="sm" onClick={openCreate} className="gap-2">
+          <Plus size={14} /> Nueva automatización
         </Button>
-      </div>
+      </PageHeader>
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>

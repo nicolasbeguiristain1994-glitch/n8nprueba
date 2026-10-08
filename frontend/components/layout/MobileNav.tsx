@@ -104,7 +104,7 @@ export function MobileNav({ items = DEFAULT_ITEMS }: MobileNavProps) {
                 strokeWidth={isActive ? 2.5 : 2}
                 aria-hidden="true"
               />
-              <span className="text-[10px] font-medium">
+              <span className="text-[11px] font-medium">
                 {label}
               </span>
             </Link>

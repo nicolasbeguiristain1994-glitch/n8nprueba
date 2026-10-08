@@ -22,22 +22,22 @@ export function DashboardDateRangePicker({ value, onChange }: { value: DateRange
     if (p === 'custom') { setDraft(value.preset === 'custom' ? value : { preset: p, from: value.from, to: exclusiveEndDate(value) }); return }
     const next = { preset: p, ...computeDateRange(p) }; setDraft(next); onChange(next)
   }
-  return <div className="flex items-center gap-1.5 flex-wrap">
-    <CalendarRange className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+  return <div className="flex items-center gap-2 flex-wrap">
     <Select value={draft.preset} onValueChange={v => { if (v) preset(v as DateRangePreset) }}>
-      <SelectTrigger aria-label="Período del dashboard" size="sm" className="h-9 w-auto min-w-[130px] text-xs">
+      <SelectTrigger aria-label="Período del dashboard" className="h-10 w-auto min-w-[150px] text-sm">
+        <CalendarRange className="size-4 text-muted-foreground shrink-0" />
         <SelectValue>{draft.preset === 'custom' ? 'Personalizado' : DATE_RANGE_LABELS[draft.preset]}</SelectValue>
       </SelectTrigger>
       <SelectContent align="end">{(Object.keys(DATE_RANGE_LABELS) as DateRangePreset[]).map(p => <SelectItem key={p} value={p} className="text-xs">{DATE_RANGE_LABELS[p]}</SelectItem>)}</SelectContent>
     </Select>
-    {draft.preset === 'custom' && <div className="flex items-center gap-1.5 flex-wrap">
-      <Input type="date" value={draft.from} onChange={e => setDraft(d => ({ ...d, from: e.target.value }))} className="h-9 w-[135px] text-xs px-2" aria-label="Desde" aria-describedby="dashboard-range-from-hint" />
-      <span id="dashboard-range-from-hint" className="text-muted-foreground text-xs">00:00</span>
-      <span className="text-muted-foreground text-xs">→</span>
-      <Input type="date" value={draft.to} onChange={e => setDraft(d => ({ ...d, to: e.target.value }))} className="h-9 w-[135px] text-xs px-2" aria-label="Hasta" aria-describedby="dashboard-range-to-hint" />
-      <span id="dashboard-range-to-hint" className="text-muted-foreground text-xs">00:00 (no incluye ese día)</span>
-      <Button size="sm" className="h-9 text-xs" disabled={!valid || !pending} onClick={() => onChange(draft)}>Aplicar fechas</Button>
-      {pending && <Button variant="ghost" size="sm" className="h-9 text-xs" onClick={() => setDraft(value)}>Cancelar</Button>}
+    {draft.preset === 'custom' && <div className="flex items-center gap-2 flex-wrap">
+      <Input type="date" value={draft.from} onChange={e => setDraft(d => ({ ...d, from: e.target.value }))} className="h-10 w-[144px] text-sm px-2.5" aria-label="Desde" aria-describedby="dashboard-range-from-hint" />
+      <span id="dashboard-range-from-hint" className="sr-only">00:00</span>
+      <span className="text-muted-foreground text-sm" aria-hidden="true">→</span>
+      <Input type="date" value={draft.to} onChange={e => setDraft(d => ({ ...d, to: e.target.value }))} className="h-10 w-[144px] text-sm px-2.5" aria-label="Hasta" aria-describedby="dashboard-range-to-hint" />
+      <span id="dashboard-range-to-hint" className="text-muted-foreground text-xs max-w-28 leading-snug">00:00 (no incluye ese día)</span>
+      <Button size="sm" className="h-10" disabled={!valid || !pending} onClick={() => onChange(draft)}>Aplicar fechas</Button>
+      {pending && <Button variant="ghost" size="sm" className="h-10" onClick={() => setDraft(value)}>Cancelar</Button>}
       {pending && <span role={valid ? 'status' : 'alert'} className={`text-xs ${valid ? 'text-muted-foreground' : 'text-destructive'}`}>
         {valid ? `Sin aplicar · ${describeDateRange(draft)}` : 'Completá ambas fechas; Desde debe ser anterior a Hasta (Hasta se toma a las 00:00 y no se incluye).'}
       </span>}

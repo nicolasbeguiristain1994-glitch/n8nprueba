@@ -74,19 +74,19 @@ export function PageHeader({
   return (
     <div
       className={cn(
-        'flex flex-col items-start justify-between gap-4 mb-6 xl:flex-row',
+        'flex flex-col items-start justify-between gap-4 mb-6 xl:flex-row xl:items-center',
         className,
       )}
     >
       {/* ── Izquierda: título + badge + descripción ── */}
-      <div className="min-w-0 shrink-0 xl:max-w-md">
+      <div className="min-w-0 xl:max-w-xl">
         <div className="flex items-center gap-2.5 flex-wrap">
           <h1 className="page-title text-foreground">
             {title}
           </h1>
 
           {count !== undefined && (
-            <span className="inline-flex items-center border text-xs text-muted-foreground bg-card px-2 py-0.5 rounded-md font-medium tabular-nums shrink-0">
+            <span className="inline-flex items-center border border-primary/10 text-xs text-primary bg-accent px-2.5 py-1 rounded-full font-medium tabular-nums shrink-0">
               {count.toLocaleString('es-AR')}
             </span>
           )}

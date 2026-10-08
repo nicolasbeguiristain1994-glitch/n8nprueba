@@ -430,9 +430,9 @@ export default function MisTareasPage() {
                 className={`transition-shadow hover:shadow-md ${overdue ? 'border-destructive/20' : ''}`}
               >
                 <CardContent className="p-4">
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
                     {/* Info principal */}
-                    <div className="flex-1 min-w-0">
+                    <div className="min-w-0 sm:flex-1">
                       <div className="flex items-center gap-2 flex-wrap mb-1">
                         <Badge className={`text-xs ${TYPE_COLORS[t.type as TaskType]}`}>
                           {TYPE_LABELS[t.type as TaskType]}
@@ -450,13 +450,13 @@ export default function MisTareasPage() {
                         )}
                       </div>
 
-                      <h3 className="font-semibold text-foreground leading-tight">{t.title}</h3>
+                      <h3 className="break-words font-semibold text-foreground leading-tight">{t.title}</h3>
 
                       {t.description && (
                         <p className="text-sm text-muted-foreground mt-1 line-clamp-2">{t.description}</p>
                       )}
 
-                      <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+                      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                         {t.due_date && (
                           <span className={`flex items-center gap-1 ${overdue ? 'text-destructive font-medium' : ''}`}>
                             <Calendar size={11} />
@@ -474,7 +474,7 @@ export default function MisTareasPage() {
                     </div>
 
                     {/* Acciones */}
-                    <div className="flex flex-col gap-2 shrink-0">
+                    <div className="flex min-w-0 flex-wrap gap-2 border-t border-border pt-3 sm:shrink-0 sm:flex-col sm:border-0 sm:pt-0">
                       <Button
                         variant="ghost"
                         size="sm"

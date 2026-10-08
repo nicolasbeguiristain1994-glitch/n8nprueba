@@ -1,4 +1,6 @@
 'use client'
+
+import { PageHeader } from '@/components/layout/PageHeader'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -605,25 +607,17 @@ export default function Lines() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="page-title">Líneas WhatsApp</h1>
-          <p className="text-sm text-muted-foreground">
-            {connected} conectadas · {active} activas · {eligible} elegibles · {lines.length} total
-          </p>
-        </div>
-        <div className="flex gap-2">
-          {isAdmin && (
-            <Button size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground"
-              onClick={() => setAddStep('choose-type')}>
-              <Plus size={14} className="mr-1" /> Agregar línea
-            </Button>
-          )}
-          <Button variant="outline" size="sm" onClick={load} aria-label="Actualizar líneas">
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+      <PageHeader title="Líneas WhatsApp" className="mb-0"
+        description={`${connected} conectadas · ${active} activas · ${eligible} elegibles · ${lines.length} total`}>
+        {isAdmin && (
+          <Button size="sm" onClick={() => setAddStep('choose-type')}>
+            <Plus size={14} className="mr-1" /> Agregar línea
           </Button>
-        </div>
-      </div>
+        )}
+        <Button variant="outline" size="sm" onClick={load} aria-label="Actualizar líneas">
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </PageHeader>
 
       {/* Error al cargar */}
       {loadError && (

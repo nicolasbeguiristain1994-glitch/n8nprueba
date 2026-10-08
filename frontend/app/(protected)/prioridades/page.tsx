@@ -1,4 +1,5 @@
 'use client'
+import { PageHeader } from '@/components/layout/PageHeader'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   TrendingUp, RefreshCw, ChevronLeft, ChevronRight,
@@ -231,39 +232,24 @@ export default function PrioridadesPage() {
   const hasFilters = segment !== 'todos' || tier !== 'todos' || agent !== 'todos'
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div className="flex min-w-0 flex-col gap-4">
 
       <ScoringHelpModal open={showHelp} onClose={() => setShowHelp(false)} />
 
       {/* Header */}
-      <div className="bg-card border-b border-border px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <TrendingUp size={20} className="text-success" />
-            <div>
-              <h1 className="text-lg font-semibold text-foreground">Prioridades</h1>
-              <p className="text-xs text-muted-foreground">Contactos ordenados por score de reactivación</p>
-            </div>
-            {result && (
-              <span className="ml-2 text-sm text-muted-foreground font-normal">
-                {result.total.toLocaleString()} {tab === 'pending' ? 'a difundir' : 'difundidos'}
-              </span>
-            )}
-            <button
-              onClick={() => setShowHelp(true)}
-              title="¿Cómo funciona el score?"
-              className="p-1 rounded-full text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted transition-colors"
-            >
-              <HelpCircle size={16} />
-            </button>
-          </div>
+      <div>
+        <PageHeader title="Prioridades" className="mb-0" count={result?.total}
+          description={`Contactos ordenados por score de reactivación · ${tab === 'pending' ? 'A difundir' : 'Difundidos'}`}>
+          <Button variant="outline" size="sm" onClick={() => setShowHelp(true)} className="gap-2">
+            <HelpCircle size={16} /> Cómo funciona
+          </Button>
           {isAdmin && (
             <Button onClick={handleRecompute} disabled={recomputing || result?.recomputing} size="sm" variant="outline" className="gap-2">
               <RefreshCw size={14} className={recomputing ? 'animate-spin' : ''} />
               {recomputing ? 'Calculando…' : 'Recomputar'}
             </Button>
           )}
-        </div>
+        </PageHeader>
         {recomputeMsg && (
           <div className={`mt-3 flex items-center gap-2 text-sm px-3 py-2 rounded-lg ${
             recomputeMsg.type === 'ok' ? 'bg-success/10 text-success' : 'bg-destructive/10 text-destructive'
@@ -274,15 +260,15 @@ export default function PrioridadesPage() {
         )}
       </div>
 
-      {result && <div className="px-6 py-2 text-xs text-muted-foreground bg-card">
+      {result && <div className="text-sm text-muted-foreground">
         Último cálculo: {result.computedAt ? new Date(result.computedAt).toLocaleString('es-AR') : 'sin cálculo completo'}
         {result.recomputing && <span className="ml-3">Actualización en curso; se muestra el último cálculo completo.</span>}
         {result.computedAt && Date.now() - Date.parse(result.computedAt) > 36 * 3600000 && <span className="ml-3 text-warning">El cálculo tiene más de 36 horas. Actualizalo para incorporar movimientos recientes.</span>}
       </div>}
-      {actionError && <p role="alert" className="px-6 py-3 text-sm text-destructive">{actionError}</p>}
+      {actionError && <p role="alert" className="rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">{actionError}</p>}
 
       {/* Tab principal: A difundir / Difundidos */}
-      <div className="bg-card border-b border-border px-6 flex gap-1">
+      <div className="flex w-fit max-w-full gap-1 rounded-xl border border-border bg-card p-1">
         {([
           { key: 'pending',     label: 'A difundir' },
           { key: 'broadcasted', label: 'Difundidos' },
@@ -290,10 +276,10 @@ export default function PrioridadesPage() {
           <button
             key={key}
             onClick={() => switchTab(key)}
-            className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
               tab === key
-                ? 'border-green-600 text-success'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
+                ? 'bg-primary/10 text-primary'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
             }`}
           >
             {label}
@@ -302,7 +288,7 @@ export default function PrioridadesPage() {
       </div>
 
       {/* Tab de plataforma */}
-      <div className="bg-card border-b border-border px-6 py-2 flex items-center gap-1 overflow-x-auto">
+      <div className="filter-bar">
         <span className="text-xs text-muted-foreground mr-1 shrink-0">Plataforma:</span>
         {PLATFORMS.map(({ key, label }) => (
           <button
@@ -310,7 +296,7 @@ export default function PrioridadesPage() {
             onClick={() => switchPlatform(key)}
             className={`px-3 py-1 rounded-full text-xs font-medium transition-colors shrink-0 ${
               platform === key
-                ? 'bg-success/15 text-success'
+                ? 'bg-primary/10 text-primary'
                 : 'bg-muted text-muted-foreground hover:bg-border'
             }`}
           >
@@ -320,7 +306,7 @@ export default function PrioridadesPage() {
       </div>
 
       {/* Filtros: segmento, nivel, agente */}
-      <div className="bg-card border-b border-border px-6 py-3 flex items-center gap-4 flex-wrap">
+      <div className="filter-bar gap-4">
         <Filter size={14} className="text-muted-foreground shrink-0" />
 
         <div className="flex items-center gap-1.5">
@@ -384,7 +370,7 @@ export default function PrioridadesPage() {
       </div>
 
       {/* Tabla */}
-      <div className="flex-1 overflow-auto px-6 py-4">
+      <div className="min-w-0 flex-1 overflow-auto">
         {loading ? (
           <div className="flex items-center justify-center h-48 text-muted-foreground text-sm">
             <RefreshCw size={16} className="animate-spin mr-2" /> Cargando…
@@ -418,10 +404,10 @@ export default function PrioridadesPage() {
             )}
           </div>
         ) : (
-          <div className="bg-card rounded-lg border border-border overflow-hidden">
+          <div className="surface overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border bg-background text-xs text-muted-foreground uppercase tracking-wide">
+                <tr className="border-b border-border bg-muted/50 text-xs font-semibold text-muted-foreground">
                   <th className="px-4 py-3 text-right w-16">Score</th>
                   <th className="px-4 py-3 text-left">Contacto</th>
                   <th className="px-4 py-3 text-left w-24">Agente</th>
@@ -436,7 +422,7 @@ export default function PrioridadesPage() {
                   <th className="px-4 py-3 w-10" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-border">
                 {result.data.map(c => (
                   <tr key={c.id} className="hover:bg-background transition-colors">
                     <td className="px-4 py-3 text-right">
@@ -492,7 +478,7 @@ export default function PrioridadesPage() {
                       <div className="flex flex-wrap gap-1">
                         {c.platforms.length > 0
                           ? c.platforms.map(p => (
-                              <span key={p} className="text-xs bg-muted text-slate-600 px-1.5 py-0.5 rounded">
+                              <span key={p} className="text-xs bg-muted text-muted-foreground px-1.5 py-0.5 rounded">
                                 {p}
                               </span>
                             ))
@@ -547,7 +533,7 @@ export default function PrioridadesPage() {
 
       {/* Paginación */}
       {result && result.totalPages > 1 && (
-        <div className="bg-card border-t border-border px-6 py-3 flex items-center justify-between text-sm text-muted-foreground">
+        <div className="surface flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm text-muted-foreground">
           <span>
             {((page - 1) * PAGE_SIZE) + 1}–{Math.min(page * PAGE_SIZE, result.total)} de {result.total.toLocaleString()}
           </span>

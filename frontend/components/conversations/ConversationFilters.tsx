@@ -56,7 +56,7 @@ export function ConversationFilters({
   const hasAdv = agent !== 'all' || !!dateFrom || !!dateTo || campaign !== 'all' || level !== 'all' || !['all','unread'].includes(filter)
 
   return (
-    <div className="border-b border-border p-3 space-y-3 shrink-0">
+    <div className="border-b border-border bg-card p-4 space-y-3 shrink-0">
 
       {/* Search + realtime dot */}
       <div className="relative">
@@ -65,7 +65,7 @@ export function ConversationFilters({
           placeholder="Buscar nombre, teléfono…"
           value={search}
           onChange={e => onSearch(e.target.value)}
-          className="h-9 text-xs pr-12" aria-label="Buscar conversaciones"
+          className="h-10 text-sm pr-12" aria-label="Buscar conversaciones"
         />
         <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
           <button
@@ -75,10 +75,10 @@ export function ConversationFilters({
             className="text-muted-foreground hover:text-muted-foreground transition-colors disabled:cursor-not-allowed"
           >
             {notifPermission === 'denied'
-              ? <BellOff size={11} className="text-muted-foreground/60" />
+              ? <BellOff size={14} className="text-muted-foreground/60" />
               : notifPermission === 'granted'
-              ? <Bell size={11} className="text-green-500" />
-              : <Bell size={11} className="text-muted-foreground" />
+              ? <Bell size={14} className="text-green-500" />
+              : <Bell size={14} className="text-muted-foreground" />
             }
           </button>
           <div
@@ -89,7 +89,7 @@ export function ConversationFilters({
       </div>
 
       <label className="block text-xs font-medium text-muted-foreground">Agente
-        <select aria-label="Filtrar por agente" value={agent} onChange={e=>onAgent?.(e.target.value)} className="mt-1 h-8 w-full rounded-md border border-border bg-card px-2 text-xs text-foreground">
+        <select aria-label="Filtrar por agente" value={agent} onChange={e=>onAgent?.(e.target.value)} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-card px-3 text-sm text-foreground">
           <option value="all">Todos los agentes</option><option value="none">Sin agente</option>
           {agents.map(item=><option key={item.name} value={item.name}>{item.name} ({item.count})</option>)}
         </select>
@@ -107,7 +107,7 @@ export function ConversationFilters({
               className={`text-xs px-2 py-1 rounded-full border font-medium transition-colors ${
                 filter === key
                   ? 'bg-accent text-accent-foreground border-primary/20'
-                  : 'bg-card text-muted-foreground border-border hover:border-gray-400'
+                  : 'bg-card text-muted-foreground border-border hover:border-primary/40'
               }`}
             >
               {label}
@@ -121,11 +121,11 @@ export function ConversationFilters({
           aria-label="Filtros avanzados" aria-expanded={showAdv}
           className={`ml-auto text-xs px-1.5 py-0.5 rounded-full border font-medium transition-colors ${
             showAdv || hasAdv
-              ? 'bg-accent text-primary border-indigo-300'
-              : 'bg-card text-muted-foreground border-border hover:border-gray-400'
+              ? 'bg-accent text-primary border-primary/30'
+              : 'bg-card text-muted-foreground border-border hover:border-primary/40'
           }`}
         >
-          <SlidersHorizontal size={9} className="inline mr-0.5" />
+          <SlidersHorizontal size={12} className="inline mr-0.5" />
           {hasAdv ? 'Filtros activos' : 'Filtros'}
         </button>
       </div>
@@ -137,7 +137,7 @@ export function ConversationFilters({
         <label className="block text-xs font-medium text-muted-foreground">
           Campaña
           <select aria-label="Filtrar por campaña" value={campaign} onChange={e => onCampaign(e.target.value)}
-            className="mt-1 h-8 w-full min-w-0 rounded-md border border-border bg-card px-2 text-xs text-foreground">
+            className="mt-1.5 h-10 w-full min-w-0 rounded-lg border border-input bg-card px-3 text-sm text-foreground">
             <option value="all">Todas las campañas</option>
             <option value="none">Sin campaña</option>
             {campaigns.map(item => <option key={item.id} value={item.id}>{item.name} ({item.count})</option>)}
@@ -146,7 +146,7 @@ export function ConversationFilters({
         <label className="block text-xs font-medium text-muted-foreground">
           Nivel del contacto
           <select aria-label="Filtrar por nivel" value={level} onChange={e => onLevel(e.target.value as LevelFilter)}
-            className="mt-1 h-8 w-full min-w-0 rounded-md border border-border bg-card px-2 text-xs text-foreground">
+            className="mt-1.5 h-10 w-full min-w-0 rounded-lg border border-input bg-card px-3 text-sm text-foreground">
             <option value="all">Todos los niveles</option>
             {LEVEL_DEFS.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}
             <option value="none">Sin nivel</option>
@@ -155,15 +155,15 @@ export function ConversationFilters({
       </div>
 
           <div className="flex gap-1 items-center">
-            <CalendarRange size={10} className="text-muted-foreground shrink-0" />
+            <CalendarRange size={14} className="text-muted-foreground shrink-0" />
             <input
               aria-label="Conversaciones desde" type="date" value={dateFrom} onChange={e => onDateFrom(e.target.value)}
-              className="min-w-0 flex-1 text-xs border border-border rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-300"
+              className="min-w-0 flex-1 h-9 text-xs border border-input bg-card rounded-lg px-2 py-1 focus:outline-none focus:border-ring"
             />
             <span className="text-xs text-muted-foreground">—</span>
             <input
               aria-label="Conversaciones hasta" type="date" value={dateTo} onChange={e => onDateTo(e.target.value)}
-              className="min-w-0 flex-1 text-xs border border-border rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-300"
+              className="min-w-0 flex-1 h-9 text-xs border border-input bg-card rounded-lg px-2 py-1 focus:outline-none focus:border-ring"
             />
             {(dateFrom || dateTo) && (
               <button onClick={() => { onDateFrom(''); onDateTo('') }} aria-label="Limpiar fechas" className="text-xs text-muted-foreground hover:text-muted-foreground">✕</button>

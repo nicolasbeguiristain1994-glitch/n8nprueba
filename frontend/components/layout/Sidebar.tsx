@@ -16,10 +16,10 @@ function NavLink({ item, collapsed, onClick }: { item: NavItem; collapsed: boole
   const Icon = item.icon
   return <Link href={item.href} onClick={onClick} title={collapsed ? item.label : undefined}
     aria-label={collapsed ? item.label : undefined} aria-current={active ? 'page' : undefined}
-    className={cn('relative flex h-9 items-center gap-2.5 rounded-md text-[13px] transition-colors duration-150',
-      collapsed ? 'w-9 justify-center' : 'px-2.5',
-      active ? 'bg-sidebar-accent font-semibold text-sidebar-accent-foreground' : 'font-medium text-sidebar-foreground/80 hover:bg-muted hover:text-foreground')}>
-    <Icon size={16} strokeWidth={1.8} className="shrink-0" aria-hidden="true" />
+    className={cn('relative flex h-10 items-center gap-3 rounded-lg text-sm transition-colors duration-150',
+      collapsed ? 'w-9 justify-center' : 'px-3',
+      active ? 'bg-sidebar-accent font-semibold text-sidebar-accent-foreground' : 'font-medium text-sidebar-foreground hover:bg-muted hover:text-foreground')}>
+    <Icon size={18} strokeWidth={1.8} className="shrink-0" aria-hidden="true" />
     {!collapsed && <span className="truncate">{item.label}</span>}
     {!collapsed && active && <span className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" aria-hidden="true" />}
   </Link>
@@ -40,18 +40,18 @@ function SidebarContent({ collapsed, onClose }: { collapsed: boolean; onClose?: 
         const items = group.paths.flatMap(path => nav.filter(item => item.href === path))
         if (!items.length) return null
         return <div key={group.label} className="mb-4 last:mb-0">
-          {!collapsed && <p className="px-2.5 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">{group.label}</p>}
+          {!collapsed && <p className="px-2.5 pb-2 pt-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">{group.label}</p>}
           {collapsed && group !== NAV_GROUPS[0] && <div className="mx-2 mb-3 border-t border-sidebar-border" />}
           <div className="space-y-0.5">{items.map(item => <NavLink key={item.href} item={item} collapsed={collapsed} onClick={onClose} />)}</div>
         </div>
       })}
     </nav>
     <div className={cn('shrink-0 border-t border-sidebar-border py-2.5', collapsed ? 'px-3.5' : 'px-3')}>
-      <Link href="/ayuda" onClick={onClose} title="Guía de uso" aria-label={collapsed ? 'Guía de uso' : undefined} className={cn('flex h-9 items-center gap-2.5 rounded-md text-xs text-muted-foreground hover:bg-muted hover:text-foreground', collapsed ? 'w-9 justify-center' : 'px-2.5')}><HelpCircle size={16} />{!collapsed && 'Guía de uso'}</Link>
+      <Link href="/ayuda" onClick={onClose} title="Guía de uso" aria-label={collapsed ? 'Guía de uso' : undefined} className={cn('flex h-9 items-center gap-2.5 rounded-md text-xs text-muted-foreground hover:bg-muted hover:text-foreground', collapsed ? 'w-9 justify-center' : 'px-3')}><HelpCircle size={16} />{!collapsed && 'Guía de uso'}</Link>
       <button onClick={logout} title="Cerrar sesión" aria-label={collapsed ? 'Cerrar sesión' : undefined} className={cn('flex h-9 w-full items-center gap-2.5 rounded-md text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive', collapsed ? 'justify-center' : 'px-2.5')}><LogOut size={16} />{!collapsed && 'Cerrar sesión'}</button>
       {!collapsed && user && <div className="mt-2 flex items-center gap-2.5 border-t border-sidebar-border px-2.5 pt-3 pb-1">
-        <div className="flex size-7 shrink-0 items-center justify-center rounded-lg border bg-card text-[11px] font-semibold text-primary">{(user.name || user.email).slice(0, 2).toUpperCase()}</div>
-        <div className="min-w-0"><p className="truncate text-xs font-medium">{user.name ?? user.email}</p><p className="mt-0.5 text-[10px] text-muted-foreground">{user.role === 'admin' ? 'Administrador' : user.role === 'operator' ? 'Operador' : 'Solo lectura'}</p></div>
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-semibold text-primary">{(user.name || user.email).slice(0, 2).toUpperCase()}</div>
+        <div className="min-w-0"><p className="truncate text-sm font-medium">{user.name ?? user.email}</p><p className="mt-0.5 text-xs text-muted-foreground">{user.role === 'admin' ? 'Administrador' : user.role === 'operator' ? 'Operador' : 'Solo lectura'}</p></div>
       </div>}
     </div>
   </div>
@@ -59,7 +59,7 @@ function SidebarContent({ collapsed, onClose }: { collapsed: boolean; onClose?: 
 
 export function Sidebar() {
   const { collapsed, toggle } = useSidebar()
-  return <aside suppressHydrationWarning className={cn('relative hidden shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 md:flex', collapsed ? 'w-16' : 'w-[232px]')}>
+  return <aside suppressHydrationWarning className={cn('relative hidden shrink-0 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 md:flex', collapsed ? 'w-16' : 'w-60')}>
     <div className="min-h-0 flex-1 overflow-hidden"><SidebarContent collapsed={collapsed} /></div>
     <button onClick={toggle} aria-label={collapsed ? 'Expandir sidebar' : 'Colapsar sidebar'} aria-expanded={!collapsed} className="flex h-10 shrink-0 items-center justify-center gap-2 border-t border-sidebar-border text-xs text-muted-foreground hover:bg-muted hover:text-foreground">
       {collapsed ? <PanelLeftOpen size={16} /> : <><PanelLeftClose size={16} /> Contraer menú</>}

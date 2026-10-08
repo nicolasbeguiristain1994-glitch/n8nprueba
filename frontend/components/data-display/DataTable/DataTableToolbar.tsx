@@ -68,7 +68,7 @@ export function DataTableToolbar<TData>({
   return (
     <div
       className={cn(
-        'flex flex-wrap items-center justify-between gap-2 rounded-t-xl px-3 py-2.5 border-b border-border bg-muted/20',
+        'flex flex-wrap items-center justify-between gap-3 rounded-t-xl border-b border-border bg-card px-4 py-3',
         className,
       )}
     >
@@ -85,13 +85,13 @@ export function DataTableToolbar<TData>({
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 px-2 gap-1.5 text-muted-foreground hover:text-foreground"
+            className="h-8 px-2.5 gap-1.5 text-muted-foreground hover:text-foreground"
             onClick={() => { setDensityOpen(v => !v); setColsOpen(false) }}
             aria-label="Cambiar densidad de filas"
             aria-expanded={densityOpen}
             aria-haspopup="menu"
           >
-            <AlignJustify size={13} aria-hidden="true" />
+            <AlignJustify size={14} aria-hidden="true" />
             <span className="text-xs hidden sm:inline">{DENSITY_LABELS[density]}</span>
           </Button>
 
@@ -132,13 +132,13 @@ export function DataTableToolbar<TData>({
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 px-2 gap-1.5 text-muted-foreground hover:text-foreground"
+              className="h-8 px-2.5 gap-1.5 text-muted-foreground hover:text-foreground"
               onClick={() => { setColsOpen(v => !v); setDensityOpen(false) }}
               aria-label="Columnas visibles"
               aria-expanded={colsOpen}
               aria-haspopup="menu"
             >
-              <Columns3 size={13} aria-hidden="true" />
+              <Columns3 size={14} aria-hidden="true" />
               <span className="text-xs hidden sm:inline">Columnas</span>
             </Button>
 

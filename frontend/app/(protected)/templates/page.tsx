@@ -1,4 +1,6 @@
 'use client'
+
+import { PageHeader } from '@/components/layout/PageHeader'
 import { useEffect, useState, useCallback } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -405,20 +407,16 @@ export default function TemplatesPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="page-title text-foreground">Plantillas</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Plantillas de mensajes de WhatsApp Business</p>
-        </div>
+      <PageHeader title="Plantillas" description="Plantillas de mensajes de WhatsApp Business" className="mb-0">
         {isAdmin && (
-          <Button onClick={openCreate} className="h-9 text-sm gap-2">
+          <Button onClick={openCreate} className="gap-2">
             <Plus size={15} /> Nueva plantilla
           </Button>
         )}
-      </div>
+      </PageHeader>
 
       {/* Filtros */}
-      <div className="flex gap-2 flex-wrap">
+      <div className="filter-bar">
         <Input
           placeholder="Buscar por nombre…"
           value={filterQ}

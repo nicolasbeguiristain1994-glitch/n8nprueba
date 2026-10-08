@@ -32,7 +32,7 @@ export function ConversationSidebar({ phone, conv, onRefresh }: Props) {
             <p className="text-xs font-semibold text-foreground truncate">
               {conv ? displayName(conv) : fmtPhone(phone)}
             </p>
-            <p className="text-[10px] text-muted-foreground">{fmtPhone(phone)}</p>
+            <p className="text-xs text-muted-foreground">{fmtPhone(phone)}</p>
           </div>
         </div>
 
@@ -47,12 +47,12 @@ export function ConversationSidebar({ phone, conv, onRefresh }: Props) {
         {(conv?.actividad || conv?.valor_riesgo) && (
           <div className="flex flex-wrap gap-1 mt-1.5">
             {conv.actividad && (
-              <span className="text-[10px] bg-muted text-muted-foreground rounded px-1.5 py-0.5">
+              <span className="text-xs bg-muted text-muted-foreground rounded px-1.5 py-0.5">
                 {conv.actividad}
               </span>
             )}
             {conv.valor_riesgo && (
-              <span className="text-[10px] bg-muted text-muted-foreground rounded px-1.5 py-0.5">
+              <span className="text-xs bg-muted text-muted-foreground rounded px-1.5 py-0.5">
                 {conv.valor_riesgo}
               </span>
             )}
@@ -62,19 +62,19 @@ export function ConversationSidebar({ phone, conv, onRefresh }: Props) {
 
       {/* Metrics */}
       <div className="px-3 py-2.5 grid grid-cols-2 gap-2">
-        <div className="bg-background rounded p-2">
+        <div className="bg-background rounded-lg border border-border p-2.5">
           <div className="flex items-center gap-1 mb-0.5">
             <Calendar size={10} className="text-muted-foreground" />
-            <span className="text-[10px] text-muted-foreground">Último msj</span>
+            <span className="text-xs text-muted-foreground">Último msj</span>
           </div>
           <p className="text-xs font-semibold text-foreground">
             {days === null ? '—' : days === 0 ? 'Hoy' : `Hace ${days}d`}
           </p>
         </div>
-        <div className="bg-background rounded p-2">
+        <div className="bg-background rounded-lg border border-border p-2.5">
           <div className="flex items-center gap-1 mb-0.5">
             <TrendingUp size={10} className="text-muted-foreground" />
-            <span className="text-[10px] text-muted-foreground">Nivel</span>
+            <span className="text-xs text-muted-foreground">Nivel</span>
           </div>
           <p className="text-xs font-semibold text-foreground">
             {segmentLabel(conv?.segment)}
@@ -83,11 +83,11 @@ export function ConversationSidebar({ phone, conv, onRefresh }: Props) {
       </div>
 
       <div className="px-3 py-3 space-y-2">
-        <p className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"><Megaphone size={11} /> Campañas</p>
+        <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground"><Megaphone size={11} /> Campañas</p>
         {conv?.campaigns?.length ? conv.campaigns.map((campaign, index) => (
-          <div key={campaign.id} className="rounded border border-border bg-background p-2">
+          <div key={campaign.id} className="rounded-lg border border-border bg-background p-3">
             <p className="break-words text-xs font-medium">{campaign.name}</p>
-            <p className="mt-0.5 text-[10px] text-muted-foreground">
+            <p className="mt-0.5 text-xs text-muted-foreground">
               {index === 0 ? 'Última · ' : ''}{new Date(campaign.last_sent_at).toLocaleDateString('es-AR')}
             </p>
           </div>

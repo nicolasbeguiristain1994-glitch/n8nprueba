@@ -1,4 +1,6 @@
 'use client'
+
+import { PageHeader } from '@/components/layout/PageHeader'
 import { useEffect, useState } from 'react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { SegmentationTab } from '@/components/settings/SegmentationTab'
@@ -11,7 +13,7 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Loader2, CheckCircle2, AlertCircle, Settings } from 'lucide-react'
+import { Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 
 type AppSettings = {
@@ -171,15 +173,7 @@ export default function SettingsPage() {
   return (
     <div className="max-w-3xl space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <div className="w-8 h-8 bg-muted rounded-lg flex items-center justify-center">
-          <Settings size={16} className="text-muted-foreground" />
-        </div>
-        <div>
-          <h1 className="page-title text-foreground">Ajustes</h1>
-          <p className="text-sm text-muted-foreground">Configuración global del sistema</p>
-        </div>
-      </div>
+      <PageHeader title="Ajustes" description="Configuración global del sistema" className="mb-0" />
 
       {saveError && saving === null && (
         <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3">

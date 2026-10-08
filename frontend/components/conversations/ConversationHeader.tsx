@@ -12,8 +12,8 @@ interface Props {
 
 export function ConversationHeader({ phone, conv, selectedCampaign }: Props) {
   return (
-    <div className="border-b border-border px-4 py-3 flex items-center gap-3 shrink-0">
-      <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${avatarCls(conv?.segment)}`}>
+    <div className="border-b border-border bg-card px-4 py-4 flex flex-wrap items-center gap-3 shrink-0">
+      <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${avatarCls(conv?.segment)}`}>
         {conv ? initials(conv) : phone.slice(-2)}
       </div>
 
@@ -25,12 +25,12 @@ export function ConversationHeader({ phone, conv, selectedCampaign }: Props) {
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
           <p className="text-xs text-muted-foreground font-mono">{fmtPhone(phone)}</p>
           {conv?.actividad && (
-            <span className="text-[10px] text-muted-foreground bg-muted rounded px-1.5 py-0.5">
+            <span className="text-xs text-muted-foreground bg-muted rounded px-1.5 py-0.5">
               {conv.actividad}
             </span>
           )}
           {conv?.valor_riesgo && (
-            <span className="text-[10px] text-muted-foreground bg-muted rounded px-1.5 py-0.5">
+            <span className="text-xs text-muted-foreground bg-muted rounded px-1.5 py-0.5">
               {conv.valor_riesgo}
             </span>
           )}

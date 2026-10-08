@@ -1,4 +1,6 @@
 'use client'
+
+import { PageHeader } from '@/components/layout/PageHeader'
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -761,22 +763,15 @@ export default function Campaigns() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="page-title">Campañas</h1>
-          <p className="text-sm text-muted-foreground">
-            {campaignsLoaded ? `${campaigns.length} campañas` : campaignsLoading ? 'Cargando…' : 'Sin datos'}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={loadCampaigns} disabled={campaignsLoading}>
-            <RefreshCw size={13} className={`mr-1 ${campaignsLoading ? 'animate-spin' : ''}`} /> Actualizar
-          </Button>
-          <Button onClick={openNew} className="bg-primary hover:bg-primary/90" size="sm">
-            <Plus size={14} className="mr-1" /> Nueva campaña
-          </Button>
-        </div>
-      </div>
+      <PageHeader title="Campañas" className="mb-0"
+        description={campaignsLoaded ? `${campaigns.length} campañas` : campaignsLoading ? 'Cargando…' : 'Sin datos'}>
+        <Button variant="outline" size="sm" onClick={loadCampaigns} disabled={campaignsLoading}>
+          <RefreshCw size={13} className={`mr-1 ${campaignsLoading ? 'animate-spin' : ''}`} /> Actualizar
+        </Button>
+        <Button onClick={openNew} size="sm">
+          <Plus size={14} className="mr-1" /> Nueva campaña
+        </Button>
+      </PageHeader>
 
       <CloudReadiness />
 
@@ -816,10 +811,10 @@ export default function Campaigns() {
           </CardContent></Card>
         : <div className="space-y-3">
             {campaigns.map(c => (
-              <Card key={c.id} className="hover:shadow-sm transition-shadow">
-                <CardContent className="p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
+              <Card key={c.id} className="py-0 hover:shadow-sm transition-shadow">
+                <CardContent className="p-5">
+                  <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_auto]">
+                    <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2 mb-1">
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_BADGE[c.status] || ''}`}>
                           {STATUS_LABEL[c.status] ?? c.status}
@@ -838,11 +833,11 @@ export default function Campaigns() {
                           <span className="text-xs text-orange-500">Programación automática no habilitada: requiere envío manual</span>
                         )}
                       </div>
-                      <h3 className="font-medium truncate">{c.name}</h3>
-                      <div className="flex items-center gap-2">
+                      <h3 className="break-words text-base font-semibold leading-snug">{c.name}</h3>
+                      <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
                         {c.message_type === 'template'
-                          ? <p className="text-sm text-muted-foreground truncate">Plantilla de WhatsApp{c.template_name ? `: ${c.template_name}` : ''}</p>
-                          : <p className="text-sm text-muted-foreground truncate">{c.message}</p>}
+                          ? <p className="min-w-0 break-words text-sm text-muted-foreground">Plantilla de WhatsApp{c.template_name ? `: ${c.template_name}` : ''}</p>
+                          : <p className="min-w-0 break-words text-sm text-muted-foreground line-clamp-2">{c.message}</p>}
                         {c.message_type !== 'template' && Array.isArray(c.messages) && c.messages.length > 1 && (
                           <span className="text-xs bg-accent text-primary px-1.5 py-0.5 rounded-full whitespace-nowrap flex items-center gap-1 shrink-0">
                             <Shuffle size={10} /> {c.messages.length} variantes
@@ -851,7 +846,7 @@ export default function Campaigns() {
                       </div>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-xs text-muted-foreground">
                         {(c.list_name || c.prospect_list_name) && (
-                          <span>Lista: <b className="text-muted-foreground">{c.list_name || c.prospect_list_name}</b></span>
+                          <span className="min-w-0 break-words">Lista: <b className="text-muted-foreground">{c.list_name || c.prospect_list_name}</b></span>
                         )}
                         <span>{c.total_targets} dest.</span>
                         <span className="flex items-center gap-1"><Shield size={10}/> {c.antiblock_delay_min}-{c.antiblock_delay_max}s</span>
@@ -864,7 +859,7 @@ export default function Campaigns() {
 
                     {/* Métricas inline */}
                     {(c.total_sent > 0 || c.total_skipped > 0 || c.total_failed > 0) && (
-                      <div className="flex max-w-full flex-wrap gap-4 text-center">
+                      <div className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-3 rounded-lg bg-muted/40 p-3 text-center sm:grid-cols-5">
                         <MiniStat label="Enviados"   value={c.total_sent}      color="blue" />
                         <MiniStat label="Entregados" value={c.total_delivered} color="green" />
                         <MiniStat label="Leídos"     value={c.total_read}      pct={c.read_rate} color="purple" />
@@ -873,9 +868,9 @@ export default function Campaigns() {
                       </div>
                     )}
 
-                    <div className="flex max-w-full flex-wrap gap-2 shrink-0">
+                    <div className="flex min-w-0 flex-wrap gap-2 border-t border-border pt-3 xl:col-span-2">
                       <Button variant="outline" size="sm" onClick={() => openDetail(c)} aria-label={`Ver detalle de ${c.name}`}>
-                        <Eye size={13} />
+                        <Eye size={13} /> Ver detalle
                       </Button>
 
                       {c.status === 'scheduled' && c.scheduled_at && !c.started_at && !c.processor_locked_at && canEditSchedule && (isAdmin || c.owned_by === user?.id) && (
@@ -936,7 +931,7 @@ export default function Campaigns() {
                                 className="border-destructive/20 text-red-500 hover:bg-destructive/10"
                                 onClick={() => { if (confirm(`¿Cancelar "${c.name}"?`)) updateStatus(c.id, 'cancelled') }}
                                 disabled={actioning === c.id}>
-                          <XCircle size={13} />
+                          <XCircle size={13} /> Cancelar campaña
                         </Button>
                       )}
 
@@ -949,7 +944,7 @@ export default function Campaigns() {
                                 disabled={syncing === c.id}>
                           {syncing === c.id
                             ? <Loader2 size={13} className="animate-spin"/>
-                            : <Truck size={13} />}
+                            : <><Truck size={13} /> Sincronizar</>}
                         </Button>
                       )}
 
@@ -975,7 +970,7 @@ export default function Campaigns() {
                                 disabled={freqResetting === c.id}>
                           {freqResetting === c.id
                             ? <Loader2 size={13} className="animate-spin"/>
-                            : <RefreshCw size={13} />}
+                            : <><RefreshCw size={13} /> Reiniciar</>}
                         </Button>
                       )}
                     </div>
@@ -1973,7 +1968,7 @@ function MiniStat({ label, value, pct, color }: { label: string; value: number; 
   const colors: Record<string, string> = { blue:'text-blue-600', green:'text-success', purple:'text-purple-600', red:'text-red-500', orange:'text-orange-500' }
   return (
     <div>
-      <p className={`text-lg font-bold ${colors[color]}`}>{value}{pct !== undefined ? <span className="text-xs font-normal ml-0.5">{pct}%</span> : ''}</p>
+      <p className={`flex flex-wrap items-baseline justify-center gap-x-1 text-lg font-semibold tabular-nums ${colors[color]}`}><span>{value}</span>{pct !== undefined && <span className="text-xs font-normal">{pct}%</span>}</p>
       <p className="text-xs text-muted-foreground">{label}</p>
     </div>
   )

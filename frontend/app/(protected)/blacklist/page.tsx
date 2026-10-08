@@ -1,5 +1,7 @@
 'use client'
 
+import { PageHeader } from '@/components/layout/PageHeader'
+
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -281,31 +283,17 @@ export default function BlacklistPage() {
   return (
     <div className="p-6 space-y-5">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-destructive/15 flex items-center justify-center">
-            <ShieldOff size={18} className="text-destructive" />
-          </div>
-          <div>
-            <h1 className="page-title text-foreground">Blacklist Global</h1>
-            <p className="text-sm text-muted-foreground">Números excluidos del envío de mensajes</p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" onClick={handleExport} className="gap-2">
-            <Download size={14} />
-            Exportar CSV
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setShowImport(true)} className="gap-2">
-            <Upload size={14} />
-            Importar
-          </Button>
-          <Button size="sm" onClick={() => { setShowAdd(true); setAddSuccess(null); setAddError(null) }} className="gap-2 bg-red-600 hover:bg-red-700 text-white">
-            <Plus size={14} />
-            Agregar número
-          </Button>
-        </div>
-      </div>
+      <PageHeader title="Blacklist Global" description="Números excluidos del envío de mensajes" className="mb-0">
+        <Button variant="outline" size="sm" onClick={handleExport} className="gap-2">
+          <Download size={14} /> Exportar CSV
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setShowImport(true)} className="gap-2">
+          <Upload size={14} /> Importar
+        </Button>
+        <Button size="sm" onClick={() => { setShowAdd(true); setAddSuccess(null); setAddError(null) }} className="gap-2">
+          <Plus size={14} /> Agregar número
+        </Button>
+      </PageHeader>
 
       {/* Filtros */}
       <Card>

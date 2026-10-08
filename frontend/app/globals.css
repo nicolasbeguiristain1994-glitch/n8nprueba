@@ -54,41 +54,41 @@
 
 :root {
   --font-sans: var(--font-inter, 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif);
-  --background: #f8f9fb;
-  --foreground: #20232d;
+  --background: #f5f6fb;
+  --foreground: #1b2135;
   --card: #ffffff;
-  --card-foreground: #20232d;
+  --card-foreground: #1b2135;
   --popover: #ffffff;
-  --popover-foreground: #20232d;
-  --primary: #5551d9;
+  --popover-foreground: #1b2135;
+  --primary: #6554e8;
   --primary-foreground: #ffffff;
-  --secondary: #f0f1f5;
-  --secondary-foreground: #363a48;
-  --muted: #f0f1f5;
-  --muted-foreground: #626879;
-  --accent: #eeedf9;
-  --accent-foreground: #4843b8;
+  --secondary: #eff1f8;
+  --secondary-foreground: #3f4862;
+  --muted: #eff1f8;
+  --muted-foreground: #5e6981;
+  --accent: #f0edff;
+  --accent-foreground: #5442cc;
   --destructive: #c63345;
-  --border: #e3e5eb;
-  --input: #d8dce5;
-  --ring: #7672e4;
+  --border: #e2e6f1;
+  --input: #d6dcec;
+  --ring: #6554e8;
   --vip: #8254bc;
   --success: #198260;
   --warning: #94640e;
-  --chart-1: #6963db;
+  --chart-1: #6554e8;
   --chart-2: #38978b;
   --chart-3: #9770c4;
   --chart-4: #598bc5;
   --chart-5: #bc8e44;
-  --radius: 0.625rem;
-  --sidebar: #f3f4f7;
-  --sidebar-foreground: #343847;
-  --sidebar-primary: #5551d9;
+  --radius: 0.75rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #414c68;
+  --sidebar-primary: #6554e8;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #e7e6f7;
-  --sidebar-accent-foreground: #4843b8;
-  --sidebar-border: #e1e3ea;
-  --sidebar-ring: #7672e4;
+  --sidebar-accent: #efecff;
+  --sidebar-accent-foreground: #5442cc;
+  --sidebar-border: #e2e6f1;
+  --sidebar-ring: #6554e8;
 }
 
 .dark {
@@ -152,9 +152,9 @@
   .page-content > * { min-width: 0; }
   .page-content [data-slot="card-content"]:has(> table) { overflow-x: auto; }
   .page-content [data-slot="card"]:has(> [data-slot="card-content"].p-0:only-child) { padding-block: 0; }
-  .page-title { @apply text-2xl font-semibold leading-tight tracking-tight; }
-  .surface { @apply min-w-0 rounded-xl border border-border bg-card shadow-[0_1px_2px_rgb(20_24_40/0.03)]; }
-  .filter-bar { @apply flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card p-3; }
+  .page-title { @apply text-2xl font-semibold leading-tight tracking-tight sm:text-[1.875rem]; }
+  .surface { @apply min-w-0 rounded-xl border border-border bg-card shadow-[0_2px_6px_rgb(27_33_53/0.025)]; }
+  .filter-bar { @apply flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card p-4; }
   .skip-link { @apply fixed left-4 top-4 z-[100] -translate-y-24 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground focus:translate-y-0; }
 }
 

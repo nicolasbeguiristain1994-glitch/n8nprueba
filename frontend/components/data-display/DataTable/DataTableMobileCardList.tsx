@@ -36,7 +36,7 @@ export function DataTableMobileCardList<TData>({
   if (rows.length === 0) return null
 
   return (
-    <div className="md:hidden space-y-2 px-4 py-3" role="list" aria-label="Lista de elementos">
+    <div className="md:hidden space-y-3 p-3 sm:p-4" role="list" aria-label="Lista de elementos">
       {rows.map((row) => {
         const isSelected = row.getIsSelected()
         const visibleCells = row.getVisibleCells()
@@ -59,7 +59,7 @@ export function DataTableMobileCardList<TData>({
               }
             }}
             className={cn(
-              'relative flex flex-wrap gap-3 p-3 rounded-xl border border-border bg-card',
+              'relative flex flex-wrap gap-3 p-4 rounded-xl border border-border bg-card',
               'transition-colors duration-100',
               isSelected ? 'border-primary/40 bg-primary/5' : 'hover:bg-muted/40',
               onRowClick && 'cursor-pointer',
@@ -87,11 +87,11 @@ export function DataTableMobileCardList<TData>({
                     className={cn(
                       'flex items-start gap-2',
                       // Primera columna: destacada como título
-                      i === 0 ? 'text-sm font-medium text-foreground' : 'text-xs text-muted-foreground',
+                      i === 0 ? 'text-sm font-semibold text-foreground' : 'text-sm text-muted-foreground',
                     )}
                   >
                     {i > 0 && (
-                      <span className="shrink-0 w-20 text-muted-foreground/70">
+                      <span className="shrink-0 w-24 text-muted-foreground">
                         {label}:
                       </span>
                     )}

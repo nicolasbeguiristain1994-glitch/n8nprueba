@@ -1,5 +1,7 @@
 'use client'
 
+import { PageHeader } from '@/components/layout/PageHeader'
+
 /**
  * /users/[id]/visibility
  *
@@ -192,24 +194,16 @@ export default function VisibilityPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="sm" onClick={() => router.push('/users')}>
+      <PageHeader title="Visibilidad de contactos" className="mb-0"
+        description={operator && <>
+          {operator.name ?? operator.email}
+          <Badge variant="outline" className="ml-2 text-xs">{operator.role}</Badge>
+          <span className="ml-2">{assignedTotal.toLocaleString()} asignados</span>
+        </>}>
+        <Button variant="outline" size="sm" onClick={() => router.push('/users')}>
           <ArrowLeftIcon size={14} className="mr-1" /> Usuarios
         </Button>
-        <div>
-          <h1 className="text-xl font-semibold flex items-center gap-2">
-            <UserCheck size={18} className="text-primary" />
-            Visibilidad de contactos
-          </h1>
-          {operator && (
-            <p className="text-sm text-muted-foreground">
-              {operator.name ?? operator.email}
-              <Badge variant="outline" className="ml-2 text-xs">{operator.role}</Badge>
-              <span className="ml-2 text-muted-foreground">{assignedTotal.toLocaleString()} asignados</span>
-            </p>
-          )}
-        </div>
-      </div>
+      </PageHeader>
 
       {error && (
         <div className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-2 text-sm text-destructive flex items-center justify-between">
@@ -219,10 +213,10 @@ export default function VisibilityPage() {
       )}
 
       {/* Dual panel */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
 
         {/* ── Panel izquierdo: disponibles ─────────────────────────────────── */}
-        <div className="border border-border rounded-xl overflow-hidden flex flex-col">
+        <div className="surface overflow-hidden flex flex-col">
           <div className="bg-background px-4 py-3 border-b border-border">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-semibold text-foreground flex items-center gap-1.5">
@@ -303,7 +297,7 @@ export default function VisibilityPage() {
         </div>
 
         {/* ── Panel derecho: asignados ──────────────────────────────────────── */}
-        <div className="border border-border rounded-xl overflow-hidden flex flex-col">
+        <div className="surface overflow-hidden flex flex-col">
           <div className="bg-background px-4 py-3 border-b border-border">
             <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-semibold text-foreground flex items-center gap-1.5">

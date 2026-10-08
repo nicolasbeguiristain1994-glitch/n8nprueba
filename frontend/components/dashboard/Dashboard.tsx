@@ -12,6 +12,7 @@ import { PlatformOverview } from './PlatformOverview'
 import { WidgetGrid } from './WidgetGrid'
 import { AddWidgetModal } from './widgets/AddWidgetModal'
 import { Toast } from './Toast'
+import { ArrowRight, CheckCircle2, ClipboardList } from 'lucide-react'
 
 export function Dashboard() {
   const {user} = useCurrentUser()
@@ -110,8 +111,11 @@ export function Dashboard() {
         </div>
       )}
 
-      {data?.crmAvailable && (user?.role==='admin'||user?.sectors?.includes('tasks')) && <Link href={user?.role==='admin'?'/tareas':'/mis-tareas'} className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl border bg-card px-4 py-3 text-sm hover:border-primary/40">
-        <span className="font-semibold">Trabajo pendiente</span><span><strong className="tabular-nums">{data.kpis.tasks_pending}</strong> tareas pendientes</span><span className={data.kpis.tasks_overdue>0?'text-destructive':'text-muted-foreground'}><strong className="tabular-nums">{data.kpis.tasks_overdue}</strong> vencidas</span><span className="ml-auto text-primary">Abrir tareas →</span>
+      {data?.crmAvailable && (user?.role==='admin'||user?.sectors?.includes('tasks')) && <Link href={user?.role==='admin'?'/tareas':'/mis-tareas'} className="surface mb-5 flex flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3.5 text-sm transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <span className="flex items-center gap-2.5 font-medium">{data.kpis.tasks_pending === 0 ? <CheckCircle2 size={20} className="text-emerald-600 dark:text-emerald-400" aria-hidden="true" /> : <ClipboardList size={20} className="text-primary" aria-hidden="true" />}{data.kpis.tasks_pending === 0 ? 'Sin tareas pendientes' : 'Trabajo pendiente'}</span>
+        {data.kpis.tasks_pending > 0 && <span className="text-muted-foreground"><strong className="font-semibold text-foreground tabular-nums">{data.kpis.tasks_pending}</strong> tareas pendientes</span>}
+        {data.kpis.tasks_overdue > 0 && <span className="rounded-md bg-destructive/10 px-2 py-1 text-xs text-destructive"><strong className="tabular-nums">{data.kpis.tasks_overdue}</strong> vencidas</span>}
+        <span className="ml-auto flex items-center gap-2 font-medium text-primary">Abrir tareas <ArrowRight size={16} aria-hidden="true" /></span>
       </Link>}
 
       {/* PlatformOverview labels "from al to" inclusively: give it the days actually queried. */}

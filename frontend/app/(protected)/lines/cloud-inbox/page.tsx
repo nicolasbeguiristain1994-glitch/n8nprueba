@@ -1,12 +1,16 @@
 'use client'
 import { Suspense, useEffect, useState } from 'react'
 import Link from 'next/link'
+import { PageHeader } from '@/components/layout/PageHeader'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { useSearchParams } from 'next/navigation'
 import { cloudMessageText, type CloudMessageContent } from '@/lib/cloud-api/message-content'
 type Line = { id: string; display_name: string; cloud_phone_number_id: string | null }
 type Message = { id: string; direction: string; status: string; message_type: string; content: CloudMessageContent; sent_at: string; error_title?: string }
 export default function CloudInboxPage() {
-  return <Suspense fallback={<main className="mx-auto max-w-4xl p-6">Cargando bandeja…</main>}><CloudInbox /></Suspense>
+  return <Suspense fallback={<div className="surface p-6 text-sm text-muted-foreground">Cargando bandeja…</div>}><CloudInbox /></Suspense>
 }
 function CloudInbox() {
   const requestedPhone=useSearchParams().get('phoneNumberId')?.trim() || ''
@@ -41,19 +45,51 @@ function CloudInbox() {
       const d=await r.json();if(!r.ok)throw Error(d.error || 'Error de envío');setText('');setRevision(v=>v+1)
     }catch(e){setError(e instanceof Error?e.message:'Error de conexión')}finally{setBusy(false)}
   }
-  return <main className="mx-auto max-w-4xl p-6 space-y-4">
-    <Link href="/lines" className="text-primary">← Líneas</Link><h1 className="text-2xl font-semibold">Bandeja de WhatsApp API</h1>
-    <p className="text-sm text-muted-foreground">Consultá mensajes y estados de tus números oficiales. Texto libre dentro de las 24 horas del último mensaje del cliente; fuera de esa ventana, usá una plantilla aprobada.</p>
-    <label className="block">Línea<select className="ml-2 rounded border p-2" value={phone} onChange={e=>{setPhone(e.target.value);setContact('');setRequestedDenied(false)}}><option value="">Seleccionar</option>{lines.map(l=><option key={l.id} value={l.cloud_phone_number_id!}>{l.display_name}</option>)}</select></label>
-    <button className="rounded border p-2" onClick={()=>setRevision(v=>v+1)}>Actualizar mensajes y estados</button>
-    {requestedDenied&&<p role="alert" className="text-amber-800">La línea solicitada no existe o no tenés acceso a ella. Elegí una línea de la lista.</p>}
-    {error&&<p role="alert" className="text-red-700">{error}</p>}
-    {!contact&&conversations.map(c=><button key={c.id} className="block w-full rounded border p-3 text-left" onClick={()=>setContact(c.contact_phone)}>{c.contact_phone} · {c.last_message_preview}</button>)}
-    <label className="block">Destinatario autorizado<input className="ml-2 rounded border p-2" placeholder="+549…" value={contact} onChange={e=>setContact(e.target.value)} /></label>
-    {contact&&<><button className="text-primary" onClick={()=>setContact('')}>Volver a conversaciones</button><div className="space-y-2">{messages.map(m=><article key={m.id} className="rounded border p-3"><p>{m.direction==='inbound'?'Recibido':'Enviado'} · {m.status} · {new Date(m.sent_at).toLocaleString('es-AR')}</p><p className="whitespace-pre-wrap">{cloudMessageText(m.content,m.message_type)}</p>{m.error_title&&<p className="text-red-700">{m.error_title}</p>}</article>)}</div>
-      <label className="block">Mensaje<textarea className="block w-full rounded border p-2" value={text} onChange={e=>setText(e.target.value)} maxLength={4096} /></label>
-      <details className="rounded border p-3"><summary>Usar plantilla aprobada sin variables</summary><label className="block">Nombre exacto<input className="m-2 rounded border p-2" value={template} onChange={e=>setTemplate(e.target.value)} /></label><label>Idioma<input className="m-2 rounded border p-2" value={language} onChange={e=>setLanguage(e.target.value)} /></label><p className="text-xs">Si completás el nombre, se envía la plantilla en lugar del texto. Las plantillas con variables se gestionan desde Campañas.</p></details>
-      <button className="rounded bg-primary p-2 text-primary-foreground disabled:opacity-50" disabled={busy||!phone||(!text.trim()&&!template)} onClick={send}>{busy?'Enviando…':'Enviar mensaje'}</button></>}
-    {!lines.length&&<Link href="/lines/cloud-onboard" className="block text-primary">Conectar un número oficial →</Link>}
-  </main>
+  return <div className="max-w-5xl space-y-5">
+    <Link href="/lines" className="text-sm font-medium text-primary">← Líneas</Link>
+    <PageHeader title="Bandeja de WhatsApp API" className="mb-0"
+      description="Consultá mensajes y estados de tus números oficiales. Texto libre dentro de las 24 horas del último mensaje del cliente; fuera de esa ventana, usá una plantilla aprobada." />
+    <div className="filter-bar">
+      <label className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-sm font-medium">
+        Línea
+        <select className="h-10 min-w-0 flex-1 rounded-lg border border-input bg-card px-3 text-sm shadow-xs focus-visible:ring-2 focus-visible:ring-ring" value={phone} onChange={e=>{setPhone(e.target.value);setContact('');setRequestedDenied(false)}}>
+          <option value="">Seleccionar</option>
+          {lines.map(l=><option key={l.id} value={l.cloud_phone_number_id!}>{l.display_name}</option>)}
+        </select>
+      </label>
+      <Button variant="outline" onClick={()=>setRevision(v=>v+1)}>Actualizar mensajes y estados</Button>
+    </div>
+    {requestedDenied&&<p role="alert" className="rounded-xl border border-warning/20 bg-warning/10 p-4 text-sm text-warning">La línea solicitada no existe o no tenés acceso a ella. Elegí una línea de la lista.</p>}
+    {error&&<p role="alert" className="rounded-xl border border-destructive/20 bg-destructive/10 p-4 text-sm text-destructive">{error}</p>}
+    {!contact&&conversations.map(c=><button key={c.id} className="surface block w-full p-4 text-left transition-colors hover:bg-primary/5" onClick={()=>setContact(c.contact_phone)}>
+      <span className="block text-sm font-semibold">{c.contact_phone}</span>
+      <span className="mt-1 block truncate text-sm text-muted-foreground">{c.last_message_preview}</span>
+    </button>)}
+    <label className="block max-w-md text-sm font-medium">Destinatario autorizado
+      <Input className="mt-2" placeholder="+549…" value={contact} onChange={e=>setContact(e.target.value)} />
+    </label>
+    {contact&&<>
+      <Button variant="ghost" onClick={()=>setContact('')}>← Volver a conversaciones</Button>
+      <div className="space-y-3">{messages.map(m=><article key={m.id} className="surface p-4">
+        <p className="text-xs text-muted-foreground">{m.direction==='inbound'?'Recibido':'Enviado'} · {m.status} · {new Date(m.sent_at).toLocaleString('es-AR')}</p>
+        <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed">{cloudMessageText(m.content,m.message_type)}</p>
+        {m.error_title&&<p className="mt-2 text-sm text-destructive">{m.error_title}</p>}
+      </article>)}</div>
+      <div className="surface space-y-4 p-5">
+        <label className="block text-sm font-medium">Mensaje
+          <Textarea className="mt-2 min-h-28" value={text} onChange={e=>setText(e.target.value)} maxLength={4096} />
+        </label>
+        <details className="rounded-xl border border-border bg-muted/20 p-4">
+          <summary className="cursor-pointer text-sm font-medium">Usar plantilla aprobada sin variables</summary>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <label className="block text-sm font-medium">Nombre exacto<Input className="mt-2" value={template} onChange={e=>setTemplate(e.target.value)} /></label>
+            <label className="block text-sm font-medium">Idioma<Input className="mt-2" value={language} onChange={e=>setLanguage(e.target.value)} /></label>
+          </div>
+          <p className="mt-3 text-sm text-muted-foreground">Si completás el nombre, se envía la plantilla en lugar del texto. Las plantillas con variables se gestionan desde Campañas.</p>
+        </details>
+        <Button disabled={busy||!phone||(!text.trim()&&!template)} onClick={send}>{busy?'Enviando…':'Enviar mensaje'}</Button>
+      </div>
+    </>}
+    {!lines.length&&<Link href="/lines/cloud-onboard" className="block text-sm font-medium text-primary">Conectar un número oficial →</Link>}
+  </div>
 }

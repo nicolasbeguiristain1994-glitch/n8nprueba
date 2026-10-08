@@ -7,7 +7,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import {
-  RefreshCw, SlidersHorizontal, Clock, Database, User, CloudDownload,
+  RefreshCw, SlidersHorizontal, Clock, Database, User, CloudDownload, ChevronDown,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import {
@@ -58,15 +58,15 @@ function AutoRefreshToggle({ enabled, softLoading, onToggle }: AutoRefreshToggle
       aria-pressed={enabled}
       aria-label={enabled ? 'Desactivar refresco automático de la vista' : 'Activar refresco automático de la vista'}
       className={cn(
-        'flex items-center gap-1.5 h-9 px-2.5 rounded-lg border text-xs font-medium transition-all',
+        'flex items-center gap-2 h-10 px-3 rounded-lg border text-sm font-medium transition-colors',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
         enabled
           ? 'border-primary/30 bg-primary/8 text-primary'
           : 'border-border text-muted-foreground hover:text-foreground hover:border-border/80',
       )}
     >
-      <Clock className={cn('w-3 h-3', softLoading && 'animate-spin')} />
-      <span className="hidden sm:inline">Auto</span>
+      <Clock className={cn('size-4', softLoading && 'animate-spin')} />
+      <span>Auto</span>
     </button>
   )
 }
@@ -88,10 +88,10 @@ interface PlatformSelectorProps {
 
 function PlatformSelector({ value, onChange }: PlatformSelectorProps) {
   return (
-    <div className="flex items-center gap-1.5">
-      <Database className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+    <div className="flex items-center gap-2">
       <Select value={value} onValueChange={v => onChange(v as Platform)}>
-        <SelectTrigger aria-label="Plataforma del dashboard" size="sm" className="h-9 w-auto min-w-[80px] text-xs">
+        <SelectTrigger aria-label="Plataforma del dashboard" className="h-10 w-auto min-w-[160px] text-sm">
+          <Database className="size-4 shrink-0 text-muted-foreground" />
           <SelectValue>{PLATFORM_LABELS[value]}</SelectValue>
         </SelectTrigger>
         <SelectContent align="end">
@@ -117,10 +117,10 @@ interface AgentSelectorProps {
 function AgentSelector({ value, platform, onChange }: AgentSelectorProps) {
   const agents = dashboardAgents(platform)
   return (
-    <div className="flex items-center gap-1.5">
-      <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+    <div className="flex items-center gap-2">
       <Select value={value || '_all'} onValueChange={(v: string | null) => onChange(!v || v === '_all' ? '' : v)}>
-        <SelectTrigger aria-label="Agente del dashboard" size="sm" className="h-9 w-auto min-w-[90px] text-xs">
+        <SelectTrigger aria-label="Agente del dashboard" className="h-10 w-auto min-w-[160px] text-sm">
+          <User className="size-4 shrink-0 text-muted-foreground" />
           <SelectValue>{value || 'Todos los agentes'}</SelectValue>
         </SelectTrigger>
         <SelectContent align="end">
@@ -172,33 +172,34 @@ export const DashboardHeader = memo(function DashboardHeader({
   onSyncCasino,
 }: DashboardHeaderProps) {
   const minutesAgo = useMinutesAgo(lastUpdated)
+  const [detailsOpen, setDetailsOpen] = useState(false)
 
   return (
-    <div className="mb-5 space-y-4">
-      <PageHeader title="Dashboard" description="Una mirada a tu operación, tus clientes y tu equipo." className="mb-0"
+    <div className="mb-5 space-y-5">
+      <PageHeader title="Resumen de operaciones" description="Tus movimientos, plataformas y equipo en un solo lugar." className="mb-0"
         actions={<>
           <Button variant="outline" size="sm" onClick={onCustomize} aria-label="Personalizar dashboard"><SlidersHorizontal size={14} /> Personalizar</Button>
           <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading} aria-label="Refrescar vista"><RefreshCw size={14} className={cn((loading || softLoading) && 'animate-spin')} /> Actualizar</Button>
-          <Button size="sm" onClick={onSyncCasino} disabled={syncStatus === 'loading'} title={platform === 'consolidado' ? 'Sincronizar Zeus y Bet30' : `Sincronizar casino (${platform})`}><CloudDownload size={14} className={cn(syncStatus === 'loading' && 'animate-pulse')} />{syncStatus === 'loading' ? 'Sincronizando…' : 'Sync casino'}</Button>
+          <Button size="sm" onClick={onSyncCasino} disabled={syncStatus === 'loading'} title={platform === 'consolidado' ? 'Sincronizar Zeus y Bet30' : `Sincronizar casino (${platform})`}><CloudDownload size={14} className={cn(syncStatus === 'loading' && 'animate-pulse')} />{syncStatus === 'loading' ? 'Sincronizando…' : 'Sincronizar casino'}</Button>
         </>} />
-      <div className="surface">
-        <div className="flex flex-wrap items-center gap-3 p-3">
+      <div className="surface overflow-hidden">
+        <div className="flex flex-wrap items-center gap-3 p-4">
           <DashboardDateRangePicker value={dateRange} onChange={onDateRangeChange} />
-          <div className="hidden h-5 border-l sm:block" aria-hidden="true" />
           <PlatformSelector value={platform} onChange={onPlatformChange} />
           <AgentSelector value={agent} platform={platform} onChange={onAgentChange} />
-          <div className="ml-auto flex items-center gap-3">
-            {minutesAgo && <span className="hidden text-xs text-muted-foreground xl:inline">Vista consultada {minutesAgo}</span>}
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <Button variant="ghost" size="sm" className="h-10 text-muted-foreground" aria-expanded={detailsOpen} aria-controls="dashboard-filter-details" onClick={() => setDetailsOpen(open => !open)}>Detalles de filtros<ChevronDown size={14} className={cn('transition-transform', detailsOpen && 'rotate-180')} /></Button>
             <AutoRefreshToggle enabled={autoRefreshEnabled} softLoading={softLoading} onToggle={onAutoRefreshToggle} />
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t bg-muted/25 px-3 py-2 text-[11px] text-muted-foreground" aria-label="Filtros activos del dashboard">
+        {detailsOpen && <div id="dashboard-filter-details" className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t bg-muted/25 px-4 py-3 text-xs leading-relaxed text-muted-foreground" aria-label="Filtros activos del dashboard">
           <span className="font-medium text-foreground">Filtro activo: {PLATFORM_LABELS[platform]} · {agent || 'Todos los agentes'}</span>
           <span>{DATE_RANGE_LABELS[dateRange.preset]} · {describeDateRange(dateRange)} · hora Argentina</span>
           {agent && <button className="text-primary hover:underline" onClick={() => onAgentChange('')}>Ver todos los agentes</button>}
           {agent && platform === 'consolidado' && <span>Equivalencias: {agentScopeLabel(platform, agent)}</span>}
+          {minutesAgo && <span>Vista consultada {minutesAgo}</span>}
           <span className="ml-auto" title="Estos filtros se guardan en este navegador. Otra computadora puede tener una selección distinta.">Preferencias guardadas en este navegador</span>
-        </div>
+        </div>}
       </div>
     </div>
   )

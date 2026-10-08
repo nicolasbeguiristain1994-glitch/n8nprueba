@@ -1,5 +1,7 @@
 'use client'
 
+import { PageHeader } from '@/components/layout/PageHeader'
+
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Loader2, Plus, Pencil, UserX, UserCheck, KeyRound, Search, Users, Eye } from 'lucide-react'
@@ -507,26 +509,17 @@ export default function UsersPage() {
   }
 
   return (
-    <div className="flex-1 overflow-auto p-6">
+    <div className="min-w-0">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-success/10 rounded-xl flex items-center justify-center">
-            <Users size={18} className="text-success" />
-          </div>
-          <div>
-            <h1 className="text-lg font-semibold text-foreground">Usuarios</h1>
-            <p className="text-xs text-muted-foreground">Gestión de usuarios y permisos (RBAC)</p>
-          </div>
-        </div>
+      <PageHeader title="Usuarios" description="Gestión de usuarios y permisos">
         <Button onClick={() => setCreateOpen(true)}>
           <Plus size={14} className="mr-1" /> Nuevo usuario
         </Button>
-      </div>
+      </PageHeader>
 
       {/* Search */}
-      <div className="mb-4">
-        <div className="relative max-w-xs">
+      <div className="filter-bar mb-4">
+        <div className="relative w-full sm:max-w-sm">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input
             type="text"
@@ -546,7 +539,7 @@ export default function UsersPage() {
       )}
 
       {/* Table */}
-      <div className="bg-card rounded-xl border border-border overflow-hidden">
+      <div className="surface overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-16 text-muted-foreground">
             <Loader2 size={20} className="animate-spin mr-2" />

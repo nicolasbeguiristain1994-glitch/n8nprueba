@@ -1,4 +1,6 @@
 'use client'
+
+import { PageHeader } from '@/components/layout/PageHeader'
 import { argentinaToday, shiftDate, formatPesos } from '@/lib/dashboard-format'
 import { CampaignEffectivenessPanel } from '@/components/campaigns/CampaignEffectivenessPanel'
 import type { CampaignEffectiveness, EffectiveRecipient } from '@/lib/campaign-effectiveness'
@@ -347,37 +349,33 @@ export default function EstadisticasPage() {
     <div className="space-y-5">
       {exportError && <p role="alert" className="text-sm text-destructive">{exportError}</p>}
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="page-title text-foreground">Estadísticas</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Métricas en hora argentina. Campañas: resultado actual por destinatario; Resumen: actividad del período.</p>
+      <PageHeader title="Estadísticas" className="mb-0"
+        description="Métricas en hora argentina. Campañas: resultado actual por destinatario; Resumen: actividad del período." />
+      <div className="filter-bar">
+        {/* Presets */}
+        <div className="flex max-w-full flex-wrap gap-1 bg-muted rounded-lg p-1">
+          {PRESETS.map((p, i) => (
+            <button key={p.label} onClick={() => applyPreset(i)}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
+                preset === i && !custom ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
+              }`}>
+              {p.label}
+            </button>
+          ))}
         </div>
-        <div className="flex min-w-0 max-w-full items-center gap-2 flex-wrap">
-          {/* Presets */}
-          <div className="flex max-w-full flex-wrap gap-1 bg-muted rounded-lg p-1">
-            {PRESETS.map((p, i) => (
-              <button key={p.label} onClick={() => applyPreset(i)}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${
-                  preset === i && !custom ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                }`}>
-                {p.label}
-              </button>
-            ))}
-          </div>
-          {/* Custom date range */}
-          <div className="flex items-center gap-1">
-            <Input aria-label="Estadísticas desde" type="date" value={from} max={to}
-              onChange={e => { setFrom(e.target.value); setCustom(true); setPreset(-1) }}
-              className="h-8 text-xs w-36" />
-            <span className="text-muted-foreground text-xs">→</span>
-            <Input aria-label="Estadísticas hasta" type="date" value={to} min={from}
-              onChange={e => { setTo(e.target.value); setCustom(true); setPreset(-1) }}
-              className="h-8 text-xs w-36" />
-          </div>
-          <Button variant="ghost" size="sm" onClick={() => { void loadOverview(); if (tab === 'campanas') { void loadCampaigns(); if (detail) void loadDetail(detail) } }} className="h-8">
-            <RefreshCw size={13} aria-label="Actualizar estadísticas" />
-          </Button>
+        {/* Custom date range */}
+        <div className="flex items-center gap-1">
+          <Input aria-label="Estadísticas desde" type="date" value={from} max={to}
+            onChange={e => { setFrom(e.target.value); setCustom(true); setPreset(-1) }}
+            className="h-8 text-xs w-36" />
+          <span className="text-muted-foreground text-xs">→</span>
+          <Input aria-label="Estadísticas hasta" type="date" value={to} min={from}
+            onChange={e => { setTo(e.target.value); setCustom(true); setPreset(-1) }}
+            className="h-8 text-xs w-36" />
         </div>
+        <Button variant="ghost" size="sm" onClick={() => { void loadOverview(); if (tab === 'campanas') { void loadCampaigns(); if (detail) void loadDetail(detail) } }} className="h-8">
+          <RefreshCw size={13} aria-label="Actualizar estadísticas" />
+        </Button>
       </div>
 
       {/* Tabs */}

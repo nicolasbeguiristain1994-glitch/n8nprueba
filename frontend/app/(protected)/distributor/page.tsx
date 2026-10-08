@@ -1,4 +1,6 @@
 'use client'
+
+import { PageHeader } from '@/components/layout/PageHeader'
 import { useEffect, useState, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -111,26 +113,17 @@ export default function DistributorPage() {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="page-title">Distribuidor de Líneas</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Asignación operacional de líneas y proxies para campañas
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={loadAll} disabled={loading}>
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-            <span className="ml-1.5">Actualizar</span>
-          </Button>
-          <Button size="sm" onClick={runPreview} disabled={loading}>
-            <Activity size={14} className="mr-1.5" />
-            Vista previa de asignación
-          </Button>
-        </div>
-      </div>
+      <PageHeader title="Distribuidor de Líneas" description="Asignación operacional de líneas y proxies para campañas" className="mb-0">
+        <Button variant="outline" size="sm" onClick={loadAll} disabled={loading}>
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          <span className="ml-1.5">Actualizar</span>
+        </Button>
+        <Button size="sm" onClick={runPreview} disabled={loading}>
+          <Activity size={14} className="mr-1.5" /> Vista previa de asignación
+        </Button>
+      </PageHeader>
 
       {error && (
         <div className="flex items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">

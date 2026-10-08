@@ -154,7 +154,7 @@ export function DataTable<TData>({
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="flex min-w-0 flex-col rounded-xl border border-border bg-card shadow-xs">
+    <div className="surface flex flex-col">
 
       {/* ── Toolbar interno (density + col visibility + slot externo) ── */}
       <DataTableToolbar
@@ -177,7 +177,7 @@ export function DataTable<TData>({
           role="grid"
           aria-rowcount={totalRows ?? rows.length}
           aria-colcount={table.getVisibleLeafColumns().length}
-          className="crm-data-table w-full text-sm"
+          className="crm-data-table w-full text-sm tabular-nums"
         >
           {/* Sticky header */}
           <thead className="sticky top-0 z-10 bg-muted border-b border-border">
@@ -190,7 +190,7 @@ export function DataTable<TData>({
                     aria-sort={header.column.getIsSorted() === 'asc' ? 'ascending' : header.column.getIsSorted() === 'desc' ? 'descending' : undefined}
                     colSpan={header.colSpan}
                     style={{ width: header.getSize() !== 150 ? header.getSize() : undefined, ...pinStyle(header.column.id) }}
-                    className="px-4 py-2.5 text-left text-xs text-muted-foreground font-medium whitespace-nowrap"
+                    className="px-4 py-3 text-left text-xs text-muted-foreground font-semibold whitespace-nowrap"
                   >
                     {header.isPlaceholder
                       ? null

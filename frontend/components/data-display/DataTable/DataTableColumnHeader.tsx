@@ -22,7 +22,7 @@ export function DataTableColumnHeader<TData, TValue>({
   className,
 }: DataTableColumnHeaderProps<TData, TValue>) {
   if (!column.getCanSort()) {
-    return <span className={cn('text-xs font-medium text-muted-foreground', className)}>{title}</span>
+    return <span className={cn('text-xs font-semibold text-muted-foreground', className)}>{title}</span>
   }
 
   const sorted = column.getIsSorted()
@@ -31,7 +31,7 @@ export function DataTableColumnHeader<TData, TValue>({
     <button
       onClick={() => sorted === 'desc' ? column.clearSorting() : column.toggleSorting(sorted === 'asc')}
       className={cn(
-        'flex items-center gap-1.5 text-xs font-medium text-muted-foreground',
+        'flex items-center gap-1.5 text-xs font-semibold text-muted-foreground',
         'hover:text-foreground transition-colors group -ml-1 px-1 py-0.5 rounded',
         'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
         className,

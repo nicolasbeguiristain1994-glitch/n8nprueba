@@ -21,13 +21,13 @@ export function DataTableEmptyState({
   return (
     <div
       role="status"
-      className="flex flex-col items-center justify-center py-16 text-center"
+      className="flex flex-col items-center justify-center px-4 py-16 text-center"
     >
-      <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mb-4">
-        <Icon size={20} className="text-muted-foreground" aria-hidden="true" />
+      <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
+        <Icon size={20} className="text-primary" aria-hidden="true" />
       </div>
-      <p className="text-sm font-medium text-foreground">{message}</p>
-      <p className="text-xs text-muted-foreground mt-1 max-w-xs">{description}</p>
+      <p className="text-base font-semibold text-foreground">{message}</p>
+      <p className="text-sm text-muted-foreground mt-1 max-w-xs leading-relaxed">{description}</p>
     </div>
   )
 }

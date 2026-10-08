@@ -45,11 +45,11 @@ export function DataTablePagination<TData>({
 
   return (
     <div
-      className="flex flex-wrap items-center justify-between gap-3 rounded-b-xl bg-muted/20 px-3 py-3 border-t border-border"
+      className="flex flex-wrap items-center justify-between gap-3 rounded-b-xl bg-muted/20 px-4 py-3 border-t border-border"
       aria-label="Paginación"
     >
       {/* Info de rango */}
-      <p className="text-xs text-muted-foreground tabular-nums">
+      <p className="text-sm text-muted-foreground tabular-nums">
         {totalRows !== undefined
           ? `${from.toLocaleString('es-AR')}–${to.toLocaleString('es-AR')} de ${totalRows.toLocaleString('es-AR')}`
           : `Página ${pageIndex + 1} de ${pageCount}`}
@@ -68,7 +68,7 @@ export function DataTablePagination<TData>({
             onChange={e => setInputValue(e.target.value)}
             onBlur={goToPage}
             onKeyDown={e => { if (e.key === 'Enter') goToPage() }}
-            className="h-7 w-16 text-xs text-center px-1 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            className="h-9 w-16 text-sm text-center px-1 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
             aria-label="Número de página"
           />
           <span className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">de {pageCount}</span>
@@ -78,7 +78,7 @@ export function DataTablePagination<TData>({
           <Button
             variant="outline"
             size="sm"
-            className="h-8 w-8 p-0"
+            className="h-9 w-9 p-0"
             onClick={() => table.setPageIndex(0)}
             disabled={!table.getCanPreviousPage()}
             aria-label="Primera página"
@@ -88,7 +88,7 @@ export function DataTablePagination<TData>({
           <Button
             variant="outline"
             size="sm"
-            className="h-8 w-8 p-0"
+            className="h-9 w-9 p-0"
             onClick={() => table.previousPage()}
             disabled={!table.getCanPreviousPage()}
             aria-label="Página anterior"
@@ -99,7 +99,7 @@ export function DataTablePagination<TData>({
           <Button
             variant="outline"
             size="sm"
-            className="h-8 w-8 p-0"
+            className="h-9 w-9 p-0"
             onClick={() => table.nextPage()}
             disabled={!table.getCanNextPage()}
             aria-label="Página siguiente"
@@ -109,7 +109,7 @@ export function DataTablePagination<TData>({
           <Button
             variant="outline"
             size="sm"
-            className="h-8 w-8 p-0"
+            className="h-9 w-9 p-0"
             onClick={() => table.setPageIndex(pageCount - 1)}
             disabled={!table.getCanNextPage()}
             aria-label="Última página"
