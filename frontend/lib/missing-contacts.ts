@@ -1,6 +1,7 @@
 import type { Client } from 'pg'
 import type { SessionUser } from './auth'
-import { getLongRunningClient } from './db'
+import { getLongRunningClient, pool } from './db'
+import { missingContactSnapshot, filterMissingContactSnapshot } from './missing-contact-snapshot'
 import { dashboardAgents, platformCanonicalAgentSql, movementDateSql, movementPeriodSql } from './dashboard-scope'
 import { SYNC_PLATFORMS } from './casino-agents'
 import { normalizeMissingContactPhone } from './missing-contact-files'
@@ -48,7 +49,7 @@ async function withClient<T>(run: (client: Client) => Promise<T>): Promise<T> {
   } finally { await client.end() }
 }
 
-async function scopedAgents(client: Client, user: Access) {
+async function scopedAgents(client: Pick<Client, 'query'>, user: Access) {
   const agents = missingContactAgents(user)
   if (user.role === 'admin' || !agents.length) return agents
   const { rows } = await client.query('SELECT EXISTS(SELECT 1 FROM operator_contact_visibility WHERE operator_id=$1) AS restricted', [user.user_id])
@@ -67,11 +68,8 @@ export function readMissingContactFilters(params: URLSearchParams) {
   return { months, page, platform, agent, q: (params.get('q') ?? '').trim().slice(0, 100), includeNew: params.get('include_new') !== 'false' }
 }
 
-export async function listMissingContacts(user: Access, filters: ReturnType<typeof readMissingContactFilters>, download = false) {
+export async function loadMissingContactSnapshot(): Promise<MissingContact[]> {
   return withClient(async client => {
-    const agents = await scopedAgents(client, user)
-    const selected = filters.agent ? agents.filter(a => a === filters.agent) : agents
-    if (!selected.length) return { users: [] as MissingContact[], total: 0, agents }
     const { rows } = await client.query(`WITH ${accountsSql},
       bounds AS (SELECT CASE WHEN $3::int=0 THEN '-infinity'::date
         ELSE (${today} - make_interval(months => $3::int))::date END AS since),
@@ -96,11 +94,22 @@ export async function listMissingContacts(user: Access, filters: ReturnType<type
         LIMIT $6 OFFSET $7
       ) SELECT (SELECT count(*)::int FROM pending) AS total,
         COALESCE((SELECT jsonb_agg(page) FROM page),'[]'::jsonb) AS users`,
-    [filters.platform ? [filters.platform] : [...SYNC_PLATFORMS], selected, filters.months, filters.q, filters.includeNew,
-      download ? 100001 : 50, download ? 0 : (filters.page - 1) * 50])
-    if (download && rows[0].total > 100000) throw new Error('Hay más de 100.000 usuarios. Filtrá por agente o plataforma antes de descargar.')
-    return { ...rows[0], agents } as { users: MissingContact[]; total: number; agents: string[] }
+    [[...SYNC_PLATFORMS], dashboardAgents('consolidado'), 0, '', true, null, 0])
+    return rows[0].users as MissingContact[]
   })
+}
+
+export async function startMissingContactRefresh() {
+  // Warm the permission-check connection too, before the first authenticated read.
+  await Promise.all([pool.query('SELECT 1'), missingContactSnapshot.start(loadMissingContactSnapshot)])
+}
+
+export async function listMissingContacts(user: Access, filters: ReturnType<typeof readMissingContactFilters>, download = false) {
+  // Reuse the ordinary pool only for fresh permission scope checks. Heavy work
+  // runs once per minute, never once per user, filter, page or export.
+  const agents = user.role === 'admin' ? missingContactAgents(user) : await scopedAgents(pool, user)
+  if (!agents.length || (filters.agent && !agents.includes(filters.agent))) return { users: [] as MissingContact[], total: 0, agents }
+  return filterMissingContactSnapshot(await missingContactSnapshot.read(loadMissingContactSnapshot), agents, filters, download)
 }
 
 export function validateMissingContactRows(input: unknown): MissingContactImportRow[] {
@@ -117,7 +126,8 @@ export function validateMissingContactRows(input: unknown): MissingContactImport
 }
 
 export async function importMissingContacts(user: Access, input: MissingContactImportRow[], dryRun: boolean): Promise<MissingContactImportResult> {
-  return withClient(async client => {
+  let linkedAccounts: MissingContactImportRow[] = []
+  const imported = await withClient(async client => {
     // Serialize this import workflow so two returned sheets cannot attach the
     // same platform account to different phones concurrently.
     if (!dryRun) await client.query("SELECT pg_advisory_xact_lock(hashtextextended('missing-contact-import',0))")
@@ -189,6 +199,10 @@ export async function importMissingContacts(user: Access, input: MissingContactI
     if (approved.some(r => !savedPhones.has(r.phone))) throw new Error('Un contacto cambió durante la carga. Volvé a revisar el archivo.')
     result.inserted = saved.filter(r => r.inserted).length
     result.linked = approved.length
+    linkedAccounts = approved
     return result
   })
+  // Only evict after COMMIT; a failed import leaves the previous list intact.
+  if (!dryRun && linkedAccounts.length) missingContactSnapshot.remove(linkedAccounts)
+  return imported
 }

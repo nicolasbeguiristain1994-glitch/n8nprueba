@@ -2,9 +2,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { Client } from 'pg'
-vi.mock('@/lib/db', () => ({ getLongRunningClient: vi.fn() }))
-import { getLongRunningClient } from '@/lib/db'
-import { importMissingContacts, listMissingContacts, readMissingContactFilters, validateMissingContactRows } from '@/lib/missing-contacts'
+vi.mock('@/lib/db', () => ({ getLongRunningClient: vi.fn(), pool: { query: vi.fn() } }))
+import { getLongRunningClient, pool } from '@/lib/db'
+import { importMissingContacts, listMissingContacts, loadMissingContactSnapshot, readMissingContactFilters, validateMissingContactRows } from '@/lib/missing-contacts'
+
+import { missingContactSnapshot } from '@/lib/missing-contact-snapshot'
 
 const admin = { user_id: '00000000-0000-0000-0000-000000000001', role: 'admin' as const, allowed_agents: [] }
 const operator = { ...admin, role: 'operator' as const, allowed_agents: ['royal'] }
@@ -43,8 +45,10 @@ describe.skipIf(process.env.RUN_MISSING_CONTACTS_PG_TESTS !== '1')('missing phon
     const migration = readFileSync('../db/migrations/126_casino_excel_import.sql','utf8')
     await db.query(migration.slice(migration.indexOf('CREATE OR REPLACE VIEW casino_segmentation_players'), migration.indexOf('CREATE OR REPLACE FUNCTION preserve_explicit_casino_platforms')))
     vi.mocked(getLongRunningClient).mockImplementation(connection)
+    vi.mocked(pool.query).mockImplementation(((sql: string, params: unknown[]) => db.query(sql, params)) as never)
   })
   beforeEach(async () => {
+    missingContactSnapshot.reset()
     await db.query(`TRUNCATE contacts,casino_players,casino_transactions,operator_contact_visibility;
       INSERT INTO casino_players(username,platform,agente,fecha_ultima,first_seen_at) VALUES
         ('active','zeus','royal',${today}-5,NULL),('old','zeus','royal',${today}-400,NULL),
@@ -89,6 +93,7 @@ describe.skipIf(process.env.RUN_MISSING_CONTACTS_PG_TESTS !== '1')('missing phon
   it('returns a total on empty pages and updates automatically after new activity', async () => {
     expect(await listMissingContacts(admin,filters('page=20'))).toMatchObject({ users: [],total: 6 })
     await db.query(`INSERT INTO casino_transactions(platform,username,agente,tipo,fecha) VALUES('zeus','brandnew','royal','carga',${today})`)
+    await missingContactSnapshot.refresh(loadMissingContactSnapshot)
     expect((await listMissingContacts(admin,filters())).total).toBe(7)
   })
   it('uses the six calendar month boundary, inclusive, and the Argentina day', async () => {

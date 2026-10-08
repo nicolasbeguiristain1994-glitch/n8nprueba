@@ -39,3 +39,13 @@ La importación confirma todos los registros válidos en una transacción. Los e
 Para ejecutar las pruebas PostgreSQL, usar `RUN_MISSING_CONTACTS_PG_TESTS=1` y `DATABASE_URL` apuntando exclusivamente a un PostgreSQL local de pruebas; la suite rechaza hosts remotos. Crea y elimina su propio esquema. Las pruebas restantes no requieren base.
 
 Validación local del 08/10/2026: **40 pruebas aprobadas**, TypeScript sin errores y compilación Next.js 16.3.5 aprobada en una copia temporal aislada. Se revisó la pestaña en Chrome con datos ficticios a 1440 × 960 y 390 × 844: sin errores de página ni desborde horizontal del documento. Capturas y resultado del navegador en `.local-tools/missing-contacts-20261008/`; no contienen contactos reales.
+
+## Carga rápida de la pestaña
+
+La lectura usa una lista completa preparada al iniciar el servidor y renovada en segundo plano cada 60 segundos. Los cambios de agente, plataforma, período, búsqueda y página filtran esa lista sin volver a recorrer movimientos ni abrir conexiones dedicadas. La descarga usa el mismo conjunto filtrado y conserva su límite de 100.000 filas. La autorización y el alcance del operador se comprueban contra la base en cada solicitud; la lista compartida nunca se envía completa al navegador.
+
+La importación sigue verificando las cuentas contra datos actuales y sólo retira los usuarios del cálculo compartido después de confirmar la transacción. Una consulta iniciada antes de importar no puede volver a agregar esas cuentas. Otros cambios de sincronización o contactos aparecen con la renovación periódica. Si falla una renovación, se conserva la última lista completa por un máximo de cinco minutos; después se exige una consulta correcta. El servidor prepara la lista antes de aceptar tráfico, incluso después de un despliegue.
+
+Se elimina la espera artificial de 250 ms de los selectores (se mantiene sólo al escribir búsquedas), se anticipa la descarga del componente al enfocar la pestaña y la tabla permanece visible durante sus renovaciones automáticas. La respuesta incluye `Server-Timing` para medir el procesamiento por separado de la red.
+
+Verificación sobre copia restaurada: siete combinaciones de filtros, historial completo y paginación devolvieron exactamente los mismos registros que el SQL anterior; filtrar la lista preparada tardó entre 0,32 y 1,05 ms. Esto mide procesamiento local, no la latencia HTTP de producción.

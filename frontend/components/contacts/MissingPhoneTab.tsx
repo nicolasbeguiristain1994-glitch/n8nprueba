@@ -28,6 +28,11 @@ export function MissingPhoneTab({ onImported }: { onImported: () => void }) {
   const [months, setMonths] = useState('6')
   const [includeNew, setIncludeNew] = useState(true)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 250)
+    return () => clearTimeout(timer)
+  }, [search])
   const [page, setPage] = useState(1)
   const [revision, setRevision] = useState(0)
   const [data, setData] = useState<Listing>({ users: [], total: 0, agents: [] })
@@ -41,21 +46,23 @@ export function MissingPhoneTab({ onImported }: { onImported: () => void }) {
   const [busy, setBusy] = useState(false)
   const [filename, setFilename] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
-  const params = new URLSearchParams({ agent, platform, months, include_new: String(includeNew), q: search, page: String(page) }).toString()
+  const loadedParams = useRef<string | null>(null)
+  const params = new URLSearchParams({ agent, platform, months, include_new: String(includeNew), q: debouncedSearch, page: String(page) }).toString()
 
   useEffect(() => {
     const controller = new AbortController()
-    setLoading(true); setError('')
+    setLoading(loadedParams.current !== params); setError('')
     const timer = setTimeout(async () => {
       try {
         const body = await readResponse<Listing>(await fetch(`/api/contacts/missing-phone?${params}`, { signal: controller.signal, cache: 'no-store' }))
         if (!controller.signal.aborted) {
+          loadedParams.current = params
           setData(body)
           if (page > 1 && (page - 1) * 50 >= body.total) setPage(Math.max(1, Math.ceil(body.total / 50)))
         }
       } catch (e) { if (!controller.signal.aborted) setError((e as Error).message) }
       finally { if (!controller.signal.aborted) setLoading(false) }
-    }, 250)
+    }, 0)
     return () => { clearTimeout(timer); controller.abort() }
   }, [params, revision, page])
 
