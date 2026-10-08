@@ -9,7 +9,7 @@ vi.mock('@/lib/missing-contacts', async original => {
   const actual = await original<typeof import('@/lib/missing-contacts')>()
   return { ...actual, listMissingContacts: vi.fn(), importMissingContacts: vi.fn() }
 })
-vi.mock('@/lib/db', () => ({ getLongRunningClient: vi.fn() }))
+vi.mock('@/lib/db', () => ({ getLongRunningClient: vi.fn(), pool: { query: vi.fn() } }))
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { getAppSetting } from '@/lib/app-settings'
 import { listMissingContacts, importMissingContacts } from '@/lib/missing-contacts'

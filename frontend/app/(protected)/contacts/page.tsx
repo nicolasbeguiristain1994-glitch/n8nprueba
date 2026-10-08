@@ -43,7 +43,8 @@ import type { ColumnDef, RowSelectionState, PaginationState } from '@/components
 const tabLoading = () => <p role="status" className="py-6 text-sm text-muted-foreground">Cargando…</p>
 const ProspectsTab = dynamic(() => import('@/components/prospects/ProspectsTab').then(m => m.ProspectsTab), { loading: tabLoading })
 const ProspectListsTab = dynamic(() => import('@/components/prospects/ProspectListsTab').then(m => m.ProspectListsTab), { loading: tabLoading })
-const MissingPhoneTab = dynamic(() => import('@/components/contacts/MissingPhoneTab').then(m => m.MissingPhoneTab), { loading: tabLoading })
+const loadMissingPhoneTab = () => import('@/components/contacts/MissingPhoneTab').then(m => m.MissingPhoneTab)
+const MissingPhoneTab = dynamic(loadMissingPhoneTab, { loading: tabLoading })
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tipos
@@ -1227,6 +1228,8 @@ export default function Contacts() {
           Contactos
         </button>
         <button
+          onMouseEnter={() => { void loadMissingPhoneTab() }}
+          onFocus={() => { void loadMissingPhoneTab() }}
           onClick={() => setActiveTab('missing-phone')}
           className={`shrink-0 px-3 py-2.5 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'missing-phone' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'

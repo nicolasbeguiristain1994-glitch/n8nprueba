@@ -6,6 +6,7 @@ import { listMissingContacts, readMissingContactFilters } from '@/lib/missing-co
 import { missingContactSheetRows } from '@/lib/missing-contact-files'
 
 export async function GET(req: NextRequest) {
+  const started = performance.now()
   const auth = await checkPermissionWithUser(req, 'contacts', 'read')
   if (!auth.ok) return auth.response
   const download = req.nextUrl.searchParams.get('download') === 'true'
@@ -17,7 +18,7 @@ export async function GET(req: NextRequest) {
   catch (error) { return NextResponse.json({ error: (error as Error).message }, { status: 400 }) }
   try {
     const data = await listMissingContacts(auth.user, filters, download)
-    if (!download) return NextResponse.json(data, { headers: { 'Cache-Control': 'no-store' } })
+    if (!download) return NextResponse.json(data, { headers: { 'Cache-Control': 'no-store', 'Server-Timing': `missing_contacts;dur=${(performance.now() - started).toFixed(1)}` } })
     const XLSX = await import('xlsx')
     const book = XLSX.utils.book_new()
     const sheet = XLSX.utils.aoa_to_sheet(missingContactSheetRows(data.users))

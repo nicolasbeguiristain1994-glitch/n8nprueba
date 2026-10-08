@@ -1,12 +1,17 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+vi.mock('@/lib/missing-contacts', () => ({ startMissingContactRefresh: vi.fn().mockResolvedValue(undefined) }))
 import { register } from '../../instrumentation'
+import { startMissingContactRefresh } from '@/lib/missing-contacts'
 
 const runtime = globalThis as typeof globalThis & { __campaignSchedulerRegistration?: Promise<void> }
 const fetchMock = vi.fn()
 beforeEach(() => {
   vi.useFakeTimers()
   delete runtime.__campaignSchedulerRegistration
+  vi.mocked(startMissingContactRefresh).mockClear()
+  vi.stubEnv('DATABASE_URL', '')
+  vi.stubEnv('DB_HOST', '')
   vi.stubEnv('NEXT_RUNTIME', 'nodejs')
   vi.stubEnv('NODE_ENV', 'production')
   vi.stubEnv('NEXT_PHASE', '')
@@ -23,6 +28,14 @@ afterEach(() => {
 })
 
 describe('Next runtime scheduler registration', () => {
+  it('primes missing contacts before accepting traffic without requiring campaign scheduling', async () => {
+    vi.stubEnv('DATABASE_URL', 'postgresql://example.test/local')
+    vi.stubEnv('CAMPAIGN_SCHEDULER_ENABLED', 'false'); vi.stubEnv('CRON_SECRET', '')
+    await register()
+    expect(startMissingContactRefresh).toHaveBeenCalledOnce()
+    vi.mocked(startMissingContactRefresh).mockClear(); vi.stubEnv('NEXT_PHASE', 'phase-production-build')
+    await register(); expect(startMissingContactRefresh).not.toHaveBeenCalled()
+  })
   it('polls delayed automations independently of the campaign switch', async () => {
     vi.stubEnv('CAMPAIGN_SCHEDULER_ENABLED', 'false'); vi.stubEnv('AUTOMATION_SCHEDULER_ENABLED', 'true')
     await register(); await vi.advanceTimersByTimeAsync(45000)
