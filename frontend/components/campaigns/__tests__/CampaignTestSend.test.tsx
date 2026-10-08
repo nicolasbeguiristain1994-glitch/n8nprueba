@@ -17,6 +17,24 @@ async function open() {
   await screen.findByLabelText('Número de prueba')
 }
 describe('test send panel', () => {
+  it('shows a newly available line after refreshing an empty snapshot without sending', async () => {
+    fetchMock.mockResolvedValueOnce(response({ ...snapshot, lines: [] }))
+      .mockResolvedValueOnce(response(snapshot))
+    await open()
+    expect(screen.getByText(/No hay líneas disponibles para esta plantilla/)).toHaveTextContent('misma cuenta de WhatsApp de la plantilla, estar habilitada y tener cupo disponible')
+    expect(screen.getByLabelText('Línea de envío')).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Enviar prueba a este número' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actualizar pruebas' }))
+    await waitFor(() => expect(screen.getByLabelText('Línea de envío')).toHaveValue('line'))
+    expect(screen.getByRole('option', { name: 'Solbatt' })).toBeInTheDocument()
+    expect(screen.queryByText(/No hay líneas disponibles para esta plantilla/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Enviar prueba a este número' })).toBeEnabled()
+    expect(fetchMock.mock.calls).toEqual([
+      ['/api/campaigns/campaign/test-send'],
+      ['/api/campaigns/campaign/test-send'],
+    ])
+  })
   it('sends once on a double click and displays acceptance separately from delivery', async () => {
     let resolveSend!: (r: Response) => void
     fetchMock.mockImplementation((_url, init) => init?.method === 'POST'

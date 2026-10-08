@@ -126,7 +126,7 @@ export function CampaignTestSend({ campaignId }: { campaignId: string }) {
               <option value="">Seleccioná una línea</option>
               {data.lines.map(l => <option key={l.id} value={l.id}>{l.display_name}</option>)}
             </select>
-            {data.lines.length === 0 && <p className="text-xs text-orange-600 mt-1">No hay líneas disponibles para esta plantilla.</p>}
+            {data.lines.length === 0 && <p className="text-xs text-orange-600 mt-1">No hay líneas disponibles para esta plantilla. La línea debe pertenecer a la misma cuenta de WhatsApp de la plantilla, estar habilitada y tener cupo disponible.</p>}
           </div>
         </div>
         <details open={data.recipients.length === 0} className="rounded border p-3">

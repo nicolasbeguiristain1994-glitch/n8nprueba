@@ -235,11 +235,12 @@ describe('getDispatchSummary', () => {
         total: '100', queued: '40', processing: '2',
         sent: '50', failed: '5', skipped: '3',
       }])
+      .mockResolvedValueOnce([{ message_type: 'text' }])
       .mockResolvedValueOnce([makeLine()])  // getEligibleLines
       .mockResolvedValueOnce([             // lineUsage
         { line_id: 'l1', line_key: 'line_01', display_name: 'Línea 01', sent: 45, failed: 5 },
       ])
-      .mockResolvedValueOnce([             // topErrors (4th query)
+      .mockResolvedValueOnce([             // topErrors
         { error: 'Evolution 429: Too Many Requests', count: 3 },
       ])
 
@@ -255,6 +256,30 @@ describe('getDispatchSummary', () => {
     expect(summary.line_usage[0].sent).toBe(45)
     expect(summary.top_errors).toHaveLength(1)
     expect(summary.top_errors[0].count).toBe(3)
+  })
+
+  it.each([
+    { name: 'approved template', campaign: { message_type: 'template', template_waba_id: 'royal', template_status: 'APROBADA' }, expected: 1 },
+    { name: 'template from another WABA', campaign: { message_type: 'template', template_waba_id: 'other', template_status: 'APROBADA' }, expected: 0 },
+    { name: 'template missing its WABA', campaign: { message_type: 'template', template_waba_id: null, template_status: 'APROBADA' }, expected: 0 },
+    { name: 'unapproved template', campaign: { message_type: 'template', template_waba_id: 'royal', template_status: 'RECHAZADA' }, expected: 0 },
+    { name: 'text campaign', campaign: { message_type: 'text' }, expected: 3 },
+    { name: 'missing campaign', campaign: null, expected: 0 },
+  ])('counts campaign-compatible lines for $name while preserving owner scope', async ({ campaign, expected }) => {
+    const { getDispatchSummary } = await import('@/lib/campaign-distributor')
+    vi.mocked(db.query)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(campaign ? [campaign] : [])
+      .mockResolvedValueOnce([
+        makeLine({ id: 'evolution' }),
+        makeLine({ id: 'royal', line_type: 'cloud', waba_id: 'royal' }),
+        makeLine({ id: 'nexus', line_type: 'cloud', waba_id: 'nexus' }),
+      ])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+
+    expect((await getDispatchSummary('campaign-uuid', 'owner-uuid')).eligible_lines).toBe(expected)
+    expect(db.query).toHaveBeenCalledWith(expect.stringContaining('get_accessible_line_ids($1::uuid)'), ['owner-uuid'])
   })
 })
 

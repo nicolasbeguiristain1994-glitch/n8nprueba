@@ -498,7 +498,21 @@ export async function getDispatchSummary(campaignId: string, operatorId?: string
     [campaignId]
   )
 
-  const eligibleLines = await getEligibleLines(operatorId)
+  const [campaign] = await query<Pick<CampaignForDispatch, 'message_type' | 'template_waba_id' | 'template_status'>>(
+    `SELECT c.message_type, wt.waba_id AS template_waba_id, wt.status AS template_status
+     FROM campaigns c
+     LEFT JOIN whatsapp_templates wt ON wt.id = c.template_id
+     WHERE c.id = $1`,
+    [campaignId]
+  )
+  const availableLines = await getEligibleLines(operatorId)
+  // Count the same template/account boundary enforced by the actual dispatcher.
+  // A healthy line in another WABA cannot send this campaign's template.
+  const eligibleLines = !campaign ? [] : campaign.message_type === 'template'
+    ? availableLines.filter(line => campaign.template_status === 'APROBADA'
+      && !!campaign.template_waba_id
+      && line.line_type === 'cloud' && line.waba_id === campaign.template_waba_id)
+    : availableLines
 
   const lineUsage = await query<LineUsageSummary>(
     `SELECT
