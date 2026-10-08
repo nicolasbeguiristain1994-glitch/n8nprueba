@@ -37,8 +37,8 @@ async function mountLegacy() {
 async function addLine7() {
   const user = userEvent.setup()
   await user.click(screen.getByRole('button', { name: 'Filtrar por líneas: Línea 2' }))
-  expect(await screen.findByRole('checkbox', { name: 'Línea 2', exact: true })).toBeChecked()
-  await user.click(screen.getByRole('checkbox', { name: 'Línea 7', exact: true }))
+  expect(await screen.findByRole('checkbox', { name: 'Línea 2' })).toBeChecked()
+  await user.click(screen.getByRole('checkbox', { name: 'Línea 7' }))
   await user.click(screen.getByRole('button', { name: 'Listo' }))
   await waitFor(() => expect(lastParams().get('linea')).toBe('2,7'))
   return user
@@ -54,7 +54,7 @@ it('applies legacy views, combines lines with other filters, resets page/selecti
   await user.click(screen.getByRole('button', { name: 'Seleccionar todos' }))
   await screen.findByRole('toolbar', { name: 'Acciones para 1 elementos seleccionados' })
   await user.click(screen.getByRole('button', { name: 'Filtrar por líneas: 2 líneas' }))
-  await user.click(await screen.findByRole('checkbox', { name: 'Línea 2', exact: true }))
+  await user.click(await screen.findByRole('checkbox', { name: 'Línea 2' }))
   await user.click(screen.getByRole('button', { name: 'Listo' }))
   await waitFor(() => {
     expect(lastParams().get('linea')).toBe('7')
@@ -62,7 +62,7 @@ it('applies legacy views, combines lines with other filters, resets page/selecti
   })
   expect(screen.queryByRole('toolbar', { name: /elementos seleccionados/ })).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: 'Filtrar por líneas: Línea 7' }))
-  await user.click(await screen.findByRole('checkbox', { name: 'Línea 7', exact: true }))
+  await user.click(await screen.findByRole('checkbox', { name: 'Línea 7' }))
   await user.click(screen.getByRole('button', { name: 'Listo' }))
   await waitFor(() => expect(lastParams().get('linea')).toBe(''))
   expect(screen.getByLabelText('Filtros activos')).not.toHaveTextContent('Línea:')
@@ -80,9 +80,9 @@ it('uses the same multiple-line audience for select-all, export, dynamic lists a
   await waitFor(() => expect(lastParams().get('select_all')).toBe('true'))
   expect(lastParams().get('linea')).toBe('2,7')
 
-  await user.click(screen.getByRole('button', { name: 'Descargar', exact: true }))
+  await user.click(screen.getByRole('button', { name: 'Descargar' }))
   const downloadDialog = await screen.findByRole('dialog', { name: 'Descargar contactos' })
-  await user.click(within(downloadDialog).getByRole('button', { name: 'Descargar', exact: true }))
+  await user.click(within(downloadDialog).getByRole('button', { name: 'Descargar' }))
   await waitFor(() => expect(downloadSingleVcf).toHaveBeenCalledOnce())
   const exportUrl = fetchMock.mock.calls.find(([url]) => String(url).includes('download=true'))![0]
   expect(new URL(exportUrl, 'http://localhost').searchParams.get('linea')).toBe('2,7')
@@ -92,7 +92,7 @@ it('uses the same multiple-line audience for select-all, export, dynamic lists a
     const dialog = await screen.findByRole('dialog', { name: 'Crear lista de distribución' })
     if (!dynamic) await user.click(within(dialog).getByRole('checkbox', { name: /Actualizar automáticamente/ }))
     fireEvent.change(within(dialog).getByPlaceholderText('Nombre de la lista (ej: Betcoin Slots VIP)'), { target: { value: dynamic ? 'Dinámica 2 y 7' : 'Fija 2 y 7' } })
-    await user.click(within(dialog).getByRole('button', { name: 'Crear lista', exact: true }))
+    await user.click(within(dialog).getByRole('button', { name: 'Crear lista' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Crear lista de distribución' })).not.toBeInTheDocument())
     const body = JSON.parse(fetchMock.mock.calls.filter(([url]) => url === '/api/lists').at(-1)![1].body)
     if (dynamic) expect(body).toMatchObject({ is_dynamic: true, filters: { linea: '2,7', panel: 'royal', linea_sub: 'b' } })
