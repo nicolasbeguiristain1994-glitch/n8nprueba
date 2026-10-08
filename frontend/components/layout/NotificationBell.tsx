@@ -172,7 +172,7 @@ function PreferencesPanel({ onClose }: { onClose: () => void }) {
                 disabled={saving}
                 className={cn(
                   'relative w-8 h-4 rounded-full transition-colors shrink-0',
-                  prefs[key] ? 'bg-blue-500' : 'bg-muted-foreground/30'
+                  prefs[key] ? 'bg-primary' : 'bg-muted-foreground/30'
                 )}
               >
                 <span className={cn(

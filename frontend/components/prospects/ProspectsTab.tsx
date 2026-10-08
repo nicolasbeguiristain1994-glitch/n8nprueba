@@ -2038,7 +2038,7 @@ export function ProspectsTab() {
                 {detailProspect.status === 'active' && !detailProspect.converted_to_contact_id && (
                   <Button
                     onClick={() => setConvertStep('confirm')}
-                    className="bg-blue-600 hover:bg-blue-700 text-white"
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground"
                   >
                     <UserPlus className="h-4 w-4 mr-1" /> Convertir a contacto
                   </Button>
@@ -2085,7 +2085,7 @@ export function ProspectsTab() {
                 <Button
                   onClick={confirmConvert}
                   disabled={converting}
-                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground"
                 >
                   {converting ? 'Convirtiendo…' : 'Confirmar conversión'}
                 </Button>

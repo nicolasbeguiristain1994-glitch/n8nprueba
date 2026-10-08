@@ -159,7 +159,7 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
             <button
               onClick={saveFollowUp}
               disabled={!canUpdate || !fuDate || loading === 'schedule'}
-              className="w-full text-xs bg-indigo-600 text-white rounded py-1 hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+              className="w-full text-xs bg-primary text-primary-foreground rounded py-1 hover:bg-primary/90 disabled:opacity-40 transition-colors"
             >
               Guardar seguimiento
             </button>

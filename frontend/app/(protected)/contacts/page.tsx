@@ -1945,7 +1945,7 @@ export default function Contacts() {
                 Filtros activos {hasActiveFilters && `(${total.toLocaleString()})`}
               </button>
               <button onClick={() => setListMode('criteria')}
-                className={`flex-1 py-2 font-medium transition-colors border-l border-border ${listMode === 'criteria' ? 'bg-indigo-600 text-white' : 'bg-background text-muted-foreground hover:bg-muted'}`}>
+                className={`flex-1 py-2 font-medium transition-colors border-l border-border ${listMode === 'criteria' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-muted'}`}>
                 Por criterios
               </button>
             </div>
@@ -2410,7 +2410,7 @@ export default function Contacts() {
                       onClick={() => handleSplitPartsChange(p, splitSource?.name ?? '')}
                       className={`flex-1 py-2 rounded-lg border text-sm font-medium transition-colors ${
                         splitParts === p
-                          ? 'border-indigo-500 bg-accent text-primary'
+                          ? 'border-primary bg-accent text-primary'
                           : 'border-border text-muted-foreground hover:border-indigo-300'
                       }`}
                     >

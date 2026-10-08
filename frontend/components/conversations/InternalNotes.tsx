@@ -70,7 +70,7 @@ export function InternalNotes({ phone }: Props) {
         <button
           onClick={save}
           disabled={!canUpdate || !text.trim() || saving}
-          className="self-end p-1.5 rounded bg-indigo-600 text-white disabled:opacity-40 hover:bg-indigo-700 transition-colors"
+          className="self-end p-1.5 rounded bg-primary text-primary-foreground disabled:opacity-40 hover:bg-primary/90 transition-colors"
         >
           {saving ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
         </button>

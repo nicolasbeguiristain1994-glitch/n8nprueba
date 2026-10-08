@@ -228,7 +228,7 @@ export function DownloadContactsModal({
             >
               <span className="font-medium">Dividir en varios archivos</span>
               <span className={`relative inline-flex w-9 h-5 rounded-full transition-colors flex-shrink-0 ${
-                splitting ? 'bg-indigo-500' : 'bg-muted-foreground/30'
+                splitting ? 'bg-primary' : 'bg-muted-foreground/30'
               }`}>
                 <span className={`absolute top-0.5 w-4 h-4 rounded-full bg-card shadow-sm transition-transform ${
                   splitting ? 'translate-x-4' : 'translate-x-0.5'

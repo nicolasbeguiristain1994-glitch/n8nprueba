@@ -296,7 +296,7 @@ export default function MisTareasPage() {
               <div
                 onClick={toggleAutoRefresh}
                 className={`relative w-7 h-4 rounded-full transition-colors ${
-                  autoRefresh ? 'bg-blue-500' : 'bg-border'
+                  autoRefresh ? 'bg-primary' : 'bg-border'
                 }`}
               >
                 <span className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-card shadow transition-transform ${
@@ -487,7 +487,7 @@ export default function MisTareasPage() {
                       {t.status === 'pendiente' && (
                         <Button
                           size="sm"
-                          className="h-8 gap-1.5 text-xs bg-blue-600 hover:bg-blue-700 text-white"
+                          className="h-8 gap-1.5 text-xs bg-primary hover:bg-primary/90 text-primary-foreground"
                           onClick={() => handleStart(t)}
                           disabled={actionLoading === t.id}
                         >
@@ -605,7 +605,7 @@ export default function MisTareasPage() {
               <div className="flex gap-2">
                 {detailTask.status === 'pendiente' && (
                   <Button
-                    className="flex-1 gap-1.5 bg-blue-600 hover:bg-blue-700 text-white"
+                    className="flex-1 gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground"
                     onClick={async () => {
                       await handleStart(detailTask)
                       const data = await fetchJson<{ task: Task; logs: TaskLog[] }>(`/api/tasks/${detailTask.id}`)

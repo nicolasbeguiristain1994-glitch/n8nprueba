@@ -1121,7 +1121,7 @@ export default function Campaigns() {
                   onClick={() => setForm(f => ({ ...f, audience_type: 'contacts', prospect_list_id: '' }))}
                   className={`flex-1 py-1.5 text-xs rounded-md border transition-colors font-medium ${
                     form.audience_type === 'contacts'
-                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      ? 'border-primary bg-accent text-primary'
                       : 'border-border text-muted-foreground hover:border-input'
                   }`}
                 >

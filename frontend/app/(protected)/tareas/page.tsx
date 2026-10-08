@@ -514,7 +514,7 @@ export default function TareasPage() {
                   className={`h-7 text-xs gap-1 ${
                     bulkAction === 'delete'
                       ? 'bg-red-600 hover:bg-red-700 text-white'
-                      : 'bg-blue-600 hover:bg-blue-700 text-white'
+                      : 'bg-primary hover:bg-primary/90 text-primary-foreground'
                   }`}
                   onClick={handleBulkAction}
                   disabled={bulkLoading}

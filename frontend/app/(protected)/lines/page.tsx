@@ -829,7 +829,7 @@ export default function Lines() {
                             ? <div className="flex flex-wrap items-center gap-1.5">
                                 {l.cloud_phone_number_id && (
                                   <Link href={cloudInboxHref(l.cloud_phone_number_id)}
-                                    className="inline-flex items-center h-7 px-2 rounded-md bg-blue-600 text-white text-xs font-medium hover:bg-blue-700">
+                                    className="inline-flex items-center h-7 px-2 rounded-md bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90">
                                     <MessageSquare size={11} className="mr-1" /> Abrir bandeja
                                   </Link>
                                 )}
@@ -1012,7 +1012,7 @@ export default function Lines() {
                   <div className="rounded-xl border border-border bg-background/80 p-4 space-y-2.5">
                     {detailLine.cloud_phone_number_id && (
                       <Link href={cloudInboxHref(detailLine.cloud_phone_number_id)}
-                        className="flex items-center justify-center gap-1.5 w-full h-9 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">
+                        className="flex items-center justify-center gap-1.5 w-full h-9 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90">
                         <MessageSquare size={14} /> Abrir bandeja
                       </Link>
                     )}
@@ -1348,7 +1348,7 @@ export default function Lines() {
                     >
                       <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold transition-all ${
                         done    ? 'bg-green-500 text-white' :
-                        current ? 'bg-indigo-600 text-white ring-4 ring-indigo-100' :
+                        current ? 'bg-primary text-primary-foreground ring-4 ring-primary/15' :
                                   'bg-muted text-muted-foreground'
                       }`}>
                         {done ? <Check size={11} /> : i + 1}

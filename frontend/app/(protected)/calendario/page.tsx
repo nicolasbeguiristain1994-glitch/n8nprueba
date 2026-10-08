@@ -402,7 +402,7 @@ export default function CalendarioPage() {
             onClick={() => setViewMode('month')}
             className={[
               'flex items-center gap-1.5 px-3 py-1.5 font-medium transition-colors',
-              viewMode === 'month' ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground hover:bg-background',
+              viewMode === 'month' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-background',
             ].join(' ')}
           >
             <CalendarDays size={12} /> Mensual
@@ -411,7 +411,7 @@ export default function CalendarioPage() {
             onClick={() => setViewMode('day')}
             className={[
               'flex items-center gap-1.5 px-3 py-1.5 font-medium transition-colors',
-              viewMode === 'day' ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground hover:bg-background',
+              viewMode === 'day' ? 'bg-primary text-primary-foreground' : 'bg-card text-muted-foreground hover:bg-background',
             ].join(' ')}
           >
             <Clock size={12} /> Por día / hora
@@ -508,7 +508,7 @@ export default function CalendarioPage() {
                   >
                     <span className={[
                       'inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-medium mb-0.5',
-                      isToday ? 'bg-blue-600 text-white font-bold' : inMonth ? 'text-foreground' : 'text-muted-foreground/60',
+                      isToday ? 'bg-primary text-primary-foreground font-bold' : inMonth ? 'text-foreground' : 'text-muted-foreground/60',
                     ].join(' ')}>
                       {date.getDate()}
                     </span>
@@ -673,7 +673,7 @@ export default function CalendarioPage() {
                     isCurrentHour ? 'bg-blue-50' : 'bg-background/40',
                   ].join(' ')}>
                     <span className={['text-[11px] font-medium tabular-nums',
-                      isCurrentHour ? 'text-blue-600 font-bold' : 'text-muted-foreground'].join(' ')}>
+                      isCurrentHour ? 'text-primary font-bold' : 'text-muted-foreground'].join(' ')}>
                       {label}
                     </span>
                   </div>
@@ -708,7 +708,7 @@ export default function CalendarioPage() {
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base">
-              <CalendarDays size={16} className="text-blue-600 shrink-0" />
+              <CalendarDays size={16} className="text-primary shrink-0" />
               {selectedDay ? fmtDateLong(selectedDay) : ''}
             </DialogTitle>
           </DialogHeader>
