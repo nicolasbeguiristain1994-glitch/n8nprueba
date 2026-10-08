@@ -12,7 +12,7 @@ import { parseMissingContactSheet } from '@/lib/missing-contact-files'
 import type { MissingContact, MissingContactImportRow, MissingContactImportResult } from '@/lib/missing-contact-types'
 
 type Listing = { users: MissingContact[]; total: number; agents: string[] }
-const selectClass = 'h-9 rounded-md border bg-background px-3 text-sm'
+const selectClass = 'h-10 min-w-0 max-w-full rounded-lg border border-input bg-card px-3 text-sm transition-colors outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/25'
 const date = (value: string | null) => value ? new Date(value.length === 10 ? `${value}T12:00:00-03:00` : value).toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }) : '—'
 
 async function readResponse<T>(response: Response): Promise<T> {
@@ -123,7 +123,7 @@ export function MissingPhoneTab({ onImported }: { onImported: () => void }) {
       <p>1. Filtrá por agente y descargá la planilla. 2. El agente completa la columna <strong>Celular</strong>. 3. Cargá el archivo para incorporarlos a Contactos.</p>
       <p>Incluye cargas y retiros del período, y nuevos usuarios detectados por la sincronización. La lista se actualiza automáticamente cada minuto. La cobertura depende de las plataformas sincronizadas.</p>
     </div>
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="filter-bar">
       <Input aria-label="Buscar usuario sin número" placeholder="Buscar usuario…" className="w-full sm:w-64" value={search} onChange={e => filter(() => setSearch(e.target.value))} />
       <select aria-label="Agente de usuarios sin número" className={selectClass} value={agent} onChange={e => filter(() => setAgent(e.target.value))}>
         <option value="">Todos los agentes</option>{data.agents.map(a => <option key={a} value={a}>{a}</option>)}
@@ -138,10 +138,10 @@ export function MissingPhoneTab({ onImported }: { onImported: () => void }) {
     </div>
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
     {loading ? <p role="status" className="py-10 text-center text-muted-foreground">Buscando usuarios sin número…</p> : !error && <>
-      {!data.users.length ? <div className="rounded-xl border p-10 text-center space-y-2"><PhoneOff className="mx-auto size-8 text-muted-foreground" /><p>No hay usuarios pendientes con estos filtros.</p><p className="text-sm text-muted-foreground">{data.agents.length ? 'Probá ampliar el período o cambiar de agente.' : 'Necesitás acceso por agente para consultar usuarios que todavía no tienen contacto.'}</p></div> :
-      <div className="rounded-xl border overflow-x-auto"><table className="w-full text-sm"><thead className="bg-muted/50 text-left"><tr>{['Usuario', 'Agente', 'Plataforma', 'Último movimiento', 'Detectado en el sistema'].map(h => <th key={h} className="p-3 font-medium">{h}</th>)}</tr></thead>
+      {!data.users.length ? <div className="surface p-10 text-center space-y-2"><PhoneOff className="mx-auto size-8 text-muted-foreground" /><p>No hay usuarios pendientes con estos filtros.</p><p className="text-sm text-muted-foreground">{data.agents.length ? 'Probá ampliar el período o cambiar de agente.' : 'Necesitás acceso por agente para consultar usuarios que todavía no tienen contacto.'}</p></div> :
+      <div className="surface overflow-x-auto"><table className="w-full min-w-[640px] text-sm"><thead className="bg-muted/50 text-left"><tr>{['Usuario', 'Agente', 'Plataforma', 'Último movimiento', 'Detectado en el sistema'].map(h => <th key={h} className="p-3 font-medium">{h}</th>)}</tr></thead>
         <tbody>{data.users.map(row => <tr key={`${row.platform}:${row.username}`} className="border-t"><td className="p-3 font-medium">{row.username}</td><td className="p-3">{row.agent}</td><td className="p-3">{row.platform}</td><td className="p-3">{row.last_movement ? date(row.last_movement) : 'Sin movimientos registrados'}</td><td className="p-3">{date(row.first_seen_at)}</td></tr>)}</tbody></table></div>}
-      <div className="flex justify-between items-center text-sm text-muted-foreground"><p>{data.total.toLocaleString('es-AR')} usuarios pendientes · Página {page} de {Math.max(1, Math.ceil(data.total / 50))}</p><div className="flex gap-2"><Button variant="outline" size="icon" aria-label="Página anterior" disabled={page === 1} onClick={() => setPage(p => p - 1)}><ChevronLeft className="size-4" /></Button><Button variant="outline" size="icon" aria-label="Página siguiente" disabled={page * 50 >= data.total} onClick={() => setPage(p => p + 1)}><ChevronRight className="size-4" /></Button></div></div>
+      <div className="flex flex-wrap justify-between items-center gap-3 text-sm text-muted-foreground"><p>{data.total.toLocaleString('es-AR')} usuarios pendientes · Página {page} de {Math.max(1, Math.ceil(data.total / 50))}</p><div className="flex gap-2"><Button variant="outline" size="icon" aria-label="Página anterior" disabled={page === 1} onClick={() => setPage(p => p - 1)}><ChevronLeft className="size-4" /></Button><Button variant="outline" size="icon" aria-label="Página siguiente" disabled={page * 50 >= data.total} onClick={() => setPage(p => p + 1)}><ChevronRight className="size-4" /></Button></div></div>
     </>}
     <Dialog open={importOpen} onOpenChange={open => { if (!busy) setImportOpen(open) }}><DialogContent className="sm:max-w-2xl"><DialogHeader><DialogTitle>{result && !result.dryRun ? 'Carga completada' : 'Revisar celulares'}</DialogTitle></DialogHeader>
       <p className="text-sm text-muted-foreground break-all">{filename}</p>
