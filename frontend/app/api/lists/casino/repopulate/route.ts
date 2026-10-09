@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   try {
     // Resolve admin owner id for list ownership
     const adminRows = await query<{ id: string }>(
-      `SELECT id FROM users WHERE role = 'admin' ORDER BY created_at ASC LIMIT 1`,
+      `SELECT id FROM users WHERE role = 'admin' AND is_active=true AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 1`,
     )
     const ownerId = adminRows[0]?.id ?? null
 

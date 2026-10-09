@@ -37,7 +37,7 @@ export async function GET(req: Request) {
       sql = `
         SELECT id, email, name, role, sectors, is_active, last_login_at, created_at, can_download_contacts, allowed_agents
         FROM users
-        WHERE (LOWER(email) LIKE $1 OR LOWER(name) LIKE $1)
+        WHERE deleted_at IS NULL AND (LOWER(email) LIKE $1 OR LOWER(name) LIKE $1)
         ORDER BY created_at DESC
         LIMIT $2 OFFSET $3
       `
@@ -46,6 +46,7 @@ export async function GET(req: Request) {
       sql = `
         SELECT id, email, name, role, sectors, is_active, last_login_at, created_at, can_download_contacts, allowed_agents
         FROM users
+        WHERE deleted_at IS NULL
         ORDER BY created_at DESC
         LIMIT $1 OFFSET $2
       `
@@ -56,8 +57,8 @@ export async function GET(req: Request) {
 
     // Count total
     const countSql = search
-      ? `SELECT COUNT(*)::text AS count FROM users WHERE (LOWER(email) LIKE $1 OR LOWER(name) LIKE $1)`
-      : `SELECT COUNT(*)::text AS count FROM users`
+      ? `SELECT COUNT(*)::text AS count FROM users WHERE deleted_at IS NULL AND (LOWER(email) LIKE $1 OR LOWER(name) LIKE $1)`
+      : `SELECT COUNT(*)::text AS count FROM users WHERE deleted_at IS NULL`
     const countParams = search ? [`%${search.toLowerCase()}%`] : []
     const countRows = await query<{ count: string }>(countSql, countParams)
     const total = parseInt(countRows[0]?.count ?? '0', 10)

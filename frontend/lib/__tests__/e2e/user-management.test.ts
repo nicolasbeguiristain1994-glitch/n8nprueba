@@ -65,37 +65,23 @@ function mockAdminRbac(): void {
 }
 
 /** Second db.query in PATCH: fetches the current state of the target user for diffing. */
+let currentFixture: Record<string, unknown>
 function mockCurrentUser(override: Record<string, unknown> = {}): void {
-  vi.mocked(db.query).mockResolvedValueOnce([{
-    id: TARGET_ID, role: 'operator', sectors: ['campaigns'],
-    is_active: true, session_version: 1,
-    ...override,
-  }] as never)
+  currentFixture = { id: TARGET_ID, role: 'operator', sectors: ['campaigns'], is_active: true, session_version: 1, ...override }
 }
-
-/**
- * Mock withTransaction for PATCH: no admin-guard needed (target is not an admin),
- * just returns a successful UPDATE RETURNING id.
- */
 function mockPatchTransaction(updatedId = TARGET_ID): void {
-  vi.mocked(db.withTransaction).mockImplementation(async (cb: any) =>
-    cb({ query: vi.fn().mockResolvedValueOnce({ rows: [{ id: updatedId }] }) })
-  )
+  vi.mocked(db.withTransaction).mockImplementation(async (cb: any) => cb({
+    query: vi.fn().mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [currentFixture] })
+      .mockResolvedValue({ rows: [{ id: updatedId }] }),
+  }))
 }
-
-/**
- * Mock withTransaction for DELETE of a non-admin user:
- *   1. SELECT existing → operator, active
- *   2. UPDATE (non-returning)
- */
 function mockDeleteTransaction(): void {
-  vi.mocked(db.withTransaction).mockImplementation(async (cb: any) =>
-    cb({
-      query: vi.fn()
-        .mockResolvedValueOnce({ rows: [{ role: 'operator', is_active: true }] })
-        .mockResolvedValueOnce({ rows: [] }),
-    })
-  )
+  vi.mocked(db.withTransaction).mockImplementation(async (cb: any) => cb({
+    query: vi.fn().mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: TARGET_ID, role: 'operator', is_active: true }] })
+      .mockResolvedValueOnce({ rows: [] }),
+  }))
 }
 
 // ── Audit helpers ─────────────────────────────────────────────────────────────
@@ -338,7 +324,7 @@ describe('Flujo E2E — DELETE (soft-delete) con audit y securityLog', () => {
     // Transaction: target is the only active admin → guard fires → 400
     vi.mocked(db.withTransaction).mockImplementation(async (cb: any) =>
       cb({
-        query: vi.fn()
+        query: vi.fn().mockResolvedValueOnce({ rows: [] })
           .mockResolvedValueOnce({ rows: [{ role: 'admin', is_active: true }] }) // existing is admin
           .mockResolvedValueOnce({ rows: [{ id: TARGET_ID }] }),                   // only 1 active admin
       })
@@ -346,7 +332,7 @@ describe('Flujo E2E — DELETE (soft-delete) con audit y securityLog', () => {
 
     const res = await usersDelete(adminDelete(TARGET_URL, admin) as never, PARAMS)
     expect(res.status).toBe(400)
-    expect((await res.json()).error).toContain('Cannot deactivate the last active admin')
+    expect((await res.json()).error).toContain('último administrador activo')
   })
 
   it('devuelve 404 si el usuario no existe', async () => {
@@ -355,7 +341,7 @@ describe('Flujo E2E — DELETE (soft-delete) con audit y securityLog', () => {
 
     // Transaction: SELECT returns no rows → user not found
     vi.mocked(db.withTransaction).mockImplementation(async (cb: any) =>
-      cb({ query: vi.fn().mockResolvedValueOnce({ rows: [] }) })
+      cb({ query: vi.fn().mockResolvedValue({ rows: [] }) })
     )
 
     const res = await usersDelete(adminDelete(TARGET_URL, admin) as never, PARAMS)

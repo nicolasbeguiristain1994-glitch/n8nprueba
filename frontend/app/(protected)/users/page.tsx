@@ -4,7 +4,8 @@ import { PageHeader } from '@/components/layout/PageHeader'
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Loader2, Plus, Pencil, UserX, UserCheck, KeyRound, Search, Users, Eye } from 'lucide-react'
+import { Loader2, Plus, Pencil, UserX, UserCheck, KeyRound, Search, Users, Eye, Trash2 } from 'lucide-react'
+import { useCurrentUser } from '@/lib/useCurrentUser'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -21,6 +22,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
 
@@ -420,17 +422,22 @@ function ResetPasswordModal({
 
 export default function UsersPage() {
   const router = useRouter()
+  const { user: currentUser, permissions } = useCurrentUser()
   const [users, setUsers]         = useState<User[]>([])
   const [loading, setLoading]     = useState(true)
   const [search, setSearch]       = useState('')
   const [page, setPage]           = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [apiError, setApiError]   = useState('')
+  const [notice, setNotice] = useState('')
 
   // Modals
   const [createOpen, setCreateOpen]   = useState(false)
   const [editTarget, setEditTarget]   = useState<User | null>(null)
   const [resetTarget, setResetTarget] = useState<User | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<User | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
 
   const fetchUsers = useCallback(async () => {
     setLoading(true)
@@ -442,7 +449,7 @@ export default function UsersPage() {
       if (!res.ok) throw new Error('Error al cargar usuarios')
       const data = await res.json()
       setUsers(data.users ?? [])
-      setTotalPages(data.pagination?.pages ?? 1)
+      setTotalPages(Math.max(1, data.pagination?.pages ?? 1))
     } catch (err: unknown) {
       setApiError(err instanceof Error ? err.message : 'Error')
     } finally {
@@ -508,6 +515,28 @@ export default function UsersPage() {
     await fetchUsers()
   }
 
+  const handleDelete = async () => {
+    if (!deleteTarget || deleting) return
+    setDeleting(true)
+    setDeleteError('')
+    try {
+      const res = await fetch(`/api/users/${deleteTarget.id}`, { method: 'DELETE' })
+      if (!res.ok && res.status !== 404) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || 'No se pudo eliminar el usuario. Intentá nuevamente.')
+      }
+      setNotice(`Usuario ${deleteTarget.name || deleteTarget.email} eliminado`)
+      setUsers(previous => previous.filter(user => user.id !== deleteTarget.id))
+      setDeleteTarget(null)
+      if (users.length === 1 && page > 1) setPage(previous => previous - 1)
+      else await fetchUsers()
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : 'No se pudo eliminar el usuario')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <div className="min-w-0">
       {/* Header */}
@@ -532,6 +561,7 @@ export default function UsersPage() {
       </div>
 
       {/* Error */}
+      {notice && <p role="status" className="mb-4 text-sm text-success">{notice}</p>}
       {apiError && (
         <p className="mb-4 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2">
           {apiError}
@@ -635,6 +665,19 @@ export default function UsersPage() {
                           <Eye size={13} />
                         </Button>
                       )}
+                      {permissions.users?.includes('delete') && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="ml-1 text-destructive hover:bg-destructive/10"
+                          aria-label={`Eliminar usuario ${user.name || user.email}`}
+                          title={user.id === currentUser?.id ? 'No podés eliminar tu propia cuenta' : 'Eliminar usuario'}
+                          disabled={!currentUser || user.id === currentUser.id}
+                          onClick={() => { setDeleteError(''); setNotice(''); setDeleteTarget(user) }}
+                        >
+                          <Trash2 size={13} /> Eliminar
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -668,6 +711,29 @@ export default function UsersPage() {
       )}
 
       {/* Create modal */}
+      <Dialog open={!!deleteTarget} onOpenChange={open => { if (!open && !deleting) setDeleteTarget(null) }}>
+        <DialogContent className="sm:max-w-md" showCloseButton={!deleting}>
+          <DialogHeader>
+            <DialogTitle>Eliminar usuario</DialogTitle>
+            <DialogDescription>
+              Se quitará de la lista y perderá el acceso al sistema. Sus sesiones se cerrarán.
+              Se conservarán sus contactos, campañas e historial de actividad.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="rounded-lg border p-3">
+            <p className="font-medium">{deleteTarget?.name || 'Sin nombre'}</p>
+            <p className="text-sm text-muted-foreground break-all">{deleteTarget?.email}</p>
+          </div>
+          {deleteError && <p role="alert" className="text-sm text-destructive">{deleteError}</p>}
+          <DialogFooter>
+            <Button variant="outline" disabled={deleting} onClick={() => setDeleteTarget(null)}>Cancelar</Button>
+            <Button variant="destructive" disabled={deleting} onClick={() => void handleDelete()}>
+              {deleting ? <><Loader2 size={14} className="animate-spin" /> Eliminando…</> : 'Eliminar usuario'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <UserFormModal
         open={createOpen}
         mode="create"

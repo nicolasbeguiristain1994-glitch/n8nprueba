@@ -1,10 +1,11 @@
 import bcryptjs from 'bcryptjs'
 import { query, withTransaction } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermission, checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { parseBody, handleValidationError, UpdateUserSchema, type UpdateUserInput } from '@/lib/schema'
 import { securityLog, appLog } from '@/lib/security-log'
+import { lockManagedUser, protectLastAdmin } from '@/lib/user-management'
 
 type UserRow = {
   id: string
@@ -32,7 +33,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 
     const rows = await query<UserRow>(
       `SELECT id, email, name, role, sectors, is_active, session_version, last_login_at, created_at, can_download_contacts, allowed_agents
-       FROM users WHERE id = $1`,
+       FROM users WHERE id = $1 AND deleted_at IS NULL`,
       [id]
     )
 
@@ -111,43 +112,15 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     if (!parsed.ok) return handleValidationError(req, parsed.error, 'users')
     const body = parsed.data
 
-    // Fetch current user (outside transaction for validation/diff)
-    const existing = await query<UserRow>(
-      `SELECT id, role, sectors, is_active, session_version FROM users WHERE id = $1`,
-      [id]
-    )
-    if (!existing[0]) {
-      return Response.json({ error: 'User not found' }, { status: 404 })
-    }
-
-    const current          = existing[0]
-    const newRole          = (body.role     !== undefined ? body.role     : current.role) as string
-    const newIsActive      = body.is_active !== undefined ? body.is_active : current.is_active
-    const adminGuardNeeded = (newRole !== 'admin' || newIsActive === false) && current.role === 'admin'
-
-    // Build SET clause outside the transaction (bcrypt hash is computed here)
-    const { setClauses, queryParams, passwordChanged } = await buildUpdateSetClause(body, current)
-    queryParams.push(id)
-    const updateSql = `UPDATE users SET ${setClauses.join(', ')} WHERE id = $${queryParams.length} RETURNING id`
-
-    // Transaction: lock active admins before guard check + update to prevent race condition
+    const passwordChanged = body.password !== undefined && body.password !== ''
     await withTransaction(async (client) => {
-      if (adminGuardNeeded) {
-        // Row-level lock prevents concurrent demotions from both passing the guard
-        const { rows: adminRows } = await client.query<{ id: string }>(
-          `SELECT id FROM users WHERE role = 'admin' AND is_active = true FOR UPDATE`
-        )
-        if (adminRows.length <= 1) {
-          throw Response.json(
-            { error: 'Cannot demote or deactivate the last active admin' },
-            { status: 400 }
-          )
-        }
-      }
-      const { rows: updatedRows } = await client.query<{ id: string }>(updateSql, queryParams)
-      if (!updatedRows[0]) {
-        throw Response.json({ error: 'User not found' }, { status: 404 })
-      }
+      const current = await lockManagedUser(client, id)
+      const newRole = body.role ?? current.role
+      const newIsActive = body.is_active ?? current.is_active
+      await protectLastAdmin(client, current, newRole !== 'admin' || !newIsActive)
+      const { setClauses, queryParams } = await buildUpdateSetClause(body, current)
+      queryParams.push(id)
+      await client.query(`UPDATE users SET ${setClauses.join(', ')} WHERE id = $${queryParams.length} AND deleted_at IS NULL`, queryParams)
     })
 
     const changedFields: string[] = []
@@ -180,50 +153,31 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 // ── DELETE /api/users/[id] (soft delete) ─────────────────────────────────────
 
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const err = await checkPermission(req, 'users', 'manage')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'users', 'delete')
+  if (!auth.ok) return auth.response
 
   try {
     const { id } = await params
     if (!isUUID(id)) return Response.json({ error: 'Invalid id' }, { status: 400 })
+    if (id === auth.user.user_id) return Response.json(
+      { error: 'No podés eliminar la cuenta con la que estás conectado' }, { status: 400 })
 
-    // Transaction: lock active admins before guard check + soft-delete to prevent race condition
     await withTransaction(async (client) => {
-      const { rows: existing } = await client.query<{ role: string; is_active: boolean }>(
-        `SELECT role, is_active FROM users WHERE id = $1`,
-        [id]
-      )
-      if (!existing[0]) {
-        throw Response.json({ error: 'User not found' }, { status: 404 })
-      }
-
-      // Guard: do not allow deactivating the last admin
-      if (existing[0].role === 'admin' && existing[0].is_active) {
-        const { rows: adminRows } = await client.query<{ id: string }>(
-          `SELECT id FROM users WHERE role = 'admin' AND is_active = true FOR UPDATE`
-        )
-        if (adminRows.length <= 1) {
-          throw Response.json(
-            { error: 'Cannot deactivate the last active admin' },
-            { status: 400 }
-          )
-        }
-      }
-
-      // Soft delete: deactivate + invalidate all sessions
+      const current = await lockManagedUser(client, id)
+      await protectLastAdmin(client, current, true)
       await client.query(
-        `UPDATE users SET is_active = false, session_version = session_version + 1, updated_at = NOW() WHERE id = $1`,
-        [id]
-      )
+        `UPDATE users SET deleted_at=NOW(), deleted_by=$2, is_active=false,
+          session_version=session_version+1, updated_at=NOW() WHERE id=$1`,
+        [id, auth.user.user_id])
     })
 
-    void audit({ req, action: 'delete', resource: 'users', resource_id: id })
+    void audit({ req, action: 'delete', resource: 'users', resource_id: id,
+      metadata: { history_preserved: true } })
     securityLog('user_deactivated', { targetUserId: id, via: 'delete' })
-
     return Response.json({ ok: true })
   } catch (e) {
     if (e instanceof Response) return e
     appLog('ERROR', 'DELETE /api/users/[id] failed', { error: (e as Error).message })
-    return Response.json({ error: 'Internal server error' }, { status: 500 })
+    return Response.json({ error: 'No se pudo eliminar el usuario' }, { status: 500 })
   }
 }
