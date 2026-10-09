@@ -177,3 +177,16 @@ it('retains the visible agents during a requested fresh recalculation', async ()
  expect(result.current.data?.casino?.agentes[0].total).toBe(7)
  expect(result.current.softLoading).toBe(true)
 })
+
+it('uses the authorized navigation request once instead of fetching agents again after mounting', async () => {
+ const { prefetchDashboard, clearDashboardPrefetch } = await import('@/lib/dashboard-prefetch')
+ const fetcher = vi.fn().mockResolvedValue(response({ agentes: [{ agente: 'royal', total: 7 }] }))
+ vi.stubGlobal('fetch', fetcher)
+ try {
+  prefetchDashboard('current-user')
+  const { result } = renderHook(() => useDashboard('current-user'))
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  expect(result.current.data?.casino?.agentes[0].total).toBe(7)
+  expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/dashboard/casino?'))).toHaveLength(1)
+ } finally { clearDashboardPrefetch() }
+})

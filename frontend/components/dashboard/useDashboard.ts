@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { arrayMove } from '@dnd-kit/sortable'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
+import { takeDashboardPrefetch } from '@/lib/dashboard-prefetch'
 import { argentinaToday } from '@/lib/dashboard-format'
 import { queryDateRange } from '@/lib/dashboard-date-range'
 import type { DepositAnalytics } from '@/lib/dashboard-deposits'
@@ -77,7 +78,7 @@ interface UseDashboardReturn extends DashboardFilters {
   refresh:            () => void
 }
 
-export function useDashboard(): UseDashboardReturn {
+export function useDashboard(userId?: string): UseDashboardReturn {
   const [layout, setLayout] = useLocalStorage<DashboardLayout>('dashboard:layout', DEFAULT_LAYOUT)
   const [savedDateRange, setDateRangeStored] = useLocalStorage<DateRange>('dashboard:dateRange', DEFAULT_DATE_RANGE)
   const today = argentinaToday()
@@ -108,6 +109,8 @@ export function useDashboard(): UseDashboardReturn {
   const agentRef = useRef(agent)
   const requestRef = useRef<AbortController | null>(null)
   const initialFetchRef = useRef(true)
+  const userIdRef = useRef(userId)
+  useEffect(() => { userIdRef.current = userId }, [userId])
   const auxRef = useRef<{ crm: CrmDashboardData; msgs: { stats?: MsgsStats }; at: number } | null>(null)
 
   useEffect(() => { dateRangeRef.current          = dateRange },           [dateRange])
@@ -162,7 +165,8 @@ export function useDashboard(): UseDashboardReturn {
       let msgsJson: { stats?: MsgsStats } | null = reuseAux ? cached.msgs : null
       const jobs = [
         async () => {
-          const result = await fetchJson(`/api/dashboard/casino?${qs}`)
+          const prepared = takeDashboardPrefetch(userIdRef.current, qs)
+          const result = await (prepared ? Promise.race([prepared, aborted]) : fetchJson(`/api/dashboard/casino?${qs}`)) as Awaited<ReturnType<typeof json>>
           if (controller.signal.aborted) return
           recordTime(result?.updatedAt)
           partial.casino = result ? { summary: result.summary ?? null, agentes: result.agentes ?? [],

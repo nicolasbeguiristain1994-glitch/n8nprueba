@@ -9,13 +9,14 @@ import { useSidebar } from './sidebar-context'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 import { cn } from '@/lib/utils'
 import { Brand } from './Brand'
+import { clearDashboardPrefetch, prefetchDashboard } from '@/lib/dashboard-prefetch'
 import { BASE_NAV, ADMIN_NAV, NAV_GROUPS, type NavItem } from './navigation'
 
-function NavLink({ item, collapsed, onClick }: { item: NavItem; collapsed: boolean; onClick?: () => void }) {
+function NavLink({ item, collapsed, onClick, onPrepare }: { item: NavItem; collapsed: boolean; onClick?: () => void; onPrepare?: () => void }) {
   const pathname = usePathname()
   const active = item.href === '/' ? pathname === '/' : pathname === item.href || pathname.startsWith(item.href + '/')
   const Icon = item.icon
-  return <Link href={item.href} prefetch={item.href === '/' ? true : undefined} onClick={onClick} title={collapsed ? item.label : undefined}
+  return <Link href={item.href} prefetch={item.href === '/' ? true : undefined} onPointerEnter={onPrepare} onFocus={onPrepare} onClick={() => { onPrepare?.(); onClick?.() }} title={collapsed ? item.label : undefined}
     aria-label={collapsed ? item.label : undefined} aria-current={active ? 'page' : undefined}
     className={cn('relative flex h-10 items-center gap-3 rounded-lg text-sm transition-colors duration-150',
       collapsed ? 'w-9 justify-center' : 'px-3',
@@ -36,7 +37,7 @@ function SidebarContent({ collapsed, onClose }: { collapsed: boolean; onClose?: 
     // Load the screen's code while the permitted navigation is visible.
     if (canOpenDashboard) void import('@/app/(protected)/page').catch(() => {})
   }, [canOpenDashboard])
-  const logout = async () => { await fetch('/api/auth/logout', { method: 'POST' }); router.push('/login') }
+  const logout = async () => { clearDashboardPrefetch(); await fetch('/api/auth/logout', { method: 'POST' }); router.push('/login') }
   return <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
     <div className={cn('flex h-16 shrink-0 items-center border-b border-sidebar-border', collapsed ? 'justify-center' : 'px-4')}>
       <Brand compact={collapsed} />
@@ -49,7 +50,7 @@ function SidebarContent({ collapsed, onClose }: { collapsed: boolean; onClose?: 
         return <div key={group.label} className="mb-4 last:mb-0">
           {!collapsed && <p className="px-2.5 pb-2 pt-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">{group.label}</p>}
           {collapsed && group !== NAV_GROUPS[0] && <div className="mx-2 mb-3 border-t border-sidebar-border" />}
-          <div className="space-y-0.5">{items.map(item => <NavLink key={item.href} item={item} collapsed={collapsed} onClick={onClose} />)}</div>
+          <div className="space-y-0.5">{items.map(item => <NavLink key={item.href} item={item} collapsed={collapsed} onClick={onClose} onPrepare={item.href === '/' && user ? () => prefetchDashboard(user.id) : undefined} />)}</div>
         </div>
       })}
     </nav>
