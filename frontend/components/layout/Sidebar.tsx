@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useEffect } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { PanelLeftClose, PanelLeftOpen, LogOut, HelpCircle, X } from 'lucide-react'
 import { Dialog } from '@base-ui/react/dialog'
@@ -29,6 +30,12 @@ function SidebarContent({ collapsed, onClose }: { collapsed: boolean; onClose?: 
   const router = useRouter()
   const { user } = useCurrentUser()
   const nav = [...BASE_NAV, ...ADMIN_NAV].filter(item => user?.role === 'admin' || user?.sectors?.includes(item.sector))
+  const canOpenDashboard = nav.some(item => item.href === '/')
+  useEffect(() => {
+    // Route prefetch alone does not evaluate the dashboard's client chunks.
+    // Load the screen's code while the permitted navigation is visible.
+    if (canOpenDashboard) void import('@/app/(protected)/page').catch(() => {})
+  }, [canOpenDashboard])
   const logout = async () => { await fetch('/api/auth/logout', { method: 'POST' }); router.push('/login') }
   return <div className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground">
     <div className={cn('flex h-16 shrink-0 items-center border-b border-sidebar-border', collapsed ? 'justify-center' : 'px-4')}>
