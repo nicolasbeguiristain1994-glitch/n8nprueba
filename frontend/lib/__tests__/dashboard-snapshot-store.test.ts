@@ -4,15 +4,14 @@ import { DashboardSnapshotStore } from '../dashboard-snapshot-store'
 let store: DashboardSnapshotStore
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-08T12:00:00Z')); store = new DashboardSnapshotStore() })
 afterEach(() => { store.reset(); vi.useRealTimers() })
-it('primes before traffic and shares simultaneous reads without duplicate queries', async () => {
+it('shares simultaneous reads without duplicate queries', async () => {
   let resolve!: (value: number) => void
   const load = vi.fn(() => new Promise<number>(r => { resolve = r }))
-  const startup = store.start(() => [{ key: 'default', load }])
   const one = store.read('default', load), two = store.read('default', load)
   await Promise.resolve(); expect(load).toHaveBeenCalledOnce()
-  resolve(7); await startup
+  resolve(7)
   expect((await one).value).toBe(7); expect(await one).toEqual(await two)
-  await store.start(() => [{ key: 'default', load }]); expect(load).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(1)
+  expect(load).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0)
 })
 it('serves the prior result while one background refresh runs and bounds staleness', async () => {
   await store.read('one', async () => 1)
@@ -36,13 +35,12 @@ it('manual refresh waits for fresh results, with isolated keys and a bounded LRU
   const load = vi.fn(async () => 99)
   expect((await store.read('royal/7d', load)).value).toBe(99); expect(load).toHaveBeenCalledOnce()
 })
-it('refreshes sequentially, tracks new calendar defaults, and expires idle custom scopes', async () => {
-  let day = 'day1'
-  const load = vi.fn(async () => day)
-  const defaults = () => [{ key: day, load }]
-  await store.start(defaults)
-  await store.read('custom', async () => 'old')
-  day = 'day2'; await vi.advanceTimersByTimeAsync(16 * 60_000)
-  expect((await store.read('day2', load)).value).toBe('day2')
-  const custom = vi.fn(async () => 'new'); expect((await store.read('custom', custom)).value).toBe('new'); expect(custom).toHaveBeenCalledOnce()
+it('does not recompute unused periods; the next request revalidates them', async () => {
+  const load = vi.fn(async () => 7)
+  await store.read('custom/90d', load)
+  await vi.advanceTimersByTimeAsync(30 * 60_000)
+  expect(load).toHaveBeenCalledOnce()
+  expect(vi.getTimerCount()).toBe(0)
+  expect((await store.read('custom/90d', load)).value).toBe(7)
+  expect(load).toHaveBeenCalledTimes(2)
 })

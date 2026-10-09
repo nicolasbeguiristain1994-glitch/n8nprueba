@@ -1,8 +1,8 @@
 // @vitest-environment node
 import { afterEach, expect, it, vi } from 'vitest'
-const mocks = vi.hoisted(() => ({ configs: [] as Record<string, unknown>[], query: vi.fn(), on: vi.fn() }))
+const mocks = vi.hoisted(() => ({ configs: [] as Record<string, unknown>[], query: vi.fn(), release: vi.fn(), on: vi.fn() }))
 vi.mock('pg', () => ({ Pool: class {
-  query = mocks.query; on = mocks.on
+  connect = async () => ({ query: mocks.query, release: mocks.release }); on = mocks.on
   constructor(options: Record<string, unknown>) { mocks.configs.push(options) }
 } }))
 vi.mock('@/lib/db', () => ({ pool: { options: { connectionString: 'postgresql://synthetic.invalid/db', ssl: { rejectUnauthorized: true }, max: 10, query_timeout: 10_000 } } }))
@@ -14,9 +14,15 @@ it('shares a bounded financial pool without changing interactive timeouts or TLS
   await dashboardSnapshotQuery('SELECT $1 AS total', [8])
   expect(mocks.configs).toHaveLength(1)
   expect(mocks.configs[0]).toMatchObject({ min: 0, max: 2, query_timeout: 50_000, options: '--statement_timeout=45000', ssl: { rejectUnauthorized: true } })
-  expect(mocks.query).toHaveBeenLastCalledWith('SELECT $1 AS total', [8])
+  expect(mocks.query.mock.calls.slice(-4)).toEqual([
+    ['BEGIN READ ONLY'], ["SET LOCAL statement_timeout = '45s'"], ['SELECT $1 AS total', [8]], ['COMMIT'],
+  ])
+  expect(mocks.release).toHaveBeenCalledTimes(2)
+  expect(mocks.release).toHaveBeenLastCalledWith(false)
 })
 it('propagates errors so failed computations cannot become valid cached zeros', async () => {
-  mocks.query.mockRejectedValue(Error('statement timeout'))
+  mocks.query.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] }).mockRejectedValueOnce(Error('statement timeout'))
   await expect(dashboardSnapshotQuery('SELECT 1')).rejects.toThrow('statement timeout')
+  expect(mocks.release).toHaveBeenCalledWith(true)
+  expect(mocks.query).not.toHaveBeenCalledWith('COMMIT')
 })

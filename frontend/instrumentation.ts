@@ -5,12 +5,8 @@ type SchedulerGlobal = typeof globalThis & { __campaignSchedulerRegistration?: P
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME === 'nodejs' && process.env.NODE_ENV === 'production' &&
       process.env.NEXT_PHASE !== 'phase-production-build' && (process.env.DATABASE_URL || process.env.DB_HOST)) {
-    await Promise.all([
-      import('./lib/missing-contacts').then(({ startMissingContactRefresh }) => startMissingContactRefresh())
-        .catch(() => console.warn('[missing contacts] Startup refresh unavailable; will retry')),
-      import('./lib/dashboard-snapshot').then(({ startDashboardRefresh }) => startDashboardRefresh())
-        .catch(() => console.warn('[dashboard] Startup refresh unavailable; will retry')),
-    ])
+    await import('./lib/missing-contacts').then(({ startMissingContactRefresh }) => startMissingContactRefresh())
+      .catch(() => console.warn('[missing contacts] Startup refresh unavailable; will retry'))
   }
 
   if (process.env.NEXT_RUNTIME !== 'nodejs' || process.env.NODE_ENV !== 'production' ||

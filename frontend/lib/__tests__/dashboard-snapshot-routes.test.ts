@@ -6,7 +6,7 @@ vi.mock('@/lib/dashboard-snapshot-query', () => ({ dashboardSnapshotQuery: (sql:
 vi.mock('@/lib/permissions', () => ({ checkPermission: vi.fn() }))
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'
-import { dashboardSnapshot, dashboardWarmScopes } from '../dashboard-snapshot'
+import { dashboardSnapshot } from '../dashboard-snapshot'
 import { GET as casino } from '@/app/api/dashboard/casino/route'
 import { GET as overview } from '@/app/api/dashboard/casino/overview/route'
 import { GET as deposits } from '@/app/api/dashboard/casino/deposits/route'
@@ -32,10 +32,4 @@ it('separates dates, platforms and normalized agents and bypasses cache on manua
   vi.mocked(query).mockResolvedValue([{ dashboard: { agentes: [{ total: 8 }] } }])
   expect(await (await casino(request('&agent=royal&refresh=1'))).json()).toMatchObject({ agentes: [{ total: 8 }] })
   expect(query).toHaveBeenCalledTimes(5)
-})
-it('warms the same inclusive presets as the UI, using Argentina midnight', () => {
-  vi.useFakeTimers(); vi.setSystemTime(new Date('2026-10-09T01:00:00Z'))
-  expect(dashboardWarmScopes().map(s => [s.from, s.to])).toEqual([
-    ['2026-10-02', '2026-10-08'], ['2026-09-09', '2026-10-08'], ['2026-10-01', '2026-10-08'], ['2026-07-11', '2026-10-08'],
-  ])
 })

@@ -1,7 +1,6 @@
 import { query } from './db'
 import { dashboardSnapshotQuery } from './dashboard-snapshot-query'
 import type { Platform } from './casino-agents'
-import { argentinaToday, shiftDate } from './dashboard-format'
 import { casinoDashboard, type CasinoDashboardData } from './dashboard-casino'
 import { overviewSql, type PlatformActivity } from './dashboard-overview'
 import { depositAnalytics, depositAnalyticsSql, type DepositAggregateRow, type DepositAnalytics } from './dashboard-deposits'
@@ -26,18 +25,7 @@ async function load<K extends Kind>(kind: K, scope: DashboardScope): Promise<Res
 
 export async function readDashboardSnapshot<K extends Kind>(kind: K, scope: DashboardScope, fresh = false) {
   // Development/integration queries remain live; production uses the exact same
-  // loaders for both startup warming and requests, without changing calculations.
+  // loaders for requests and revalidation, without changing calculations.
   if (process.env.NODE_ENV !== 'production') return { value: await load(kind, scope), updatedAt: Date.now() }
   return dashboardSnapshot.read(key(kind, scope), () => load(kind, scope), fresh)
-}
-
-export function dashboardWarmScopes(): DashboardScope[] {
-  const to = argentinaToday()
-  return [...new Set([shiftDate(to, -6), shiftDate(to, -29), to.slice(0, 8) + '01', shiftDate(to, -89)])]
-    .map(from => ({ platform: 'consolidado', from, to, agent: null }))
-}
-
-export async function startDashboardRefresh() {
-  await dashboardSnapshot.start(() => dashboardWarmScopes().flatMap(scope =>
-    (['casino', 'overview', 'deposits'] as const).map(kind => ({ key: key(kind, scope), load: () => load(kind, scope) }))))
 }
