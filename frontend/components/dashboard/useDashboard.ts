@@ -165,8 +165,11 @@ export function useDashboard(userId?: string): UseDashboardReturn {
       let msgsJson: { stats?: MsgsStats } | null = reuseAux ? cached.msgs : null
       const jobs = [
         async () => {
-          const prepared = takeDashboardPrefetch(userIdRef.current, qs)
-          const result = await (prepared ? Promise.race([prepared, aborted]) : fetchJson(`/api/dashboard/casino?${qs}`)) as Awaited<ReturnType<typeof json>>
+          const prepared = takeDashboardPrefetch(userIdRef.current, qs, controller.signal)
+          let result = prepared ? await Promise.race([prepared, aborted]) as Awaited<ReturnType<typeof json>> : null
+          // Navigation prefetch is an optimization, not the only chance to load
+          // accounts. Recover once if it failed, within this request's deadline.
+          if (!result && !controller.signal.aborted) result = await fetchJson(`/api/dashboard/casino?${qs}`)
           if (controller.signal.aborted) return
           recordTime(result?.updatedAt)
           partial.casino = result ? { summary: result.summary ?? null, agentes: result.agentes ?? [],

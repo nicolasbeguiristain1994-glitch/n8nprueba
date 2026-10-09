@@ -27,10 +27,13 @@ export function prefetchDashboard(userId: string) {
   pending = { userId, query, expires: Date.now() + 5000, result, controller, timer }
 }
 
-export function takeDashboardPrefetch(userId: string | undefined, query: URLSearchParams): Promise<unknown> | undefined {
+export function takeDashboardPrefetch(userId: string | undefined, query: URLSearchParams, signal: AbortSignal): Promise<unknown> | undefined {
   if (!pending || pending.userId !== userId || pending.query !== query.toString() || pending.expires <= Date.now()) return
   const entry = pending; pending = undefined; clearTimeout(entry.timer)
-  // A consumed request still has a bounded lifetime, even if navigation fails.
-  const deadline = setTimeout(() => entry.controller.abort(), 10_000)
-  return entry.result.finally(() => clearTimeout(deadline))
+  // Once consumed, the dashboard owns the deadline and cancellation. A separate
+  // 10-second timer used to turn valid monthly queries into "cuentas" failures.
+  const abort = () => entry.controller.abort()
+  if (signal.aborted) abort()
+  else signal.addEventListener('abort', abort, { once: true })
+  return entry.result.finally(() => signal.removeEventListener('abort', abort))
 }
