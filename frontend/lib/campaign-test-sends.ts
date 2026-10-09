@@ -40,6 +40,7 @@ async function loadCampaign(id: string, read: Reader = query): Promise<TestCampa
 }
 
 async function loadLines(wabaId: string, read: Reader = query): Promise<CampaignTestLine[]> {
+  await read('SELECT reset_line_counters_if_due()')
   return read<CampaignTestLine>(
     `SELECT wl.id, COALESCE(wl.display_name, wl.line_key) AS display_name, cn.phone_number_id
      FROM whatsapp_lines wl JOIN cloud_numbers cn ON cn.whatsapp_line_id=wl.id AND cn.status='active'

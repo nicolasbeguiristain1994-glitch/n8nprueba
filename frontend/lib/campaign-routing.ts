@@ -6,7 +6,8 @@ export const ROUTING_SYSTEM_OWNER = '00000000-0000-0000-0000-000000000000'
 /**
  * Reserve senders before any provider request. Serialize only allocation (never
  * network I/O), so overlapping campaigns/workers cannot choose different senders
- * for the same phone. Existing assignments win over balancing and survive retries.
+ * for the same phone. Existing senders win over balancing and survive retries.
+ * A NULL sender was deleted: recover surviving history or allocate a new sender.
  */
 export async function prepareCampaignRouting(campaignId: string, eligibleLineIds: string[]): Promise<void> {
   const lineIds = [...new Set(eligibleLineIds)].sort()
@@ -28,7 +29,8 @@ export async function prepareCampaignRouting(campaignId: string, eligibleLineIds
         FROM campaign_recipients cr
         WHERE cr.campaign_id=$1 AND cr.status IN ('pending','sending')
           AND NOT EXISTS (SELECT 1 FROM campaign_line_assignments a
-            WHERE a.owner_key=$2 AND a.phone=regexp_replace(cr.phone_number, '[^0-9]', '', 'g'))
+            WHERE a.owner_key=$2 AND a.phone=regexp_replace(cr.phone_number, '[^0-9]', '', 'g')
+              AND a.line_id IS NOT NULL)
       ), visible AS MATERIALIZED (
         SELECT wl.id FROM whatsapp_lines wl
         WHERE $3::uuid IS NULL OR wl.id IN (SELECT get_accessible_line_ids($3::uuid))
@@ -37,6 +39,7 @@ export async function prepareCampaignRouting(campaignId: string, eligibleLineIds
         FROM missing m JOIN campaign_recipients cr
           ON regexp_replace(cr.phone_number, '[^0-9]', '', 'g')=m.phone
         JOIN campaigns c ON c.id=cr.campaign_id
+        JOIN visible v ON v.id=cr.line_id
         WHERE cr.status='sent' AND cr.line_id IS NOT NULL
           AND COALESCE(c.owned_by, '${ROUTING_SYSTEM_OWNER}'::uuid)=$2
         UNION ALL
@@ -53,10 +56,12 @@ export async function prepareCampaignRouting(campaignId: string, eligibleLineIds
           ON regexp_replace(p.phone, '[^0-9]', '', 'g')=m.phone
         JOIN visible v ON v.id=p.line_id
       )
-      INSERT INTO campaign_line_assignments(owner_key,phone,line_id,source)
+      INSERT INTO campaign_line_assignments AS assignment(owner_key,phone,line_id,source)
       SELECT DISTINCT ON (phone) $2,phone,line_id,'history' FROM history
       ORDER BY phone, at DESC NULLS LAST, line_id
-      ON CONFLICT (owner_key,phone) DO NOTHING`, [campaignId, owner, campaign.owned_by])
+      ON CONFLICT (owner_key,phone) DO UPDATE
+        SET line_id=EXCLUDED.line_id, source=EXCLUDED.source, assigned_at=NOW()
+        WHERE assignment.line_id IS NULL`, [campaignId, owner, campaign.owned_by])
 
     await client.query(`INSERT INTO campaign_line_rotation(owner_key) VALUES($1)
       ON CONFLICT (owner_key) DO NOTHING`, [owner])
@@ -68,15 +73,18 @@ export async function prepareCampaignRouting(campaignId: string, eligibleLineIds
         FROM campaign_recipients cr
         WHERE cr.campaign_id=$1 AND cr.status IN ('pending','sending')
           AND NOT EXISTS (SELECT 1 FROM campaign_line_assignments a
-            WHERE a.owner_key=$2 AND a.phone=regexp_replace(cr.phone_number, '[^0-9]', '', 'g'))
+            WHERE a.owner_key=$2 AND a.phone=regexp_replace(cr.phone_number, '[^0-9]', '', 'g')
+              AND a.line_id IS NOT NULL)
       ), numbered AS (
         SELECT phone, ROW_NUMBER() OVER (ORDER BY phone)-1 AS n FROM missing
       ), allocated AS (
-        INSERT INTO campaign_line_assignments(owner_key,phone,line_id,source)
+        INSERT INTO campaign_line_assignments AS assignment(owner_key,phone,line_id,source)
         SELECT $2, n.phone,
           ($3::uuid[])[((r.next_position+n.n) % cardinality($3::uuid[])+1)::int], 'rotation'
         FROM numbered n CROSS JOIN campaign_line_rotation r WHERE r.owner_key=$2
-        ON CONFLICT (owner_key,phone) DO NOTHING RETURNING phone
+        ON CONFLICT (owner_key,phone) DO UPDATE
+          SET line_id=EXCLUDED.line_id, source=EXCLUDED.source, assigned_at=NOW()
+          WHERE assignment.line_id IS NULL RETURNING phone
       )
       UPDATE campaign_line_rotation SET next_position=next_position+(SELECT COUNT(*) FROM allocated)
       WHERE owner_key=$2`, [campaignId, owner, lineIds])

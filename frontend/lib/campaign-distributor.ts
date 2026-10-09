@@ -295,8 +295,8 @@ function isNetworkError(err: unknown): boolean {
  *   - msgs_sent_today < msg_per_day (daily rate limit)
  *   - allowed_types IS NULL (accepts all) OR includes 'campaign'
  *
- * NOTE: Counter reset is handled externally by reset_line_counters_if_due()
- * (called from WF-013). This function reads current counter values only.
+ * Refresh expired quotas before selection; replies/tests must not depend on a
+ * running campaign or an external scheduler to regain capacity.
  */
 export async function getEligibleLines(operatorId?: string | null): Promise<EligibleLine[]> {
   return getLinesMatching(operatorId, `(${lineEligibleExpr('wl')} OR (${cloudEligibleExpr('wl')} AND cn.id IS NOT NULL))`)
@@ -307,6 +307,7 @@ export async function getEligibleReplyLines(operatorId?: string | null): Promise
 }
 
 async function getLinesMatching(operatorId: string | null | undefined, eligibility: string): Promise<EligibleLine[]> {
+  await query('SELECT reset_line_counters_if_due()')
   const { clause, params } = distributorVisibilityClause(operatorId, 1, 'wl')
   // Table alias 'wl' is required to avoid column ambiguity with the cloud_numbers JOIN.
   // Visibility clause uses wl.id so it doesn't collide with cn.id.
@@ -683,6 +684,7 @@ export async function sendViaCloud(
 
   // Re-read connection and quotas immediately before sending. Only campaigns
   // require campaign opt-in; a customer reply remains on its receiving number.
+  await query('SELECT reset_line_counters_if_due()')
   const [current] = await query<{ waba_id: string }>(
     `SELECT cn.waba_id FROM whatsapp_lines wl
      JOIN cloud_numbers cn ON cn.whatsapp_line_id = wl.id AND cn.status = 'active'
@@ -704,7 +706,9 @@ export async function sendViaCloud(
   if (options.reserveCapacity) {
     const reserved = await query(
       `UPDATE whatsapp_lines wl SET msgs_sent_hour=msgs_sent_hour+1,
-         msgs_sent_today=msgs_sent_today+1, updated_at=NOW()
+         msgs_sent_today=msgs_sent_today+1,
+         hour_reset_at=COALESCE(hour_reset_at,NOW()+INTERVAL '1 hour'),
+         day_reset_at=COALESCE(day_reset_at,NOW()+INTERVAL '24 hours'), updated_at=NOW()
        WHERE wl.id=$1 AND ${eligibility}
          AND EXISTS (SELECT 1 FROM cloud_numbers cn WHERE cn.whatsapp_line_id=wl.id
            AND cn.phone_number_id=$2 AND cn.waba_id=$3 AND cn.status='active') RETURNING wl.id`,

@@ -37,7 +37,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign test sends 
       CREATE TABLE whatsapp_lines(id uuid PRIMARY KEY, display_name text, line_key text, line_type text,
         status text, is_connected boolean, sending_enabled boolean, msgs_sent_hour int, msg_per_hour int,
         msgs_sent_today int, msg_per_day int, allowed_types jsonb, priority int,
-        evolution_instance text, evolution_url text, last_seen_at timestamptz, personality_config jsonb);
+        evolution_instance text, evolution_url text, last_seen_at timestamptz, personality_config jsonb,
+        hour_reset_at timestamptz,day_reset_at timestamptz,updated_at timestamptz);
       CREATE TABLE cloud_numbers(whatsapp_line_id uuid, status text, waba_id text, phone_number_id text,
         id uuid DEFAULT gen_random_uuid());
       CREATE TABLE blacklist(phone_number_normalized text, removed_at timestamptz);
@@ -45,6 +46,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign test sends 
       CREATE TABLE contact_send_history(id int PRIMARY KEY, phone_number text);
       CREATE TABLE campaign_recipients(id int PRIMARY KEY, status text, campaign_id uuid, line_id uuid, error_detail text);
     `)
+    const counters = readFileSync(new URL('../../../db/migrations/001_whatsapp_lines.sql', import.meta.url), 'utf8')
+    await db.query(counters.match(/CREATE OR REPLACE FUNCTION reset_line_counters_if_due\(\)[\s\S]*?\$\$ LANGUAGE plpgsql;/)![0])
     const migration = readFileSync(new URL('../../../db/migrations/136_campaign_test_sends.sql', import.meta.url), 'utf8')
     await db.query(migration)
     await db.query(migration)
@@ -121,6 +124,11 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign test sends 
     expect((await getCampaignTestSnapshot(campaignId)).lines).toEqual([])
     expect((await getDispatchSummary(campaignId)).eligible_lines).toBe(0)
     expect(mocks.send).not.toHaveBeenCalled()
+  })
+  it('restores expired test capacity before listing or selecting the line',async()=>{
+    await db.query("UPDATE whatsapp_lines SET msgs_sent_hour=msg_per_hour,msgs_sent_today=msg_per_day,hour_reset_at=NOW()-INTERVAL '1 second',day_reset_at=NOW()-INTERVAL '1 second'")
+    expect((await getCampaignTestSnapshot(campaignId)).lines.map(line=>line.id)).toEqual([lineId])
+    expect((await sendCampaignTest(campaignId,input(),userId)).status).toBe('sent')
   })
   it('serializes concurrent requests with the same key and never sends twice', async () => {
     const [a, b] = await Promise.all([sendCampaignTest(campaignId, input(), userId), sendCampaignTest(campaignId, input(), userId)])

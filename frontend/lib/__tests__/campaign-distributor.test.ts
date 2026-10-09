@@ -113,7 +113,7 @@ describe('line eligibility conditions', () => {
   it('eligible line: active, connected, within limits, sending_enabled', async () => {
     const { getEligibleLines } = await import('@/lib/campaign-distributor')
     const mockLine = makeLine()
-    vi.mocked(db.query).mockResolvedValueOnce([mockLine])
+    vi.mocked(db.query).mockResolvedValueOnce([]).mockResolvedValueOnce([mockLine])
     const result = await getEligibleLines()
     expect(result).toHaveLength(1)
     expect(result[0].id).toBe(mockLine.id)
@@ -121,7 +121,7 @@ describe('line eligibility conditions', () => {
 
   it('no eligible lines when DB returns empty array', async () => {
     const { getEligibleLines } = await import('@/lib/campaign-distributor')
-    vi.mocked(db.query).mockResolvedValueOnce([])
+    vi.mocked(db.query).mockResolvedValueOnce([]).mockResolvedValueOnce([])
     const result = await getEligibleLines()
     expect(result).toHaveLength(0)
   })
@@ -133,7 +133,7 @@ describe('line eligibility conditions', () => {
       makeLine({ id: 'line-b', remaining_day: 300 }),
       makeLine({ id: 'line-c', remaining_day: 200 }),
     ]
-    vi.mocked(db.query).mockResolvedValueOnce(lines)
+    vi.mocked(db.query).mockResolvedValueOnce([]).mockResolvedValueOnce(lines)
     const result = await getEligibleLines()
     expect(result.map(l => l.id)).toEqual(['line-a', 'line-b', 'line-c'])
   })
@@ -236,6 +236,7 @@ describe('getDispatchSummary', () => {
         sent: '50', failed: '5', skipped: '3',
       }])
       .mockResolvedValueOnce([{ message_type: 'text' }])
+      .mockResolvedValueOnce([]) // reset expired line counters
       .mockResolvedValueOnce([makeLine()])  // getEligibleLines
       .mockResolvedValueOnce([             // lineUsage
         { line_id: 'l1', line_key: 'line_01', display_name: 'Línea 01', sent: 45, failed: 5 },
@@ -270,6 +271,7 @@ describe('getDispatchSummary', () => {
     vi.mocked(db.query)
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce(campaign ? [campaign] : [])
+      .mockResolvedValueOnce([]) // reset expired line counters
       .mockResolvedValueOnce([
         makeLine({ id: 'evolution' }),
         makeLine({ id: 'royal', line_type: 'cloud', waba_id: 'royal' }),
@@ -470,21 +472,21 @@ describe('getEligibleLines — SQL eligibility', () => {
 
   it('la query incluye la expresión de elegibilidad evolution', async () => {
     const { getEligibleLines } = await import('@/lib/campaign-distributor')
-    vi.mocked(db.query).mockResolvedValueOnce([])
+    vi.mocked(db.query).mockResolvedValueOnce([]).mockResolvedValueOnce([])
 
     await getEligibleLines()
 
-    const sqlCalled = vi.mocked(db.query).mock.calls[0][0] as string
+    const sqlCalled = vi.mocked(db.query).mock.calls.find(([sql]) => sql.includes("FROM whatsapp_lines wl"))![0] as string
     expect(sqlCalled).toContain("line_type = 'evolution'")
   })
 
   it('la query incluye la expresión de elegibilidad cloud', async () => {
     const { getEligibleLines } = await import('@/lib/campaign-distributor')
-    vi.mocked(db.query).mockResolvedValueOnce([])
+    vi.mocked(db.query).mockResolvedValueOnce([]).mockResolvedValueOnce([])
 
     await getEligibleLines()
 
-    const sqlCalled = vi.mocked(db.query).mock.calls[0][0] as string
+    const sqlCalled = vi.mocked(db.query).mock.calls.find(([sql]) => sql.includes("FROM whatsapp_lines wl"))![0] as string
     expect(sqlCalled).toContain("line_type = 'cloud'")
   })
 
@@ -496,7 +498,7 @@ describe('getEligibleLines — SQL eligibility', () => {
       evolution_instance: 'wa-evo-01',
       evolution_url:      'http://evo:8080',
     })
-    vi.mocked(db.query).mockResolvedValueOnce([evolutionLine])
+    vi.mocked(db.query).mockResolvedValueOnce([]).mockResolvedValueOnce([evolutionLine])
 
     const result = await getEligibleLines()
     expect(result).toHaveLength(1)
@@ -513,7 +515,7 @@ describe('getEligibleLines — SQL eligibility', () => {
       evolution_instance: null,
       evolution_url:      null,
     })
-    vi.mocked(db.query).mockResolvedValueOnce([cloudLine])
+    vi.mocked(db.query).mockResolvedValueOnce([]).mockResolvedValueOnce([cloudLine])
 
     const result = await getEligibleLines()
     expect(result).toHaveLength(1)

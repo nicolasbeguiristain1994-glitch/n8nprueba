@@ -144,7 +144,7 @@ describe('Cloud campaign template and send guards', () => {
   it('refuses a cached line that was disabled or ran out of quota before sending', async () => {
     mocks.query.mockResolvedValue([])
     await expect(sendViaCloud(line, unit.phone_number, templatePayload())).rejects.toBeInstanceOf(CampaignLineUnavailableError)
-    expect(mocks.query.mock.calls[0][0]).toContain('wl.sending_enabled = true')
+    expect(mocks.query.mock.calls.find(([sql])=>sql.includes('SELECT cn.waba_id'))![0]).toContain('wl.sending_enabled = true')
     expect(mocks.send).not.toHaveBeenCalled()
   })
 

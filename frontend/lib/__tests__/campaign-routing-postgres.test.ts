@@ -113,12 +113,47 @@ describe.skipIf(!enabled)('campaign routing on real PostgreSQL (no provider requ
     expect(rows).toEqual([{phone:phone(1).slice(1),line_id:a},{phone:phone(2).slice(1),line_id:b}])
     expect(await getCampaignAssignedLine(campaign,phone(1))).toBe(await getCampaignAssignedLine(nextCampaign,phone(1)))
   })
-  it('preserves a deleted assignment and never silently reroutes it', async () => {
+  it('repairs a deleted sender through rotation without changing surviving assignments', async () => {
     await seed(); await recipient(campaign,1); await prepareCampaignRouting(campaign,[a])
+    await recipient(campaign,2); await prepareCampaignRouting(campaign,[b])
     await pool.query('DELETE FROM whatsapp_lines WHERE id=$1',[a])
     await prepareCampaignRouting(campaign,[b])
-    expect(await claimNextUnit(campaign,b)).toBeNull()
-    expect((await pool.query('SELECT line_id FROM campaign_line_assignments')).rows).toEqual([{line_id:null}])
+    expect(await getCampaignAssignedLine(campaign,phone(1))).toBe(b)
+    expect(await getCampaignAssignedLine(campaign,phone(2))).toBe(b)
+    expect((await claimNextUnit(campaign,b))?.phone_number).toBe(phone(1))
+    const before=(await pool.query('SELECT * FROM campaign_line_assignments ORDER BY phone')).rows
+    await prepareCampaignRouting(campaign,[b])
+    expect((await pool.query('SELECT * FROM campaign_line_assignments ORDER BY phone')).rows).toEqual(before)
+  })
+  it('recovers a surviving historical sender after deletion even when it is not eligible', async () => {
+    await seed(); await recipient(campaign,1); await prepareCampaignRouting(campaign,[a])
+    await recipient(nextCampaign,1,b,'sent')
+    await pool.query('DELETE FROM whatsapp_lines WHERE id=$1',[a])
+    const fresh=id(13); await pool.query('INSERT INTO whatsapp_lines VALUES($1,$2)',[fresh,owner])
+    await prepareCampaignRouting(campaign,[fresh])
+    expect(await getCampaignAssignedLine(campaign,phone(1))).toBe(b)
+    expect(await claimNextUnit(campaign,fresh)).toBeNull()
+    expect((await pool.query('SELECT source FROM campaign_line_assignments')).rows).toEqual([{source:'history'}])
+  })
+  it('ignores deleted and inaccessible campaign history when repairing a sender',async()=>{
+    await seed(); await recipient(campaign,1); await prepareCampaignRouting(campaign,[a])
+    await recipient(nextCampaign,1,a,'sent')
+    await pool.query('DELETE FROM whatsapp_lines WHERE id=$1',[a])
+    const other=id(13); await pool.query('INSERT INTO whatsapp_lines VALUES($1,$2)',[other,otherOwner])
+    await recipient(nextCampaign,1,other,'sent','2026-10-01')
+    await prepareCampaignRouting(campaign,[b])
+    expect(await getCampaignAssignedLine(campaign,phone(1))).toBe(b)
+  })
+  it('repairs overlapping campaigns once and leaves unrelated owners unchanged',async()=>{
+    await seed(); await recipient(campaign,1); await recipient(nextCampaign,1)
+    await prepareCampaignRouting(campaign,[a])
+    await pool.query('DELETE FROM whatsapp_lines WHERE id=$1',[a])
+    await pool.query("INSERT INTO campaign_line_assignments(owner_key,phone,line_id,source) VALUES($1,$2,NULL,'rotation')",[otherOwner,phone(1).slice(1)])
+    await Promise.all([prepareCampaignRouting(campaign,[b]),prepareCampaignRouting(nextCampaign,[b])])
+    expect(await getCampaignAssignedLine(campaign,phone(1))).toBe(b)
+    expect(await getCampaignAssignedLine(nextCampaign,phone(1))).toBe(b)
+    expect((await pool.query('SELECT next_position::int n FROM campaign_line_rotation WHERE owner_key=$1',[owner])).rows[0].n).toBe(2)
+    expect((await pool.query('SELECT line_id FROM campaign_line_assignments WHERE owner_key=$1',[otherOwner])).rows[0].line_id).toBeNull()
   })
   it('keeps ownership scopes isolated and imports only accessible inbox/legacy lines', async () => {
     await seed(); await recipient(campaign,1,a,'sent')
@@ -138,5 +173,54 @@ describe.skipIf(!enabled)('campaign routing on real PostgreSQL (no provider requ
     await recipient(nextCampaign,1);await prepareCampaignRouting(nextCampaign,[a,b])
     expect(await claimOne(nextCampaign,[b])).toBeUndefined()
     expect((await claimOne(nextCampaign,[a]))?.phone_number).toBe(phone(1))
+  })
+
+  async function seedEight() {
+    await seed()
+    const lines=Array.from({length:8},(_,i)=>id(11+i))
+    for(const line of lines.slice(2))await pool.query('INSERT INTO whatsapp_lines VALUES($1,$2)',[line,owner])
+    return lines
+  }
+  async function addSyntheticRecipients(c:string,start:number,count:number) {
+    await pool.query(`INSERT INTO campaign_recipients(campaign_id,phone_number)
+      SELECT $1,'+54911'||lpad(n::text,8,'0') FROM generate_series($2::int,$3::int) n`,[c,start,start+count-1])
+  }
+  it('Nexus audit: assigns 800 fresh destinations equally across eight lines and does not consume rotation twice',async()=>{
+    const lines=await seedEight();await addSyntheticRecipients(campaign,1,800)
+    await prepareCampaignRouting(campaign,[...lines].reverse());await prepareCampaignRouting(campaign,lines)
+    const counts=(await pool.query('SELECT line_id,count(*)::int n FROM campaign_line_assignments GROUP BY line_id ORDER BY line_id')).rows
+    expect(counts).toEqual(lines.map(line_id=>({line_id,n:100})))
+    const first=(await pool.query('SELECT line_id FROM campaign_line_assignments ORDER BY phone LIMIT 16')).rows.map(r=>r.line_id)
+    expect(first).toEqual([...lines,...lines])
+    expect((await pool.query('SELECT next_position::int n FROM campaign_line_rotation')).rows[0].n).toBe(800)
+  })
+  it('Nexus audit: two rounds of eight parallel workers claim sixteen unique messages without changing assigned senders',async()=>{
+    const lines=await seedEight();await addSyntheticRecipients(campaign,1,16)
+    await prepareCampaignRouting(campaign,lines)
+    const claimed=[]
+    for(let round=0;round<2;round++)claimed.push(...await Promise.all(lines.map(async line=>({line,unit:await claimNextUnit(campaign,line)}))))
+    expect(claimed.every(row=>row.unit)).toBe(true)
+    expect(new Set(claimed.map(row=>row.unit!.id)).size).toBe(16)
+    for(const row of claimed)expect(await getCampaignAssignedLine(campaign,row.unit!.phone_number)).toBe(row.line)
+    expect(await Promise.all(lines.map(line=>claimNextUnit(campaign,line)))).toEqual(Array(8).fill(null))
+  })
+  it('Nexus audit: adding five lines preserves old contacts and distributes only new contacts across all eight',async()=>{
+    const lines=await seedEight();await addSyntheticRecipients(campaign,1,24)
+    await prepareCampaignRouting(campaign,lines.slice(0,3))
+    const before=(await pool.query('SELECT phone,line_id FROM campaign_line_assignments ORDER BY phone')).rows
+    await prepareCampaignRouting(campaign,lines)
+    expect((await pool.query('SELECT phone,line_id FROM campaign_line_assignments ORDER BY phone')).rows).toEqual(before)
+    await addSyntheticRecipients(nextCampaign,25,16);await prepareCampaignRouting(nextCampaign,lines)
+    const newCounts=(await pool.query('SELECT line_id,count(*)::int n FROM campaign_line_assignments WHERE phone>$1 GROUP BY line_id ORDER BY line_id',[phone(24).slice(1)])).rows
+    expect(newCounts).toEqual(lines.map(line_id=>({line_id,n:2})))
+  })
+  it('Nexus audit: unavailable assigned senders leave their contacts pending without switching numbers',async()=>{
+    const lines=await seedEight();await addSyntheticRecipients(campaign,1,16)
+    await prepareCampaignRouting(campaign,lines)
+    const available=lines.slice(0,3)
+    for(let round=0;round<2;round++)await Promise.all(available.map(line=>claimNextUnit(campaign,line)))
+    await prepareCampaignRouting(campaign,available)
+    expect(await Promise.all(available.map(line=>claimNextUnit(campaign,line)))).toEqual([null,null,null])
+    expect((await pool.query("SELECT count(*)::int n FROM campaign_recipients WHERE status='pending'")).rows[0].n).toBe(10)
   })
 })
