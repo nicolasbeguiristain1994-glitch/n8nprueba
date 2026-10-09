@@ -58,7 +58,6 @@ export async function casinoDashboard(platform: Platform, from: string, to: stri
   const agentExpr = platform === 'consolidado' ? platformCanonicalAgentSql('a') : 'a.agente'
   const rankingAgentExpr = platform === 'consolidado' ? platformCanonicalAgentSql('l') : 'LOWER(BTRIM(l.agente))'
   const vipLevels = "('super_vip','vip_alto','vip_medio','vip')"
-  const scopedAccounts = `SELECT * FROM casino_dashboard_players cp WHERE ${cpFilter}`
   // Both period consumers share the same bounded ledger. Without this scope,
   // PostgreSQL scans the complete transaction history twice for every refresh.
   const ledgerScope = (alias: string) => `${getPlatformFilterSql(platform, alias)}
@@ -67,11 +66,11 @@ export async function casinoDashboard(platform: Platform, from: string, to: stri
   // The account projection is maintained atomically with ledger writes.
   // First deposits belong to their original agent; VIP/risk use the current agent.
   const result = await runQuery<{ dashboard: CasinoDashboardData }>(`
-      WITH ledger AS MATERIALIZED (${financialLedgerSql(ledgerScope)}), all_players AS MATERIALIZED (${scopedAccounts}),
-      players AS MATERIALIZED (SELECT * FROM all_players cp WHERE ${dashboardAgentSql(platform, 3, 'cp')}),
+      WITH ledger AS MATERIALIZED (${financialLedgerSql(ledgerScope)}),
+      players AS MATERIALIZED (SELECT * FROM casino_dashboard_players cp WHERE ${cpFilter} AND ${dashboardAgentSql(platform, 3, 'cp')}),
       firsts AS MATERIALIZED (
-        SELECT * FROM (SELECT platform,username_lower,first_deposit_agent AS agente,fecha_primera FROM all_players) cp
-        WHERE fecha_primera IS NOT NULL AND ${dashboardAgentSql(platform, 3, 'cp')}
+        SELECT * FROM (SELECT platform,username_lower,first_deposit_agent AS agente,fecha_primera FROM casino_dashboard_players) cp
+        WHERE ${cpFilter} AND fecha_primera IS NOT NULL AND ${dashboardAgentSql(platform, 3, 'cp')}
       ),
       summary AS (
         WITH activity AS (

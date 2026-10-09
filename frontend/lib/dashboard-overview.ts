@@ -1,6 +1,6 @@
 import { financialLedgerSql } from './dashboard-financial-ledger'
-import { DASHBOARD_TIMEZONE, dashboardAgentSql, movementPeriodSql } from './dashboard-scope'
-import { getPlatformFilterSql, type Platform, type SyncPlatform } from './casino-agents'
+import { DASHBOARD_TIMEZONE, dashboardAgentSql, movementDateSql, movementPeriodSql } from './dashboard-scope'
+import { getPlatformFilterSql, SYNC_PLATFORMS, type Platform, type SyncPlatform } from './casino-agents'
 
 export interface PlatformActivity {
   platform: SyncPlatform
@@ -13,6 +13,39 @@ export interface PlatformActivity {
   movimientos: number
   cuentas: number
   ultima_fecha: string | null
+}
+
+/** Seek to the latest movement of each raw agent using the history index.
+ * A GROUP BY/MAX scans millions of old movements even for a one-day dashboard.
+ * Keep raw agent spellings and the null-agent group, including inactive agents.
+ */
+export function latestTransactionDatesSql(platform: Platform): string {
+  const platforms = platform === 'consolidado' ? SYNC_PLATFORMS : [platform]
+  const day = movementDateSql('t')
+  return `WITH RECURSIVE platforms(platform) AS (VALUES ${platforms.map(p => `('${p}'::text)`).join(',')}),
+    dated_agents AS (
+      SELECT p.platform, next.agente, next.day FROM platforms p
+      CROSS JOIN LATERAL (
+        SELECT t.agente, ${day} AS day FROM casino_transactions t
+        WHERE t.platform=p.platform AND t.agente IS NOT NULL
+        ORDER BY t.agente, ${day} DESC NULLS LAST LIMIT 1
+      ) next
+      UNION ALL
+      SELECT previous.platform, next.agente, next.day FROM dated_agents previous
+      CROSS JOIN LATERAL (
+        SELECT t.agente, ${day} AS day FROM casino_transactions t
+        WHERE t.platform=previous.platform AND t.agente>previous.agente
+        ORDER BY t.agente, ${day} DESC NULLS LAST LIMIT 1
+      ) next
+    )
+    SELECT platform, agente, day FROM dated_agents
+    UNION ALL
+    SELECT p.platform, next.agente, next.day FROM platforms p
+    CROSS JOIN LATERAL (
+      SELECT t.agente, ${day} AS day FROM casino_transactions t
+      WHERE t.platform=p.platform AND t.agente IS NULL
+      ORDER BY t.agente, ${day} DESC NULLS LAST LIMIT 1
+    ) next`
 }
 
 /** GROUPING SETS counts accounts once per platform, even if they changed agent. */
@@ -31,10 +64,8 @@ export function overviewSql(platform: Platform): string {
       COUNT(*)::int AS movimientos, COUNT(DISTINCT LOWER(username))::int AS cuentas
     FROM ledger GROUP BY GROUPING SETS ((platform), (platform, agente))
   ), history_dates AS (
-    SELECT t.platform, t.agente,
-      GREATEST((MAX(t.fecha_hora_utc) AT TIME ZONE '${DASHBOARD_TIMEZONE}')::date,
-        MAX(t.fecha) FILTER (WHERE t.fecha_hora_utc IS NULL)) AS day
-    FROM casino_transactions t WHERE ${scope('t')} GROUP BY t.platform,t.agente
+    SELECT t.platform, t.agente, t.day
+    FROM (${latestTransactionDatesSql(platform)}) t WHERE ${scope('t')}
     UNION ALL
     SELECT f.platform, f.agente,
       GREATEST((MAX(f.fecha_hora_utc) AT TIME ZONE '${DASHBOARD_TIMEZONE}')::date,
