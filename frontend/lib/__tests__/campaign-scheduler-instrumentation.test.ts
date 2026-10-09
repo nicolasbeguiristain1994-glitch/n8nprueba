@@ -1,7 +1,9 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@/lib/missing-contacts', () => ({ startMissingContactRefresh: vi.fn().mockResolvedValue(undefined) }))
+vi.mock('@/lib/dashboard-snapshot', () => ({ startDashboardRefresh: vi.fn().mockResolvedValue(undefined) }))
 import { register } from '../../instrumentation'
+import { startDashboardRefresh } from '@/lib/dashboard-snapshot'
 import { startMissingContactRefresh } from '@/lib/missing-contacts'
 
 const runtime = globalThis as typeof globalThis & { __campaignSchedulerRegistration?: Promise<void> }
@@ -9,6 +11,7 @@ const fetchMock = vi.fn()
 beforeEach(() => {
   vi.useFakeTimers()
   delete runtime.__campaignSchedulerRegistration
+  vi.mocked(startDashboardRefresh).mockClear()
   vi.mocked(startMissingContactRefresh).mockClear()
   vi.stubEnv('DATABASE_URL', '')
   vi.stubEnv('DB_HOST', '')
@@ -32,6 +35,7 @@ describe('Next runtime scheduler registration', () => {
     vi.stubEnv('DATABASE_URL', 'postgresql://example.test/local')
     vi.stubEnv('CAMPAIGN_SCHEDULER_ENABLED', 'false'); vi.stubEnv('CRON_SECRET', '')
     await register()
+    expect(startDashboardRefresh).toHaveBeenCalledOnce()
     expect(startMissingContactRefresh).toHaveBeenCalledOnce()
     vi.mocked(startMissingContactRefresh).mockClear(); vi.stubEnv('NEXT_PHASE', 'phase-production-build')
     await register(); expect(startMissingContactRefresh).not.toHaveBeenCalled()

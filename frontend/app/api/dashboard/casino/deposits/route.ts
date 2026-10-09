@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server'
 import { checkPermission } from '@/lib/permissions'
-import { query } from '@/lib/db'
+import { readDashboardSnapshot } from '@/lib/dashboard-snapshot'
 import { isValidPlatform } from '@/lib/casino-agents'
 import { argentinaToday, shiftDate, validDateRange } from '@/lib/dashboard-format'
 import { dashboardAgent } from '@/lib/dashboard-scope'
-import { depositAnalytics, depositAnalyticsSql, type DepositAggregateRow } from '@/lib/dashboard-deposits'
 
 export async function GET(req: Request) {
   const denied = await checkPermission(req, 'dashboard', 'read')
@@ -18,8 +17,8 @@ export async function GET(req: Request) {
   }
   try {
     const agent = dashboardAgent(platform, params.get('agent') || '') || null
-    const rows = await query<DepositAggregateRow>(depositAnalyticsSql(platform), [from, to, agent])
-    return NextResponse.json(depositAnalytics(rows, platform), { headers: { 'Cache-Control': 'no-store' } })
+    const snapshot = await readDashboardSnapshot('deposits', { platform, from, to, agent }, params.get('refresh') === '1')
+    return NextResponse.json({ ...snapshot.value, updatedAt: new Date(snapshot.updatedAt).toISOString() }, { headers: { 'Cache-Control': 'no-store' } })
   } catch {
     return NextResponse.json({ error: 'No se pudieron consultar los depósitos. Reintentá la consulta.' }, { status: 500 })
   }

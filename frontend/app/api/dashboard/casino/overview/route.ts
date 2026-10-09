@@ -1,10 +1,9 @@
 import { dashboardAgent } from '@/lib/dashboard-scope'
 import { NextResponse } from 'next/server'
-import { query } from '@/lib/db'
+import { readDashboardSnapshot } from '@/lib/dashboard-snapshot'
 import { checkPermission } from '@/lib/permissions'
 import { isValidPlatform } from '@/lib/casino-agents'
 import { argentinaToday, shiftDate, validDateRange } from '@/lib/dashboard-format'
-import { overviewSql, type PlatformActivity } from '@/lib/dashboard-overview'
 
 export async function GET(req: Request) {
   const denied = await checkPermission(req, 'dashboard', 'read')
@@ -17,8 +16,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Plataforma o período inválido' }, { status: 400 })
   }
   try {
-    const activity = await query<PlatformActivity>(overviewSql(platform), [from, to, dashboardAgent(platform, params.get('agent') || '') || null])
-    return NextResponse.json({ activity }, { headers: { 'Cache-Control': 'no-store' } })
+    const agent = dashboardAgent(platform, params.get('agent') || '') || null
+    const snapshot = await readDashboardSnapshot('overview', { platform, from, to, agent }, params.get('refresh') === '1')
+    return NextResponse.json({ ...snapshot.value, updatedAt: new Date(snapshot.updatedAt).toISOString() }, { headers: { 'Cache-Control': 'no-store' } })
   } catch {
     return NextResponse.json({ error: 'No se pudo consultar el resumen de plataformas' }, { status: 500 })
   }

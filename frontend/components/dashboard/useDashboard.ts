@@ -106,6 +106,7 @@ export function useDashboard(): UseDashboardReturn {
   const platformRef           = useRef(platform)
   const agentRef = useRef(agent)
   const requestRef = useRef<AbortController | null>(null)
+  const initialFetchRef = useRef(true)
   const auxRef = useRef<{ crm: CrmDashboardData; msgs: { stats?: MsgsStats }; at: number } | null>(null)
 
   useEffect(() => { dateRangeRef.current          = dateRange },           [dateRange])
@@ -126,6 +127,7 @@ export function useDashboard(): UseDashboardReturn {
     const deadline = setTimeout(() => { timedOut = true; controller.abort() }, 30000)
     const options = { signal: controller.signal, cache: 'no-store' as const }
     const qs = new URLSearchParams({ platform: platformRef.current, agent: agentRef.current, ...queryDateRange(range) })
+    if (force) qs.set('refresh', '1')
     if (force || soft) setRevision(value => value + 1)
     setLoading(true)
     setActivityLoading(true)
@@ -150,12 +152,27 @@ export function useDashboard(): UseDashboardReturn {
         tasks: reuseAux ? cached.crm.tasks : [], msgs: reuseAux ? cached.msgs.stats ?? null : null }
       const publish = () => { if (!controller.signal.aborted) setData({ ...partial }) }
       const failed: string[] = []
+      const financialTimes: number[] = []
+      const recordTime = (value: unknown) => {
+        const time = typeof value === 'string' ? Date.parse(value) : NaN
+        if (Number.isFinite(time)) financialTimes.push(time)
+      }
       let crmJson: CrmDashboardData | null = reuseAux ? cached.crm : null
       let msgsJson: { stats?: MsgsStats } | null = reuseAux ? cached.msgs : null
       const jobs = [
         async () => {
+          const result = await fetchJson(`/api/dashboard/casino?${qs}`)
+          if (controller.signal.aborted) return
+          recordTime(result?.updatedAt)
+          partial.casino = result ? { summary: result.summary ?? null, agentes: result.agentes ?? [],
+            vips: result.vips ?? [], seg_actividad: result.seg_actividad ?? [], seg_monto: result.seg_monto ?? [] } : null
+          if (!result) failed.push('cuentas')
+          publish()
+        },
+        async () => {
           const result = await fetchJson(`/api/dashboard/casino/overview?${qs}`)
           if (controller.signal.aborted) return
+          recordTime(result?.updatedAt)
           partial.activity = result?.activity ?? null
           if (!result) failed.push('movimientos')
           publish(); setActivityLoading(false)
@@ -163,17 +180,10 @@ export function useDashboard(): UseDashboardReturn {
         async () => {
           const result = await fetchJson(`/api/dashboard/casino/deposits?${qs}`)
           if (controller.signal.aborted) return
+          recordTime(result?.updatedAt)
           partial.deposits = result
           if (!result) failed.push('gráficos de depósitos')
           publish(); setDepositsLoading(false)
-        },
-        async () => {
-          const result = await fetchJson(`/api/dashboard/casino?${qs}`)
-          if (controller.signal.aborted) return
-          partial.casino = result ? { summary: result.summary ?? null, agentes: result.agentes ?? [],
-            vips: result.vips ?? [], seg_actividad: result.seg_actividad ?? [], seg_monto: result.seg_monto ?? [] } : null
-          if (!result) failed.push('cuentas')
-          publish()
         },
         ...(!reuseAux ? [
           async () => {
@@ -205,7 +215,7 @@ export function useDashboard(): UseDashboardReturn {
       if (controller.signal.aborted) return
       if (!reuseAux && crmJson && msgsJson) auxRef.current = { crm: crmJson, msgs: msgsJson, at: Date.now() }
       if (failed.length) setError(`No se pudieron consultar: ${failed.join(', ')}. Los bloques disponibles se muestran por separado.`)
-      if (!failed.length) setLastUpdated(new Date())
+      if (!failed.length) setLastUpdated(new Date(Math.min(Date.now(), ...financialTimes)))
       if (soft && !failed.length) setSoftSuccessCount(c => c + 1)
     } finally {
       clearTimeout(deadline)
@@ -222,7 +232,9 @@ export function useDashboard(): UseDashboardReturn {
     // browser request alone does not cancel already-running SQL.
     const running = requestRef.current; requestRef.current = null; running?.abort()
     setLoading(true); setActivityLoading(true); setDepositsLoading(true); setData(null)
-    const timer = setTimeout(() => { void fetchData(dateRange) }, 180)
+    // Start immediately on entry; debounce only subsequent filter edits.
+    const timer = setTimeout(() => { void fetchData(dateRange) }, initialFetchRef.current ? 0 : 180)
+    initialFetchRef.current = false
     return () => { clearTimeout(timer); const running = requestRef.current; requestRef.current = null; running?.abort() }
   }, [dateRange.from, dateRange.to, platform, agent, fetchData])
 

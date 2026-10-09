@@ -1,13 +1,12 @@
 'use client'
 
-import dynamic from 'next/dynamic'
-
-// Browser-persisted filters must not be hydrated over different server defaults.
-const Dashboard = dynamic(() => import('@/components/dashboard/Dashboard').then(m => m.Dashboard), {
-  ssr: false,
-  loading: () => <p role="status" className="p-6 text-sm text-muted-foreground">Preparando dashboard…</p>,
-})
+import { useEffect, useState } from 'react'
+import { Dashboard } from '@/components/dashboard/Dashboard'
 
 export default function DashboardPage() {
-  return <Dashboard />
+  // Keep saved browser filters out of SSR hydration, while preloading dashboard
+  // code with the page instead of downloading another chunk after it mounts.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+  return mounted ? <Dashboard /> : <p role="status" className="p-6 text-sm text-muted-foreground">Preparando dashboard…</p>
 }

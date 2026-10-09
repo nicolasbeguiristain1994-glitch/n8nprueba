@@ -144,3 +144,26 @@ describe('bounded dashboard refresh',()=>{
   }finally{vi.useRealTimers()}
  })
 })
+
+it('starts agents on entry without waiting for other blocks or the filter debounce', async () => {
+ vi.useFakeTimers()
+ try {
+  const fetcher = vi.fn((url: string) => url.startsWith('/api/dashboard/casino?')
+    ? Promise.resolve(response({ agentes: [{ agente: 'royal', total: 7 }] })) : new Promise(() => {}))
+  vi.stubGlobal('fetch', fetcher)
+  const { result } = renderHook(useDashboard)
+  await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+  expect(String(fetcher.mock.calls[0][0])).toContain('/api/dashboard/casino?')
+  expect(result.current.data?.casino?.agentes[0].total).toBe(7)
+  expect(result.current.activityLoading).toBe(true)
+ } finally { vi.useRealTimers() }
+})
+
+it('requests fresh financial results on manual refresh', async () => {
+ const fetcher = vi.fn().mockResolvedValue(response()); vi.stubGlobal('fetch', fetcher)
+ const { result } = renderHook(useDashboard); await waitFor(() => expect(result.current.loading).toBe(false))
+ act(() => result.current.refresh()); await waitFor(() => expect(result.current.loading).toBe(false))
+ for (const path of ['casino?', 'casino/overview?', 'casino/deposits?']) {
+  expect(fetcher.mock.calls.filter(([url]) => String(url).includes(path)).at(-1)?.[0]).toContain('refresh=1')
+ }
+})
