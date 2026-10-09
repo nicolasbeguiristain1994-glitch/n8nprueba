@@ -52,7 +52,7 @@ export interface CasinoCashRankingRow {
 }
 export interface CasinoDashboardData { summary: CasinoSummary; agentes: CasinoAgente[]; vips: CasinoVip[]; seg_actividad: SegCount[]; seg_monto: SegCount[]; cash_ranking: CasinoCashRankingRow[] }
 
-export async function casinoDashboard(platform: Platform, from: string, to: string, agent: string | null): Promise<CasinoDashboardData> {
+export async function casinoDashboard(platform: Platform, from: string, to: string, agent: string | null, runQuery: typeof query = query): Promise<CasinoDashboardData> {
   const filter = getPlatformFilterSql(platform)
   const cpFilter = getPlatformFilterSql(platform, 'cp')
   const agentExpr = platform === 'consolidado' ? platformCanonicalAgentSql('a') : 'a.agente'
@@ -66,7 +66,7 @@ export async function casinoDashboard(platform: Platform, from: string, to: stri
     AND ${movementPeriodSql(alias, '$1::date - ($2::date - $1::date + 1)')}`
   // The account projection is maintained atomically with ledger writes.
   // First deposits belong to their original agent; VIP/risk use the current agent.
-  const result = await query<{ dashboard: CasinoDashboardData }>(`
+  const result = await runQuery<{ dashboard: CasinoDashboardData }>(`
       WITH ledger AS MATERIALIZED (${financialLedgerSql(ledgerScope)}), all_players AS MATERIALIZED (${scopedAccounts}),
       players AS MATERIALIZED (SELECT * FROM all_players cp WHERE ${dashboardAgentSql(platform, 3, 'cp')}),
       firsts AS MATERIALIZED (

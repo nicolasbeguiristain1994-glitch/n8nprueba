@@ -120,12 +120,12 @@ export function useDashboard(): UseDashboardReturn {
 
   // Keep filter changes from refetching unrelated CRM/messages or overlapping Auto.
   const fetchData = useCallback(async (range: DateRange, soft = false, force = false) => {
-    if (soft && requestRef.current) return
+    if (soft && !force && requestRef.current) return
     requestRef.current?.abort()
     const controller = new AbortController()
     requestRef.current = controller
     let timedOut = false
-    const deadline = setTimeout(() => { timedOut = true; controller.abort() }, 30000)
+    const deadline = setTimeout(() => { timedOut = true; controller.abort() }, force ? 60000 : 30000)
     const options = { signal: controller.signal, cache: 'no-store' as const }
     const qs = new URLSearchParams({ platform: platformRef.current, agent: agentRef.current, ...queryDateRange(range) })
     if (force) qs.set('refresh', '1')
@@ -295,7 +295,7 @@ export function useDashboard(): UseDashboardReturn {
 
   const setDateRange      = useCallback((range: DateRange) => { setDateRangeStored(range) }, [setDateRangeStored])
   const toggleAutoRefresh = useCallback(() => { setAutoRefreshEnabled(prev => !prev) }, [setAutoRefreshEnabled])
-  const refresh           = useCallback(() => { fetchData(dateRangeRef.current, false, true) }, [fetchData])
+  const refresh           = useCallback(() => { fetchData(dateRangeRef.current, true, true) }, [fetchData])
 
   return {
     layout: { ...layout, order: safeOrder() },

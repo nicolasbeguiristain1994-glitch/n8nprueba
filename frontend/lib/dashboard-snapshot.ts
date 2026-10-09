@@ -1,4 +1,5 @@
 import { query } from './db'
+import { dashboardSnapshotQuery } from './dashboard-snapshot-query'
 import type { Platform } from './casino-agents'
 import { argentinaToday, shiftDate } from './dashboard-format'
 import { casinoDashboard, type CasinoDashboardData } from './dashboard-casino'
@@ -16,9 +17,10 @@ export const dashboardSnapshot = runtime.__dashboardSnapshotV1 ??= new Dashboard
 
 async function load<K extends Kind>(kind: K, scope: DashboardScope): Promise<Results[K]> {
   const { platform, from, to, agent } = scope
-  if (kind === 'casino') return await casinoDashboard(platform, from, to, agent) as Results[K]
-  if (kind === 'overview') return { activity: await query<PlatformActivity>(overviewSql(platform), [from, to, agent]) } as Results[K]
-  const rows = await query<DepositAggregateRow>(depositAnalyticsSql(platform), [from, to, agent])
+  const runQuery = process.env.NODE_ENV === 'production' ? dashboardSnapshotQuery : query
+  if (kind === 'casino') return await casinoDashboard(platform, from, to, agent, runQuery) as Results[K]
+  if (kind === 'overview') return { activity: await runQuery<PlatformActivity>(overviewSql(platform), [from, to, agent]) } as Results[K]
+  const rows = await runQuery<DepositAggregateRow>(depositAnalyticsSql(platform), [from, to, agent])
   return depositAnalytics(rows, platform) as Results[K]
 }
 

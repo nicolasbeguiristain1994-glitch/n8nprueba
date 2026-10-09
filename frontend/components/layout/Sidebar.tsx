@@ -14,7 +14,7 @@ function NavLink({ item, collapsed, onClick }: { item: NavItem; collapsed: boole
   const pathname = usePathname()
   const active = item.href === '/' ? pathname === '/' : pathname === item.href || pathname.startsWith(item.href + '/')
   const Icon = item.icon
-  return <Link href={item.href} onClick={onClick} title={collapsed ? item.label : undefined}
+  return <Link href={item.href} prefetch={item.href === '/' ? true : undefined} onClick={onClick} title={collapsed ? item.label : undefined}
     aria-label={collapsed ? item.label : undefined} aria-current={active ? 'page' : undefined}
     className={cn('relative flex h-10 items-center gap-3 rounded-lg text-sm transition-colors duration-150',
       collapsed ? 'w-9 justify-center' : 'px-3',

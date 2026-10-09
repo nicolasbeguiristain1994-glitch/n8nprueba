@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { NextResponse } from 'next/server'
 vi.mock('@/lib/db', () => ({ query: vi.fn() }))
+vi.mock('@/lib/dashboard-snapshot-query', () => ({ dashboardSnapshotQuery: (sql: string, params?: unknown[]) => query(sql, params) }))
 vi.mock('@/lib/permissions', () => ({ checkPermission: vi.fn() }))
 import { query } from '@/lib/db'
 import { checkPermission } from '@/lib/permissions'

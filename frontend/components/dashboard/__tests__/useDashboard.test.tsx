@@ -167,3 +167,13 @@ it('requests fresh financial results on manual refresh', async () => {
   expect(fetcher.mock.calls.filter(([url]) => String(url).includes(path)).at(-1)?.[0]).toContain('refresh=1')
  }
 })
+
+it('retains the visible agents during a requested fresh recalculation', async () => {
+ const fetcher = vi.fn((url: string) => url.includes('refresh=1') ? new Promise(() => {})
+   : Promise.resolve(response(url.startsWith('/api/dashboard/casino?') ? { agentes: [{ agente: 'royal', total: 7 }] } : {})))
+ vi.stubGlobal('fetch', fetcher)
+ const { result } = renderHook(useDashboard); await waitFor(() => expect(result.current.loading).toBe(false))
+ act(() => result.current.refresh())
+ expect(result.current.data?.casino?.agentes[0].total).toBe(7)
+ expect(result.current.softLoading).toBe(true)
+})
