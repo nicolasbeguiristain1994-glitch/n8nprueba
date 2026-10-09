@@ -1,24 +1,24 @@
 # ── Stage 1: root dependencies (scripts + connectors) ────────────────────────
-FROM node:20-alpine AS root-deps
+FROM public.ecr.aws/docker/library/node:20-alpine AS root-deps
 WORKDIR /root-app
 COPY package*.json ./
 RUN npm ci --omit=dev
 
 # ── Stage 2: frontend dependencies ────────────────────────────────────────────
-FROM node:20-alpine AS frontend-deps
+FROM public.ecr.aws/docker/library/node:20-alpine AS frontend-deps
 WORKDIR /app
 COPY frontend/package*.json ./
 RUN npm ci
 
 # ── Stage 3: Next.js build ────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM public.ecr.aws/docker/library/node:20-alpine AS builder
 WORKDIR /app
 COPY --from=frontend-deps /app/node_modules ./node_modules
 COPY frontend/ .
 RUN npm run build
 
 # ── Stage 4: runner ───────────────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM public.ecr.aws/docker/library/node:20-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
