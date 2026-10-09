@@ -11,7 +11,7 @@ it('renders the overview, accounts and auxiliary blocks while deposits are slow,
     active++; maxActive = Math.max(maxActive, active)
     if (url.includes('/deposits?')) await new Promise(resolve => { finishDeposits = resolve })
     active--
-    return { ok: true, json: async () => ({ activity: [{ platform: 'zeus' }], summary: { total_jugadores: 7 }, stats: { sent: 9 }, kpis: {}, tasks: [] }) }
+    return { ok: true, json: async () => ({ activity: [{ platform: 'zeus' }], summary: { total_jugadores: 7 }, cash_ranking: [{ platform: 'zeus', username: 'player', diferencia: '123' }], stats: { sent: 9 }, kpis: {}, tasks: [] }) }
   })
   vi.stubGlobal('fetch', fetcher)
   const { result } = renderHook(useDashboard)
@@ -19,6 +19,7 @@ it('renders the overview, accounts and auxiliary blocks while deposits are slow,
   expect(result.current.activityLoading).toBe(false)
   expect(result.current.depositsLoading).toBe(true)
   expect(result.current.data?.casino?.summary?.total_jugadores).toBe(7)
+  expect(result.current.data?.casino?.cash_ranking).toEqual([{ platform: 'zeus', username: 'player', diferencia: '123' }])
   expect(result.current.data?.crmAvailable).toBe(true)
   expect(result.current.data?.msgs?.sent).toBe(9)
   expect(maxActive).toBe(2)

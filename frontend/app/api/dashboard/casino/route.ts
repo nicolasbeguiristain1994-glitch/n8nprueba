@@ -4,7 +4,7 @@ import { isValidPlatform } from '@/lib/casino-agents'
 import { argentinaToday, shiftDate, validDateRange } from '@/lib/dashboard-format'
 import { dashboardAgent } from '@/lib/dashboard-scope'
 import { readDashboardSnapshot } from '@/lib/dashboard-snapshot'
-export type { CasinoSummary, CasinoAgente, CasinoVip, SegCount, CasinoDashboardData } from '@/lib/dashboard-casino'
+export type { CasinoSummary, CasinoAgente, CasinoVip, SegCount, CasinoDashboardData, CasinoCashRankingRow } from '@/lib/dashboard-casino'
 
 export async function GET(req: Request) {
   const err = await checkPermission(req, 'dashboard', 'read')

@@ -7,7 +7,7 @@ import { argentinaToday } from '@/lib/dashboard-format'
 import { queryDateRange } from '@/lib/dashboard-date-range'
 import type { DepositAnalytics } from '@/lib/dashboard-deposits'
 import type { PlatformActivity } from '@/lib/dashboard-overview'
-import type { CasinoSummary, CasinoAgente, CasinoVip, SegCount } from '@/app/api/dashboard/casino/route'
+import type { CasinoSummary, CasinoAgente, CasinoVip, CasinoCashRankingRow, SegCount } from '@/app/api/dashboard/casino/route'
 import type { PendingTask, CrmKPIs, CrmDashboardData } from '@/app/api/dashboard/crm/route'
 import {
   DEFAULT_DATE_RANGE,
@@ -43,6 +43,7 @@ export interface DashboardData {
     vips:          CasinoVip[]
     seg_actividad: SegCount[]
     seg_monto:     SegCount[]
+    cash_ranking:  CasinoCashRankingRow[] | null
   } | null
   kpis:  CrmKPIs
   tasks: PendingTask[]
@@ -165,7 +166,8 @@ export function useDashboard(): UseDashboardReturn {
           if (controller.signal.aborted) return
           recordTime(result?.updatedAt)
           partial.casino = result ? { summary: result.summary ?? null, agentes: result.agentes ?? [],
-            vips: result.vips ?? [], seg_actividad: result.seg_actividad ?? [], seg_monto: result.seg_monto ?? [] } : null
+            vips: result.vips ?? [], seg_actividad: result.seg_actividad ?? [], seg_monto: result.seg_monto ?? [],
+            cash_ranking: result.cash_ranking ?? null } : null
           if (!result) failed.push('cuentas')
           publish()
         },
