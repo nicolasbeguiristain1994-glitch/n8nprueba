@@ -24,6 +24,7 @@ export const BASE_NAV: NavItem[] = [
 ]
 
 export const ADMIN_NAV: NavItem[] = [
+  { href: '/agentes',  label: 'Agentes',   icon: Users,         sector: 'agents' },
   { href: '/tareas',    label: 'Tareas',    icon: ClipboardList, sector: 'tasks' },
   { href: '/users',     label: 'Usuarios',  icon: UserCog,       sector: 'users' },
   { href: '/settings',  label: 'Ajustes',   icon: Settings,      sector: 'settings' },
@@ -32,7 +33,7 @@ export const ADMIN_NAV: NavItem[] = [
 
 export const NAV_GROUPS = [
   { label: 'Espacio de trabajo', paths: ['/', '/mis-tareas', '/calendario'] },
-  { label: 'Clientes y campañas', paths: ['/contacts', '/prioridades', '/campaigns', '/conversations', '/templates'] },
+  { label: 'Clientes y campañas', paths: ['/contacts', '/agentes', '/prioridades', '/campaigns', '/conversations', '/templates'] },
   { label: 'Operaciones', paths: ['/lines', '/automatizaciones', '/estadisticas', '/blacklist'] },
   { label: 'Administración', paths: ['/tareas', '/users', '/settings'] },
 ]

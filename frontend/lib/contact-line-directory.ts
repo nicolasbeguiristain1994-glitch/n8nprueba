@@ -1,6 +1,7 @@
 import { hasAssignedLineVariable, replaceAssignedLineVariable } from './assigned-line-variable'
 
-/** Active Ofizeus destinations provided by the operator on 2026-10-06.
+/** Snapshot provided by the operator on 2026-10-06, retained for migration/tests.
+ * Live automation calls pass the editable database directory explicitly.
  * Main lines have no variant. Never substitute a main line for an unknown variant.
  * These are displayed destinations, not sending credentials or Cloud sender IDs.
  */
@@ -17,12 +18,16 @@ export const OFIZEUS_LINES = [
 export type RoutingContact = {first_name:string|null;panel:string|null;linea:number|string|null;linea_sub:string|null}
 export const ADVISOR_FALLBACK = 'Gracias por escribirnos. Un asesor te atenderá para indicarte tu línea correspondiente.'
 export function isOfizeus(contact: Pick<RoutingContact,'panel'>): boolean {return contact.panel?.trim().toLowerCase()==='ofizeus'}
-export function ofizeusReply(contacts: RoutingContact[], prefix:string): {message:string;handoff:boolean} {
+export function ofizeusReply(contacts: RoutingContact[], prefix:string,
+  directory: ReadonlyArray<readonly [number,string,string,string]> = OFIZEUS_LINES,
+): {message:string;handoff:boolean} {
   if (contacts.length!==1 || !isOfizeus(contacts[0])) return {message:ADVISOR_FALLBACK,handoff:true}
   const c=contacts[0],variant=(c.linea_sub??'').trim().toLowerCase()
-  const line=OFIZEUS_LINES.find(([n,v])=>c.linea!==null && Number(c.linea)===n && variant===v)
+  const line=directory.find(([n,v])=>c.linea!==null && Number(c.linea)===n && variant===v)
   if (!line) return {message:ADVISOR_FALLBACK,handoff:true}
-  const formatted = `${line[3].slice(0,3)} | ${line[3].slice(3,7)} | ${line[3].slice(7)}`
+  const phone = line[3].replace(/^\+/, '')
+  const formatted = phone.startsWith('549') && phone.length === 13
+    ? `${phone.slice(0,3)} | ${phone.slice(3,7)} | ${phone.slice(7)}` : '+' + phone
   // Preserve the earlier append behavior for already configured messages. A
   // variable inserts only the number in place, without adding another footer.
   const message = hasAssignedLineVariable(prefix)

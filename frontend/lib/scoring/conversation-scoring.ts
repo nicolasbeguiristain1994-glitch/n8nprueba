@@ -37,6 +37,10 @@ export interface Conv {
   first_name?:        string | null
   last_name?:         string | null
   agent?:             string | null
+  linea?:             number | null
+  linea_sub?:         string | null
+  line_assignment_ambiguous?: boolean
+  assigned_line?:     {label: string; phone: string} | null
   segment?:           Segment
   actividad?:         string | null
   valor_riesgo?:      string | null

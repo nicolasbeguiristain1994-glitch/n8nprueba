@@ -14,6 +14,7 @@ export type Resource =
   | 'lines'
   | 'warmup'
   | 'users'
+  | 'agents'
   | 'lists'
   | 'send'
   | 'audit'
@@ -65,7 +66,7 @@ export function canAccess(
   const sectors: string[] = Array.isArray(user.sectors) ? user.sectors : []
 
   // users, audit and blacklist management are always admin-only
-  if (resource === 'users' || resource === 'audit' || resource === 'blacklist') return false
+  if (resource === 'users' || resource === 'agents' || resource === 'audit' || resource === 'blacklist') return false
 
   // sector check — operator/viewer must have the resource in their sectors
   // 'lists' is part of the contacts module: access is implied by contacts access
@@ -93,7 +94,7 @@ export function effectivePermissions(
 ): EffectivePermissions {
   const resources: Resource[] = [
     'dashboard', 'contacts', 'campaigns', 'conversations',
-    'lines', 'users', 'lists', 'send', 'audit', 'settings', 'blacklist', 'tasks',
+    'lines', 'users', 'agents', 'lists', 'send', 'audit', 'settings', 'blacklist', 'tasks',
     'estadisticas', 'automations', 'templates',
   ]
   const actions: Action[] = ['read', 'create', 'update', 'delete', 'manage', 'send']

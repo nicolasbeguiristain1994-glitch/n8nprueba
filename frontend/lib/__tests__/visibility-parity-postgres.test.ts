@@ -51,6 +51,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
         opt_in_marketing bool,opt_in_sms bool,platform_source text,created_at timestamptz DEFAULT now(),updated_at timestamptz,total_deposits int,total_withdrawals int,last_deposit_at timestamptz);
       CREATE TABLE operator_contact_visibility(operator_id uuid,contact_id uuid,assigned_by uuid,PRIMARY KEY(operator_id,contact_id));
       CREATE TABLE contact_tags(contact_id uuid,tag text,added_at timestamptz DEFAULT now(),UNIQUE(contact_id,tag));
+      CREATE TABLE agent_contact_lines(id uuid,agent_code text,linea int,variant text,label text,phone text,is_active boolean);
       CREATE TABLE users(id uuid PRIMARY KEY,role text,sectors text[],is_active bool DEFAULT true,session_version int DEFAULT 1,
         can_download_contacts bool DEFAULT true,allowed_agents text[],is_super_admin bool DEFAULT false);
       CREATE TABLE contact_lists(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name text,description text,filters jsonb,owned_by uuid,updated_by uuid,source text,created_at timestamptz DEFAULT now());

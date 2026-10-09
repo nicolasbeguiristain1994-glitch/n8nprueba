@@ -83,7 +83,10 @@ export async function evaluateAutomations(phone: string, messageText: string, me
     let handoff=rule.type==='handoff'
     if (rule.action_config.contact_line_directory) {
       if (rule.type!=='reply' || rule.action_config.contact_line_directory!=='ofizeus') return
-      const routed=ofizeusReply(routingContacts,rule.action_config.message??'Esta es tu línea asignada:')
+      const directory = await db.query<{linea:number;variant:string;label:string;phone:string}>(`SELECT linea,variant,label,phone
+        FROM agent_contact_lines WHERE agent_code='ofizeus' AND is_active=true`)
+      const routed=ofizeusReply(routingContacts,rule.action_config.message??'Esta es tu línea asignada:',
+        directory.rows.map(line=>[line.linea,line.variant,line.label,line.phone] as const))
       if (routed.message.length>4096) {
         await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details) VALUES($1,$2,$3,'error','La respuesta con la línea supera 4096 caracteres')`,[rule.id,rule.name,number]);return
       }

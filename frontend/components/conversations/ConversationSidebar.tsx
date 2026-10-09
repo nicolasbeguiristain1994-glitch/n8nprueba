@@ -1,5 +1,7 @@
 'use client'
 import { User, TrendingUp, Calendar, Megaphone } from 'lucide-react'
+import { AgentBadge } from './AgentBadge'
+import { ContactLineBadge } from './ContactLineBadge'
 import type { Conv } from '@/lib/scoring/conversation-scoring'
 import { SegmentBadge, IntentBadge, EscalatedBadge } from './PriorityBadge'
 import { QuickActions } from './QuickActions'
@@ -39,6 +41,7 @@ export function ConversationSidebar({ phone, conv, onRefresh }: Props) {
         {/* Badges */}
         <div className="flex flex-wrap gap-1">
           <SegmentBadge segment={conv?.segment ?? null} />
+          <AgentBadge agent={conv?.agent} /><ContactLineBadge conv={conv} />
           {conv && <IntentBadge intent={detectIntent(conv.last_message, conv.last_direction)} />}
           {conv?.is_escalated && <EscalatedBadge />}
         </div>

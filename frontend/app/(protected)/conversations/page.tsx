@@ -14,6 +14,7 @@ import { ConversationHeader }     from '@/components/conversations/ConversationH
 import { MessageBubble }          from '@/components/conversations/MessageBubble'
 import { QuickTemplates }         from '@/components/conversations/QuickTemplates'
 import { ConversationSidebar }    from '@/components/conversations/ConversationSidebar'
+import { AssignedLineActions } from '@/components/conversations/AssignedLineActions'
 import { CloudWindowIndicator } from '@/components/conversations/CloudWindowIndicator'
 import { StickerPicker } from '@/components/conversations/StickerPicker'
 import { EmojiPicker }            from '@/components/conversations/EmojiPicker'
@@ -160,6 +161,10 @@ export default function Conversations() {
 
                 {/* Input area */}
                 <div className="border-t border-border p-3 bg-card shrink-0">
+                  <AssignedLineActions key={selected} conv={selectedConv} disabled={sending} onInsert={text=>{
+                    setReply(previous=>previous.trim() ? previous + '\n' + text : text)
+                    textareaRef.current?.focus()
+                  }}/>
                   {reply.trim() && <p className="mb-2 text-xs text-muted-foreground" role="status">Borrador de este contacto · se conserva al cambiar de chat durante esta sesión</p>}
                   <div className="flex gap-2 items-start">
                     <StickerPicker key={selected} disabled={sending} onSend={sendSticker} />

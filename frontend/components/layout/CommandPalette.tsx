@@ -81,6 +81,7 @@ const COMMAND_ITEMS: CommandItem[] = [
   { id: 'lines',         type: 'navigate', label: 'Líneas',           icon: Activity,        href: '/lines',            group: 'Navegación', keywords: ['numeros', 'telefonos'] },
 
   // Admin
+  { id: 'agents', type: 'navigate', label: 'Agentes', icon: Users, href: '/agentes', group: 'Admin', keywords: ['líneas asignadas', 'cajeros', 'royal', 'ofizeus'] },
   { id: 'estadisticas',  type: 'navigate', label: 'Estadísticas',     icon: BarChart2,       href: '/estadisticas',     group: 'Admin', keywords: ['reportes', 'kpi', 'metricas', 'analytics'] },
   { id: 'automations',   type: 'navigate', label: 'Automatizaciones', icon: Bot,             href: '/automatizaciones', group: 'Admin', keywords: ['bots', 'flujos', 'workflows'] },
   { id: 'blacklist',     type: 'navigate', label: 'Blacklist',        icon: ShieldOff,       href: '/blacklist',        group: 'Admin', keywords: ['bloqueados', 'ban'] },

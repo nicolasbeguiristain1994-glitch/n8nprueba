@@ -1,5 +1,6 @@
 'use client'
 import { AgentBadge } from './AgentBadge'
+import { ContactLineBadge } from './ContactLineBadge'
 import { memo } from 'react'
 import {
   detectIntent, displayName, initials, avatarCls, fmtTime,
@@ -55,6 +56,7 @@ export const ConversationItem = memo(function ConversationItem({ conv: c, isSele
 
           <div className="flex flex-wrap gap-1 mb-1">
             <SegmentBadge segment={c.segment ?? null} /><AgentBadge agent={c.agent} />
+            <ContactLineBadge conv={c} />
             {inProcess && <ProcessBadge />}
             {c.has_follow_up && <FollowUpBadge />}
             {c.is_escalated ? <EscalatedBadge /> : <IntentBadge intent={intent} />}

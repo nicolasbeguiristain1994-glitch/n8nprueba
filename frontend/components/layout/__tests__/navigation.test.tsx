@@ -16,6 +16,7 @@ describe('CRM navigation', () => {
     const navigation = screen.getByRole('navigation', { name: 'Navegación principal' })
     expect(within(navigation).getByRole('link', { name: 'Contactos' })).toHaveAttribute('aria-current', 'page')
     expect(within(navigation).queryByRole('link', { name: 'Usuarios' })).not.toBeInTheDocument()
+    expect(within(navigation).queryByRole('link', { name: 'Agentes' })).not.toBeInTheDocument()
     expect(within(navigation).queryByRole('link', { name: 'Campañas' })).not.toBeInTheDocument()
     rerender(<MobileNav />)
     expect(screen.getByRole('link', { name: 'Contactos' })).toHaveAttribute('aria-current', 'page')
@@ -26,6 +27,7 @@ describe('CRM navigation', () => {
     mocks.user.role = 'admin'
     const { rerender } = render(<Sidebar />)
     expect(screen.getByRole('link', { name: 'Usuarios' })).toHaveAttribute('href', '/users')
+    expect(screen.getByRole('link', { name: 'Agentes' })).toHaveAttribute('href', '/agentes')
     expect(screen.getByRole('link', { name: 'Ajustes' })).toHaveAttribute('href', '/settings')
     expect(screen.queryByRole('link', { name: 'Monitoreo' })).not.toBeInTheDocument()
     rerender(<MobileNav />)

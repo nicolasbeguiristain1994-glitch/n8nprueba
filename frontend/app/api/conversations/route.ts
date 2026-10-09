@@ -54,6 +54,10 @@ export async function GET(req: NextRequest) {
     }>(`
       ${conversationInboxCte(scope.sql, 6)}, enriched_page AS (
       SELECT page.*,
+          assignment.ambiguous AS line_assignment_ambiguous,
+          CASE WHEN NOT assignment.ambiguous AND directory.id IS NOT NULL
+            THEN jsonb_build_object('label',directory.label,'phone',directory.phone)
+            ELSE NULL END AS assigned_line,
           COALESCE(cs.is_escalated, false)         AS is_escalated,
           cs.escalation_reason,
           cs.current_flow                          AS conv_flow,
@@ -76,6 +80,16 @@ export async function GET(req: NextRequest) {
            WHERE contact_id = page.contact_id AND tag LIKE 'casino:valor_riesgo:%'
            LIMIT 1)                                AS valor_riesgo
         FROM (SELECT * FROM filtered_inbox ORDER BY last_at DESC, phone_number LIMIT $4 OFFSET $5) page
+        LEFT JOIN LATERAL (
+          SELECT EXISTS (SELECT 1 FROM contacts other
+            WHERE other.phone_number IN (page.phone_number,'+' || page.phone_number)
+              AND other.deleted_at IS NULL AND other.id <> page.contact_id
+              AND (NULLIF(lower(trim(other.panel)),''),other.linea,COALESCE(trim(other.linea_sub),''))
+                IS DISTINCT FROM (page.agent,page.linea,COALESCE(trim(page.linea_sub),''))) AS ambiguous
+        ) assignment ON true
+        LEFT JOIN agent_contact_lines directory ON directory.agent_code=page.agent
+          AND directory.linea=page.linea AND directory.variant=COALESCE(trim(page.linea_sub),'')
+          AND directory.is_active=true
         LEFT JOIN LATERAL (
           SELECT is_escalated, escalation_reason, current_flow FROM conversation_state
           WHERE phone_number = page.phone_number AND resolved_at IS NULL LIMIT 1

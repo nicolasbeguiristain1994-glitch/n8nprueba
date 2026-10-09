@@ -25,7 +25,8 @@ export const conversationInboxCte = (messages = CONVERSATION_MESSAGES_CTE, agent
     ORDER BY REPLACE(phone_number, '+', ''), created_at DESC, id DESC
   ), inbox AS (
     SELECT DISTINCT ON (lm.phone_number) lm.*, c.id AS contact_id, c.first_name, c.last_name,
-      c.segment::text AS segment, NULLIF(lower(trim(c.panel)), '') AS agent, COALESCE(ch.campaigns, '[]'::jsonb) AS campaigns
+      c.segment::text AS segment, NULLIF(lower(trim(c.panel)), '') AS agent,
+      c.linea, c.linea_sub, COALESCE(ch.campaigns, '[]'::jsonb) AS campaigns
     FROM latest_messages lm
     LEFT JOIN contacts c ON REPLACE(c.phone_number, '+', '') = lm.phone_number
     LEFT JOIN campaign_history ch ON ch.phone_number = lm.phone_number
