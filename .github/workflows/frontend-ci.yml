@@ -12,7 +12,8 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:17
+        # Docker Official Image via ECR avoids Docker Hub's shared-runner pull limit.
+        image: public.ecr.aws/docker/library/postgres:17
         env:
           POSTGRES_PASSWORD: local-test-only
           POSTGRES_DB: postgres
