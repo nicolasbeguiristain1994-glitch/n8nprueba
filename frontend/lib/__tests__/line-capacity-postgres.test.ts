@@ -21,7 +21,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('standalone Cloud cap
   let db: Pool
   const schema=`line_capacity_${process.pid}`
   const line={id:'00000000-0000-4000-8000-000000000001',phone_number_id:'123456789'}
-  const send=()=>sendViaCloud(line,'+5491112345678',{kind:'text',body:'Synthetic reply'},undefined,{purpose:'conversation_reply',reserveCapacity:true})
+  const send=()=>sendViaCloud(line,'+5491112345678',{kind:'text',body:'Synthetic reply',mediaUrl:null},undefined,{purpose:'conversation_reply',reserveCapacity:true})
   beforeAll(async()=>{
     const url=new URL(process.env.DATABASE_URL!)
     if(!['localhost','127.0.0.1'].includes(url.hostname))throw Error('LOCAL_ONLY')
