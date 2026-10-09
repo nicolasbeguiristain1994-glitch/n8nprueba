@@ -1,11 +1,11 @@
 'use client'
 
-import { memo, useState, useEffect, useCallback } from 'react'
+import { memo, useState, useEffect, useCallback, useId } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Wallet, ChevronLeft, ChevronRight, BookOpen, Search } from 'lucide-react'
+import { Wallet, ChevronLeft, ChevronRight, ChevronDown, BookOpen, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { CajaRow, CajaTotals } from '@/app/api/dashboard/caja/route'
 
@@ -197,6 +197,8 @@ function Pagination({ page, total, perPage, onChange }: PaginationProps) {
 export const CajaWidget = memo(function CajaWidget({ dateRange, platform, agent, revision, enabled = true }: {
   enabled?: boolean; dateRange: DateRange; platform: Platform; agent: string; revision: number
 }) {
+  const [expanded, setExpanded] = useState(false)
+  const contentId = useId()
   const { from, to } = queryDateRange(dateRange)
   const [searchBy, setSearchBy] = useState<'username' | 'agente'>('username')
   const [search,   setSearch]   = useState('')
@@ -209,7 +211,7 @@ export const CajaWidget = memo(function CajaWidget({ dateRange, platform, agent,
   }, [inputVal])
 
   useEffect(() => { setPage(1) }, [from, to, platform, agent])
-  const params: CajaParams = { enabled, from, to, platform, agent, revision, search, searchBy, page }
+  const params: CajaParams = { enabled: enabled && expanded, from, to, platform, agent, revision, search, searchBy, page }
   const { rows, total, totals, loading, error } = useCajaData(params)
 
   const PER_PAGE = 20
@@ -217,14 +219,23 @@ export const CajaWidget = memo(function CajaWidget({ dateRange, platform, agent,
   return (
     <Card>
       {/* ── Header ── */}
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-sm">
-          <Wallet className="w-4 h-4 text-primary" />
-          Caja (Depósitos y Retiros)
-        </CardTitle>
+      <CardHeader>
+        <div className="flex flex-wrap items-center justify-between gap-3 pr-4">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Wallet className="w-4 h-4 text-primary" aria-hidden="true" />
+            Caja (Depósitos y Retiros)
+          </CardTitle>
+          <Button variant="outline" size="sm" aria-expanded={expanded} aria-controls={contentId}
+            onClick={() => setExpanded(value => !value)}>
+            {expanded ? 'Ocultar movimientos' : 'Ver movimientos'}
+            <ChevronDown className={cn('size-4 transition-transform', expanded && 'rotate-180')} aria-hidden="true" />
+          </Button>
+        </div>
 
-        <p className="text-xs text-muted-foreground">Período y plataforma del dashboard · {describeDateRange(dateRange)} · {PLATFORM_LABELS[platform]}{agent ? ` · ${agent}` : ''} · ARS. Saldo = depósitos + bonos registrados − retiros.</p>
-        <div className="flex flex-wrap items-end gap-2 mt-2">
+        <p className="text-xs text-muted-foreground">{describeDateRange(dateRange)} · {PLATFORM_LABELS[platform]} · {agent || 'Todos los agentes'} · ARS</p>
+      </CardHeader>
+      <div id={contentId} hidden={!expanded}>
+        <div className="flex flex-wrap items-end gap-2 px-5 pb-4">
           {/* Search by selector + input */}
           <div className="flex flex-col gap-1">
             <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Buscar en</span>
@@ -263,10 +274,10 @@ export const CajaWidget = memo(function CajaWidget({ dateRange, platform, agent,
           </div>
 
         </div>
-      </CardHeader>
 
       {/* ── Body ── */}
       <CardContent className="p-0">
+        <p className="px-5 pb-3 text-xs text-muted-foreground">Saldo = depósitos + bonos registrados − retiros.</p>
         {loading ? (
           <div className="px-4 pb-4"><Skeleton /></div>
         ) : error ? (
@@ -381,6 +392,7 @@ export const CajaWidget = memo(function CajaWidget({ dateRange, platform, agent,
           </>
         )}
       </CardContent>
+      </div>
     </Card>
   )
 })

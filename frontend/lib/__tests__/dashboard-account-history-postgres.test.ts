@@ -73,6 +73,31 @@ describe.skipIf(process.env.RUN_DASHBOARD_PG_TESTS !== '1')('complete dashboard 
     await sql("SET LOCAL TIME ZONE 'Pacific/Honolulu'")
     expect(await account('risk')).toMatchObject({ seg_actividad: 'en_riesgo' })
   })
+  it('reconciles new users by agent with the total across platforms, aliases and period boundaries', async () => {
+    await tx(1, 'shared', 100, '2026-09-01', { agent: 'royal' })
+    await tx(2, 'shared', 200, '2026-09-10', { agent: 'farabet' })
+    await tx(3, 'shared', 100, '2026-09-30', { platform: 'bet30', agent: 'zeusroyal' })
+    await tx(4, 'other', 100, '2026-09-15', { platform: 'argenbet', agent: 'adminbtc' })
+    await tx(5, 'older', 100, '2026-08-31')
+    await tx(6, 'older', 100, '2026-09-15')
+    await tx(7, 'later', 100, '2026-10-01')
+    await tx(8, 'bonus-only', 100, '2026-09-15', { details: 'Bono' })
+    const read = async (scope: string) => (await GET(new Request(`http://localhost/api/dashboard/casino?${scope}&from=2026-09-01&to=2026-09-30`))).json()
+    const all = await read('platform=consolidado')
+    expect(all.summary.nuevos_mes).toBe(3)
+    expect(all.agentes.reduce((sum: number, row: { nuevos_mes: number }) => sum + row.nuevos_mes, 0)).toBe(3)
+    expect(all.agentes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ agente: 'royal', nuevos_mes: 2 }),
+      expect.objectContaining({ agente: 'betcoin', nuevos_mes: 1 }),
+      expect.objectContaining({ agente: 'farabet', nuevos_mes: 0 }),
+    ]))
+    const royal = await read('platform=consolidado&agent=royal')
+    expect(royal.summary.nuevos_mes).toBe(2)
+    expect(royal.agentes).toEqual([expect.objectContaining({ agente: 'royal', nuevos_mes: 2 })])
+    const bet30 = await read('platform=bet30&agent=zeusroyal')
+    expect(bet30.summary.nuevos_mes).toBe(1)
+    expect(bet30.agentes).toEqual([expect.objectContaining({ agente: 'zeusroyal', nuevos_mes: 1 })])
+  })
   it('updates amounts, dates, bonus classification and deletes without stale aggregates', async () => {
     await tx(1, 'shared', 100, '2026-08-01')
     await tx(2, 'shared', 200, '2026-09-01')
@@ -84,6 +109,43 @@ describe.skipIf(process.env.RUN_DASHBOARD_PG_TESTS !== '1')('complete dashboard 
     expect(await account()).toMatchObject({ total_cargas: '0', cant_cargas: 0, fecha_primera: null, seg_actividad: 'perdido' })
     await sql('DELETE FROM casino_transactions WHERE id=2')
     expect(await account()).toBeUndefined()
+  })
+  it('ranks net withdrawals with exact amounts, excludes bonuses and keeps platform identities separate', async () => {
+    await tx(1, 'Shared', 100, '2026-09-01')
+    await tx(2, 'shared', 350, '2026-09-20', { kind: 'retiro' })
+    await tx(3, 'shared', 9000, '2026-09-20', { details: 'Bono' })
+    await tx(4, 'shared', 5000, '2026-08-31', { kind: 'retiro' })
+    await tx(5, 'shared', 5000, '2026-10-01', { kind: 'retiro' })
+    await tx(6, 'shared', 75, '2026-09-20', { kind: 'retiro', platform: 'bet30', agent: 'zeusroyal' })
+    await tx(7, 'shared', 50, '2026-09-20', { kind: 'retiro', agent: 'farabet' })
+    await tx(8, 'negative', 500, '2026-09-20')
+    await tx(9, 'negative', 400, '2026-09-20', { kind: 'retiro' })
+    await tx(10, 'zero', 50, '2026-09-20')
+    await tx(11, 'zero', 50, '2026-09-20', { kind: 'retiro' })
+    await tx(12, 'precise', 300, '2026-09-20', { kind: 'retiro', platform: 'argenbet', agent: 'adminroyal' })
+    await sql("INSERT INTO casino_financial_source_records(platform,source_id,transaction_id,kind,monto) VALUES('argenbet','original',12,'importe_original',300.009)")
+    await tx(13, 'boundary', 9000, '2026-09-01', { kind: 'retiro', instant: '2026-09-01T02:59:59Z' })
+    const read = async (scope: string) => (await GET(new Request(`http://localhost/api/dashboard/casino?${scope}&from=2026-09-01&to=2026-09-30`))).json()
+    const all = await read('platform=consolidado')
+    expect(all.cash_ranking).toEqual([
+      { platform: 'argenbet', username: 'precise', agentes: 'royal', depositos: '0', retiros: '300.009', diferencia: '300.009' },
+      { platform: 'zeus', username: 'shared', agentes: 'farabet, royal', depositos: '100', retiros: '400', diferencia: '300' },
+      { platform: 'bet30', username: 'shared', agentes: 'royal', depositos: '0', retiros: '75', diferencia: '75' },
+    ])
+    const royal = await read('platform=consolidado&agent=royal')
+    expect(royal.cash_ranking[1]).toMatchObject({ agentes: 'royal', retiros: '350', diferencia: '250' })
+    const bet30 = await read('platform=bet30&agent=zeusroyal')
+    expect(bet30.cash_ranking).toEqual([{ platform: 'bet30', username: 'shared', agentes: 'zeusroyal', depositos: '0', retiros: '75', diferencia: '75' }])
+  })
+  it('returns only the 20 highest positive differences with stable ordering for ties', async () => {
+    for (let i = 1; i <= 25; i++) await tx(i, `player-${String(i).padStart(2, '0')}`, i, '2026-09-15', { kind: 'retiro' })
+    await tx(26, 'tie', 25, '2026-09-15', { kind: 'retiro' })
+    const response = await GET(new Request('http://localhost/api/dashboard/casino?platform=zeus&from=2026-09-01&to=2026-09-30'))
+    const { cash_ranking } = await response.json()
+    expect(cash_ranking).toHaveLength(20)
+    expect(cash_ranking[0]).toMatchObject({ username: 'player-25', diferencia: '25' })
+    expect(cash_ranking[1]).toMatchObject({ username: 'tie', diferencia: '25' })
+    expect(cash_ranking[19]).toMatchObject({ username: 'player-07', diferencia: '7' })
   })
   it('refreshes both identities when a transaction changes platform, name or id', async () => {
     await tx(1, 'shared', 100, '2026-09-01')

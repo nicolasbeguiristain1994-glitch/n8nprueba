@@ -9,6 +9,8 @@ import { useToast } from './useToast'
 import { DashboardHeader } from './DashboardHeader'
 import { DepositCharts } from './DepositCharts'
 import { PlatformOverview } from './PlatformOverview'
+import { NewUsersByAgent } from './NewUsersByAgent'
+import { CashRanking } from './CashRanking'
 import { WidgetGrid } from './WidgetGrid'
 import { AddWidgetModal } from './widgets/AddWidgetModal'
 import { Toast } from './Toast'
@@ -118,8 +120,13 @@ export function Dashboard() {
         <span className="ml-auto flex items-center gap-2 font-medium text-primary">Abrir tareas <ArrowRight size={16} aria-hidden="true" /></span>
       </Link>}
 
+      <NewUsersByAgent agentes={data?.casino?.agentes ?? null} loading={loading && !data?.casino}
+        dateRange={dateRange} platform={platform} agent={agent} />
+
       {/* PlatformOverview labels "from al to" inclusively: give it the days actually queried. */}
       <PlatformOverview activity={data?.activity ?? null} platform={platform} agent={agent} from={includedDays.from} to={includedDays.to} loading={activityLoading} />
+
+      <CashRanking rows={data?.casino?.cash_ranking ?? null} loading={loading && !data?.casino} />
 
       <DepositCharts data={data?.deposits ?? null} loading={depositsLoading} />
 

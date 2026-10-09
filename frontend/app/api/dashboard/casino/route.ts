@@ -47,7 +47,15 @@ export interface CasinoVip {
 }
 
 export interface SegCount { seg: string; cnt: number }
-export interface CasinoDashboardData { summary: CasinoSummary; agentes: CasinoAgente[]; vips: CasinoVip[]; seg_actividad: SegCount[]; seg_monto: SegCount[] }
+export interface CasinoCashRankingRow {
+  platform: string
+  username: string
+  agentes: string
+  depositos: string
+  retiros: string
+  diferencia: string
+}
+export interface CasinoDashboardData { summary: CasinoSummary; agentes: CasinoAgente[]; vips: CasinoVip[]; seg_actividad: SegCount[]; seg_monto: SegCount[]; cash_ranking: CasinoCashRankingRow[] }
 
 // Period KPIs use the transaction ledger; segmentation describes the current state.
 export async function GET(req: Request) {
@@ -64,6 +72,7 @@ export async function GET(req: Request) {
   const filter = getPlatformFilterSql(platform)
   const cpFilter = getPlatformFilterSql(platform, 'cp')
   const agentExpr = platform === 'consolidado' ? platformCanonicalAgentSql('a') : 'a.agente'
+  const rankingAgentExpr = platform === 'consolidado' ? platformCanonicalAgentSql('l') : 'LOWER(BTRIM(l.agente))'
   const vipLevels = "('super_vip','vip_alto','vip_medio','vip')"
   const scopedAccounts = `SELECT * FROM casino_dashboard_players cp WHERE ${cpFilter}`
   // Both period consumers share the same bounded ledger. Without this scope,
@@ -133,6 +142,21 @@ export async function GET(req: Request) {
         LEFT JOIN period_tx ct ON ct.platform = a.platform AND ct.agente = a.agente AND ct.uname = a.uname
         GROUP BY 1 ORDER BY total DESC
       ),
+      cash_ranking AS (
+        SELECT platform, LOWER(BTRIM(username)) AS username,
+          STRING_AGG(DISTINCT COALESCE(${rankingAgentExpr}, 'Sin agente'), ', ' ORDER BY COALESCE(${rankingAgentExpr}, 'Sin agente')) AS agentes,
+          COALESCE(SUM(monto) FILTER (WHERE tipo='carga'),0)::text AS depositos,
+          COALESCE(SUM(monto) FILTER (WHERE tipo='retiro'),0)::text AS retiros,
+          SUM(CASE WHEN tipo='retiro' THEN monto ELSE -monto END)::text AS diferencia
+        FROM ledger l
+        WHERE tipo IN ('carga','retiro') AND NULLIF(BTRIM(username),'') IS NOT NULL
+          AND ${movementDateSql('l')} BETWEEN $1::date AND $2::date
+        GROUP BY platform, LOWER(BTRIM(username))
+        HAVING SUM(CASE WHEN tipo='retiro' THEN monto ELSE -monto END) > 0
+        ORDER BY SUM(CASE WHEN tipo='retiro' THEN monto ELSE -monto END) DESC,
+          SUM(monto) FILTER (WHERE tipo='retiro') DESC, platform, LOWER(BTRIM(username))
+        LIMIT 20
+      ),
       vips AS (
         SELECT username_lower AS username, platform, agente, seg_monto, seg_actividad,
           ((CURRENT_TIMESTAMP AT TIME ZONE 'America/Argentina/Buenos_Aires')::date - fecha_ultima)::int AS dias_ultimo,
@@ -151,6 +175,7 @@ export async function GET(req: Request) {
       SELECT json_build_object(
         'summary', (SELECT row_to_json(s) FROM summary s),
         'agentes', COALESCE((SELECT json_agg(a) FROM agents a), '[]'::json),
+        'cash_ranking', COALESCE((SELECT json_agg(r) FROM cash_ranking r), '[]'::json),
         'vips', COALESCE((SELECT json_agg(v) FROM vips v), '[]'::json),
         'seg_actividad', COALESCE((SELECT json_agg(a) FROM activity_segments a), '[]'::json),
         'seg_monto', COALESCE((SELECT json_agg(v) FROM value_segments v), '[]'::json)
