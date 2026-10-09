@@ -7,8 +7,10 @@ export const AgentNameSchema = z.object({ name: z.string().trim().min(1, 'Ingres
 export const NewAgentSchema = AgentNameSchema.extend({ code: AgentCodeSchema })
 export const AgentLineDetailsSchema = z.object({
   label: z.string().trim().min(1, 'Ingresá un nombre para la línea').max(100),
-  phone: z.string().trim().max(40).transform(value => value.replace(/[\s().-]/g, ''))
-    .pipe(z.string().regex(/^\+[1-9][0-9]{7,14}$/, 'Ingresá el teléfono con + y código de país, por ejemplo +5491123456789')),
+  phone: z.string().trim().max(40).transform(value => {
+    const compact = value.replace(/[\s().|\-]/g, '')
+    return /^549\d{10}$/.test(compact) ? '+' + compact : compact
+  }).pipe(z.string().regex(/^\+[1-9][0-9]{7,14}$/, 'Ingresá el teléfono completo con código de país, por ejemplo 549 | 1123 | 456789')),
   is_active: z.boolean(),
 }).strict()
 export const NewAgentLineSchema = AgentLineDetailsSchema.extend({

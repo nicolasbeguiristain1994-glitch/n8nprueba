@@ -1,4 +1,5 @@
 import { hasAssignedLineVariable, replaceAssignedLineVariable } from './assigned-line-variable'
+import { formatAgentLinePhone } from './agent-line-types'
 
 /** Snapshot provided by the operator on 2026-10-06, retained for migration/tests.
  * Live automation calls pass the editable database directory explicitly.
@@ -25,9 +26,7 @@ export function ofizeusReply(contacts: RoutingContact[], prefix:string,
   const c=contacts[0],variant=(c.linea_sub??'').trim().toLowerCase()
   const line=directory.find(([n,v])=>c.linea!==null && Number(c.linea)===n && variant===v)
   if (!line) return {message:ADVISOR_FALLBACK,handoff:true}
-  const phone = line[3].replace(/^\+/, '')
-  const formatted = phone.startsWith('549') && phone.length === 13
-    ? `${phone.slice(0,3)} | ${phone.slice(3,7)} | ${phone.slice(7)}` : '+' + phone
+  const formatted = formatAgentLinePhone('+' + line[3].replace(/^\+/, ''))
   // Preserve the earlier append behavior for already configured messages. A
   // variable inserts only the number in place, without adding another footer.
   const message = hasAssignedLineVariable(prefix)

@@ -19,7 +19,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('agent directory on PostgreS
   const req=(method='GET',body?:unknown,user=1)=>makeReqWithSession('http://localhost/api/agents',
     makeAdminSession({user_id:id(user)}),{method,...(body?{body:JSON.stringify(body),headers:{'Content-Type':'application/json'}}:{})})
   const params=(code:string,line?:string)=>({params:Promise.resolve({code,id:line||id(99)})})
-  const line={linea:8,variant:'a',label:'Royal 8A',phone:'+549 11 1234-5678',is_active:true}
+  const line={linea:8,variant:'a',label:'Royal 8A',phone:'549 | 1112 | 345678',is_active:true}
   beforeAll(async()=>{
     const url=new URL(process.env.OPS_TEST_DATABASE_URL!)
     if(!['127.0.0.1','localhost'].includes(url.hostname))throw Error('LOCAL_ONLY')

@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { useCurrentUser } from '@/lib/useCurrentUser'
-import { contactLineLabel, type AgentDirectoryEntry, type AgentLine } from '@/lib/agent-line-types'
+import { contactLineLabel, formatAgentLinePhone, type AgentDirectoryEntry, type AgentLine } from '@/lib/agent-line-types'
 
 type Editor = {kind:'agent';agent?:AgentDirectoryEntry} | {kind:'line';agent:AgentDirectoryEntry;line?:AgentLine}
 type Fields = {code:string;name:string;linea:string;variant:string;label:string;phone:string;is_active:boolean}
@@ -34,7 +34,7 @@ export default function AgentsPage() {
   const open = (next:Editor) => {
     setFormError('');setNotice('');setEditor(next)
     setFields(next.kind==='agent' ? {...empty,code:next.agent?.code||'',name:next.agent?.name||''}
-      : {...empty,linea:String(next.line?.linea||1),variant:next.line?.variant||'',label:next.line?.label||'',phone:next.line?.phone||'',is_active:next.line?.is_active??true})
+      : {...empty,linea:String(next.line?.linea||1),variant:next.line?.variant||'',label:next.line?.label||'',phone:next.line?formatAgentLinePhone(next.line.phone):'',is_active:next.line?.is_active??true})
   }
   const save = async(e:React.FormEvent) => {
     e.preventDefault(); if (!editor || saving) return
@@ -54,7 +54,7 @@ export default function AgentsPage() {
   if(authLoading)return <p role="status">Cargando…</p>
   if(user?.role!=='admin')return <p role="alert">Solo los administradores pueden gestionar los agentes y sus líneas.</p>
   const term=search.trim().toLowerCase()
-  const shown=agents.filter(a=>(!selected||a.code===selected) && (!term || [a.code,a.name,...a.lines.flatMap(l=>[l.label,l.phone,contactLineLabel(l.linea,l.variant)])].some(v=>v.toLowerCase().includes(term))))
+  const shown=agents.filter(a=>(!selected||a.code===selected) && (!term || [a.code,a.name,...a.lines.flatMap(l=>[l.label,l.phone,formatAgentLinePhone(l.phone),contactLineLabel(l.linea,l.variant)])].some(v=>v.toLowerCase().includes(term))))
   return <div className="space-y-5">
     <PageHeader title="Agentes" description="Guardá los teléfonos de las líneas designadas para compartirlos desde Conversaciones."
       actions={<Button onClick={()=>open({kind:'agent'})}><Plus size={16}/>Nuevo agente</Button>}/>
@@ -76,7 +76,7 @@ export default function AgentsPage() {
       </div>
       {!agent.lines.length?<div className="flex items-center gap-2 p-5 text-sm text-muted-foreground"><Phone size={16}/>Todavía no hay teléfonos cargados para este agente.</div>:
       <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-muted/50 text-xs text-muted-foreground"><tr><th className="px-4 py-3">Asignación</th><th className="px-4 py-3">Nombre de la línea</th><th className="px-4 py-3">Teléfono</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3 text-right">Acciones</th></tr></thead>
-        <tbody>{agent.lines.map(line=><tr key={line.id} className="border-t"><td className="whitespace-nowrap px-4 py-3 font-medium">{contactLineLabel(line.linea,line.variant)}</td><td className="px-4 py-3">{line.label}</td><td className="select-text whitespace-nowrap px-4 py-3 font-mono">{line.phone}</td><td className="px-4 py-3"><span className={line.is_active?'text-success':'text-muted-foreground'}>{line.is_active?'Activa':'Inactiva'}</span></td><td className="px-4 py-3 text-right"><Button variant="ghost" size="sm" aria-label={`Editar ${agent.name} ${contactLineLabel(line.linea,line.variant)}`} onClick={()=>open({kind:'line',agent,line})}><Pencil size={14}/>Editar</Button></td></tr>)}</tbody></table></div>}
+        <tbody>{agent.lines.map(line=><tr key={line.id} className="border-t"><td className="whitespace-nowrap px-4 py-3 font-medium">{contactLineLabel(line.linea,line.variant)}</td><td className="px-4 py-3">{line.label}</td><td className="select-text whitespace-nowrap px-4 py-3 font-mono">{formatAgentLinePhone(line.phone)}</td><td className="px-4 py-3"><span className={line.is_active?'text-success':'text-muted-foreground'}>{line.is_active?'Activa':'Inactiva'}</span></td><td className="px-4 py-3 text-right"><Button variant="ghost" size="sm" aria-label={`Editar ${agent.name} ${contactLineLabel(line.linea,line.variant)}`} onClick={()=>open({kind:'line',agent,line})}><Pencil size={14}/>Editar</Button></td></tr>)}</tbody></table></div>}
     </section>)}
     {!loading&&!error&&!shown.length&&<p className="p-5 text-center text-muted-foreground">No se encontraron agentes o líneas.</p>}
     <Dialog open={!!editor} onOpenChange={value=>{if(!value&&!saving)setEditor(null)}}>
@@ -91,7 +91,7 @@ export default function AgentsPage() {
             <div className="grid grid-cols-2 gap-3"><label className="block space-y-1 text-sm">Número de línea<Input type="number" min={1} max={100} required disabled={!!editor?.line} value={fields.linea} onChange={e=>setFields({...fields,linea:e.target.value})}/></label>
               <label className="block space-y-1 text-sm">Variante<select className="h-10 w-full rounded-lg border border-input bg-card px-3" disabled={!!editor?.line} value={fields.variant} onChange={e=>setFields({...fields,variant:e.target.value})}><option value="">Sin variante</option><option value="a">A</option><option value="b">B</option><option value="c">C</option></select></label></div>
             <label className="block space-y-1 text-sm">Nombre de la línea<Input required maxLength={100} placeholder="Royal línea 8" value={fields.label} onChange={e=>setFields({...fields,label:e.target.value})}/></label>
-            <label className="block space-y-1 text-sm">Teléfono<Input type="tel" required maxLength={40} placeholder="+5491123456789" value={fields.phone} onChange={e=>setFields({...fields,phone:e.target.value})}/></label>
+            <label className="block space-y-1 text-sm">Teléfono<Input type="tel" required maxLength={40} placeholder="549 | 1123 | 456789" value={fields.phone} onChange={e=>setFields({...fields,phone:e.target.value})}/></label>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={fields.is_active} onChange={e=>setFields({...fields,is_active:e.target.checked})}/>Línea activa</label>
           </>}
           {formError&&<p role="alert" className="text-sm text-destructive">{formError}</p>}

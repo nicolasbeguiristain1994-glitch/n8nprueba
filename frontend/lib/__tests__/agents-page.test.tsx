@@ -18,6 +18,7 @@ describe('Agents management',()=>{
     const modal=screen.getByRole('dialog')
     expect(within(modal).getByLabelText('Número de línea')).toBeDisabled()
     expect(within(modal).getByLabelText('Variante')).toBeDisabled()
+    expect(within(modal).getByLabelText('Teléfono')).toHaveValue('549 | 1112 | 345678')
     fireEvent.change(within(modal).getByLabelText('Teléfono'),{target:{value:'+5491199999999'}})
     fireEvent.click(within(modal).getByLabelText('Línea activa'))
     fireEvent.click(within(modal).getByRole('button',{name:'Guardar'}))
@@ -43,7 +44,7 @@ describe('Agents management',()=>{
   })
   it('lets the admin add an agent using its Contacts identifier',async()=>{
     render(<AgentsPage/>)
-    await screen.findByText('+5491112345678')
+    await screen.findByText('549 | 1112 | 345678')
     fireEvent.click(screen.getByRole('button',{name:'Nuevo agente'}))
     const modal=screen.getByRole('dialog')
     fireEvent.change(within(modal).getByLabelText('Nombre del agente'),{target:{value:'Mi agente'}})
