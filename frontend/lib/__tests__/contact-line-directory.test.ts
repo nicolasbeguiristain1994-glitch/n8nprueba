@@ -4,6 +4,11 @@ describe('Ofizeus active line directory',()=>{
  it.each(OFIZEUS_LINES)('resolves line %s variant %s to %s',(linea,linea_sub,label,phone)=>{
   expect(ofizeusReply([{first_name:'Ana',panel:' OFIZEUS ',linea,linea_sub}], 'Tu línea:')).toEqual({message:`Tu línea:\n\n${label} ${phone.slice(0,3)} | ${phone.slice(3,7)} | ${phone.slice(7)}`,handoff:false})
  })
+ it.each([null,'','a','b','c',' B '])('routes Line 1 variant %s to the operator-designated common destination',linea_sub=>{
+  const contact={first_name:'Cliente',panel:'ofizeus',linea:'1',linea_sub}
+  expect(ofizeusReply([contact],'Tu línea es {{2}}')).toEqual({message:'Tu línea es 549 | 1125 | 489456',handoff:false})
+  expect(ofizeusReply([contact],'Tu línea:')).toEqual({message:'Tu línea:\n\nZEUS 1 549 | 1125 | 489456',handoff:false})
+ })
  it('replaces the exact user message in place without adding name or a duplicate footer',()=>{
   const message='Hola! Envia la palabra EXTRA a tu linea designada para habilitar el regalo 🎁\nSuerte! 🍀\nLines designada: {{2}}'
   expect(ofizeusReply([{first_name:'Ana',panel:'ofizeus',linea:3,linea_sub:'a'}],message)).toEqual({message:'Hola! Envia la palabra EXTRA a tu linea designada para habilitar el regalo 🎁\nSuerte! 🍀\nLines designada: 549 | 1124 | 915455',handoff:false})

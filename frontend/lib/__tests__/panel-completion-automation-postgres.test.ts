@@ -89,6 +89,23 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   expect(m.send.mock.calls[0][0].request.text.body).toBe(expected)
   expect((await pool.query('SELECT body FROM automation_message_jobs')).rows[0].body).toBe(expected)
  })
+ it.each(['a','b','c'])('routes Line 1 variant %s without handing it off to an advisor',async(linea_sub)=>{
+  await pool.query(`UPDATE contacts SET panel='ofizeus',linea=1,linea_sub=$1`,[linea_sub])
+  await pool.query(`UPDATE automations SET trigger_type='keyword',trigger_config='{"keywords":["EXTRA"],"once_per_chat":true}',action_config='{"message":"Tu línea es {{2}}","contact_line_directory":"ofizeus"}'`)
+  await evaluateAutomations(phone,'EXTRA','line-one',source)
+  expect(m.send).toHaveBeenCalledTimes(1)
+  expect(m.send.mock.calls[0][0].request).toEqual({phoneNumberId:'phone-a',to:'+'+phone,type:'text',text:{body:'Tu línea es 549 | 1125 | 489456'}})
+  expect((await pool.query('SELECT body,handoff,status FROM automation_message_jobs')).rows).toEqual([{body:'Tu línea es 549 | 1125 | 489456',handoff:false,status:'sent'}])
+  expect((await pool.query('SELECT * FROM conversation_state')).rows).toEqual([])
+ })
+ it('does not resend Line 1 details to a chat already handed to an operator',async()=>{
+  await pool.query(`UPDATE contacts SET panel='ofizeus',linea=1,linea_sub='b';UPDATE automations SET action_config='{"message":"Tu línea es {{2}}","contact_line_directory":"ofizeus"}';INSERT INTO conversation_state(phone_number,is_escalated) VALUES('${phone}',true)`)
+  await evaluateAutomations(phone,'información','line-one-manual',source)
+  await processAutomationJobs()
+  expect(m.send).not.toHaveBeenCalled()
+  expect((await pool.query('SELECT * FROM automation_message_jobs')).rows).toEqual([])
+  expect((await pool.query('SELECT is_escalated FROM conversation_state')).rows).toEqual([{is_escalated:true}])
+ })
  it('hands unknown variants to an advisor without substituting the primary line',async()=>{
   await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3,linea_sub='b';UPDATE automations SET action_config='{"message":"Tu línea:","contact_line_directory":"ofizeus"}'`)
   await evaluateAutomations(phone,'información','routing-b',source)
