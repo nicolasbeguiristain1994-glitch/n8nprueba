@@ -13,6 +13,8 @@ import { MobileNav } from './MobileNav'
 import { CommandPalette } from './CommandPalette'
 import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { Footer } from './Footer'
+import { useConversationViewport } from '@/hooks/useConversationViewport'
+import styles from './AppShell.module.css'
 
 interface AppShellProps {
   children: React.ReactNode
@@ -24,6 +26,8 @@ const serverSnapshot = () => false
 
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname()
+  const isConversations = pathname === '/conversations'
+  const viewport = useConversationViewport(isConversations)
   // Apply the saved width after hydration without discarding the preference.
   const [savedCollapsed, setCollapsed] = useLocalStorage('sidebar:collapsed', false)
   const hydrated = useSyncExternalStore(subscribeHydration, clientSnapshot, serverSnapshot)
@@ -47,7 +51,7 @@ export function AppShell({ children }: AppShellProps) {
     <CurrentUserProvider refreshKey={pathname}>
     <SidebarContext.Provider value={sidebarContext}>
       <a href="#main-content" className="skip-link">Ir al contenido principal</a>
-      <div className="flex h-dvh w-full bg-background overflow-hidden">
+      <div className={`flex h-dvh w-full bg-background overflow-hidden ${isConversations ? styles.conversations : ''}`} data-keyboard-open={viewport?.keyboardOpen || undefined} style={viewport ? { height: viewport.height, top: viewport.top } : undefined}>
         {/* Sidebar desktop — hidden en mobile */}
         <Sidebar />
 
@@ -60,9 +64,9 @@ export function AppShell({ children }: AppShellProps) {
           <Topbar onSearchClick={() => setCmdOpen(true)} />
 
           {/* pb-16 md:pb-0 → reserva espacio para MobileNav en mobile */}
-          <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0 flex flex-col outline-none">
-            <div className="flex-1 min-w-0">{children}</div>
-            <Footer />
+          <main id="main-content" tabIndex={-1} className="flex-1 min-h-0 min-w-0 overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0 flex flex-col outline-none">
+            <div className={`flex-1 min-w-0 ${isConversations ? styles.content : ''}`}>{children}</div>
+            {!isConversations && <Footer />}
           </main>
         </div>
       </div>
@@ -71,7 +75,7 @@ export function AppShell({ children }: AppShellProps) {
       <MobileSidebar />
 
       {/* Bottom nav — visible solo en mobile */}
-      <MobileNav />
+      {!viewport?.keyboardOpen && <MobileNav />}
 
       {/* Command palette global — se monta siempre para registrar Cmd+K */}
       <CommandPalette open={cmdOpen} onOpenChange={setCmdOpen} />

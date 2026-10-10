@@ -151,7 +151,10 @@ export function useConversations() {
         setMessages(prev => {
           const next = d.messages || []
           if (scroll || next.length !== prev.length)
-            setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+            setTimeout(() => {
+              const panel = messagesEndRef.current?.parentElement
+              panel?.scrollTo({ top: panel.scrollHeight, behavior: 'smooth' })
+            }, 50)
           return next
         })
       })

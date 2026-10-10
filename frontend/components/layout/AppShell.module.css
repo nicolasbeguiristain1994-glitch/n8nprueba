@@ -1,0 +1,40 @@
+/* The inbox has its own scrolling panels, so it fills the space below Topbar. */
+.conversations main {
+  overflow: hidden;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.content > :global(.page-content) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+}
+
+@media (max-width: 767px) {
+  .conversations {
+    position: fixed;
+    inset-inline: 0;
+    top: 0;
+  }
+
+  .content > :global(.page-content) {
+    padding: 0.5rem;
+  }
+
+  .conversations[data-keyboard-open] main {
+    padding-bottom: 0;
+  }
+
+  .conversations[data-keyboard-open] > div > header {
+    display: none;
+  }
+}

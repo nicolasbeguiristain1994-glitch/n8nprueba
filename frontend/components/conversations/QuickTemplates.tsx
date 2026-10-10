@@ -65,7 +65,7 @@ export function QuickTemplates({ contactName, onSelect }: Props) {
         <>
           {/* Backdrop */}
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full mb-1.5 left-0 w-72 bg-card border border-border rounded-lg shadow-xl z-50 overflow-hidden">
+          <div className="absolute bottom-full mb-1.5 left-0 w-72 max-w-[calc(100vw-5rem)] max-h-[50dvh] overflow-y-auto bg-card border border-border rounded-lg shadow-xl z-50">
             <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide px-3 pt-2.5 pb-1">
               Plantillas rápidas
             </p>

@@ -78,10 +78,12 @@ export default function Conversations() {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-2 md:gap-3">
+      <div className={cn('shrink-0', mobilePanel !== 'list' && 'hidden lg:block')}>
       <PageHeader title="Conversaciones" description={`${convs.length}${totalConvs > convs.length ? ` de ${totalConvs}` : ''} hilos · ${convs.filter(c => c.last_direction === 'inbound').length} sin responder`} />
+      </div>
 
-      <div className={cn('grid min-h-[420px] h-[calc(100dvh-16rem)] gap-3 md:h-[calc(100dvh-13rem)] lg:grid-cols-[300px_minmax(0,1fr)]', selected && detailsOpen && 'xl:grid-cols-[300px_minmax(0,1fr)_280px]')}>
+      <div className={cn('grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-3 lg:grid-cols-[300px_minmax(0,1fr)]', selected && detailsOpen && 'xl:grid-cols-[300px_minmax(0,1fr)_280px]')}>
 
         {/* Lista */}
         <Card className={cn("min-h-0 overflow-hidden flex-col gap-0 py-0", mobilePanel === 'list' ? 'flex' : 'hidden lg:flex')}>
@@ -122,7 +124,7 @@ export default function Conversations() {
 
         {/* Chat */}
         <Card className={cn("min-h-0 flex-col gap-0 overflow-hidden py-0", mobilePanel === 'chat' ? 'flex' : mobilePanel === 'details' ? 'hidden xl:flex' : 'hidden lg:flex')}>
-          {selected && <div className="flex items-center justify-between border-b px-3 py-2">
+          {selected && <div className="flex shrink-0 items-center justify-between border-b px-2 py-1 md:px-3 md:py-2">
             <Button size="sm" variant="ghost" onClick={() => setMobilePanel('list')} className="lg:hidden"><ArrowLeft size={14} /> Conversaciones</Button>
             <Button size="sm" variant="ghost" onClick={() => { setDetailsOpen(v=>!v); setMobilePanel(detailsOpen?'chat':'details') }} aria-expanded={detailsOpen} className="ml-auto"><PanelRight size={14} /> Detalles</Button>
           </div>}
@@ -141,7 +143,7 @@ export default function Conversations() {
                 <CloudWindowIndicator key={selected} phone={selected} />
 
                 {/* Área de mensajes */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-background">
+                <div role="region" aria-label="Mensajes de la conversación" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 md:p-4 space-y-2 bg-background">
                   {messagesError && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{messagesError}<button className="ml-2 underline" onClick={() => openConv(selected)}>Reintentar</button></p>}
                   {messagesLoading ? <p role="status" className="pt-10 text-center text-sm text-muted-foreground">Cargando mensajes…</p> : messagesError && messages.length === 0 ? null : messages.length === 0
                     ? <p className="text-center text-muted-foreground text-sm pt-10">Sin mensajes aún</p>
@@ -160,13 +162,14 @@ export default function Conversations() {
                 )}
 
                 {/* Input area */}
-                <div className="border-t border-border p-3 bg-card shrink-0">
+                <div className="border-t border-border p-2 md:p-3 bg-card shrink-0">
                   <AssignedLineActions key={selected} conv={selectedConv} disabled={sending} onInsert={text=>{
                     setReply(previous=>previous.trim() ? previous + '\n' + text : text)
                     textareaRef.current?.focus()
                   }}/>
-                  {reply.trim() && <p className="mb-2 text-xs text-muted-foreground" role="status">Borrador de este contacto · se conserva al cambiar de chat durante esta sesión</p>}
-                  <div className="flex gap-2 items-start">
+                  {reply.trim() && <p className="sr-only md:not-sr-only md:mb-2 text-xs text-muted-foreground" role="status">Borrador de este contacto · se conserva al cambiar de chat durante esta sesión</p>}
+                  <div className="flex flex-wrap gap-2 items-end">
+                    <div className="relative flex w-full items-center gap-1 md:w-auto">
                     <StickerPicker key={selected} disabled={sending} onSend={sendSticker} />
                     <QuickTemplates
                       contactName={selectedConv?.first_name}
@@ -174,7 +177,7 @@ export default function Conversations() {
                     />
 
                     {/* Emoji picker */}
-                    <div className="relative">
+                    <div className="md:relative">
                       <Button
                         variant="ghost"
                         size="icon"
@@ -191,16 +194,18 @@ export default function Conversations() {
                         </div>
                       )}
                     </div>
+                    </div>
 
                     <Textarea
                       ref={textareaRef}
                       aria-label="Respuesta al contacto"
-                      placeholder="Escribí una respuesta… (Enter para enviar, Shift+Enter para nueva línea)"
+                      placeholder="Escribí una respuesta…"
+                      title="Enter para enviar, Shift+Enter para nueva línea"
                       value={reply}
                       onChange={e => setReply(e.target.value)}
                       onKeyDown={handleKeyDown}
                       rows={1}
-                      className="min-w-0 flex-1 resize-none min-h-[36px] max-h-32 overflow-y-auto text-sm leading-relaxed"
+                      className="min-w-0 flex-1 resize-none min-h-11 max-h-24 md:max-h-32 overflow-y-auto text-base md:text-sm leading-relaxed"
                     />
 
                     <Button
@@ -208,7 +213,7 @@ export default function Conversations() {
                       aria-label="Enviar respuesta"
                       disabled={sending || !reply.trim()}
                       size="icon"
-                      className="bg-primary hover:bg-primary/90 shrink-0 h-9 w-9"
+                      className="bg-primary hover:bg-primary/90 shrink-0 h-11 w-11 md:h-9 md:w-9"
                     >
                       {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                     </Button>
