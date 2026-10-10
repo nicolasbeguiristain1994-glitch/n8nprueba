@@ -3,11 +3,15 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { Client } from 'pg'
 import { NextRequest } from 'next/server'
 const mocks=vi.hoisted(()=>({query:vi.fn(),transaction:vi.fn(),auth:vi.fn(),lines:vi.fn()}))
+const mediaMocks=vi.hoisted(()=>({token:vi.fn(),download:vi.fn()}))
+vi.mock('@/lib/cloud-api/token-store',()=>({getTokenForNumber:mediaMocks.token}))
+vi.mock('@/lib/cloud-api/infrastructure/inbound-media',()=>({downloadInboundMedia:mediaMocks.download,MediaUnavailableError:class extends Error {}}))
 vi.mock('@/lib/db',()=>({query:mocks.query,withTransaction:mocks.transaction}))
 vi.mock('@/lib/permissions',()=>({checkPermissionWithUser:mocks.auth}))
 vi.mock('@/lib/line-visibility',()=>({getAccessibleLineIds:mocks.lines}))
 import { GET as windowGET } from '@/app/api/conversations/window/route'
 import { GET } from '@/app/api/conversations/route'
+import { GET as mediaGET } from '@/app/api/conversations/media/route'
 import { cloudMessageText,cloudMessageTextSql } from '../cloud-api/message-content'
 import { conversationRepository } from '../cloud-api/repositories/conversation.repository'
 import { findConversationReplyLine } from '../conversation-reply-line'
@@ -30,6 +34,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
    CREATE TEMP TABLE cloud_conversations(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number_id text,contact_phone text,window_opens_at timestamptz,window_expires_at timestamptz,window_type text,last_message_at timestamptz,last_message_preview text,unread_count int DEFAULT 0,status text,updated_at timestamptz,UNIQUE(phone_number_id,contact_phone));
    CREATE TEMP TABLE cloud_messages(id uuid DEFAULT gen_random_uuid(),conversation_id uuid,phone_number_id text,wamid text UNIQUE,direction text,message_type text,content jsonb,status text,sent_at timestamptz,created_at timestamptz DEFAULT NOW(),campaign_id uuid);
    CREATE TEMP TABLE contacts(id uuid,phone_number text,first_name text,last_name text,segment text,deleted_at timestamptz,panel text,linea int,linea_sub text);
+   CREATE TEMP TABLE operator_contact_visibility(operator_id uuid,contact_id uuid);
    CREATE TEMP TABLE agent_contact_lines(id uuid DEFAULT gen_random_uuid(),agent_code text,linea int,variant text,label text,phone text,is_active boolean DEFAULT true);
    CREATE TEMP TABLE contact_tags(contact_id uuid,tag text);
    CREATE TEMP TABLE conversation_state(phone_number text,is_escalated bool,escalation_reason text,current_flow text,resolved_at timestamptz);
@@ -39,6 +44,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   mocks.transaction.mockImplementation(fn=>fn(db))
  })
  beforeEach(async()=>{
+  mediaMocks.token.mockReset().mockResolvedValue('private-token')
+  mediaMocks.download.mockReset().mockResolvedValue({bytes:Buffer.from('test-image'),mime:'image/webp'})
   await db.query('SAVEPOINT test_case')
   mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'admin',is_super_admin:false}});mocks.lines.mockResolvedValue([id(10)])
   await db.query(`INSERT INTO cloud_numbers VALUES('10001',$1),('10002',$2)`,[id(10),id(11)])
@@ -52,6 +59,55 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
  })
  afterEach(async()=>{await db.query('ROLLBACK TO SAVEPOINT test_case')})
  afterAll(async()=>{if(db){await db.query('ROLLBACK');await db.end()}})
+ it.each(['image','sticker'])('renders stored inbound %s through an authorized URL, including legacy duplicates',async type=>{
+  await db.query(`UPDATE cloud_messages SET message_type=$1,content=jsonb_build_object($1::text,jsonb_build_object('id','123456','caption','Mi archivo')) WHERE wamid='wamid.button'`,[type])
+  let messages=(await(await GET(request('?phone='+phone))).json()).messages
+  const media=messages.find((m:{media_type:string})=>m.media_type===type)
+  expect(media).toMatchObject({media_url:'/api/conversations/media?message='+media.id,media_caption:'Mi archivo'})
+  expect(media.media_id).toBeUndefined();expect(media.content).toBeUndefined()
+  let response=await mediaGET(request('?message='+media.id))
+  expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toBe('private, no-store')
+  expect(response.headers.get('content-type')).toBe('image/webp')
+  expect(mediaMocks.download).toHaveBeenCalledWith('123456','10001','private-token')
+  await db.query(`INSERT INTO whatsapp_messages(id,phone_number,message_body,direction,status,created_at,evolution_message_id)
+    VALUES($1,$2,'[image]','inbound','received',NOW(),'wamid.button')`,[id(500),phone])
+  messages=(await(await GET(request('?phone='+phone))).json()).messages
+  expect(messages.filter((m:{media_type:string})=>m.media_type===type)).toHaveLength(1)
+  expect(messages.find((m:{id:string})=>m.id===id(500)).media_url).toBe('/api/conversations/media?message='+id(500))
+  response=await mediaGET(request('?message='+id(500)));expect(response.status).toBe(200)
+  // A deleted or inaccessible contact/line must stop downloads, even if its URL is known.
+  mediaMocks.token.mockClear();mediaMocks.download.mockClear()
+  mocks.lines.mockResolvedValue([])
+  expect((await mediaGET(request('?message='+id(500)))).status).toBe(404)
+  mocks.lines.mockResolvedValue([id(10)])
+  await db.query('UPDATE contacts SET deleted_at=NOW()')
+  expect((await mediaGET(request('?message='+id(500)))).status).toBe(404)
+  expect(mediaMocks.token).not.toHaveBeenCalled();expect(mediaMocks.download).not.toHaveBeenCalled()
+ })
+ it('does not download hidden-line media for the same contact or malformed/non-media messages',async()=>{
+  await db.query('UPDATE cloud_conversations SET contact_phone=$1 WHERE id=$2',['+'+phone,id(2)])
+  await db.query(`UPDATE cloud_messages SET message_type='image',content='{"image":{"id":"123456"}}' WHERE wamid='wamid.hidden'`)
+  const hidden=(await db.query("SELECT id FROM cloud_messages WHERE wamid='wamid.hidden'")).rows[0].id
+  expect((await mediaGET(request('?message='+hidden))).status).toBe(404)
+  expect((await mediaGET(request('?message='+id(100)))).status).toBe(404)
+  expect((await mediaGET(request('?message=https://example.com'))).status).toBe(400)
+  mocks.auth.mockResolvedValue({ok:false,response:Response.json({error:'Forbidden'},{status:403})})
+  expect((await mediaGET(request('?message='+hidden))).status).toBe(403)
+  expect(mediaMocks.token).not.toHaveBeenCalled();expect(mediaMocks.download).not.toHaveBeenCalled()
+ })
+ it('applies the same agent and explicit contact assignments to media downloads',async()=>{
+  await db.query(`UPDATE cloud_messages SET message_type='image',content='{"image":{"id":"123456"}}' WHERE wamid='wamid.button'`)
+  const imageId=(await db.query("SELECT id FROM cloud_messages WHERE wamid='wamid.button'")).rows[0].id
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'operator',allowed_agents:['bigwin']}})
+  expect((await mediaGET(request('?message='+imageId))).status).toBe(404)
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'operator',allowed_agents:['royal']}})
+  expect((await mediaGET(request('?message='+imageId))).status).toBe(200)
+  await db.query('INSERT INTO operator_contact_visibility VALUES($1,$2)',[id(900),id(999)])
+  mediaMocks.token.mockClear()
+  expect((await mediaGET(request('?message='+imageId))).status).toBe(404)
+  expect((await(await GET(request('?phone='+phone))).json()).messages).toHaveLength(0)
+  expect(mediaMocks.token).not.toHaveBeenCalled()
+ })
  it('resolves the exact agent, line and variant, and reflects edited or disabled destinations',async()=>{
   await db.query("UPDATE contacts SET linea=8,linea_sub='a'")
   await db.query(`INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone) VALUES

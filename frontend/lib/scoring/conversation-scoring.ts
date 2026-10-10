@@ -53,6 +53,8 @@ export interface Conv {
 export interface Message {
   media_type?: string
   sticker_preview?: string
+  media_url?: string
+  media_caption?: string | null
   id: string
   phone_number: string
   message_body: string

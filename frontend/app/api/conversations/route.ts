@@ -3,6 +3,7 @@ import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { getAccessibleLineIds } from '@/lib/line-visibility'
 import { scopedConversationMessages } from '@/lib/conversation-messages'
+import { CONVERSATION_MEDIA_JOIN, conversationMediaUrl, type ConversationMediaRow } from '@/lib/conversation-media'
 import { conversationInboxCte } from '@/lib/conversation-inbox'
 import { LEVEL_DEFS, type CampaignOption } from '@/lib/scoring/conversation-scoring'
 
@@ -20,15 +21,20 @@ export async function GET(req: NextRequest) {
     if (phoneRaw) {
       const phone = normalize(phoneRaw)
       const scope = scopedConversationMessages(auth.user, 2)
-      const messages = await query<{id:string;phone_number:string;message_body:string;direction:string;status:string;created_at:string;evolution_message_id:string;metadata:Record<string,unknown>}> (`
+      const messages = await query<ConversationMediaRow & {id:string;phone_number:string;message_body:string;direction:string;status:string;created_at:string;evolution_message_id:string;metadata:Record<string,unknown>}> (`
         ${scope.sql}
-        SELECT recent.*, COALESCE(to_jsonb(wm)->'metadata','{}'::jsonb) AS metadata FROM (
+        SELECT recent.*, COALESCE(to_jsonb(wm)->'metadata','{}'::jsonb) AS metadata,
+          media.media_type,media.media_id,media.media_caption FROM (
           SELECT id,phone_number,message_body,direction,status,created_at,evolution_message_id
           FROM conversation_messages WHERE REPLACE(phone_number,'+','')=$2
           ORDER BY created_at DESC,id DESC LIMIT 200
-        ) recent LEFT JOIN whatsapp_messages wm ON wm.id=recent.id ORDER BY recent.created_at ASC,recent.id ASC
+        ) recent LEFT JOIN whatsapp_messages wm ON wm.id=recent.id
+        ${CONVERSATION_MEDIA_JOIN} ORDER BY recent.created_at ASC,recent.id ASC
       `, [lineIds,phone, ...scope.params])
-      return NextResponse.json({ messages:messages.map(({metadata,...m})=>({...m,media_type:metadata?.media_type,sticker_preview:metadata?.sticker_preview})) })
+      return NextResponse.json({ messages:messages.map(({metadata,media_id,media_type,...m})=>({
+        ...m,media_type:media_type ?? metadata?.media_type,
+        media_url:conversationMediaUrl(m.id,media_id),sticker_preview:metadata?.sticker_preview,
+      })) })
     }
 
     const offsetRaw = req.nextUrl.searchParams.get('offset')
