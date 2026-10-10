@@ -39,7 +39,7 @@ export function CloudWindowIndicator({phone}:{phone:string}) {
   if(!info)return null
   const label=windowLabel(info.expiresAt,clock.now+clock.offset)
   return <div role="status" className={`shrink-0 flex flex-wrap items-center gap-x-2 gap-y-1 border-b px-3 py-1 md:py-2 text-xs ${label.urgent?'bg-amber-50 text-amber-900':'bg-muted/40 text-muted-foreground'}`}>
-    <Clock size={13} aria-hidden="true"/><span className="md:hidden">{label.text.replace('Atención Cloud · quedan ', 'Cloud · ')}</span><span className="hidden md:inline">{label.text}</span><span>· {info.lineName}</span>
+    <Clock size={13} aria-hidden="true"/><span title={label.text}>{label.text.replace('Atención Cloud · quedan ', 'Cloud · ')}</span><span>· {info.lineName}</span>
     {info.expiresAt && <span className="hidden md:inline" title={new Date(info.expiresAt).toLocaleString('es-AR')}>· {label.closed?'Venció':'Vence'} {new Date(info.expiresAt).toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'})}</span>}
   </div>
 }
