@@ -61,7 +61,7 @@ describe('Cloud template detail visibility', () => {
 
   it('preserves catalogue visibility for legacy templates without a WABA', async () => {
     mocks.access.mockResolvedValue([])
-    mocks.query.mockResolvedValue([{ ...imported, waba_id: null }])
+    mocks.query.mockResolvedValue([{ ...imported, waba_id: null, status: 'BORRADOR', whatsapp_template_id: null }])
     expect((await GET(request(), context())).status).toBe(200)
     expect(mocks.query.mock.calls[0][0]).toContain('waba_id IS NULL OR $2::uuid[] IS NULL')
   })
@@ -82,37 +82,37 @@ describe('Cloud template detail visibility', () => {
 describe('Imported templates stay authoritative to Meta', () => {
   it.each([
     { name: 'locally_changed' }, { language: 'en' },
-    { components: [{ type: 'BODY', text: 'Different from Meta' }] }, { status: 'APROBADA' },
-    { category: 'UTILITY' }, { rejection_reason: null },
+    { components: [{ type: 'BODY', text: 'Different from Meta' }] },
+    { category: 'UTILITY' },
   ])('rejects local imported-template changes %j without writing', async body => {
     const response = await PATCH(request('PATCH', body), context())
     expect(response.status).toBe(409)
     expect((await response.json()).error).toContain('Editá en Meta y sincronizá')
-    expect(mocks.query).toHaveBeenCalledExactlyOnceWith('SELECT waba_id FROM whatsapp_templates WHERE id=$1', [id])
+    expect(mocks.query).toHaveBeenCalledExactlyOnceWith('SELECT waba_id,whatsapp_template_id,status FROM whatsapp_templates WHERE id=$1', [id])
     expect(mocks.audit).not.toHaveBeenCalled()
   })
 
   it('preserves the normal admin editing flow for a legacy template', async () => {
-    mocks.query.mockResolvedValueOnce([{ waba_id: null }]).mockResolvedValueOnce([{ id }])
+    mocks.query.mockResolvedValueOnce([{ waba_id: null, status: 'BORRADOR', whatsapp_template_id: null }]).mockResolvedValueOnce([{ id }])
     const response = await PATCH(request('PATCH', { name: 'Legacy Name', language: 'es', status: 'BORRADOR' }), context())
     expect(response.status).toBe(200)
     expect(mocks.permission).toHaveBeenCalledWith(expect.any(NextRequest), 'settings', 'manage')
     const [sql, values] = mocks.query.mock.calls[1]
-    expect(sql).toContain('AND waba_id IS NULL RETURNING id')
+    expect(sql).toContain("AND whatsapp_template_id IS NULL AND status='BORRADOR' RETURNING id")
     expect(values).toEqual(['legacy_name', 'es', 'BORRADOR', id])
     expect(mocks.audit).toHaveBeenCalledTimes(1)
   })
 
   it('does not write when the template does not exist', async () => {
     mocks.query.mockResolvedValue([])
-    expect((await PATCH(request('PATCH', { status: 'APROBADA' }), context())).status).toBe(404)
+    expect((await PATCH(request('PATCH', { name: 'missing' }), context())).status).toBe(404)
     expect(mocks.query).toHaveBeenCalledTimes(1)
     expect(mocks.audit).not.toHaveBeenCalled()
   })
 
   it('requires settings:manage before reading or changing template ownership', async () => {
     mocks.permission.mockResolvedValue({ ok: false, response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) })
-    expect((await PATCH(request('PATCH', { status: 'APROBADA' }), context())).status).toBe(403)
+    expect((await PATCH(request('PATCH'), context())).status).toBe(403)
     expect(mocks.query).not.toHaveBeenCalled()
     expect(mocks.audit).not.toHaveBeenCalled()
   })

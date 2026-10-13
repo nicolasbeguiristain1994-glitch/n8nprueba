@@ -21,8 +21,8 @@ const accountB = { waba_id: '2222', phone_number_id: '2001' }
 const template = (id = '9001', status = 'APPROVED', name = 'same_name') => ({
   id, name, status, language: 'es_AR', category: 'MARKETING', components: [{ type: 'BODY', text: 'Hola' }],
 })
-const request = () => new NextRequest('https://example.test/api/templates/sync-cloud', {
-  method: 'POST', body: JSON.stringify({ waba_id: 'unassigned-waba' }),
+const request = (body: unknown = {}) => new NextRequest('https://example.test/api/templates/sync-cloud', {
+  method: 'POST', body: JSON.stringify(body),
 })
 type Row = { waba: string; metaId: string; name: string; language: string; status: string }
 let rows: Row[]
@@ -75,25 +75,39 @@ describe('Cloud catalogue sync authorization and WABA isolation', () => {
     mocks.access.mockResolvedValue([])
     mocks.query.mockResolvedValue([])
     expect((await POST(request())).status).toBe(409)
-    expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining('whatsapp_line_id=ANY($1::uuid[])'), [[]])
+    expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining('whatsapp_line_id=ANY($1::uuid[])'), [[], ''])
     expect(mocks.list).not.toHaveBeenCalled()
     expect(mocks.transaction).not.toHaveBeenCalled()
   })
 
-  it('uses authorized active accounts instead of a caller supplied WABA', async () => {
+  it('uses authorized active accounts by default', async () => {
     expect((await POST(request())).status).toBe(200)
     expect(mocks.access).toHaveBeenCalledWith(user)
-    expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("WHERE status='active'"), [['line-1']])
+    expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("WHERE status='active'"), [['line-1'], ''])
     expect(mocks.token).toHaveBeenCalledExactlyOnceWith(accountA.phone_number_id)
     expect(mocks.list).toHaveBeenCalledExactlyOnceWith(accountA.waba_id)
     expect(mocks.dbQuery).toHaveBeenCalledWith('SELECT pg_advisory_xact_lock(hashtext($1))', ['templates:1111'])
     expect(rows).toEqual([{ waba: '1111', metaId: '9001', name: 'same_name', language: 'es_AR', status: 'APROBADA' }])
   })
 
+  it('applies the selected account alongside line permissions and rejects inaccessible accounts', async () => {
+    mocks.query.mockResolvedValue([])
+    expect((await POST(request({ waba_id: '333333' }))).status).toBe(409)
+    expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("AND ($2='' OR waba_id=$2)"), [['line-1'], '333333'])
+    expect(mocks.token).not.toHaveBeenCalled()
+    expect(mocks.list).not.toHaveBeenCalled()
+  })
+
+  it('rejects malformed account filters before accessing credentials', async () => {
+    expect((await POST(request({ waba_id: 'not-an-account' }))).status).toBe(400)
+    expect(mocks.query).not.toHaveBeenCalled()
+    expect(mocks.token).not.toHaveBeenCalled()
+  })
+
   it('supports the explicit all-lines scope returned for a super administrator', async () => {
     mocks.access.mockResolvedValue(null)
     expect((await POST(request())).status).toBe(200)
-    expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining('$1::uuid[] IS NULL'), [null])
+    expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining('$1::uuid[] IS NULL'), [null, ''])
   })
 
   it('keeps identical template names independent across WABAs', async () => {
