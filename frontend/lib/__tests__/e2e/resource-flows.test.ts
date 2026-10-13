@@ -7,7 +7,7 @@
  *          payload completo → 201 + audit(create, templates).
  *
  * Test 2 — Template PATCH: actualización parcial → metadata.fields exacto
- *   Pasos: un campo → fields=['status']; dos campos → fields=['status','rejection_reason'].
+ *   Pasos: un campo → fields=['category']; dos campos → fields=['category','language'].
  *
  * Test 3 — Automation POST: validación Zod + creación + audit
  *   Pasos: campo requerido ausente → 400; trigger_type inválido → 400;
@@ -68,6 +68,8 @@ function mockInsert(id: string): void {
 
 /** Template writes first read which optional legacy columns exist (modern table here). */
 function mockTemplateColumns(): void {
+  vi.mocked(db.query).mockResolvedValueOnce([{ id: 'line-1' }] as never)
+  vi.mocked(db.query).mockResolvedValueOnce([{ phone_number_id: '1001' }] as never)
   vi.mocked(db.query).mockResolvedValueOnce([{ domain: false, body: false }] as never)
 }
 
@@ -167,7 +169,7 @@ describe('Test 1 — Template POST: validación Zod, regla BODY y creación exit
 
     const res  = await templatesPost(
       adminPost(TEMPLATES_URL, admin, {
-        name:       'bienvenida_julio',
+        waba_id: '111111', name: 'bienvenida_julio',
         category:   'UTILITY',
         components: [{ type: 'BODY', text: 'Bienvenido, {{1}}', example: { body_text: [['Ana']] } }],
       }) as never
@@ -186,7 +188,7 @@ describe('Test 1 — Template POST: validación Zod, regla BODY y creación exit
 
     await templatesPost(
       adminPost(TEMPLATES_URL, admin, {
-        name:       'promo_agosto',
+        waba_id: '111111', name: 'promo_agosto',
         category:   'MARKETING',
         components: [{ type: 'BODY', text: 'Oferta especial' }],
       }) as never
@@ -209,7 +211,7 @@ describe('Test 1 — Template POST: validación Zod, regla BODY y creación exit
 
     const res = await templatesPost(
       adminPost(TEMPLATES_URL, admin, {
-        name:       'template_ingles',
+        waba_id: '111111', name: 'template_ingles',
         category:   'UTILITY',
         language:   'en',
         components: [{ type: 'BODY', text: 'Hello, {{1}}', example: { body_text: [['Ana']] } }],
@@ -230,7 +232,7 @@ describe('Test 2 — Template PATCH: metadata.fields refleja exactamente los cam
   /** Setup estándar: admin RBAC + ownership of a local draft + UPDATE RETURNING id. */
   function mockPatchSuccess(): void {
     mockAdminCheck()
-    vi.mocked(db.query).mockResolvedValueOnce([{ waba_id: null }] as never)
+    vi.mocked(db.query).mockResolvedValueOnce([{ waba_id: null, status: 'BORRADOR', whatsapp_template_id: null }] as never)
     vi.mocked(db.query).mockResolvedValueOnce([{ id: TEMPLATE_ID }] as never)
   }
 
@@ -243,32 +245,32 @@ describe('Test 2 — Template PATCH: metadata.fields refleja exactamente los cam
     )
   }
 
-  it('enviar solo status → devuelve 200', async () => {
-    const res = await patch({ status: 'APROBADA' })
+  it('enviar solo category → devuelve 200', async () => {
+    const res = await patch({ category: 'UTILITY' })
     expect(res.status).toBe(200)
     expect((await res.json()).ok).toBe(true)
     expect(db.query).toHaveBeenNthCalledWith(2,
-      'SELECT waba_id FROM whatsapp_templates WHERE id=$1', [TEMPLATE_ID])
+      'SELECT waba_id,whatsapp_template_id,status FROM whatsapp_templates WHERE id=$1', [TEMPLATE_ID])
     expect(db.query).toHaveBeenLastCalledWith(
-      expect.stringContaining('AND waba_id IS NULL RETURNING id'), ['APROBADA', TEMPLATE_ID])
+      expect.stringContaining("AND whatsapp_template_id IS NULL AND status='BORRADOR' RETURNING id"), ['UTILITY', TEMPLATE_ID])
   })
 
-  it('enviar solo status → metadata.fields contiene únicamente "status"', async () => {
-    await patch({ status: 'APROBADA' })
+  it('enviar solo category → metadata.fields contiene únicamente "category"', async () => {
+    await patch({ category: 'UTILITY' })
 
     const fields = getAuditCall('update')?.metadata?.fields as string[]
-    expect(fields).toEqual(['status'])
+    expect(fields).toEqual(['category'])
   })
 
-  it('enviar status + rejection_reason → metadata.fields contiene exactamente esos dos', async () => {
-    await patch({ status: 'RECHAZADA', rejection_reason: 'Contenido no permitido' })
+  it('enviar category + language → metadata.fields contiene exactamente esos dos', async () => {
+    await patch({ category: 'MARKETING', language: 'es_AR' })
 
     const fields = getAuditCall('update')?.metadata?.fields as string[]
-    expect(fields).toContain('status')
-    expect(fields).toContain('rejection_reason')
+    expect(fields).toContain('category')
+    expect(fields).toContain('language')
     expect(fields).not.toContain('name')
-    expect(fields).not.toContain('category')
-    expect(fields).not.toContain('language')
+    expect(fields).not.toContain('status')
+    expect(fields).not.toContain('rejection_reason')
     expect(fields).not.toContain('components')
   })
 
@@ -297,13 +299,20 @@ describe('Test 2 — Template PATCH: metadata.fields refleja exactamente los cam
   })
 
   it('actualización exitosa genera audit con resource=templates y resource_id correcto', async () => {
-    await patch({ status: 'EN_REVISION' })
+    await patch({ language: 'es_AR' })
 
     expect(getAuditCall('update')).toMatchObject({
       action:      'update',
       resource:    'templates',
       resource_id: TEMPLATE_ID,
     })
+  })
+
+  it.each([{ status: 'APROBADA' }, { rejection_reason: 'Inventado' }, { waba_id: '222222' }])('rejects forged approval or account changes: %j', async body => {
+    const response = await patch(body)
+    expect(response.status).toBe(400)
+    expect(getAuditCall('update')).toBeUndefined()
+    expect(vi.mocked(db.query).mock.calls.some(([sql]) => sql.startsWith('UPDATE whatsapp_templates'))).toBe(false)
   })
 })
 
