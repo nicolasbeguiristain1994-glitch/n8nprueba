@@ -41,11 +41,8 @@ export function InactivityRangeFilter({ value, onChange, period = false }: { per
   </div>
 }
 
-// Choose either meaning explicitly; the inactive control shows empty bounds.
+// Keep legacy inactivity ranges separate from the movement-period control.
 export function MovementRangeFilters({ value, onChange }: { value: InactivityRange; onChange: (range: InactivityRange) => void }) {
-  return <>
-    <InactivityRangeFilter value={value.mode === 'period' ? EMPTY_INACTIVITY : value} onChange={onChange} />
-    <InactivityRangeFilter period value={value.mode === 'period' ? value : EMPTY_INACTIVITY}
-      onChange={range => onChange(range.min === '' && range.max === '' ? EMPTY_INACTIVITY : { ...range, mode: 'period' })} />
-  </>
+  return <InactivityRangeFilter period value={value.mode === 'period' ? value : EMPTY_INACTIVITY}
+    onChange={range => onChange(range.min === '' && range.max === '' ? EMPTY_INACTIVITY : { ...range, mode: 'period' })} />
 }
