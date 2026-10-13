@@ -1,5 +1,7 @@
-// Shared by the sender and the panel so the displayed reply is the actual one.
+// Default used until an administrator saves a reply in Automatizaciones.
 export const OPT_OUT_CONFIRMATION = 'Disculpá las molestias. Ya registramos tu baja y no vas a recibir más mensajes promocionales de nuestra parte.'
+export const OPT_OUT_MESSAGE_MAX_LENGTH = 4096
+export const OPT_OUT_MESSAGE_SETTING = 'automation_baja_confirmation_message'
 
 export const OPT_OUT_AUTOMATION = {
   id: 'system-baja-confirmation',

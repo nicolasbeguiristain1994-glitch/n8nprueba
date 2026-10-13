@@ -14,6 +14,7 @@ import { CampaignTemplateParamsSchema } from './campaign-template'
 import { NextResponse } from 'next/server'
 import { audit }       from '@/lib/audit'
 import { securityLog } from '@/lib/security-log'
+import { OPT_OUT_MESSAGE_MAX_LENGTH } from '@/lib/opt-out-automation'
 
 // ── Generic parse helper ──────────────────────────────────────────────────────
 
@@ -190,6 +191,13 @@ export const UpdateCampaignStatusSchema = z.object({
 export type UpdateCampaignStatusInput = z.infer<typeof UpdateCampaignStatusSchema>
 
 // ── Settings schemas ──────────────────────────────────────────────────────────
+
+export const OptOutMessageSchema = z.string().trim()
+  .min(1, 'Ingresá un mensaje de respuesta')
+  .max(OPT_OUT_MESSAGE_MAX_LENGTH, `El mensaje no puede superar los ${OPT_OUT_MESSAGE_MAX_LENGTH} caracteres`)
+export const UpdateOptOutAutomationSchema = z.object({
+  action_config: z.object({ message: OptOutMessageSchema }).strict(),
+}).strict()
 
 export const UpdateSettingsSchema = z
   .record(z.string(), z.unknown())

@@ -6,6 +6,8 @@ import { hasAssignedLineVariable, replaceAssignedLineVariable } from '@/lib/assi
 import { useEffect, useState, useCallback } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { OPT_OUT_MESSAGE_MAX_LENGTH } from '@/lib/opt-out-automation'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -120,6 +122,9 @@ export default function AutomatizacionesPage() {
   const [showEditor, setShowEditor]   = useState(false)
   const [editTarget, setEditTarget]   = useState<Automation | null>(null)
   const [systemTarget, setSystemTarget] = useState<Automation | null>(null)
+  const [systemMessage, setSystemMessage] = useState('')
+  const [systemSaving, setSystemSaving] = useState(false)
+  const [systemError, setSystemError] = useState<string | null>(null)
   const [form, setForm]               = useState({ ...BLANK_FORM })
   const [saving, setSaving]           = useState(false)
   const [saveError, setSaveError]     = useState<string | null>(null)
@@ -205,6 +210,31 @@ export default function AutomatizacionesPage() {
   }
 
   // ── Guardar ──────────────────────────────────────────────────────────────────
+
+  function openSystemEditor(item: Automation) {
+    setSystemTarget(item)
+    setSystemMessage((item.action_config as ReplyActionConfig).message)
+    setSystemError(null)
+  }
+
+  async function saveSystemMessage() {
+    if (!systemTarget || systemSaving) return
+    const message = systemMessage.trim()
+    if (!message) { setSystemError('Ingresá un mensaje de respuesta'); return }
+    if (message.length > OPT_OUT_MESSAGE_MAX_LENGTH) { setSystemError(`El mensaje no puede superar los ${OPT_OUT_MESSAGE_MAX_LENGTH} caracteres`); return }
+    setSystemSaving(true)
+    setSystemError(null)
+    try {
+      const data = await fetchJson<{ automation: Automation }>(`/api/automations/${systemTarget.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action_config: { message } }),
+      })
+      setItems(current => current.map(item => item.id === data.automation.id ? data.automation : item))
+      setSystemTarget(null)
+    } catch (e) {
+      setSystemError(e instanceof Error ? e.message : 'No se pudo guardar la respuesta')
+    } finally { setSystemSaving(false) }
+  }
 
   async function handleSave() {
     setSaveError(null)
@@ -416,7 +446,7 @@ export default function AutomatizacionesPage() {
                             <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{item.updated_at ? fmt(item.updated_at) : '—'}</td>
                             <td className="px-4 py-3">
                               {item.system_managed ? (
-                                <Button variant="outline" size="sm" onClick={() => setSystemTarget(item)}>Ver respuesta</Button>
+                                <Button variant="outline" size="sm" onClick={() => openSystemEditor(item)}><Pencil size={13} className="mr-1.5" />Editar mensaje</Button>
                               ) : <div className="flex items-center gap-1">
                                 <button
                                   onClick={() => handleToggle(item)}
@@ -448,18 +478,25 @@ export default function AutomatizacionesPage() {
           </Card>
         </TabsContent>
 
-        <Dialog open={systemTarget !== null} onOpenChange={open => { if (!open) setSystemTarget(null) }}>
-          <DialogContent aria-describedby="baja-description">
+        <Dialog open={systemTarget !== null} onOpenChange={open => { if (!open && !systemSaving) setSystemTarget(null) }}>
+          <DialogContent aria-describedby="baja-description" className="max-h-[90dvh] overflow-y-auto">
             <DialogHeader><DialogTitle>{systemTarget?.name}</DialogTitle></DialogHeader>
             <div className="space-y-4 text-sm">
               <Badge className="border-0 bg-success/15 text-success">Activa</Badge>
               <p id="baja-description">Cuando el contacto escribe BAJA o toca ese botón, se registra la baja y se responde desde la misma línea.</p>
-              <blockquote className="rounded-lg border bg-muted/40 p-4 whitespace-pre-wrap">
-                {(systemTarget?.action_config as ReplyActionConfig | undefined)?.message}
-              </blockquote>
+              <div className="space-y-2">
+                <label htmlFor="baja-message" className="block font-medium">Mensaje de respuesta</label>
+                <Textarea id="baja-message" value={systemMessage} onChange={e => setSystemMessage(e.target.value)}
+                  rows={5} maxLength={OPT_OUT_MESSAGE_MAX_LENGTH} disabled={systemSaving} aria-describedby="baja-message-help" />
+                <p id="baja-message-help" className="text-xs text-muted-foreground">Se aplicará a las próximas solicitudes de baja. {systemMessage.length}/{OPT_OUT_MESSAGE_MAX_LENGTH} caracteres.</p>
+              </div>
               <p>El contacto queda excluido de campañas en todas las líneas. La confirmación se envía una vez por solicitud.</p>
               <p className="text-muted-foreground">Esta respuesta está siempre activa. Podés consultar el mensaje enviado en Conversaciones y la baja en Blacklist.</p>
-              <div className="flex justify-end"><Button onClick={() => setSystemTarget(null)}>Cerrar</Button></div>
+              {systemError && <p role="alert" className="text-destructive">{systemError}</p>}
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button variant="outline" disabled={systemSaving} onClick={() => setSystemTarget(null)}>Cancelar</Button>
+                <Button disabled={systemSaving || !systemMessage.trim()} onClick={() => void saveSystemMessage()}>{systemSaving ? 'Guardando…' : 'Guardar cambios'}</Button>
+              </div>
             </div>
           </DialogContent>
         </Dialog>

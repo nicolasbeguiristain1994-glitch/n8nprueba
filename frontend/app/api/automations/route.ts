@@ -4,6 +4,7 @@ import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { parseBody, handleValidationError, CreateAutomationSchema } from '@/lib/schema'
 import { OPT_OUT_AUTOMATION } from '@/lib/opt-out-automation'
+import { getOptOutAutomation } from '@/lib/opt-out-settings'
 
 type AutomationRow = {
   id: string
@@ -69,7 +70,7 @@ export async function GET(req: NextRequest) {
     const showOptOut = (!q || OPT_OUT_AUTOMATION.name.toLocaleLowerCase('es').includes(q.toLocaleLowerCase('es')))
       && (!['reply', 'flow', 'handoff'].includes(type) || type === 'reply')
       && status !== 'paused'
-    return NextResponse.json({ automations: showOptOut ? [OPT_OUT_AUTOMATION, ...rows] : rows })
+    return NextResponse.json({ automations: showOptOut ? [await getOptOutAutomation(), ...rows] : rows })
   } catch (e) {
     console.error('[/api/automations GET]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 })

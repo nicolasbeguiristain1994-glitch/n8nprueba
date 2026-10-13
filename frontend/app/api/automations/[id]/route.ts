@@ -3,7 +3,9 @@ import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { isUUID } from '@/lib/validate'
 import { audit } from '@/lib/audit'
-import { parseBody, handleValidationError, UpdateAutomationSchema } from '@/lib/schema'
+import { parseBody, handleValidationError, UpdateAutomationSchema, UpdateOptOutAutomationSchema } from '@/lib/schema'
+import { OPT_OUT_AUTOMATION } from '@/lib/opt-out-automation'
+import { getOptOutAutomation, saveOptOutMessage } from '@/lib/opt-out-settings'
 
 // ── GET /api/automations/[id] ─────────────────────────────────────────────────
 
@@ -15,9 +17,10 @@ export async function GET(
   if (!auth.ok) return auth.response
 
   const { id } = await params
-  if (!isUUID(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
+  if (!isUUID(id) && id !== OPT_OUT_AUTOMATION.id) return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
 
   try {
+    if (id === OPT_OUT_AUTOMATION.id) return NextResponse.json({ automation: await getOptOutAutomation() })
     const rows = await query(
       `SELECT a.*, u.name AS created_by_name
        FROM automations a
@@ -43,6 +46,18 @@ export async function PATCH(
   if (!auth.ok) return auth.response
 
   const { id } = await params
+  if (id === OPT_OUT_AUTOMATION.id) {
+    const parsed = parseBody(UpdateOptOutAutomationSchema, await req.json().catch(() => null))
+    if (!parsed.ok) return handleValidationError(req, parsed.error, 'automations')
+    try {
+      const automation = await saveOptOutMessage(parsed.data.action_config.message, auth.user.user_id)
+      void audit({ req, action: 'update', resource: 'automations', metadata: { system_automation_id: id, fields: ['action_config.message'] } })
+      return NextResponse.json({ ok: true, automation })
+    } catch (e) {
+      console.error('[/api/automations/baja PATCH]', e instanceof Error ? e.message : e)
+      return NextResponse.json({ error: 'No se pudo guardar la respuesta de BAJA' }, { status: 500 })
+    }
+  }
   if (!isUUID(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
 
   const rawBody = await req.json().catch(() => null)

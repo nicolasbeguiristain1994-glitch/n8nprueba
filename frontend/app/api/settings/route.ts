@@ -3,6 +3,7 @@ import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { parseBody, handleValidationError, UpdateSettingsSchema } from '@/lib/schema'
+import { OPT_OUT_MESSAGE_SETTING } from '@/lib/opt-out-automation'
 
 type SettingRow = {
   key: string
@@ -38,6 +39,9 @@ export async function PATCH(req: NextRequest) {
   if (!parsed.ok) return handleValidationError(req, parsed.error, 'settings')
 
   const entries = Object.entries(parsed.data)
+  if (entries.some(([key]) => key === OPT_OUT_MESSAGE_SETTING)) {
+    return NextResponse.json({ error: 'Editá la respuesta de BAJA desde Automatizaciones' }, { status: 400 })
+  }
 
   try {
     const existingRows = await query<{ key: string; type: string }>(

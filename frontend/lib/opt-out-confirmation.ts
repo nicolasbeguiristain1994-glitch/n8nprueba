@@ -3,14 +3,15 @@ import { normalizePhone } from '@/lib/validate'
 import { getTokenForNumber } from '@/lib/cloud-api/token-store'
 import { enforceRateLimit } from '@/lib/cloud-api/rate-limiter'
 import { MetaHttpGateway } from '@/lib/cloud-api/infrastructure/meta-http.gateway'
-import { OPT_OUT_CONFIRMATION } from '@/lib/opt-out-automation'
+import { getOptOutAutomation } from '@/lib/opt-out-settings'
 export { OPT_OUT_CONFIRMATION } from '@/lib/opt-out-automation'
 
 type Request = { phone: string; sourceId: string; messageId: string; provider: 'cloud' | 'evolution' }
 type Source = { conversation_id?: string; line_id: string; evolution_url?: string | null }
 
-// This is the sole fixed-text exception to the global send prohibition. It is
-// reachable only with a committed inbound BAJA receipt, never an arbitrary body.
+// This is the sole confirmation exception to the global send prohibition. It is
+// reachable only with a committed inbound BAJA receipt. The reply comes from
+// the administrator's saved setting, never from the inbound request's body.
 // Reserve the attempt and history together before HTTP. An ambiguous send is
 // not retried: provider timeouts and webhook redelivery must not duplicate it.
 export async function sendOptOutConfirmation(request: Request): Promise<void> {
@@ -24,6 +25,8 @@ export async function sendOptOutConfirmation(request: Request): Promise<void> {
       AND l.event='opt_out' AND l.source='inbound_message'
       AND l.metadata->'confirmation'->>'status'='pending'`
   if (!(await query(pendingSql, [...receiptParams, phone])).length) return
+  // Capture once: history and provider payload must match even if edited while sending.
+  const message = (await getOptOutAutomation()).action_config.message
 
   let send: () => Promise<string>
   // Resolve credentials before claiming: failures here can safely retry.
@@ -34,7 +37,7 @@ export async function sendOptOutConfirmation(request: Request): Promise<void> {
     send = async () => {
       const result = await gateway.post<{ messages?: Array<{ id: string }> }>(`/${request.sourceId}/messages`, {
         messaging_product: 'whatsapp', recipient_type: 'individual', to: phone,
-        type: 'text', text: { body: OPT_OUT_CONFIRMATION, preview_url: false },
+        type: 'text', text: { body: message, preview_url: false },
       })
       if (!result.messages?.[0]?.id) throw new Error('Missing provider message ID')
       return result.messages[0].id
@@ -47,7 +50,7 @@ export async function sendOptOutConfirmation(request: Request): Promise<void> {
       if (!url) throw new Error('Evolution URL unavailable')
       const response = await fetch(`${url}/message/sendText/${encodeURIComponent(request.sourceId)}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', apikey: apiKey },
-        body: JSON.stringify({ number: phone, text: OPT_OUT_CONFIRMATION }), signal: AbortSignal.timeout(12000),
+        body: JSON.stringify({ number: phone, text: message }), signal: AbortSignal.timeout(12000),
       })
       if (!response.ok) throw new Error(`Evolution HTTP ${response.status}`)
       const result = await response.json()
@@ -93,11 +96,11 @@ export async function sendOptOutConfirmation(request: Request): Promise<void> {
       await db.query(`INSERT INTO cloud_messages
         (id,conversation_id,phone_number_id,direction,message_type,content,status,queued_at)
         VALUES($1,$2,$3,'outbound','text',$4::jsonb,'queued',NOW())`,
-      [receipt.id, source.conversation_id, request.sourceId, JSON.stringify({text:{body:OPT_OUT_CONFIRMATION},source:'opt_out_confirmation'})])
+      [receipt.id, source.conversation_id, request.sourceId, JSON.stringify({text:{body:message},source:'opt_out_confirmation'})])
     } else {
       await db.query(`INSERT INTO whatsapp_messages(id,phone_number,message_body,direction,status,metadata)
         VALUES($1,$2,$3,'outbound','queued',$4::jsonb)`,
-      [receipt.id, '+'+phone, OPT_OUT_CONFIRMATION, JSON.stringify({line_id:source.line_id,source:'opt_out_confirmation',consent_id:receipt.id})])
+      [receipt.id, '+'+phone, message, JSON.stringify({line_id:source.line_id,source:'opt_out_confirmation',consent_id:receipt.id})])
     }
     await db.query(`UPDATE cloud_consent_log SET metadata=jsonb_set(metadata,'{confirmation}',
       jsonb_build_object('status','sending','message_id',$1::text,'started_at',NOW())) WHERE id=$1::uuid`, [receipt.id])

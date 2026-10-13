@@ -12,6 +12,7 @@ import { complianceRepository } from '@/lib/cloud-api/repositories/compliance.re
 import { sendQueuedWithConsent } from '@/lib/cloud-api/queued-send-guard'
 import { OptOutError } from '@/lib/cloud-api/errors'
 import { sendOptOutConfirmation, OPT_OUT_CONFIRMATION } from '@/lib/opt-out-confirmation'
+import { getOptOutAutomation, saveOptOutMessage } from '@/lib/opt-out-settings'
 
 const phone='5491100000001', id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`
 const request={phone:'+'+phone,sourceId:'line-1',provider:'cloud' as const,messageId:'baja-1',text:'BAJA',metadata:{input_type:'button'}}
@@ -35,13 +36,14 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('global consent with real lo
     `)
     await pool.query(readFileSync('../db/migrations/041_blacklist.sql','utf8'))
     await pool.query(readFileSync('../db/migrations/069_cloud_api_opt_outs.sql','utf8'))
+    await pool.query(readFileSync('../db/migrations/038_app_settings.sql','utf8'))
     m.query.mockImplementation(async(sql,params)=>(await pool.query(sql,params)).rows)
     m.tx.mockImplementation(async fn=>{const db=await pool.connect();try{await db.query('BEGIN');const value=await fn(db);await db.query('COMMIT');return value}catch(e){await db.query('ROLLBACK');throw e}finally{db.release()}})
   })
   beforeEach(async()=>{
     m.post.mockReset();m.token.mockReset();m.limit.mockReset()
     m.post.mockResolvedValue({messages:[{id:'ack-wamid'}]});m.token.mockResolvedValue('local-token');m.limit.mockResolvedValue(undefined)
-    await pool.query(`TRUNCATE blacklist,cloud_opt_outs,cloud_consent_log,whatsapp_messages,campaign_recipients,automation_message_jobs,cloud_messages,cloud_conversations,contacts,users,campaigns,whatsapp_lines,cloud_numbers CASCADE;
+    await pool.query(`TRUNCATE app_settings,blacklist,cloud_opt_outs,cloud_consent_log,whatsapp_messages,campaign_recipients,automation_message_jobs,cloud_messages,cloud_conversations,contacts,users,campaigns,whatsapp_lines,cloud_numbers CASCADE;
       INSERT INTO users VALUES('${id(1)}');INSERT INTO campaigns VALUES('${id(2)}');
       INSERT INTO contacts VALUES('+${phone}',true);
       INSERT INTO whatsapp_messages(phone_number,direction,status,campaign_id) VALUES('+${phone}','outbound','sent','${id(2)}');
@@ -158,6 +160,33 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('global consent with real lo
     await sendOptOutConfirmation(request)
     expect(m.post).not.toHaveBeenCalled()
   })
+  it('persists edits and captures the same text for Cloud and history despite an edit during sending', async()=>{
+    expect((await getOptOutAutomation()).action_config.message).toBe(OPT_OUT_CONFIRMATION)
+    const message='Disculpá las molestias. Tu baja quedó registrada. Gracias.'
+    await saveOptOutMessage('  '+message+'  ',id(1))
+    expect((await getOptOutAutomation()).action_config.message).toBe(message)
+    expect((await pool.query('SELECT updated_by FROM app_settings')).rows[0].updated_by).toBe(id(1))
+    await recordGlobalOptOut({...request,confirmation:true})
+    m.token.mockImplementationOnce(async()=>{await saveOptOutMessage('Texto para futuras bajas',id(1));return 'local-token'})
+    await sendOptOutConfirmation(request)
+    expect(m.post).toHaveBeenCalledWith('/line-1/messages',expect.objectContaining({text:{body:message,preview_url:false}}))
+    expect((await pool.query("SELECT content FROM cloud_messages WHERE content->>'source'='opt_out_confirmation'")).rows[0].content.text.body).toBe(message)
+    expect((await getOptOutAutomation()).action_config.message).toBe('Texto para futuras bajas')
+    await sendOptOutConfirmation(request)
+    expect(m.post).toHaveBeenCalledOnce()
+    expect(await isGloballyOptedOut(phone)).toBe(true)
+  })
+  it('keeps the receipt pending if reading the reply fails, then uses the saved text on retry',async()=>{
+    await saveOptOutMessage('Baja confirmada. Disculpá las molestias.',id(1))
+    await recordGlobalOptOut({...request,confirmation:true})
+    const original=m.query.getMockImplementation()!
+    m.query.mockImplementationOnce(original).mockRejectedValueOnce(Error('Settings unavailable'))
+    await expect(sendOptOutConfirmation(request)).rejects.toThrow('Settings unavailable')
+    expect(m.post).not.toHaveBeenCalled()
+    expect((await pool.query('SELECT metadata FROM cloud_consent_log')).rows[0].metadata.confirmation.status).toBe('pending')
+    await sendOptOutConfirmation(request)
+    expect(m.post).toHaveBeenCalledWith('/line-1/messages',expect.objectContaining({text:{body:'Baja confirmada. Disculpá las molestias.',preview_url:false}}))
+  })
   it.each(['window','old-message','disabled-line'])('does not confirm when the origin is unavailable: %s',async(reason)=>{
     await recordGlobalOptOut({...request,confirmation:true})
     if(reason==='window') await pool.query("UPDATE cloud_conversations SET window_expires_at=NOW()-interval '1 hour'")
@@ -195,13 +224,15 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('global consent with real lo
     vi.stubEnv('EVOLUTION_GLOBAL_API_KEY','evo-test-key')
     const fetch=vi.fn().mockResolvedValue(Response.json({key:{id:'evo-ack'}}));vi.stubGlobal('fetch',fetch)
     try {
+      const message='Disculpá las molestias. No recibirás más promociones.'
+      await saveOptOutMessage(message,id(1))
       await pool.query(`INSERT INTO whatsapp_lines VALUES('${id(9)}','instance-a','https://evo.example.test','evolution','active',true,true);
         INSERT INTO whatsapp_messages(phone_number,direction,status,evolution_message_id) VALUES('${phone}','inbound','received','baja-1');`)
       await recordGlobalOptOut(evo)
       await Promise.all([sendOptOutConfirmation(evo),sendOptOutConfirmation(evo)])
       expect(fetch).toHaveBeenCalledOnce()
-      expect(fetch).toHaveBeenCalledWith('https://evo.example.test/message/sendText/instance-a',expect.objectContaining({body:JSON.stringify({number:phone,text:OPT_OUT_CONFIRMATION})}))
-      expect((await pool.query("SELECT status,evolution_message_id,metadata FROM whatsapp_messages WHERE metadata->>'source'='opt_out_confirmation'")).rows[0]).toMatchObject({status:'sent',evolution_message_id:'evo-ack',metadata:{line_id:id(9)}})
+      expect(fetch).toHaveBeenCalledWith('https://evo.example.test/message/sendText/instance-a',expect.objectContaining({body:JSON.stringify({number:phone,text:message})}))
+      expect((await pool.query("SELECT status,evolution_message_id,message_body,metadata FROM whatsapp_messages WHERE metadata->>'source'='opt_out_confirmation'")).rows[0]).toMatchObject({status:'sent',evolution_message_id:'evo-ack',message_body:message,metadata:{line_id:id(9)}})
       expect(m.post).not.toHaveBeenCalled();expect(await isGloballyOptedOut(phone)).toBe(true)
     } finally {vi.unstubAllGlobals();vi.unstubAllEnvs()}
   })

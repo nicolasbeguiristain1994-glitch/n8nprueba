@@ -15,6 +15,7 @@ vi.mock('@/components/ui/dialog', async () => {
 })
 import Page from '@/app/(protected)/automatizaciones/page'
 import { CreateAutomationSchema, UpdateAutomationSchema } from '@/lib/schema'
+import { OPT_OUT_AUTOMATION } from '@/lib/opt-out-automation'
 
 const rule = {
   id: 'once-rule', name: 'Bono EXTRA', type: 'reply', trigger_type: 'keyword',
@@ -27,6 +28,41 @@ beforeEach(() => {
   mocks.fetch.mockImplementation(async (_url, init) => init?.method ? { ok: true } : { automations: [rule] })
 })
 afterEach(cleanup)
+
+describe('BAJA reply editor', () => {
+  it('saves just the message, displays it when reopened and discards cancelled changes', async () => {
+    mocks.fetch.mockImplementation(async (_url, init) => init?.method
+      ? { ok: true, automation: { ...OPT_OUT_AUTOMATION, action_config: JSON.parse(init.body).action_config, updated_at: '2026-10-13T20:00:00Z' } }
+      : { automations: [OPT_OUT_AUTOMATION] })
+    render(<Page />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Editar mensaje' }))
+    const field = screen.getByRole('textbox', { name: 'Mensaje de respuesta' })
+    expect(field).toHaveValue(OPT_OUT_AUTOMATION.action_config.message)
+    fireEvent.change(field, { target: { value: 'Disculpá las molestias. Ya estás dado de baja.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(mocks.fetch).toHaveBeenCalledWith('/api/automations/system-baja-confirmation', expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ action_config: { message: 'Disculpá las molestias. Ya estás dado de baja.' } }) }))
+    fireEvent.click(screen.getByRole('button', { name: 'Editar mensaje' }))
+    expect(screen.getByLabelText('Mensaje de respuesta')).toHaveValue('Disculpá las molestias. Ya estás dado de baja.')
+    fireEvent.change(screen.getByLabelText('Mensaje de respuesta'), { target: { value: 'Cambio sin guardar' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Editar mensaje' }))
+    expect(screen.getByLabelText('Mensaje de respuesta')).toHaveValue('Disculpá las molestias. Ya estás dado de baja.')
+    expect(mocks.fetch.mock.calls.filter(([, init]) => init?.method)).toHaveLength(1)
+  })
+  it('rejects a blank reply and preserves the draft after a save failure', async () => {
+    mocks.fetch.mockImplementation(async (_url, init) => { if (init?.method) throw Error('No se pudo guardar'); return { automations: [OPT_OUT_AUTOMATION] } })
+    render(<Page />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Editar mensaje' }))
+    fireEvent.change(screen.getByLabelText('Mensaje de respuesta'), { target: { value: ' ' } })
+    expect(screen.getByRole('button', { name: 'Guardar cambios' })).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('Mensaje de respuesta'), { target: { value: 'Disculpá las molestias.' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo guardar')
+    expect(screen.getByLabelText('Mensaje de respuesta')).toHaveValue('Disculpá las molestias.')
+    expect(screen.getByRole('button', { name: 'Guardar cambios' })).toBeEnabled()
+  })
+})
 
 describe('once-per-chat automation setting', () => {
   it('shows the active setting and preserves it and both keywords when editing the message', async () => {
