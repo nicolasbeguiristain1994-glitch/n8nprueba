@@ -1,10 +1,13 @@
+import userEvent from '@testing-library/user-event'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/useCurrentUser', () => ({ useCurrentUser: () => ({ user: { role: 'admin' } }) }))
 import TemplatesPage from '@/app/(protected)/templates/page'
 
+const accounts = [{ waba_id: '111111', name: 'Nexus', connected: true, line_count: 3 }, { waba_id: '222222', name: 'Lexora', connected: true, line_count: 2 }]
 const saved = {
+  waba_id: '111111',
   id: '11111111-1111-4111-8111-111111111111', name: 'aviso_soporte', category: 'UTILITY', language: 'es_AR',
   status: 'BORRADOR', whatsapp_template_id: null, rejection_reason: null, usage_count: 0, last_used_at: null,
   created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
@@ -17,7 +20,7 @@ function mockApi() {
   writeCalls.length = 0
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET'
-    if (method === 'GET') return new Response(JSON.stringify({ templates: [saved] }), { status: 200 })
+    if (method === 'GET') return new Response(JSON.stringify({ templates: [saved], accounts }), { status: 200 })
     writeCalls.push({ url, method, body: JSON.parse(String(init?.body)) })
     return writeResponse()
   }))
@@ -33,11 +36,24 @@ async function openNew() {
   render(<TemplatesPage />)
   await screen.findByText('aviso_soporte')
   fireEvent.click(screen.getByRole('button', { name: /Nueva plantilla/ }))
+  fireEvent.click(screen.getByRole('combobox', { name: 'Cuenta de WhatsApp' }))
+  fireEvent.click(await screen.findByRole('option', { name: 'Nexus · 111111' }))
   fireEvent.change(screen.getByLabelText(/Nombre/), { target: { value: 'Aviso Nuevo' } })
   fireEvent.change(screen.getByLabelText(/Cuerpo del mensaje/), { target: { value: 'Gracias por escribir a soporte.' } })
 }
 
 describe('templates editor', () => {
+  it('keeps unsupported copied components out of the lossy local editor', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ accounts, templates: [{ ...saved,
+      components: [...saved.components, { type: 'BUTTONS', buttons: [{ type: 'COPY_CODE', text: 'Copiar código' }] }],
+    }] }))))
+    render(<TemplatesPage />)
+    fireEvent.click(await screen.findByTitle('Ver plantilla'))
+    expect(screen.queryByTitle('Editar')).not.toBeInTheDocument()
+    expect(screen.getByText(/Se conserva completo/)).toBeInTheDocument()
+    expect(writes()).toEqual([])
+  })
+
   it('loads saved variable examples on edit and sends them back on save', async () => {
     render(<TemplatesPage />)
     fireEvent.click(await screen.findByTitle('Editar'))
@@ -51,15 +67,27 @@ describe('templates editor', () => {
     expect(writes()[0].body.language).toBe('es_AR')
   })
 
-  it('keeps examples when duplicating', async () => {
-    writeResponse = () => new Response(JSON.stringify({ id: 'new' }), { status: 201 })
+  it('copies into a different account as a draft without transferring approval', async () => {
     render(<TemplatesPage />)
-    fireEvent.click(await screen.findByTitle('Duplicar'))
-    expect((screen.getByLabelText(/Nombre/) as HTMLInputElement).value).toBe('aviso_soporte_copia')
-    save()
+    fireEvent.click(await screen.findByTitle('Copiar a otra cuenta'))
+    expect((screen.getByLabelText('Nombre de la copia') as HTMLInputElement).value).toBe(saved.name)
+    fireEvent.click(screen.getByRole('combobox', { name: 'Cuenta de destino' }))
+    expect(screen.queryByRole('option', { name: 'Nexus · 111111' })).not.toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('option', { name: 'Lexora · 222222' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Guardar copia como borrador' }))
     await waitFor(() => expect(writes()).toHaveLength(1))
-    expect(writes()[0]).toMatchObject({ url: '/api/templates', method: 'POST' })
-    expect(writes()[0].body.components).toEqual(saved.components)
+    expect(writes()[0]).toEqual({ url: `/api/templates/${saved.id}/copy`, method: 'POST', body: { waba_id: '222222', name: saved.name } })
+    expect(await screen.findByRole('status')).toHaveTextContent('borrador en Lexora')
+  })
+
+  it('filters templates by account and displays account ownership', async () => {
+    render(<TemplatesPage />)
+    await screen.findByText(saved.name)
+    expect(screen.getByRole('columnheader', { name: 'Cuenta' })).toBeInTheDocument()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('combobox', { name: 'Filtrar por cuenta' }))
+    await user.click(await screen.findByRole('option', { name: 'Lexora · 222222' }))
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith('/api/templates?waba_id=222222'))
   })
 
   it('asks for missing examples instead of inventing them', async () => {
@@ -82,7 +110,7 @@ describe('templates editor', () => {
     save()
     await waitFor(() => expect(writes()).toHaveLength(1))
     expect(writes()[0].body).toEqual({
-      name: 'Aviso Nuevo', category: 'MARKETING', language: 'es',
+      waba_id: '111111', name: 'Aviso Nuevo', category: 'MARKETING', language: 'es',
       components: [{ type: 'BODY', text: 'Gracias por escribir a soporte.' }],
     })
   })

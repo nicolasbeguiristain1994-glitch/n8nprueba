@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/lib/db', () => ({ query: mocks.query, withTransaction: mocks.transaction }))
 vi.mock('@/lib/permissions', () => ({ checkPermissionWithUser: mocks.permission }))
 vi.mock('@/lib/line-visibility', () => ({ getAccessibleLineIds: async () => null }))
+vi.mock('@/lib/template-accounts', () => ({ templateAccountNumber: async () => '1001' }))
 vi.mock('@/lib/audit', () => ({ audit: mocks.audit }))
 vi.mock('@/lib/security-log', () => ({ securityLog: vi.fn() }))
 vi.mock('@/lib/cloud-api/token-store', () => ({ getTokenForNumber: async () => 'synthetic-token' }))
@@ -23,7 +24,7 @@ const req = (method: string, body: unknown) => new NextRequest('https://example.
   method, body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' },
 })
 const body = { type: 'BODY', text: 'Hola {{1}}, tu consulta fue registrada.', example: { body_text: [['Ana']] } }
-const draft = { name: '  Aviso  Soporte ', category: 'UTILITY', language: 'es_AR', components: [body] }
+const draft = { waba_id: '11111', name: '  Aviso  Soporte ', category: 'UTILITY', language: 'es_AR', components: [body] }
 let legacy: boolean
 
 const isColumnLookup = (sql: string) => sql.includes('pg_catalog.pg_attribute')
@@ -36,7 +37,7 @@ beforeEach(() => {
   mocks.permission.mockResolvedValue({ ok: true, user })
   mocks.query.mockImplementation(async (sql: string) => {
     if (isColumnLookup(sql)) return [{ domain: legacy, body: legacy }]
-    if (sql.startsWith('SELECT waba_id')) return [{ waba_id: null }]
+    if (sql.startsWith('SELECT waba_id')) return [{ waba_id: null, whatsapp_template_id: null, status: 'BORRADOR' }]
     return [{ id }]
   })
 })
@@ -47,8 +48,8 @@ describe('POST /api/templates', () => {
     const res = await create(req('POST', draft))
     expect(res.status).toBe(201)
     const [[sql, values]] = calls('INSERT INTO whatsapp_templates')
-    expect(sql).toContain('(name, category, language, components, created_by, domain, body)')
-    expect(values).toEqual(['aviso_soporte', 'UTILITY', 'es_AR', JSON.stringify([body]), 'admin-1', 'general', body.text])
+    expect(sql).toContain('(name, category, language, components, created_by, domain, body, waba_id)')
+    expect(values).toEqual(['aviso_soporte', 'UTILITY', 'es_AR', JSON.stringify([body]), 'admin-1', 'general', body.text, '11111'])
   })
 
   it('omits the legacy columns on a modern table', async () => {
@@ -56,7 +57,7 @@ describe('POST /api/templates', () => {
     expect((await create(req('POST', draft))).status).toBe(201)
     const [[sql, values]] = calls('INSERT INTO whatsapp_templates')
     expect(sql).not.toMatch(/domain|body/)
-    expect(values).toHaveLength(5)
+    expect(values).toHaveLength(6)
   })
 
   it.each([
@@ -83,7 +84,7 @@ describe('PATCH /api/templates/[id]', () => {
   it('mirrors BODY into the legacy body column without touching domain', async () => {
     expect((await patch(req('PATCH', { components: [body] }), ctx)).status).toBe(200)
     const [[sql, values]] = calls('UPDATE whatsapp_templates')
-    expect(sql).toContain('components = $1::jsonb, body = $2 WHERE id = $3 AND waba_id IS NULL')
+    expect(sql).toContain("components = $1::jsonb, body = $2 WHERE id = $3 AND whatsapp_template_id IS NULL AND status='BORRADOR'")
     expect(sql).not.toContain('domain')
     expect(values).toEqual([JSON.stringify([body]), body.text, id])
   })

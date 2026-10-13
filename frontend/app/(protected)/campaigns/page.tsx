@@ -184,6 +184,11 @@ export default function Campaigns() {
   // Plantillas
   const [useTemplate,      setUseTemplate]      = useState(false)
   const [templateList,     setTemplateList]     = useState<WaTemplate[]>([])
+  const [templateAccount, setTemplateAccount] = useState('')
+  const [templateAccounts, setTemplateAccounts] = useState<{ waba_id: string; name: string }[]>([])
+  const visibleTemplates = templateList.filter(t => !templateAccount || t.waba_id === templateAccount)
+  const templateAccountName = (id: string | null) => templateAccounts.find(a => a.waba_id === id)?.name || `Cuenta ${id}`
+
   const [templatesStatus,  setTemplatesStatus]  = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [selectedTemplate, setSelectedTemplate] = useState<string>('')
   const [tplBody,       setTplBody]       = useState<string[]>([])
@@ -193,10 +198,11 @@ export default function Campaigns() {
   // Cargar plantillas aprobadas cuando se abre el modal. Sólo sirven las que tienen WABA asociada.
   const loadTemplates = useCallback(() => {
     setTemplatesStatus('loading')
-    fetchJson<{ templates: WaTemplate[] }>('/api/templates?status=APROBADA')
+    fetchJson<{ templates: WaTemplate[]; accounts?: { waba_id: string; name: string }[] }>('/api/templates?status=APROBADA')
       .then(d => {
         setTemplateList((d.templates || []).filter(t =>
           t && t.waba_id != null && String(t.waba_id).trim() !== '' && (!t.status || t.status === 'APROBADA')))
+        setTemplateAccounts(d.accounts ?? [])
         setTemplatesStatus('ready')
       })
       .catch(() => setTemplatesStatus('error'))
@@ -273,6 +279,7 @@ export default function Campaigns() {
 
   const resetTemplateState = () => {
     setUseTemplate(false)
+    setTemplateAccount('')
     setSelectedTemplate('')
     setTplBody([]); setTplHeaderLink(''); setTplButtons({})
     setTemplateSyncMsg(null)
@@ -357,7 +364,7 @@ export default function Campaigns() {
 
   // La plantilla no reemplaza los mensajes de texto: se envía como template con sus parámetros
   const onSelectTemplate = (tplId: string | null) => {
-    if (!tplId || tplId.startsWith('_')) return
+    if (tplId === null || tplId.startsWith('_')) return
     setSelectedTemplate(tplId)
     setTplBody([]); setTplHeaderLink(''); setTplButtons({})
   }
@@ -1077,6 +1084,13 @@ export default function Campaigns() {
               </button>
               {useTemplate && (
                 <div className="mt-2 space-y-3">
+                  <Select value={templateAccount || 'all'} onValueChange={v => { setTemplateAccount(v === 'all' ? '' : v || ''); onSelectTemplate('') }}>
+                    <SelectTrigger aria-label="Cuenta de la plantilla" className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todas las cuentas</SelectItem>
+                      {templateAccounts.map(a => <SelectItem key={a.waba_id} value={a.waba_id}>{a.name} · {a.waba_id.slice(-6)}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
                   <div className="flex items-start gap-2">
                     <div className="flex-1 min-w-0">
                       {templatesStatus === 'error' ? (
@@ -1088,16 +1102,16 @@ export default function Campaigns() {
                         <Select
                           value={selectedTemplate}
                           onValueChange={onSelectTemplate}
-                          items={templateList.map(t => ({ value: t.id, label: `${t.name} · ${t.language || 'idioma no indicado'}` }))}
+                          items={visibleTemplates.map(t => ({ value: t.id, label: `${t.name} · ${t.language || 'idioma no indicado'} · ${templateAccountName(t.waba_id)}` }))}
                         >
                           <SelectTrigger className="text-sm"><SelectValue placeholder="Seleccionar plantilla…" /></SelectTrigger>
                           <SelectContent>
                             {templatesStatus === 'loading'
                               ? <SelectItem value="_loading" disabled>Cargando plantillas…</SelectItem>
-                              : templateList.length === 0
-                              ? <SelectItem value="_none" disabled>No hay plantillas aprobadas con cuenta WABA</SelectItem>
-                              : templateList.map(t => (
-                                  <SelectItem key={t.id} value={t.id}>{t.name} · {t.language || 'idioma no indicado'}</SelectItem>
+                              : visibleTemplates.length === 0
+                              ? <SelectItem value="_none" disabled>No hay plantillas aprobadas para esta cuenta</SelectItem>
+                              : visibleTemplates.map(t => (
+                                  <SelectItem key={t.id} value={t.id}>{t.name} · {t.language || 'idioma no indicado'} · {templateAccountName(t.waba_id)}</SelectItem>
                                 ))
                             }
                           </SelectContent>
@@ -1122,7 +1136,7 @@ export default function Campaigns() {
                       : <p role="status" className="text-xs text-success">{templateSyncMsg.text}</p>
                   )}
                   <p className="text-xs text-muted-foreground">
-                    Se envía como plantilla de WhatsApp Cloud API por el distribuidor multi-línea. Sólo se listan plantillas aprobadas con cuenta WABA asociada.
+                    Cada plantilla se envía únicamente por líneas de su misma cuenta. Sólo se listan plantillas aprobadas con cuenta asociada.
                     La sincronización sólo importa el catálogo existente en Meta: no crea plantillas ni envía mensajes.
                   </p>
 

@@ -1,7 +1,7 @@
 'use client'
 
 import { PageHeader } from '@/components/layout/PageHeader'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -13,6 +13,7 @@ import {
   AlertCircle, Eye, FileText, Image, Video, File,
   Phone, ExternalLink, MessageSquare,
 } from 'lucide-react'
+import type { TemplateAccount } from '@/lib/template-accounts'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 import {
   TEMPLATE_BUTTON_TEXT_MAX, TEMPLATE_NAME_MAX,
@@ -27,7 +28,7 @@ type TemplateCategory = 'UTILITY' | 'MARKETING' | 'AUTHENTICATION'
 
 type HeaderComponent = { type: 'HEADER' } & (
   | { format: 'TEXT'; text: string }
-  | { format: 'IMAGE' | 'VIDEO' | 'DOCUMENT'; example?: string }
+  | { format: 'IMAGE' | 'VIDEO' | 'DOCUMENT'; example?: unknown }
 )
 type BodyComponent    = { type: 'BODY'; text: string; example?: { body_text: string[][] } }
 type FooterComponent  = { type: 'FOOTER'; text: string }
@@ -41,6 +42,7 @@ type TemplateComponent = HeaderComponent | BodyComponent | FooterComponent | But
 
 interface Template {
   id: string
+  waba_id: string | null
   name: string
   category: TemplateCategory
   language: string
@@ -189,6 +191,7 @@ interface FormState {
   headerEnabled: boolean
   headerFormat: 'TEXT' | 'IMAGE' | 'VIDEO' | 'DOCUMENT'
   headerText: string
+  headerExample?: unknown
   bodyText: string
   bodyExamples: string[]   // ejemplo de {{n}} en la posición n - 1
   footerEnabled: boolean
@@ -213,7 +216,7 @@ function formToComponents(f: FormState): TemplateComponent[] {
     if (f.headerFormat === 'TEXT') {
       comps.push({ type: 'HEADER', format: 'TEXT', text: f.headerText })
     } else {
-      comps.push({ type: 'HEADER', format: f.headerFormat })
+      comps.push({ type: 'HEADER', format: f.headerFormat, ...(f.headerExample ? { example: f.headerExample } : {}) })
     }
   }
   comps.push(buildBodyComponent(f.bodyText, f.bodyExamples))
@@ -247,6 +250,7 @@ function templateToForm(t: Template): FormState {
     bodyExamples:   readBodyExamples(t.components),
     footerEnabled:  !!footer,
     footerText:     footer?.text ?? '',
+    headerExample: header && 'example' in header ? header.example : undefined,
     buttonsEnabled: !!buttons,
     buttons:        buttons?.buttons ?? [],
   }
@@ -254,11 +258,39 @@ function templateToForm(t: Template): FormState {
 
 // ── Componente principal ──────────────────────────────────────────────────────
 
+function canonicalContent(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalContent).join(',')}]`
+  if (value && typeof value === 'object') return `{${Object.entries(value).filter(([, v]) => v !== undefined).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${JSON.stringify(k)}:${canonicalContent(v)}`).join(',')}}`
+  return JSON.stringify(value)
+}
+
+function canEditLocally(t: Template): boolean {
+  if (t.status !== 'BORRADOR' || t.whatsapp_template_id) return false
+  try {
+    // Imported components can exceed the editor's capabilities. Never silently discard them.
+    return validateTemplateDraft(t).ok && canonicalContent(formToComponents(templateToForm(t))) === canonicalContent(t.components)
+  } catch { return false }
+}
+
 export default function TemplatesPage() {
   const { user } = useCurrentUser()
   const isAdmin  = user?.role === 'admin'
 
   const [templates, setTemplates] = useState<Template[]>([])
+  const [accounts, setAccounts] = useState<TemplateAccount[]>([])
+  const [filterAccount, setFilterAccount] = useState('')
+  const [formAccount, setFormAccount] = useState('')
+  const [copyTarget, setCopyTarget] = useState<Template | null>(null)
+  const [copyAccount, setCopyAccount] = useState('')
+  const [copyName, setCopyName] = useState('')
+  const [copyError, setCopyError] = useState<string | null>(null)
+  const [copying, setCopying] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [syncingAccounts, setSyncingAccounts] = useState(false)
+  const [viewTarget, setViewTarget] = useState<Template | null>(null)
+  const loadVersion = useRef(0)
+  const accountName = (id: string | null) => id ? accounts.find(a => a.waba_id === id)?.name || `Cuenta ${id}` : 'Sin cuenta asignada'
+
   const [loading,   setLoading]   = useState(true)
   const [error,     setError]     = useState<string | null>(null)
 
@@ -282,19 +314,24 @@ export default function TemplatesPage() {
   const [rowError,   setRowError]   = useState<string | null>(null)
 
   const load = useCallback(async () => {
+    const version = ++loadVersion.current
     setLoading(true)
     setError(null)
     const params = new URLSearchParams()
+    if (filterAccount) params.set('waba_id', filterAccount)
     if (filterStatus)   params.set('status',   filterStatus)
     if (filterCategory) params.set('category', filterCategory)
     if (filterQ)        params.set('q',        filterQ)
     try {
       const res  = await fetch(`/api/templates?${params.toString()}`)
-      const data = await res.json() as { templates?: Template[]; error?: string }
+      const data = await res.json() as { templates?: Template[]; accounts?: TemplateAccount[]; error?: string }
+      if (version !== loadVersion.current) return
       if (!res.ok) { setError(data.error || `Error ${res.status}`); return }
       setTemplates(data.templates ?? [])
-    } catch { setError('Error de red') } finally { setLoading(false) }
-  }, [filterStatus, filterCategory, filterQ])
+      setAccounts(data.accounts ?? [])
+    } catch { if (version === loadVersion.current) setError('Error de red') }
+    finally { if (version === loadVersion.current) setLoading(false) }
+  }, [filterStatus, filterCategory, filterQ, filterAccount])
 
   useEffect(() => { void load() }, [load])
 
@@ -306,12 +343,43 @@ export default function TemplatesPage() {
     setModal(mode)
   }
 
-  function openCreate() { openForm(DEFAULT_FORM, null, 'create') }
+  function openCreate() {
+    setFormAccount(accounts.some(a => a.waba_id === filterAccount && a.connected) ? filterAccount : '')
+    openForm(DEFAULT_FORM, null, 'create')
+  }
 
-  function openEdit(t: Template) { openForm(templateToForm(t), t, 'edit') }
+  function openEdit(t: Template) { setFormAccount(t.waba_id || ''); openForm(templateToForm(t), t, 'edit') }
 
   function openDuplicate(t: Template) {
-    openForm({ ...templateToForm(t), name: `${t.name}_copia` }, null, 'create')
+    setCopyTarget(t); setCopyName(t.name); setCopyAccount(''); setCopyError(null)
+  }
+
+  async function handleCopy() {
+    if (!copyTarget) return
+    if (!copyAccount) { setCopyError('Elegí la cuenta de destino.'); return }
+    setCopying(true); setCopyError(null)
+    try {
+      const res = await fetch(`/api/templates/${copyTarget.id}/copy`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ waba_id: copyAccount, name: copyName }) })
+      const data = await res.json()
+      if (!res.ok) { setCopyError(data.error || 'No se pudo copiar la plantilla'); return }
+      setCopyTarget(null)
+      setNotice(`Copia guardada como borrador en ${accountName(copyAccount)}. Su aprobación se solicita por separado.`)
+      setFilterAccount(copyAccount); setFilterStatus(''); setFilterCategory(''); setFilterQ('')
+      void load()
+    } catch { setCopyError('Error de red al copiar la plantilla') } finally { setCopying(false) }
+  }
+
+  async function syncAccounts() {
+    setSyncingAccounts(true); setRowError(null); setNotice(null)
+    try {
+      const res = await fetch('/api/templates/sync-cloud', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(filterAccount && filterAccount !== 'unassigned' ? { waba_id: filterAccount } : {}) })
+      const data = await res.json()
+      if (!res.ok) setRowError(data.error || 'No se pudo sincronizar desde Meta')
+      else setNotice(`Se actualizaron ${data.synced} plantillas de ${data.accounts} cuentas.`)
+      void load()
+    } catch { setRowError('Error de red al sincronizar desde Meta') } finally { setSyncingAccounts(false) }
   }
 
   async function handleSave() {
@@ -331,11 +399,12 @@ export default function TemplatesPage() {
     const draft = validateTemplateDraft(payload)
     if (!draft.ok) { showErrors(draft.errors); return }
     setFieldErrors({})
+    if (modal === 'create' && !formAccount) { setSaveError('Elegí la cuenta de WhatsApp.'); return }
     setSaving(true)
     try {
       const url    = modal === 'edit' && editTarget ? `/api/templates/${editTarget.id}` : '/api/templates'
       const method = modal === 'edit' ? 'PATCH' : 'POST'
-      const res    = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      const res    = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(modal === 'create' ? { ...payload, waba_id: formAccount } : payload) })
       const data   = await res.json().catch(() => ({})) as { error?: string; issues?: TemplateIssue[] }
       if (!res.ok) {
         if (data.issues?.length) {
@@ -348,6 +417,7 @@ export default function TemplatesPage() {
         return
       }
       setModal(null)
+      if (modal === 'create') { setFilterAccount(formAccount); setFilterStatus(''); setFilterCategory(''); setFilterQ('') }
       void load()
     } catch { setSaveError('Error de red') } finally { setSaving(false) }
   }
@@ -415,8 +485,18 @@ export default function TemplatesPage() {
         )}
       </PageHeader>
 
+      <p className="text-sm text-muted-foreground">Cada cuenta tiene su propia aprobación. Las líneas de una misma cuenta comparten sus plantillas.</p>
+      {notice && <p role="status" className="text-sm text-success bg-success/10 rounded-lg px-4 py-3">{notice}</p>}
       {/* Filtros */}
       <div className="filter-bar">
+        <Select value={filterAccount || 'all'} onValueChange={v => setFilterAccount(v === 'all' ? '' : v || '')}>
+          <SelectTrigger aria-label="Filtrar por cuenta" className="h-8 text-sm w-56"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todas las cuentas</SelectItem>
+            {accounts.map(a => <SelectItem key={a.waba_id} value={a.waba_id}>{a.name} · {a.waba_id.slice(-6)}</SelectItem>)}
+            <SelectItem value="unassigned">Sin cuenta asignada</SelectItem>
+          </SelectContent>
+        </Select>
         <Input
           placeholder="Buscar por nombre…"
           value={filterQ}
@@ -442,6 +522,13 @@ export default function TemplatesPage() {
         </Button>
       </div>
 
+      {isAdmin && <div className="flex items-center gap-3 flex-wrap">
+        <Button variant="outline" size="sm" onClick={syncAccounts} disabled={syncingAccounts || filterAccount === 'unassigned'}>
+          <RefreshCw size={13} className={`mr-1 ${syncingAccounts ? 'animate-spin' : ''}`} />
+          {syncingAccounts ? 'Sincronizando…' : 'Sincronizar desde Meta'}
+        </Button>
+        <span className="text-xs text-muted-foreground">{filterAccount && filterAccount !== 'unassigned' ? `Actualiza ${accountName(filterAccount)}.` : 'Actualiza las cuentas conectadas.'}</span>
+      </div>}
       {/* Error de fila */}
       {rowError && (
         <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3">
@@ -462,19 +549,20 @@ export default function TemplatesPage() {
       ) : templates.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground">
           <FileText size={36} className="mx-auto mb-3 opacity-30" />
-          <p className="text-sm">No hay plantillas{filterStatus || filterCategory || filterQ ? ' con esos filtros' : ' todavía'}</p>
-          {isAdmin && !filterStatus && !filterCategory && !filterQ && (
+          <p className="text-sm">No hay plantillas{filterAccount || filterStatus || filterCategory || filterQ ? ' con esos filtros' : ' todavía'}</p>
+          {isAdmin && !filterAccount && !filterStatus && !filterCategory && !filterQ && (
             <Button variant="ghost" size="sm" onClick={openCreate} className="mt-3 text-sm text-success">
               <Plus size={14} className="mr-1" /> Crear primera plantilla
             </Button>
           )}
         </div>
       ) : (
-        <div className="border border-border rounded-xl overflow-hidden">
+        <div className="border border-border rounded-xl overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-background border-b border-border">
               <tr>
                 <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Nombre</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Cuenta</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Categoría</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Idioma</th>
                 <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Estado</th>
@@ -489,13 +577,14 @@ export default function TemplatesPage() {
                   <td className="px-4 py-3">
                     <div>
                       <p className="font-medium text-foreground font-mono text-xs">{t.name}</p>
-                      {t.rejection_reason && (
+                      {t.rejection_reason && t.rejection_reason !== 'NONE' && (
                         <p className="text-xs text-red-500 mt-0.5 max-w-xs truncate" title={t.rejection_reason}>
                           ↳ {t.rejection_reason}
                         </p>
                       )}
                     </div>
                   </td>
+                  <td className="px-4 py-3"><p className="text-sm font-medium">{accountName(t.waba_id)}</p>{t.waba_id && <p className="text-xs text-muted-foreground" title={t.waba_id}>ID · {t.waba_id.slice(-6)}</p>}</td>
                   <td className="px-4 py-3 text-muted-foreground">{CATEGORY_LABEL[t.category as TemplateCategory]}</td>
                   <td className="px-4 py-3 text-muted-foreground uppercase text-xs">{t.language}</td>
                   <td className="px-4 py-3">
@@ -508,13 +597,13 @@ export default function TemplatesPage() {
                   {isAdmin && (
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 justify-end">
-                        <button onClick={() => openEdit(t)} title="Editar" className="p-1.5 rounded hover:bg-muted text-muted-foreground">
-                          <Pencil size={14} />
+                        <button onClick={() => canEditLocally(t) ? openEdit(t) : setViewTarget(t)} title={canEditLocally(t) ? 'Editar' : 'Ver plantilla'} className="p-1.5 rounded hover:bg-muted text-muted-foreground">
+                          {canEditLocally(t) ? <Pencil size={14} /> : <Eye size={14} />}
                         </button>
-                        <button onClick={() => openDuplicate(t)} title="Duplicar" className="p-1.5 rounded hover:bg-muted text-muted-foreground">
+                        <button onClick={() => openDuplicate(t)} title="Copiar a otra cuenta" className="p-1.5 rounded hover:bg-muted text-muted-foreground">
                           <Copy size={14} />
                         </button>
-                        {(t.status === 'BORRADOR' || t.status === 'RECHAZADA') && (
+                        {t.waba_id && !t.whatsapp_template_id && t.status === 'BORRADOR' && (
                           <button
                             onClick={() => void handleSubmit(t.id)}
                             disabled={submitting === t.id}
@@ -524,7 +613,7 @@ export default function TemplatesPage() {
                             {submitting === t.id ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                           </button>
                         )}
-                        {t.whatsapp_template_id && (
+                        {t.waba_id && t.whatsapp_template_id && (
                           <button
                             onClick={() => void handleSync(t.id)}
                             disabled={syncing === t.id}
@@ -552,6 +641,30 @@ export default function TemplatesPage() {
         </div>
       )}
 
+      <Dialog open={!!copyTarget} onOpenChange={open => { if (!open && !copying) setCopyTarget(null) }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader><DialogTitle>Copiar a otra cuenta</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">Origen: {accountName(copyTarget?.waba_id || null)}. La copia conservará el contenido y se guardará como borrador, con aprobación independiente.</p>
+          <label htmlFor="copy-template-name" className="text-sm font-medium">Nombre de la copia</label>
+          <Input id="copy-template-name" value={copyName} onChange={e => setCopyName(e.target.value)} maxLength={TEMPLATE_NAME_MAX} />
+          <Select value={copyAccount} onValueChange={v => setCopyAccount(v || '')}>
+            <SelectTrigger aria-label="Cuenta de destino" className="w-full"><SelectValue placeholder="Elegí la cuenta de destino…" /></SelectTrigger>
+            <SelectContent>{accounts.filter(a => a.connected && a.waba_id !== copyTarget?.waba_id).map(a => <SelectItem key={a.waba_id} value={a.waba_id}>{a.name} · {a.waba_id.slice(-6)}</SelectItem>)}</SelectContent>
+          </Select>
+          {!accounts.some(a => a.connected && a.waba_id !== copyTarget?.waba_id) && <p className="text-sm text-muted-foreground">No hay otra cuenta conectada disponible.</p>}
+          {copyError && <p role="alert" className="text-sm text-destructive">{copyError}</p>}
+          <Button onClick={handleCopy} disabled={copying || !copyAccount}>{copying ? 'Copiando…' : 'Guardar copia como borrador'}</Button>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!viewTarget} onOpenChange={open => { if (!open) setViewTarget(null) }}>
+        <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>{viewTarget?.name}</DialogTitle></DialogHeader>
+          <p className="text-sm">{accountName(viewTarget?.waba_id || null)} · {viewTarget && STATUS_LABEL[viewTarget.status]}</p>
+          {viewTarget && <WhatsAppPreview components={viewTarget.components} />}
+          <p className="text-xs text-muted-foreground">{viewTarget?.status === 'BORRADOR' && !viewTarget.whatsapp_template_id ? 'Este contenido incluye opciones que el editor local no admite. Se conserva completo; para adaptarlo, usá el administrador de plantillas de Meta.' : 'Para cambiar una plantilla enviada, editála en Meta y sincronizá la cuenta.'}</p>
+          {viewTarget?.waba_id && <a href={`https://business.facebook.com/latest/whatsapp_manager/message_templates?asset_id=${encodeURIComponent(viewTarget.waba_id)}`} target="_blank" rel="noreferrer" className="text-sm text-primary underline">Administrar en Meta</a>}
+        </DialogContent>
+      </Dialog>
       {/* Modal crear/editar */}
       <Dialog open={modal !== null} onOpenChange={open => { if (!open) setModal(null) }}>
         {/* DialogContent trae sm:max-w-sm: el ancho se sobrescribe con el mismo breakpoint. */}
@@ -563,6 +676,15 @@ export default function TemplatesPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-2 min-w-0">
             {/* Columna izquierda — formulario */}
             <div className="space-y-4 min-w-0">
+              <div>
+                <label className="text-sm font-medium block mb-1">Cuenta de WhatsApp</label>
+                {modal === 'edit' ? <p className="text-sm">{accountName(editTarget?.waba_id || null)}</p> :
+                  <Select value={formAccount} onValueChange={v => setFormAccount(v || '')}>
+                    <SelectTrigger aria-label="Cuenta de WhatsApp" className="w-full"><SelectValue placeholder="Elegí la cuenta…" /></SelectTrigger>
+                    <SelectContent>{accounts.filter(a => a.connected).map(a => <SelectItem key={a.waba_id} value={a.waba_id}>{a.name} · {a.waba_id.slice(-6)}</SelectItem>)}</SelectContent>
+                  </Select>}
+                <p className="text-xs text-muted-foreground mt-1">Se guardará como borrador. Podrás enviarla a revisión después.</p>
+              </div>
               {/* Nombre */}
               <div>
                 <label htmlFor="template-name" className="text-sm font-medium text-foreground block mb-1">

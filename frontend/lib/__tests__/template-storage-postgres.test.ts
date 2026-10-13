@@ -95,6 +95,7 @@ const json = (method: string, url: string, body: unknown) =>
 const params = (id: string) => ({ params: Promise.resolve({ id }) })
 
 const validDraft = {
+  waba_id: '11111',
   name: 'Aviso Soporte',
   category: 'UTILITY',
   language: 'es_AR',

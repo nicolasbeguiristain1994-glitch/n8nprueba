@@ -33,7 +33,7 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
-  vi.clearAllMocks()
+  vi.resetAllMocks()
   loginRateLimiter.reset(TEST_IP)
 })
 
@@ -172,7 +172,7 @@ describe('Flujo 2 — RBAC en rutas (POST /api/templates)', () => {
   const TEMPLATES_URL = 'http://localhost/api/templates'
 
   const VALID_BODY = JSON.stringify({
-    name:       'test_template',
+    waba_id: '111111', name: 'test_template',
     category:   'UTILITY',
     components: [{ type: 'BODY', text: 'Hello' }],
   })
@@ -225,7 +225,7 @@ describe('Flujo 2 — RBAC en rutas (POST /api/templates)', () => {
     const newId = 'cccccccc-0000-0000-0000-cccccccccccc'
     mockDbQuery(
       [{ role: 'admin', sectors: [], is_active: true, session_version: 1 }], // RBAC check
-      [MODERN_TEMPLATE_COLUMNS],                                               // optional legacy columns
+      [{ id: 'line-1' }], [{ phone_number_id: '1001' }], [MODERN_TEMPLATE_COLUMNS],                                               // optional legacy columns
       [{ id: newId }],                                                         // INSERT RETURNING
     )
 
@@ -250,7 +250,7 @@ describe('Flujo 3 — Auditoría al crear un recurso', () => {
     const admin = makeSession({ role: 'admin', sectors: [] })
     return makeReqWithSession(TEMPLATES_URL, admin, {
       method:  'POST',
-      body:    JSON.stringify({ name, category, components: [{ type: 'BODY', text: 'Hi' }] }),
+      body:    JSON.stringify({ waba_id: '111111', name, category, components: [{ type: 'BODY', text: 'Hi' }] }),
       headers: { 'content-type': 'application/json' },
     })
   }
@@ -259,7 +259,7 @@ describe('Flujo 3 — Auditoría al crear un recurso', () => {
     const newId = 'dddddddd-0000-0000-0000-dddddddddddd'
     mockDbQuery(
       [{ role: 'admin', sectors: [], is_active: true, session_version: 1 }],
-      [MODERN_TEMPLATE_COLUMNS],
+      [{ id: 'line-1' }], [{ phone_number_id: '1001' }], [MODERN_TEMPLATE_COLUMNS],
       [{ id: newId }],
     )
 
@@ -274,7 +274,7 @@ describe('Flujo 3 — Auditoría al crear un recurso', () => {
     const newId = 'eeeeeeee-0000-0000-0000-eeeeeeeeeeee'
     mockDbQuery(
       [{ role: 'admin', sectors: [], is_active: true, session_version: 1 }],
-      [MODERN_TEMPLATE_COLUMNS],
+      [{ id: 'line-1' }], [{ phone_number_id: '1001' }], [MODERN_TEMPLATE_COLUMNS],
       [{ id: newId }],
     )
 

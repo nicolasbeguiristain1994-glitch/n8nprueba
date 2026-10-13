@@ -112,6 +112,28 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 beforeEach(() => { vi.clearAllMocks(); currentUser.value = { user: { role: 'admin', id: 'owner' }, permissions: {} } })
 
 describe('Campañas — plantillas', () => {
+  it('separates identical names by account and clears previous parameters when switching', async () => {
+    routeFetchJson(() => Promise.resolve({ campaigns: [], scheduler_enabled: false }), () => Promise.resolve({
+      accounts: [{ waba_id: '1029384756', name: 'Nexus' }, { waba_id: '222222', name: 'Lexora' }],
+      templates: [TEMPLATES[0], { ...TEMPLATES[0], id: 'other', waba_id: '222222' }],
+    }))
+    render(<Page />)
+    await screen.findByText('No hay campañas todavía')
+    fireEvent.click(screen.getByRole('button', { name: /Nueva campaña/ }))
+    fireEvent.change(screen.getByPlaceholderText(/Retención VIP Mayo/), { target: { value: 'Por cuenta' } })
+    chooseAudience()
+    fireEvent.click(screen.getByRole('button', { name: /Usar plantilla aprobada/ }))
+    fireEvent.click(await screen.findByRole('option', { name: 'Nexus · 384756' }))
+    expect(screen.queryByRole('option', { name: /promo_bienvenida.*Lexora/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('option', { name: /promo_bienvenida.*Nexus/ }))
+    fireEvent.change(screen.getByLabelText('Parámetro {{1}} del cuerpo'), { target: { value: 'Ana' } })
+    fireEvent.click(screen.getByRole('option', { name: 'Lexora · 222222' }))
+    expect(screen.queryByLabelText('Parámetro {{1}} del cuerpo')).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /promo_bienvenida.*Nexus/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('option', { name: /promo_bienvenida.*Lexora/ }))
+    expect(screen.getByLabelText('Parámetro {{1}} del cuerpo')).toHaveValue('')
+  })
+
   it('vincula {{1}} al nombre de cada contacto y muestra Pablo sólo como ejemplo', async () => {
     routeFetchJson(
       () => Promise.resolve({ campaigns: [], scheduler_enabled: false }),
@@ -129,7 +151,7 @@ describe('Campañas — plantillas', () => {
     fireEvent.change(screen.getByPlaceholderText(/Retención VIP Mayo/), { target: { value: 'Regalo personalizado' } })
     chooseAudience()
     fireEvent.click(screen.getByRole('button', { name: /Usar plantilla aprobada/ }))
-    fireEvent.click(await screen.findByRole('option', { name: 'regalo3000 · es_AR' }))
+    fireEvent.click(await screen.findByRole('option', { name: /regalo3000 · es_AR/ }))
 
     const input = screen.getByLabelText('Parámetro {{1}} del cuerpo')
     fireEvent.change(input, { target: { value: 'nombre' } })
@@ -159,7 +181,7 @@ describe('Campañas — plantillas', () => {
     chooseAudience()
     fireEvent.click(screen.getByRole('button', { name: /Usar plantilla aprobada/ }))
 
-    const option = await screen.findByRole('option', { name: 'promo_bienvenida · es_AR' })
+    const option = await screen.findByRole('option', { name: /promo_bienvenida · es_AR/ })
     // Sin WABA asociada no se ofrece
     expect(screen.queryByRole('option', { name: /sin_waba/ })).not.toBeInTheDocument()
     fireEvent.click(option)
@@ -208,7 +230,7 @@ describe('Campañas — plantillas', () => {
     fireEvent.change(screen.getByPlaceholderText(/Retención VIP Mayo/), { target: { value: 'Cupones' } })
     chooseAudience()
     fireEvent.click(screen.getByRole('button', { name: /Usar plantilla aprobada/ }))
-    fireEvent.click(await screen.findByRole('option', { name: 'cupon_codigo · es' }))
+    fireEvent.click(await screen.findByRole('option', { name: /cupon_codigo · es/ }))
 
     const alert = screen.getByRole('alert')
     expect(alert).toHaveTextContent('Esta plantilla no se puede usar en campañas todavía')
@@ -240,12 +262,12 @@ describe('Campañas — plantillas', () => {
     chooseAudience()
     fireEvent.click(screen.getByRole('button', { name: /Usar plantilla aprobada/ }))
 
-    fireEvent.click(await screen.findByRole('option', { name: 'hueco · es' }))
+    fireEvent.click(await screen.findByRole('option', { name: /hueco · es/ }))
     expect(screen.getByRole('alert')).toHaveTextContent('variables no compatibles')
     expect(screen.queryByLabelText(/Parámetro \{\{3\}\} del cuerpo/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Guardar campaña/ })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('option', { name: 'url_media · es' }))
+    fireEvent.click(screen.getByRole('option', { name: /url_media · es/ }))
     expect(screen.getByRole('alert')).toHaveTextContent('URL dinámica no compatible')
     expect(screen.queryByRole('button', { name: /Guardar campaña/ })).not.toBeInTheDocument()
   })
@@ -287,7 +309,7 @@ describe('Campañas — sincronizar plantillas desde Meta', () => {
     expect(init).toMatchObject({ method: 'POST' })
     expect(init).not.toHaveProperty('body')
 
-    expect(await screen.findByRole('option', { name: 'promo_bienvenida · es_AR' })).toBeInTheDocument()
+    expect(await screen.findByRole('option', { name: /promo_bienvenida · es_AR/ })).toBeInTheDocument()
     expect(vi.mocked(fetchJson).mock.calls.filter(([u]) => String(u) === '/api/templates?status=APROBADA')).toHaveLength(2)
   })
 
@@ -307,7 +329,7 @@ describe('Campañas — sincronizar plantillas desde Meta', () => {
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Una cuenta WABA no respondió')
     expect(alert).toHaveTextContent('sincronización parcial: 2 plantillas importadas')
-    expect(await screen.findByRole('option', { name: 'promo_bienvenida · es_AR' })).toBeInTheDocument()
+    expect(await screen.findByRole('option', { name: /promo_bienvenida · es_AR/ })).toBeInTheDocument()
   })
 
   it('un error total muestra el mensaje sin recargar el catálogo', async () => {
