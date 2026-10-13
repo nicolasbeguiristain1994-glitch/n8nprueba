@@ -3,6 +3,7 @@ import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { parseBody, handleValidationError, CreateAutomationSchema } from '@/lib/schema'
+import { OPT_OUT_AUTOMATION } from '@/lib/opt-out-automation'
 
 type AutomationRow = {
   id: string
@@ -63,7 +64,12 @@ export async function GET(req: NextRequest) {
        ORDER BY a.priority ASC, a.created_at ASC`,
       params,
     )
-    return NextResponse.json({ automations: rows })
+    // BAJA runs before ordinary rules and is always enabled. Expose its real
+    // configuration without inserting an ordinary rule that would never run.
+    const showOptOut = (!q || OPT_OUT_AUTOMATION.name.toLocaleLowerCase('es').includes(q.toLocaleLowerCase('es')))
+      && (!['reply', 'flow', 'handoff'].includes(type) || type === 'reply')
+      && status !== 'paused'
+    return NextResponse.json({ automations: showOptOut ? [OPT_OUT_AUTOMATION, ...rows] : rows })
   } catch (e) {
     console.error('[/api/automations GET]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Error interno del servidor' }, { status: 500 })

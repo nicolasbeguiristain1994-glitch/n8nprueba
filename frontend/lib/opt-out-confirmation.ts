@@ -3,8 +3,8 @@ import { normalizePhone } from '@/lib/validate'
 import { getTokenForNumber } from '@/lib/cloud-api/token-store'
 import { enforceRateLimit } from '@/lib/cloud-api/rate-limiter'
 import { MetaHttpGateway } from '@/lib/cloud-api/infrastructure/meta-http.gateway'
-
-export const OPT_OUT_CONFIRMATION = 'Disculpá las molestias. Ya registramos tu baja y no vas a recibir más mensajes promocionales de nuestra parte.'
+import { OPT_OUT_CONFIRMATION } from '@/lib/opt-out-automation'
+export { OPT_OUT_CONFIRMATION } from '@/lib/opt-out-automation'
 
 type Request = { phone: string; sourceId: string; messageId: string; provider: 'cloud' | 'evolution' }
 type Source = { conversation_id?: string; line_id: string; evolution_url?: string | null }
