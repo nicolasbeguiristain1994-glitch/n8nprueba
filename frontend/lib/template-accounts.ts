@@ -8,7 +8,7 @@ export type TemplateAccount = { waba_id: string; name: string; line_count: numbe
 export async function listTemplateAccounts(user: SessionUser): Promise<TemplateAccount[]> {
   const ids = await getAccessibleLineIds(user)
   return query<TemplateAccount>(`WITH visible AS (
-    SELECT cn.waba_id, cn.status, cn.verified_name, wl.name AS line_name
+    SELECT cn.waba_id, cn.status, cn.verified_name, wl.display_name AS line_name
     FROM cloud_numbers cn LEFT JOIN whatsapp_lines wl ON wl.id=cn.whatsapp_line_id
     WHERE ($1::uuid[] IS NULL OR cn.whatsapp_line_id=ANY($1::uuid[]))
   ), accounts AS (
