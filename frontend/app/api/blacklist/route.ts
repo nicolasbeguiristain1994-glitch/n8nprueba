@@ -79,10 +79,19 @@ export async function GET(req: NextRequest) {
            b.campaign_id, b.original_message,
            ua.name AS added_by_name,
            ur.name AS removed_by_name,
-           b.added_by, b.removed_by
+           b.added_by, b.removed_by,
+           consent.metadata->>'input_type' AS input_type,
+           COALESCE(wl.display_name,consent.phone_number_id) AS origin_line,
+           cp.name AS campaign_name
          FROM blacklist b
          LEFT JOIN users ua ON ua.id = b.added_by
          LEFT JOIN users ur ON ur.id = b.removed_by
+         LEFT JOIN LATERAL (SELECT cl.phone_number_id,cl.metadata FROM cloud_consent_log cl
+           WHERE cl.contact_phone='+'||b.phone_number_normalized AND cl.event='opt_out'
+             AND cl.metadata->>'blacklist_id'=b.id::text ORDER BY cl.created_at DESC LIMIT 1) consent ON true
+         LEFT JOIN cloud_numbers cn ON cn.phone_number_id=consent.phone_number_id
+         LEFT JOIN whatsapp_lines wl ON wl.id=cn.whatsapp_line_id
+         LEFT JOIN campaigns cp ON cp.id=b.campaign_id
          ${where}
          ORDER BY b.added_at DESC
          LIMIT ${limit} OFFSET ${(page - 1) * limit}`,
@@ -154,7 +163,7 @@ export async function POST(req: NextRequest) {
 
   try {
     // Upsert: si existe un registro activo para ese número, lo ignora.
-    // Si existe uno removido (soft-deleted), lo reactiva.
+    // Las bajas históricas se conservan; cada bloqueo nuevo crea otro registro.
     const inserted: string[] = []
     const skipped: string[] = []
 
@@ -170,27 +179,12 @@ export async function POST(req: NextRequest) {
         continue
       }
 
-      // Si hay uno removido, reactivarlo
-      const reactivated = await query<{ id: string }>(
-        `UPDATE blacklist
-         SET removed_at = NULL, removed_by = NULL,
-             reason = $2, added_by = $3, added_at = NOW(), source = 'manual'
-         WHERE phone_number_normalized = $1
-           AND removed_at IS NOT NULL
-         RETURNING id`,
-        [normalized, reason, session.user_id],
-      )
-
-      if (reactivated.length > 0) {
-        inserted.push(raw)
-        continue
-      }
-
       // Insertar nuevo
       await query(
         `INSERT INTO blacklist
            (phone_number_raw, phone_number_normalized, reason, source, added_by)
-         VALUES ($1, $2, $3, 'manual', $4)`,
+         VALUES ($1, $2, $3, 'manual', $4)
+         ON CONFLICT(phone_number_normalized) WHERE removed_at IS NULL DO NOTHING`,
         [raw, normalized, reason, session.user_id],
       )
       inserted.push(raw)

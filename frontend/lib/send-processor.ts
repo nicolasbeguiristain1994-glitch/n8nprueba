@@ -1,3 +1,4 @@
+import { OptOutError } from '@/lib/cloud-api/errors'
 import { query } from '@/lib/db'
 import { prepareCampaignRouting, getCampaignAssignedLine, campaignRoutingCondition } from '@/lib/campaign-routing'
 import { ContactFrequencyEngine } from '@/lib/contact-frequency/ContactFrequencyEngine'
@@ -372,8 +373,8 @@ export async function sendOne(
       return deferRecipient(recipient, 'line-unavailable-before-send')
     }
     const errMsg = e instanceof Error ? e.message : 'provider error'
-    const skip = line.line_type === 'cloud' && e instanceof CloudApiError &&
-      [131021, 131026, 131047].includes(e.code ?? -1)
+    const skip = e instanceof OptOutError || (line.line_type === 'cloud' && e instanceof CloudApiError &&
+      [131021, 131026, 131047].includes(e.code ?? -1))
     const unknownOutcome = e instanceof CloudSendOutcomeUnknownError
     const detail = unknownOutcome
       ? `[provider-outcome-unknown-no-resend] ${errMsg}` : errMsg

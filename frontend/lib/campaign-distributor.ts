@@ -1,6 +1,7 @@
 import { priorityRecipientAllowed } from './user-prioritization/broadcasts'
 import { uploadCloudSticker } from './cloud-api/infrastructure/sticker-media'
 import { ensureCampaignAudienceSnapshot, campaignMembershipSQL } from './dynamic-audiences'
+import { withGlobalSendGuard } from '@/lib/global-opt-out'
 import { complianceRepository } from './cloud-api/repositories/compliance.repository'
 import { conversationRepository } from './cloud-api/repositories/conversation.repository'
 import { OptOutError, ConversationWindowError } from './cloud-api/errors'
@@ -600,11 +601,12 @@ export async function sendViaEvolution(
   }
 
   const url = `${evoUrl}/message/${mediaType === 'sticker' ? 'sendSticker' : 'sendText'}/${line.evolution_instance}`
-  const res = await fetch(url, {
+  const res = await withGlobalSendGuard(phone, () => fetch(url, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json', apikey: apiKey },
     body:    JSON.stringify(body),
-  })
+    signal: AbortSignal.timeout(20000),
+  }))
 
   if (!res.ok) {
     let errText: string
@@ -724,7 +726,7 @@ export async function sendViaCloud(
   } catch (error) {
     // A timeout/disconnected response cannot prove that Meta rejected the message.
     // Keep its queued fence intact instead of making an automatic duplicate possible.
-    if (error instanceof CloudApiError && error.code) throw error
+    if (error instanceof OptOutError || (error instanceof CloudApiError && error.code)) throw error
     throw new CloudSendOutcomeUnknownError()
   }
 }
@@ -1337,8 +1339,8 @@ export async function sendOneUnit(
     // Cloud API: contact-level non-retryable errors (see CLOUD_SKIP_CODES).
     // These come from MetaHttpGateway as CloudApiError — not from the use-case layer.
     // Marking as 'skipped' avoids wasting MAX_RETRIES on structurally unsendable recipients.
-    if (err instanceof CloudApiError && CLOUD_SKIP_CODES.has(err.code ?? -1)) {
-      const reason = err instanceof OptOutError ? 'cloud-opted-out'
+    if (err instanceof OptOutError || (err instanceof CloudApiError && CLOUD_SKIP_CODES.has(err.code ?? -1))) {
+      const reason = err instanceof OptOutError ? 'global-opt-out'
                    : err.code === 131047 ? 'cloud-no-window'
                    : err.code === 131026 ? 'cloud-undeliverable'
                    : 'cloud-non-retryable'

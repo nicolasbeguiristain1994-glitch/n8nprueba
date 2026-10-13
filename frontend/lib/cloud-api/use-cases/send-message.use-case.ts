@@ -12,6 +12,7 @@ import { createLogger }                       from '../infrastructure/logger'
 import { createCorrelationId }                from '../correlation'
 import type { SendMessageRequest, SendMessageResult } from '../types/messages'
 import { OptOutError, ConversationWindowError, CloudApiError } from '../errors'
+import { markOptOutCancelled } from '../queued-send-guard'
 import { enqueueMessage }                     from '../message-queue'
 
 export interface SendMessageInput {
@@ -104,6 +105,7 @@ export class SendMessageUseCase {
       return { messageId, wamid, status: 'sent' }
 
     } catch (err) {
+      if (err instanceof OptOutError) await markOptOutCancelled(messageId)
       cloudMetrics.messageFailed(phoneNumberId, type, err instanceof CloudApiError ? err.code : undefined)
       log.logError('send failed', err, { messageId })
       throw err

@@ -215,7 +215,7 @@ describe('SendMessageUseCase – envío exitoso de template', () => {
     // upsertForOutbound → conv id
     // insertOutbound
     mockQuery
-      .mockResolvedValueOnce([{ opted_out: false }])          // isOptedOut
+      .mockResolvedValueOnce([])          // isOptedOut
       .mockResolvedValueOnce([{ id: 'conv_send_001' }])       // upsertForOutbound
       .mockResolvedValueOnce([])                              // insertOutbound
 

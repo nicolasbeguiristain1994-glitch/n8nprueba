@@ -24,7 +24,7 @@ export class RateLimitError extends CloudApiError {
 
 export class OptOutError extends CloudApiError {
   constructor(phone: string) {
-    super(`El número ${phone} ha optado por no recibir mensajes`, 131026, 'User opted out', undefined, false)
+    super(`Baja global: el número ${phone} está bloqueado para todos los envíos.`, undefined, 'Global opt-out', undefined, false)
     this.name = 'OptOutError'
   }
 }

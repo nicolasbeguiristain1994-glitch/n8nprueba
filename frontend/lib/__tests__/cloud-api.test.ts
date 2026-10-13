@@ -230,7 +230,7 @@ describe('SendMessageUseCase', () => {
 
   it('lanza ConversationWindowError para texto libre sin ventana abierta', async () => {
     mockQuery
-      .mockResolvedValueOnce([{ opted_out: false }])      // isOptedOut
+      .mockResolvedValueOnce([])      // isOptedOut
       .mockResolvedValueOnce([{ window_expires_at: null, window_type: null }]) // findWindow
 
     const { SendMessageUseCase }    = await import('../cloud-api/use-cases/send-message.use-case')

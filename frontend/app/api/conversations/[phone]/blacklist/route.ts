@@ -1,5 +1,6 @@
 import { canReadConversation, conversationPhone } from '@/lib/conversation-access'
 import { NextRequest, NextResponse } from 'next/server'
+import { reinstateGlobalContact } from '@/lib/global-opt-out'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { normalizePhone, isUUID } from '@/lib/validate'
@@ -48,16 +49,14 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const normalized = normalizePhone(phone)
   if (!normalized) return NextResponse.json({ error: 'Teléfono inválido' }, { status: 400 })
 
-  const removedBy = isUUID(auth.user.user_id) ? auth.user.user_id : null
-
+  const body = await req.json().catch(() => null)
+  if (body?.consent_confirmed !== true || typeof body?.consent_note !== 'string' || body.consent_note.trim().length < 10 || body.consent_note.length > 2000) {
+    return NextResponse.json({error:'Registrá el nuevo consentimiento desde Blacklist para reactivar el contacto.'},{status:400})
+  }
   try {
-    if (!await canReadConversation(auth.user, phone)) return NextResponse.json({error: 'Forbidden'}, {status: 403})
-    await query(
-      `UPDATE blacklist
-       SET removed_at = NOW(), removed_by = $1::UUID
-       WHERE phone_number_normalized = $2 AND removed_at IS NULL`,
-      [removedBy, normalized]
-    )
+    if (!await canReadConversation(auth.user, phone)) return NextResponse.json({error:'Forbidden'},{status:403})
+    const [entry] = await query<{id:string}>('SELECT id FROM blacklist WHERE phone_number_normalized=$1 AND removed_at IS NULL',[normalized])
+    if (!entry || !await reinstateGlobalContact(entry.id,auth.user.user_id,body.consent_note)) return NextResponse.json({error:'Baja no encontrada'},{status:404})
     emitUpdate(phone, 'blacklist')
     return NextResponse.json({ ok: true })
   } catch (e) {

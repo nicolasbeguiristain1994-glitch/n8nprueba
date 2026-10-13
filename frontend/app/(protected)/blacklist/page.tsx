@@ -15,6 +15,9 @@ import { fetchJson } from '@/lib/fetchJson'
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
 interface BlacklistItem {
+  origin_line?: string | null
+  input_type?: string | null
+  campaign_name?: string | null
   id: string
   phone_number_raw: string
   phone_number_normalized: string
@@ -88,6 +91,9 @@ export default function BlacklistPage() {
   const [deleteTarget, setDeleteTarget] = useState<BlacklistItem | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [deleteError, setDeleteError]   = useState<string | null>(null)
+
+  const [consentNote, setConsentNote] = useState('')
+  const [consentConfirmed, setConsentConfirmed] = useState(false)
 
   const limit = 50
 
@@ -256,7 +262,7 @@ export default function BlacklistPage() {
     setDeleteLoading(true)
     setDeleteError(null)
     try {
-      await fetchJson(`/api/blacklist/${deleteTarget.id}`, { method: 'DELETE' })
+      await fetchJson(`/api/blacklist/${deleteTarget.id}`, { method: 'DELETE', headers:{'Content-Type':'application/json'}, body:JSON.stringify({consent_confirmed:consentConfirmed,consent_note:consentNote}) })
       setDeleteTarget(null)
       void fetchItems()
     } catch (e) {
@@ -386,6 +392,9 @@ export default function BlacklistPage() {
                       </td>
                       <td className="px-4 py-3 text-foreground max-w-[200px]">
                         <span className="line-clamp-2">{item.reason ?? '—'}</span>
+                        {item.origin_line && <p className="text-xs text-muted-foreground">Línea: {item.origin_line}</p>}
+                        {item.campaign_name && <p className="text-xs text-muted-foreground">Campaña: {item.campaign_name}</p>}
+                        {item.input_type && <p className="text-xs text-muted-foreground">{item.input_type === 'text' ? 'Solicitud por texto' : 'Solicitud por botón'}</p>}
                       </td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${SOURCE_COLORS[item.source] ?? 'bg-muted text-foreground'}`}>
@@ -408,7 +417,7 @@ export default function BlacklistPage() {
                       <td className="px-4 py-3">
                         {!item.removed_at && (
                           <button
-                            onClick={() => { setDeleteTarget(item); setDeleteError(null) }}
+                            onClick={() => { setDeleteTarget(item); setDeleteError(null); setConsentNote(''); setConsentConfirmed(false) }}
                             className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
                             title="Quitar de blacklist"
                           >
@@ -659,9 +668,17 @@ export default function BlacklistPage() {
               de la blacklist?
             </p>
             <p className="text-xs text-muted-foreground">
-              Al quitarlo, el número podrá volver a recibir mensajes de campañas.
+              Se habilitarán nuevos envíos en todas las líneas. Los mensajes cancelados por la baja no se reanudarán.
             </p>
 
+            <label className="flex gap-2 text-sm">
+              <input type="checkbox" checked={consentConfirmed} onChange={e=>setConsentConfirmed(e.target.checked)} />
+              El contacto volvió a aceptar recibir mensajes.
+            </label>
+            <label className="block text-sm">Nuevo consentimiento
+              <textarea value={consentNote} onChange={e=>setConsentNote(e.target.value)} maxLength={2000}
+                placeholder="Cuándo y por qué medio lo confirmó" className="mt-2 w-full rounded border p-2" />
+            </label>
             {deleteError && (
               <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded px-3 py-2">
                 <AlertTriangle size={14} /> {deleteError}
@@ -675,7 +692,7 @@ export default function BlacklistPage() {
               <Button
                 size="sm"
                 onClick={handleDelete}
-                disabled={deleteLoading}
+                disabled={deleteLoading || !consentConfirmed || consentNote.trim().length < 10}
                 className="bg-amber-600 hover:bg-amber-700 text-white"
               >
                 {deleteLoading ? 'Quitando...' : 'Sí, quitar de blacklist'}

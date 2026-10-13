@@ -1,4 +1,5 @@
 import { isOfizeus, ofizeusReply, type RoutingContact } from '@/lib/contact-line-directory'
+import { withGlobalSendGuard } from '@/lib/global-opt-out'
 import { query, withTransaction } from '@/lib/db'
 import { sendMessageUseCase } from '@/lib/cloud-api/use-cases/send-message.use-case'
 import { sseEmitter } from '@/lib/sse-events'
@@ -162,8 +163,8 @@ async function sendJob(job:Job):Promise<void> {
       VALUES($1,$2,'outbound','queued',$3::jsonb) RETURNING id`,['+'+job.phone,job.body,JSON.stringify({line_id:line.id,source:'automation',automation_id:job.automation_id,automation_job_id:job.id})])
     let response:Response
     try {
-      response=await fetch(`${line.evolution_url}/message/sendText/${line.evolution_instance}`,{method:'POST',headers:{'Content-Type':'application/json',apikey:process.env.EVOLUTION_API_KEY??''},body:JSON.stringify({number:job.phone,text:job.body}),signal:AbortSignal.timeout(20000)})
-    } catch {await complete(job,'uncertain','Sin confirmación del proveedor; no se reenvía automáticamente');return}
+      response=await withGlobalSendGuard(job.phone, () => fetch(`${line.evolution_url}/message/sendText/${line.evolution_instance}`,{method:'POST',headers:{'Content-Type':'application/json',apikey:process.env.EVOLUTION_API_KEY??''},body:JSON.stringify({number:job.phone,text:job.body}),signal:AbortSignal.timeout(20000)}))
+    } catch (err) {await complete(job,err instanceof Error && err.name==='OptOutError'?'skipped':'uncertain',err instanceof Error && err.name==='OptOutError'?'Baja solicitada por el contacto':'Sin confirmación del proveedor; no se reenvía automáticamente');return}
     if (!response.ok) {
       await query(`UPDATE whatsapp_messages SET status='failed' WHERE id=$1`,[stored.id])
       await complete(job,'failed',`Proveedor rechazó el envío (HTTP ${response.status})`);return

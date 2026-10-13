@@ -97,7 +97,7 @@ export async function enqueueMessage(
 
   // Actualizar estado en DB
   await query(
-    `UPDATE cloud_messages SET status = 'queued', queued_at = NOW() WHERE id = $1`,
+    `UPDATE cloud_messages SET status = 'queued', queued_at = NOW() WHERE id = $1 AND status = 'queued'`,
     [msg.messageId],
   ).catch(err => queueLog.logWarn('failed to update message status', { error: String(err) }))
 

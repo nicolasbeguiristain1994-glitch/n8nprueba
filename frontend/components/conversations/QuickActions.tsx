@@ -83,7 +83,7 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
   })
 
   const addToBlacklist = () => {
-    if (!confirm('¿Agregar este contacto a la blacklist? No recibirá más mensajes automáticos.')) return
+    if (!confirm('¿Agregar este contacto a la blacklist? Se bloquearán los envíos en todas las líneas.')) return
     run('blacklist', async () => {
       const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/blacklist`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -93,12 +93,7 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
     })
   }
 
-  const removeFromBlacklist = () => run('unblacklist', async () => {
-    const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/blacklist`, {
-      method: 'PATCH',
-    })
-    if (res.ok) { flash('unblacklist'); onRefresh?.() }
-  })
+  const removeFromBlacklist = () => window.location.assign('/blacklist')
 
   const inProcess      = conv?.conv_flow === 'en_proceso'
   const isBlacklisted  = conv?.is_blacklisted === true

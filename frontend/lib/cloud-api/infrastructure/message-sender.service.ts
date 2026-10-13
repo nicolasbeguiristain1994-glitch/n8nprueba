@@ -1,5 +1,6 @@
 // Responsabilidad única: enviar mensajes via Graph API y construir sus payloads.
 
+import { withGlobalSendGuard } from '@/lib/global-opt-out'
 import { MetaHttpGateway } from './meta-http.gateway'
 import type { SendMessageRequest } from '../types/messages'
 
@@ -19,10 +20,10 @@ export class MessageSenderService {
 
   async send(req: SendMessageRequest): Promise<SendResult> {
     const payload = buildMessagePayload(req)
-    const data    = await this.gw.post<{ messages: Array<{ id: string }> }>(
+    const data    = await withGlobalSendGuard(req.to, () => this.gw.post<{ messages: Array<{ id: string }> }>(
       `/${req.phoneNumberId}/messages`,
       payload,
-    )
+    ))
     return { wamid: data.messages[0].id }
   }
 

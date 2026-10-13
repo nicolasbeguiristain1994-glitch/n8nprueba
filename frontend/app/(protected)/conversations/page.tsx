@@ -160,16 +160,19 @@ export default function Conversations() {
                   </div>
                 )}
 
+                {selectedConv?.is_blacklisted && <p role="status" className="px-3 py-2 text-sm text-destructive">
+                  Baja global · Este número está en Blacklist. Los envíos están bloqueados en todas las líneas.
+                </p>}
                 {/* Input area */}
                 <div className="border-t border-border p-2 md:p-3 bg-card shrink-0">
-                  <AssignedLineActions key={selected} conv={selectedConv} disabled={sending} onInsert={text=>{
+                  <AssignedLineActions key={selected} conv={selectedConv} disabled={sending || !!selectedConv?.is_blacklisted} onInsert={text=>{
                     setReply(previous=>previous.trim() ? previous + '\n' + text : text)
                     textareaRef.current?.focus()
                   }}/>
                   {reply.trim() && <p className="sr-only md:not-sr-only md:mb-2 text-xs text-muted-foreground" role="status">Borrador de este contacto · se conserva al cambiar de chat durante esta sesión</p>}
                   <div className="flex flex-wrap gap-2 items-end">
                     <div className="relative flex w-full items-center gap-1 md:w-auto">
-                    <StickerPicker key={selected} disabled={sending} onSend={sendSticker} />
+                    <StickerPicker key={selected} disabled={sending || !!selectedConv?.is_blacklisted} onSend={sendSticker} />
 
                     {/* Emoji picker */}
                     <div className="md:relative">
@@ -194,6 +197,7 @@ export default function Conversations() {
                     <Textarea
                       ref={textareaRef}
                       aria-label="Respuesta al contacto"
+                      disabled={selectedConv?.is_blacklisted}
                       placeholder="Escribí una respuesta…"
                       title="Enter para enviar, Shift+Enter para nueva línea"
                       value={reply}
@@ -206,7 +210,7 @@ export default function Conversations() {
                     <Button
                       onClick={sendReply}
                       aria-label="Enviar respuesta"
-                      disabled={sending || !reply.trim()}
+                      disabled={sending || !!selectedConv?.is_blacklisted || !reply.trim()}
                       size="icon"
                       className="bg-primary hover:bg-primary/90 shrink-0 h-11 w-11 md:h-9 md:w-9"
                     >

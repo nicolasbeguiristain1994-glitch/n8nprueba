@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-import { complianceRepository } from '../../frontend/lib/cloud-api/repositories/compliance.repository'
+import { queuedMessageCanStart, sendQueuedWithConsent } from '../../frontend/lib/cloud-api/queued-send-guard'
 import { conversationRepository } from '../../frontend/lib/cloud-api/repositories/conversation.repository'
 // Worker de BullMQ para procesar la cola de mensajes de Cloud API.
 // Ejecutar como proceso separado: npx tsx scripts/workers/cloud-message-worker.ts
@@ -36,7 +36,7 @@ const worker = new Worker<QueuedMessage>(
 
     log.logInfo('job started', { jobId: job.id, to: msg.to })
 
-    if (await complianceRepository.isOptedOut(msg.to, msg.phoneNumberId)) throw new UnrecoverableError('Contacto dado de baja')
+    if (!await queuedMessageCanStart(msg.messageId, msg.to)) return {status:'skipped',reason:'Baja solicitada o mensaje ya procesado'}
     if (msg.payload.type !== 'template') {
       const window = await conversationRepository.findWindow(msg.phoneNumberId, msg.to)
       if (!window?.windowExpiresAt || window.windowExpiresAt <= new Date()) throw new UnrecoverableError('Ventana de servicio cerrada')
@@ -58,10 +58,12 @@ const worker = new Worker<QueuedMessage>(
 
     let responseData: { messages?: Array<{ id: string }> }
     try {
-      responseData = await gateway.post<{ messages: Array<{ id: string }> }>(
+      const sent = await sendQueuedWithConsent(msg.messageId, msg.to, () => gateway.post<{ messages: Array<{ id: string }> }>(
         `/${msg.phoneNumberId}/messages`,
         payload,
-      )
+      ))
+      if (!sent) return {status: 'skipped', reason: 'Baja solicitada o mensaje ya procesado'}
+      responseData = sent
     } catch (err) {
       const errorCode = (err as { code?: number }).code ?? 0
       log.logError('send failed', err, { jobId: job.id })

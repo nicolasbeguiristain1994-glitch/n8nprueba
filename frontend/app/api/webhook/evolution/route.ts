@@ -1,35 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
 import { query } from '@/lib/db'
-import { normalizePhone } from '@/lib/validate'
+import { recordGlobalOptOut } from '@/lib/global-opt-out'
+import { complianceRepository } from '@/lib/cloud-api/repositories/compliance.repository'
+import { evolutionOptOutCandidates } from '@/lib/opt-out-command'
 import { evaluateAutomations } from '@/lib/automation-engine'
 import { notify } from '@/lib/notify'
 import { parseInstancesResponse } from '@/lib/evolution-utils'
 import { sseEmitter } from '@/lib/sse-events'
-
-// ── Palabras clave de opt-out ─────────────────────────────────────────────────
-// Comparación normalizada: sin acentos, minúsculas, trim.
-// Se agrega automáticamente el número a la blacklist si coincide.
-const OPT_OUT_KEYWORDS = new Set([
-  'baja', 'stop', 'no', 'no quiero', 'cancelar', 'no me escribas',
-  'remover', 'salir', 'detener', 'borrar', 'desuscribir', 'unsub',
-  'unsubscribe', 'remove', 'leave', 'quit', 'out',
-])
-
-function normalizeText(text: string): string {
-  return text
-    .toLowerCase()
-    .trim()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // eliminar acentos
-    .replace(/[^a-z0-9 ]/g, '')     // solo letras, números y espacios
-    .trim()
-}
-
-function isOptOut(text: string): boolean {
-  const normalized = normalizeText(text)
-  return OPT_OUT_KEYWORDS.has(normalized)
-}
 
 // ── syncLinePhoneNumber ───────────────────────────────────────────────────────
 // Best-effort: fetch phone from Evolution and persist to DB when a line connects.
@@ -165,36 +143,14 @@ export async function POST(req: NextRequest) {
       // Notificar en tiempo real a todos los clientes SSE conectados
       sseEmitter.emit('update', { source: 'message', phone: phone })
 
-      // ── Detección de opt-out automático ──────────────────────────────────────
-      // Si el mensaje contiene una keyword de baja, agrega el número a blacklist.
-      if (typeof body_text === 'string' && isOptOut(body_text)) {
-        const normalized = normalizePhone(phone)
-        if (normalized) {
-          try {
-            // Solo insertar si no existe ya un registro activo
-            const existing = await query<{ id: string }>(
-              `SELECT id FROM blacklist WHERE phone_number_normalized = $1 AND removed_at IS NULL`,
-              [normalized],
-            )
-            if (existing.length === 0) {
-              await query(
-                `INSERT INTO blacklist
-                   (phone_number_raw, phone_number_normalized, reason, source, original_message)
-                 VALUES ($1, $2, $3, 'automatic', $4)
-                 ON CONFLICT (phone_number_normalized) WHERE removed_at IS NULL DO NOTHING`,
-                [
-                  phone,
-                  normalized,
-                  `Opt-out automático: "${body_text.slice(0, 200)}"`,
-                  body_text.slice(0, 500),
-                ],
-              )
-              console.log(`[webhook/evolution] opt-out detectado: ${phone} → blacklisted`)
-            }
-          } catch (blErr) {
-            // No bloquear el flujo si falla el blacklisting
-            console.error('[webhook/evolution] error al blacklistear opt-out:', blErr instanceof Error ? blErr.message : blErr)
-          }
+      // Failures propagate so Evolution retries the consent event; never run
+      // an automation or acknowledge an opt-out that was not durably applied.
+      for (const command of evolutionOptOutCandidates(msg)) {
+        if (await complianceRepository.matchesStopKeyword(command)) {
+          await recordGlobalOptOut({phone,sourceId: typeof body.instance === 'string' ? body.instance : 'unknown',
+            provider:'evolution',messageId:msgId || undefined,text:command,metadata:{input_type:msg?.conversation || msg?.extendedTextMessage ? 'text' : 'button'}})
+          sseEmitter.emit('update', {source:'message',phone})
+          return NextResponse.json({ok:true})
         }
       }
 
@@ -233,7 +189,7 @@ export async function POST(req: NextRequest) {
       // ── Evaluación de automatizaciones (fire-and-forget) ─────────────────────
       // Solo si el mensaje no es un opt-out (ya fue manejado arriba).
       // El engine nunca lanza excepciones — los errores son capturados internamente.
-      if (typeof body_text === 'string' && !isOptOut(body_text)) {
+      if (typeof body_text === 'string') {
         const insertedMsg = await query<{ id: string }>(
           `SELECT id FROM whatsapp_messages
            WHERE evolution_message_id = $1

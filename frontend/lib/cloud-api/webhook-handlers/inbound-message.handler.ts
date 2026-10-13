@@ -2,6 +2,7 @@
 
 import { evaluateAutomations } from '@/lib/automation-engine'
 import { cloudMessageText } from '../message-content'
+import { cloudOptOutCandidates } from '@/lib/opt-out-command'
 import { sseEmitter } from '@/lib/sse-events'
 import { conversationRepository } from '../repositories/conversation.repository'
 import { complianceRepository }                      from '../repositories/compliance.repository'
@@ -25,14 +26,15 @@ export async function handleInboundMessage(
   sseEmitter.emit('update', { source: 'message', phone: contactPhone })
 
   const inboundText = cloudMessageText(msg, msg.type)
-  if (inboundText) {
-    const isStop = await complianceRepository.matchesStopKeyword(inboundText)
+  for (const command of cloudOptOutCandidates(msg).filter(Boolean)) {
+    const isStop = await complianceRepository.matchesStopKeyword(command)
     if (isStop) {
       await complianceRepository.recordOptOut({
         phone: contactPhone, phoneNumberId,
         reason: 'stop_keyword', wamid: msg.id,
-        metadata: { keyword: inboundText.trim().toUpperCase() },
+        metadata: { keyword: command.trim().toUpperCase(), input_type: msg.type, context_wamid: msg.context?.id },
       })
+      sseEmitter.emit('update', { source: 'message', phone: contactPhone })
       cloudMetrics.optOut(phoneNumberId, 'stop_keyword')
       log.logInfo('opt_out detected', { wamid: msg.id })
       return

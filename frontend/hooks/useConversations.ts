@@ -242,7 +242,7 @@ export function useConversations() {
   const sendingRef=useRef(false)
   const sendSticker = async (url:string, token:string):Promise<boolean> => {
     const phone=selectedRef.current
-    if(!phone || sendingRef.current)return false
+    if(!phone || sendingRef.current || selectedConv?.is_blacklisted)return false
     sendingRef.current=true;setSending(true);setSendError(null)
     try {
       const response=await fetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phones:[phone],message:'[Sticker]',media_type:'sticker',sticker_data:url,sticker_token:token})})
@@ -254,7 +254,7 @@ export function useConversations() {
     finally{sendingRef.current=false;setSending(false)}
   }
   const sendReply = async () => {
-    if (!selected || !reply.trim() || sendingRef.current) return
+    if (!selected || !reply.trim() || sendingRef.current || selectedConv?.is_blacklisted) return
     sendingRef.current=true
     setSending(true); setSendError(null)
     const msgText = reply
