@@ -13,11 +13,15 @@ import { buildCatalogueUpsert, detectLegacyTemplateColumns } from '@/lib/templat
 export async function POST(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'campaigns', 'create')
   if (!auth.ok) return auth.response
+  const input = await req.json().catch(() => ({}))
+  const wabaId = input?.waba_id ?? ''
+  if (typeof wabaId !== 'string' || (wabaId && !/^\d{5,30}$/.test(wabaId))) return NextResponse.json({ error: 'Cuenta inválida' }, { status: 400 })
   try {
     const ids = await getAccessibleLineIds(auth.user)
     const accounts = await query<{ waba_id:string; phone_number_id:string }>(`SELECT DISTINCT ON (waba_id) waba_id, phone_number_id
       FROM cloud_numbers WHERE status='active' AND ($1::uuid[] IS NULL OR whatsapp_line_id=ANY($1::uuid[]))
-      ORDER BY waba_id, token_expires_at DESC NULLS FIRST`, [ids])
+        AND ($2='' OR waba_id=$2)
+      ORDER BY waba_id, token_expires_at DESC NULLS FIRST`, [ids, wabaId])
     if (!accounts.length) return NextResponse.json({ error:'No hay líneas de WhatsApp API activas accesibles' }, {status:409})
     let synced = 0
     const failed: string[] = []

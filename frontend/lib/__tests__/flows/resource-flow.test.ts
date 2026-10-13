@@ -122,6 +122,7 @@ describe('Flujo 1 — RBAC journey: sector check en GET /api/templates', () => {
       [dbOperatorRow(['campaigns'])], // RBAC check (checkPermissionWithUser)
       [{ id: lineId }],                 // get_accessible_line_ids for this operator
       [],                              // SELECT templates within that scope
+      [{ id: lineId }], [],             // Account visibility and account labels
     )
 
     const res  = await templatesGet(makeGetReq(operator))
@@ -131,7 +132,7 @@ describe('Flujo 1 — RBAC journey: sector check en GET /api/templates', () => {
     expect(db.query).toHaveBeenNthCalledWith(2,
       expect.stringContaining('get_accessible_line_ids($1)'), [operator.user_id])
     expect(db.query).toHaveBeenNthCalledWith(3,
-      expect.stringContaining('cn.whatsapp_line_id=ANY($4::uuid[])'), ['', '', '', [lineId]])
+      expect.stringContaining('cn.whatsapp_line_id=ANY($4::uuid[])'), ['', '', '', [lineId], ''])
   })
 
   it('step 2 — admin always passes regardless of sectors', async () => {
@@ -140,13 +141,14 @@ describe('Flujo 1 — RBAC journey: sector check en GET /api/templates', () => {
       [dbAdminRow()], // RBAC check
       [],              // Non-super-admin line visibility remains scoped
       [],              // SELECT templates
+      [], [],          // Account visibility and labels
     )
 
     const res = await templatesGet(makeGetReq(admin))
     expect(res.status).toBe(200)
     expect((await res.json()).templates).toEqual([])
     expect(db.query).toHaveBeenNthCalledWith(3,
-      expect.stringContaining('cn.whatsapp_line_id=ANY($4::uuid[])'), ['', '', '', []])
+      expect.stringContaining('cn.whatsapp_line_id=ANY($4::uuid[])'), ['', '', '', [], ''])
   })
 })
 
@@ -188,10 +190,10 @@ describe('Flujo 2 — Create journey: inválido → 400, corregido → 201 + aud
   it('step 2 — corrected payload returns 201 with the new resource id', async () => {
     const admin = makeAdminSession()
     const newId = 'bbbbbbbb-1111-0000-0000-bbbbbbbbbbbb'
-    mockDbQuery([dbAdminRow()], [MODERN_TEMPLATE_COLUMNS], [{ id: newId }])
+    mockDbQuery([dbAdminRow()], [{ id: 'line-1' }], [{ phone_number_id: '1001' }], [MODERN_TEMPLATE_COLUMNS], [{ id: newId }])
 
     const res = await templatesPost(adminPost(TEMPLATES_URL, admin, {
-      name:       'promo_julio',
+      waba_id: '111111', name: 'promo_julio',
       category:   'MARKETING',
       components: [{ type: 'BODY', text: 'Hola' }],
     }) as never)
@@ -203,10 +205,10 @@ describe('Flujo 2 — Create journey: inválido → 400, corregido → 201 + aud
   it('step 2 — successful create emits audit with action, resource and resource_id', async () => {
     const admin = makeAdminSession()
     const newId = 'bbbbbbbb-2222-0000-0000-bbbbbbbbbbbb'
-    mockDbQuery([dbAdminRow()], [MODERN_TEMPLATE_COLUMNS], [{ id: newId }])
+    mockDbQuery([dbAdminRow()], [{ id: 'line-1' }], [{ phone_number_id: '1001' }], [MODERN_TEMPLATE_COLUMNS], [{ id: newId }])
 
     await templatesPost(adminPost(TEMPLATES_URL, admin, {
-      name:       'promo_agosto',
+      waba_id: '111111', name: 'promo_agosto',
       category:   'UTILITY',
       components: [{ type: 'BODY', text: 'Info' }],
     }) as never)
@@ -231,7 +233,7 @@ describe('Flujo 3 — Update journey: PATCH parcial → audit.fields exacto', ()
     const admin = makeAdminSession()
     mockDbQuery(
       [dbAdminRow()],         // RBAC check
-      [{ waba_id: null }],    // Existing local draft, eligible for a local edit
+      [{ waba_id: null, status: 'BORRADOR', whatsapp_template_id: null }],    // Existing local draft, eligible for a local edit
       [{ id: TEMPLATE_ID }],  // UPDATE RETURNING id
     )
     return adminPatch(TEMPLATE_URL, admin, body)
@@ -244,34 +246,34 @@ describe('Flujo 3 — Update journey: PATCH parcial → audit.fields exacto', ()
     )
   }
 
-  it('returns 200 when updating only the status field', async () => {
-    const res = await callPatch({ status: 'APROBADA' })
+  it('returns 200 when updating only the category field', async () => {
+    const res = await callPatch({ category: 'UTILITY' })
     expect(res.status).toBe(200)
     expect((await res.json()).ok).toBe(true)
     expect(db.query).toHaveBeenNthCalledWith(2,
-      'SELECT waba_id FROM whatsapp_templates WHERE id=$1', [TEMPLATE_ID])
+      'SELECT waba_id,whatsapp_template_id,status FROM whatsapp_templates WHERE id=$1', [TEMPLATE_ID])
     expect(db.query).toHaveBeenLastCalledWith(
-      expect.stringContaining('AND waba_id IS NULL RETURNING id'), ['APROBADA', TEMPLATE_ID])
+      expect.stringContaining("AND whatsapp_template_id IS NULL AND status='BORRADOR' RETURNING id"), ['UTILITY', TEMPLATE_ID])
   })
 
   it('audit fields contains exactly the single updated field', async () => {
-    await callPatch({ status: 'APROBADA' })
-    expect(getAuditCall('update')?.metadata?.fields).toEqual(['status'])
+    await callPatch({ category: 'UTILITY' })
+    expect(getAuditCall('update')?.metadata?.fields).toEqual(['category'])
   })
 
   it('audit fields lists both updated fields and excludes all omitted ones', async () => {
-    await callPatch({ status: 'RECHAZADA', rejection_reason: 'Contenido no permitido' })
+    await callPatch({ category: 'MARKETING', language: 'es_AR' })
 
     const fields = getAuditCall('update')?.metadata?.fields as string[]
-    expect(fields).toContain('status')
-    expect(fields).toContain('rejection_reason')
+    expect(fields).toContain('category')
+    expect(fields).toContain('language')
     expect(fields).not.toContain('name')
-    expect(fields).not.toContain('category')
-    expect(fields).not.toContain('language')
+    expect(fields).not.toContain('status')
+    expect(fields).not.toContain('rejection_reason')
   })
 
   it('audit uses resource:templates (not the old copy-paste "campaigns")', async () => {
-    await callPatch({ status: 'APROBADA' })
+    await callPatch({ category: 'UTILITY' })
     expect(getAuditCall('update')).toMatchObject({
       resource:    'templates',
       resource_id: TEMPLATE_ID,
@@ -285,7 +287,7 @@ describe('Flujo 3 — Update journey: PATCH parcial → audit.fields exacto', ()
     const res = await templatesPatch(
       makeReqWithSession(TEMPLATE_URL, operator, {
         method:  'PATCH',
-        body:    JSON.stringify({ status: 'APROBADA' }),
+        body:    JSON.stringify({ category: 'UTILITY' }),
         headers: { 'content-type': 'application/json' },
       }) as never,
       { params: Promise.resolve({ id: TEMPLATE_ID }) },

@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { spawn, execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import pg from 'pg';
+import { secureDatabaseTransport } from '../../frontend/lib/database-tls.js';
 
 const SCHEMAS = ['public', 'app_migrations'];
 const q = name => '"' + name.replaceAll('"', '""') + '"';
@@ -24,15 +25,16 @@ function clientFor(urlString, localOnly = false) {
   const {url, local} = connection(urlString, localOnly);
   const ca = !local && process.env.PGSSLROOTCERT && process.env.PGSSLROOTCERT !== 'system'
     ? fs.readFileSync(process.env.PGSSLROOTCERT, 'utf8') : undefined;
-  return new pg.Client({connectionString: url.toString(), connectionTimeoutMillis: 15000,
-    ssl: local ? false : {rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false', ...(ca ? {ca} : {})},
+  const transport = secureDatabaseTransport(url.toString(), undefined, {...process.env, ...(ca ? {DB_SSL_CA:ca} : {})});
+  return new pg.Client({...transport, connectionTimeoutMillis: 15000,
     application_name: 'verified-database-backup'});
 }
 function pgEnv(urlString) {
   const {url, local} = connection(urlString);
+  secureDatabaseTransport(url.toString()); // Reject insecure remote policy before invoking libpq.
   const env = {...process.env, PGHOST: url.hostname.replace(/^\[|\]$/g, ''), PGPORT: url.port || '5432', PGDATABASE: decodeURIComponent(url.pathname.slice(1)),
     PGUSER: decodeURIComponent(url.username), PGPASSWORD: decodeURIComponent(url.password),
-    PGSSLMODE: local ? 'disable' : (process.env.DB_SSL_REJECT_UNAUTHORIZED === 'false' ? 'require' : 'verify-full'),
+    PGSSLMODE: local ? 'disable' : 'verify-full',
     PGCONNECT_TIMEOUT: '15', PGOPTIONS: '-c timezone=UTC -c extra_float_digits=3'};
   // A libpq service or hostaddr inherited from the shell must not redirect a
   // localhost restore to another server.

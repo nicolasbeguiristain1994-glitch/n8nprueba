@@ -296,15 +296,11 @@ async function runPreview(opts, deps) {
   return report
 }
 
-// Match the frontend's existing connection/SSL interpretation, only for preview.
-// The normal writer's pool options are deliberately unchanged.
+// Use the same verified transport as the application.
 function previewPoolOptions(env) {
-  const url = new URL(env.DATABASE_URL.trim())
-  if (!['postgres:', 'postgresql:'].includes(url.protocol)) block('INVALID_DB_URL')
-  if (!url.searchParams.has('uselibpqcompat')) url.searchParams.set('uselibpqcompat', 'true')
-  return { connectionString: url.toString(), max: 1,
-    ssl: String(env.DB_SSL || '').trim() === 'false' ? false
-      : { rejectUnauthorized: String(env.DB_SSL_REJECT_UNAUTHORIZED || '').trim() === 'true' },
+  const { secureDatabaseTransport } = require('../../../frontend/lib/database-tls')
+  const transport = secureDatabaseTransport(env.DATABASE_URL, undefined, env)
+  return { ...transport, max: 1,
     connectionTimeoutMillis: 10000, query_timeout: 25000,
     options: '-c default_transaction_read_only=on' }
 }

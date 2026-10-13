@@ -197,10 +197,10 @@ describe('read-only preview orchestration', () => {
     expect(await f.run()).toMatchObject({ cursor_projection: { moved: false, reason: 'disjoint',
       cursor: { coveredFrom: '2026-08-01', coveredThrough: '2026-08-10' } } })
   })
-  it('retains the existing frontend SSL interpretation for a synthetic connection', () => {
-    const c = previewPoolOptions({ DATABASE_URL: 'postgresql://synthetic:fake@localhost/test?sslmode=require', DB_SSL_REJECT_UNAUTHORIZED: ' true\n' })
+  it('uses verified TLS while retaining the read-only transaction setting', () => {
+    const c = previewPoolOptions({ DATABASE_URL: 'postgresql://synthetic:fake@localhost/test?sslmode=require', DB_SSL: ' true\n' })
     expect(c.ssl).toEqual({ rejectUnauthorized: true })
-    expect(c.connectionString).toContain('uselibpqcompat=true')
+    expect(c.connectionString).not.toContain('sslmode=')
     expect(c.options).toBe('-c default_transaction_read_only=on')
     expect(previewPoolOptions({ DATABASE_URL: 'postgresql://synthetic:fake@localhost/test', DB_SSL: ' false\n' }).ssl).toBe(false)
   })

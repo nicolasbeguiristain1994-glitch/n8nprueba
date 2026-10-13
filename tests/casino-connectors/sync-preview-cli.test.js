@@ -24,6 +24,7 @@ async function runFixture({ args = ARGS, databaseUrl = 'postgres://fixture:synth
   const createLogger = jest.fn(() => ({ error: jest.fn(), warn: jest.fn(), info: jest.fn() }))
   const modules = {
     pg: { Pool },
+    '../frontend/lib/database-tls': require('../../frontend/lib/database-tls'),
     '../src/casino-connectors/index': { createConnector, getDefaultPlatform: () => 'zeus' },
     '../src/lib/logger': { createLogger },
     '../src/casino-connectors/sync/cli-args': { parseSyncArgs: (argv, opts) => parseSyncArgs(argv, { ...opts, now: new Date('2026-09-15T15:00:00Z') }) },

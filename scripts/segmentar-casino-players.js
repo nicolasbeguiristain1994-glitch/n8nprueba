@@ -34,6 +34,7 @@
  */
 
 'use strict'
+const { secureDatabaseTransport } = require('../frontend/lib/database-tls')
 
 const { Pool } = require('pg')
 const fs       = require('fs')
@@ -72,7 +73,7 @@ if (!process.env.DATABASE_URL) {
 
 const pool = new Pool({
   max: 1,
-  connectionString:        process.env.DATABASE_URL,
+  ...secureDatabaseTransport(process.env.DATABASE_URL),
   connectionTimeoutMillis: 30_000,
   idleTimeoutMillis:       60_000,
 })

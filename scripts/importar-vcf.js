@@ -1,3 +1,4 @@
+const { secureDatabaseTransport } = require('../frontend/lib/database-tls');
 /**
  * Importa un archivo VCF de contactos a la plataforma con auto-tagging de casino.
  *
@@ -23,7 +24,7 @@ if (!vcfPath || !connStr) {
   process.exit(1);
 }
 
-const pool = new Pool({ connectionString: connStr, ssl: { rejectUnauthorized: false }, family: 4 });
+const pool = new Pool({ ...secureDatabaseTransport(connStr), family: 4 });
 
 // ── Extraer username del casino ───────────────────────────────────────────────
 // Separa por espacio o / y elige la parte que termina en z, ze, zz, zs (panel zeus).

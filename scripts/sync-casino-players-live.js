@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict'
+const { secureDatabaseTransport } = require('../frontend/lib/database-tls')
 
 /**
  * Casino players sync — CLI.
@@ -83,7 +84,7 @@ if (parsed.value.preview) {
   const log = createLogger({ component: 'sync', platform: parsed.value.platform })
 
   const pool = new Pool({
-    connectionString:             process.env.DATABASE_URL,
+    ...secureDatabaseTransport(process.env.DATABASE_URL),
     keepAlive:                    true,
     keepAliveInitialDelayMillis:  10_000,
     connectionTimeoutMillis:      30_000,

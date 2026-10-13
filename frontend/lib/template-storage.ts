@@ -48,16 +48,17 @@ const placeholders = (from: number, count: number) =>
   Array.from({ length: count }, (_, i) => `$${from + i}`)
 
 export function buildLocalTemplateInsert(cols: LegacyTemplateColumns, input: {
-  name: string; category: string; language: string; components: unknown[]; createdBy: string | null
+  name: string; category: string; language: string; components: unknown[]; createdBy: string | null; wabaId?: string | null
 }): { sql: string; values: unknown[] } {
   const extra = legacyInsertColumns(cols, input.components)
-  const columns = ['name', 'category', 'language', 'components', 'created_by', ...extra.names]
-  const binds = ['$1', '$2', '$3', '$4::jsonb', '$5', ...placeholders(6, extra.values.length)]
+  const account = input.wabaId ? { names: ['waba_id'], values: [input.wabaId] } : { names: [], values: [] }
+  const columns = ['name', 'category', 'language', 'components', 'created_by', ...extra.names, ...account.names]
+  const binds = ['$1', '$2', '$3', '$4::jsonb', '$5', ...placeholders(6, extra.values.length + account.values.length)]
   return {
     sql: `INSERT INTO whatsapp_templates (${columns.join(', ')})
        VALUES (${binds.join(', ')})
        RETURNING id`,
-    values: [input.name, input.category, input.language, JSON.stringify(input.components), input.createdBy, ...extra.values],
+    values: [input.name, input.category, input.language, JSON.stringify(input.components), input.createdBy, ...extra.values, ...account.values],
   }
 }
 

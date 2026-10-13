@@ -1,42 +1,39 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query } from '@/lib/db'
+import { withTransaction } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { isUUID } from '@/lib/validate'
-import { submitTemplateToMeta, mapMetaStatus } from '@/lib/meta-graph'
+import { mapMetaStatus, type MetaTemplateStatus } from '@/lib/meta-graph'
+import { templateAccountNumber } from '@/lib/template-accounts'
+import { getTokenForNumber } from '@/lib/cloud-api/token-store'
+import { MetaCloudApiClient } from '@/lib/cloud-api/client'
+import { audit } from '@/lib/audit'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await checkPermissionWithUser(req, 'settings', 'manage')
   if (!auth.ok) return auth.response
   const { id } = await params
   if (!isUUID(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
-
-  const rows = await query<{ name: string; category: string; language: string; components: unknown; status: string; waba_id: string | null }>(
-    `SELECT name, category, language, components, status, waba_id FROM whatsapp_templates WHERE id = $1`, [id]
-  )
-  if (!rows[0]) return NextResponse.json({ error: 'Plantilla no encontrada' }, { status: 404 })
-  const tpl = rows[0]
-  if (tpl.waba_id != null) {
-    return NextResponse.json({
-      error: 'Editá esta plantilla importada en Meta y usá «Sincronizar desde Meta» en Campañas para actualizar el catálogo.',
-    }, { status: 409 })
-  }
-
   try {
-    const result = await submitTemplateToMeta({
-      name:       tpl.name,
-      category:   tpl.category as 'UTILITY' | 'MARKETING' | 'AUTHENTICATION',
-      language:   tpl.language,
-      components: tpl.components as unknown[],
+    return await withTransaction(async db => {
+      const { rows: [tpl] } = await db.query(`SELECT name,category,language,components,status,waba_id,whatsapp_template_id
+        FROM whatsapp_templates WHERE id=$1 FOR UPDATE`, [id])
+      if (!tpl) return NextResponse.json({ error: 'Plantilla no encontrada' }, { status: 404 })
+      if (!tpl.waba_id) return NextResponse.json({ error: 'Copiá esta plantilla a una cuenta antes de enviarla a Meta' }, { status: 409 })
+      const phone = await templateAccountNumber(auth.user, tpl.waba_id)
+      if (!phone) return NextResponse.json({ error: 'La cuenta no tiene una línea conectada accesible' }, { status: 403 })
+      if (tpl.whatsapp_template_id || tpl.status !== 'BORRADOR') return NextResponse.json({ error: 'Esta plantilla ya fue enviada. Sincronizá su estado desde Meta.' }, { status: 409 })
+      const client = new MetaCloudApiClient(await getTokenForNumber(phone))
+      // Recover through catalogue sync if a previous Meta success was not persisted locally.
+      const existing = (await client.listTemplates(tpl.waba_id)).find(t => t.name === tpl.name && t.language === tpl.language)
+      if (existing) return NextResponse.json({ error: 'Ya existe en Meta una plantilla con este nombre e idioma. Sincronizá la cuenta para recuperar su estado.' }, { status: 409 })
+      const result = await client.createTemplate({ wabaId: tpl.waba_id, name: tpl.name,
+        category: tpl.category, language: tpl.language, components: tpl.components })
+      const status = mapMetaStatus(result.status as MetaTemplateStatus)
+      await db.query(`UPDATE whatsapp_templates SET whatsapp_template_id=$1,status=$2,rejection_reason=NULL,updated_at=NOW() WHERE id=$3`, [result.id, status, id])
+      void audit({ req, action: 'update', resource: 'templates', resource_id: id, metadata: { action: 'submit_to_meta', waba_id: tpl.waba_id } })
+      return NextResponse.json({ ok: true, whatsapp_template_id: result.id, status })
     })
-    const internalStatus = mapMetaStatus(result.status as import('@/lib/meta-graph').MetaTemplateStatus)
-    await query(
-      `UPDATE whatsapp_templates SET whatsapp_template_id = $1, status = $2, updated_at = NOW() WHERE id = $3`,
-      [result.id, internalStatus, id]
-    )
-    return NextResponse.json({ ok: true, whatsapp_template_id: result.id, status: internalStatus })
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : 'Error al comunicarse con Meta'
-    console.error('[POST /api/templates/[id]/submit]', msg)
-    return NextResponse.json({ error: msg }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'No se pudo enviar la plantilla a Meta. Revisá la conexión de la cuenta y los ejemplos del contenido; sincronizá antes de reintentar.' }, { status: 502 })
   }
 }

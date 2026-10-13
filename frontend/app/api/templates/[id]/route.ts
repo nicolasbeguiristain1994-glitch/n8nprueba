@@ -6,6 +6,7 @@ import { audit } from '@/lib/audit'
 import { parseBody, handleValidationError, UpdateTemplateSchema } from '@/lib/schema'
 import { getAccessibleLineIds } from '@/lib/line-visibility'
 import { detectLegacyTemplateColumns, legacyBodyUpdate } from '@/lib/template-storage'
+import { templateAccountNumber } from '@/lib/template-accounts'
 
 type TemplateRow = {
   id: string; name: string; category: string; language: string; status: string
@@ -47,6 +48,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!parsed.ok) return handleValidationError(req, parsed.error, 'templates')
 
   const { name, category, language, components, status, rejection_reason } = parsed.data
+  if ((status !== undefined && status !== 'BORRADOR') || rejection_reason !== undefined || rawBody?.waba_id !== undefined) {
+    return NextResponse.json({ error: 'La cuenta y la aprobación no se pueden modificar desde el editor. Usá «Copiar a otra cuenta» o sincronizá desde Meta.' }, { status: 400 })
+  }
 
   const sets: string[] = ['updated_at = NOW()']
   const vals: unknown[] = []
@@ -61,21 +65,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (rejection_reason !== undefined) { sets.push(`rejection_reason = $${idx++}`); vals.push(rejection_reason) }
 
   try {
-    const [current] = await query<{ waba_id: string | null }>(
-      'SELECT waba_id FROM whatsapp_templates WHERE id=$1', [id],
+    const [current] = await query<{ waba_id: string | null; whatsapp_template_id: string | null; status: string }>(
+      'SELECT waba_id,whatsapp_template_id,status FROM whatsapp_templates WHERE id=$1', [id],
     )
     if (!current) return NextResponse.json({ error: 'Plantilla no encontrada' }, { status: 404 })
-    if (current.waba_id !== null) return NextResponse.json({
+    if (current.whatsapp_template_id || current.status !== 'BORRADOR') return NextResponse.json({
       error: 'Esta plantilla está sincronizada con WhatsApp. Editá en Meta y sincronizá el catálogo.',
     }, { status: 409 })
+    if (current.waba_id && !await templateAccountNumber(auth.user, current.waba_id)) return NextResponse.json({ error: 'Sin acceso a la cuenta de esta plantilla' }, { status: 403 })
     // Historical tables keep a NOT NULL body copy of BODY; the existing domain is preserved.
     if (components !== undefined) {
       const mirror = legacyBodyUpdate(await detectLegacyTemplateColumns(query), components)
       if (mirror) { sets.push(`${mirror.column} = $${idx++}`); vals.push(mirror.value) }
     }
     vals.push(id)
-    // The write guard also protects against a concurrent change of WABA ownership.
-    const rows = await query<{ id: string }>(`UPDATE whatsapp_templates SET ${sets.join(', ')} WHERE id = $${idx} AND waba_id IS NULL RETURNING id`, vals)
+    // A concurrent submit/sync must not turn this edit into a change of an approved template.
+    const rows = await query<{ id: string }>(`UPDATE whatsapp_templates SET ${sets.join(', ')} WHERE id = $${idx} AND whatsapp_template_id IS NULL AND status='BORRADOR' RETURNING id`, vals)
     if (!rows[0]) return NextResponse.json({ error: 'Plantilla no encontrada' }, { status: 404 })
     void audit({ req, action: 'update', resource: 'templates', resource_id: id,
       metadata: { fields: Object.keys(parsed.data).filter(k => parsed.data[k as keyof typeof parsed.data] !== undefined) } })
