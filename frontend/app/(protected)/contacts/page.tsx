@@ -186,7 +186,6 @@ export default function Contacts() {
   const [filterRecent, setFilterRecent] = useState('')
   const [broadcast, setBroadcast] = useState(EMPTY_BROADCAST)
   const [dynamicList, setDynamicList] = useState(true)
-  const [filtersOpen, setFiltersOpen] = useState(false)
   const [contactColumns, updateContactColumns] = useState<Record<string, boolean>>(CONTACT_COLUMNS)
   useEffect(() => {
     try {
@@ -1464,10 +1463,9 @@ export default function Contacts() {
           <Input className="pl-9" aria-label="Buscar contactos" placeholder="Buscar por nombre o teléfono…" value={search}
             onChange={e => { setSearch(e.target.value); resetPage() }} />
         </div>
-        <Button variant={filtersOpen?'secondary':'outline'} onClick={()=>setFiltersOpen(v=>!v)} aria-expanded={filtersOpen} aria-controls="contact-filters"><Filter size={14}/>Filtros{activeFilterLabels.length>0?` (${activeFilterLabels.length})`:''}</Button>
       </div>
       {activeFilterLabels.length>0&&<div className="flex flex-wrap items-center gap-1.5" aria-label="Filtros activos">{activeFilterLabels.map(label=><span key={String(label)} className="max-w-full break-words rounded-md border bg-muted/40 px-2 py-1 text-xs">{label}</span>)}<Button variant="ghost" size="sm" onClick={()=>applyView({...DEFAULT_CONTACT_VIEW,columns:contactColumns})}>Limpiar filtros</Button></div>}
-      <div id="contact-filters" hidden={!filtersOpen} className="space-y-3 rounded-xl border bg-card p-3">
+      <div id="contact-filters" role="region" aria-label="Filtros de contactos" className="space-y-3 rounded-xl border bg-card p-3">
       <div className="flex flex-wrap gap-2">
         <Select value={filterPanel} onValueChange={v => { setFilterPanel(v ?? ''); resetPage() }}>
           <SelectTrigger className="w-40"><SelectValue placeholder="Agente" /></SelectTrigger>
