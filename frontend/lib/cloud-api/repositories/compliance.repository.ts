@@ -16,9 +16,10 @@ export const complianceRepository = {
     wamid?:        string
     agentUserId?:  string
     metadata?:     Record<string, unknown>
+    confirmation?: boolean
   }): Promise<void> {
     await recordGlobalOptOut({phone:opts.phone,sourceId:opts.phoneNumberId,provider:'cloud',
-      messageId:opts.wamid,agentUserId:opts.agentUserId,metadata:opts.metadata,
+      messageId:opts.wamid,agentUserId:opts.agentUserId,metadata:opts.metadata,confirmation:opts.confirmation,
       text:typeof opts.metadata?.keyword === 'string' ? opts.metadata.keyword : undefined})
   },
 

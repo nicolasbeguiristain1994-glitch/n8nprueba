@@ -34,9 +34,9 @@ async function mountView(state: ContactViewState = legacy) {
   localStorage.setItem('crm:contact-views:one', JSON.stringify([{ id: 'old', name: 'Línea anterior', state }]))
   render(<Contacts />)
   await waitFor(() => expect(contactsCalls()).toHaveLength(1))
+  expect(screen.getByRole('region', { name: 'Filtros de contactos' })).toBeVisible()
   fireEvent.change(screen.getByLabelText('Vista de contactos'), { target: { value: 'old' } })
   await waitFor(() => expect(lastParams().get('linea')).toBe(Array.isArray(state.linea) ? state.linea.join(',') : state.linea))
-  fireEvent.click(screen.getByRole('button', { name: /^Filtros/ }))
 }
 async function openLines(user: ReturnType<typeof userEvent.setup>, label: string) {
   await user.click(screen.getByRole('button', { name: `Filtrar por líneas: ${label}` }))
@@ -84,6 +84,7 @@ it('removes the final line filter and restores the remaining filters with global
     expect(lastParams().get('linea_sub')).toBe('')
   })
   expect(screen.queryByRole('button', { name: 'Limpiar filtros' })).not.toBeInTheDocument()
+  expect(screen.getByRole('region', { name: 'Filtros de contactos' })).toBeVisible()
 }, FLOW_TIMEOUT)
 it('uses the same multiple-line audience for select-all and export', async () => {
   await mountView(multiple)

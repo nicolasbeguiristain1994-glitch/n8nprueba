@@ -35,10 +35,11 @@ interface Automation {
   trigger_config: TriggerConfig
   action_config: ActionConfig
   is_active: boolean
+  system_managed?: boolean
   priority: number
   created_by_name: string | null
-  created_at: string
-  updated_at: string
+  created_at: string | null
+  updated_at: string | null
 }
 
 interface AutomationLog {
@@ -118,6 +119,7 @@ export default function AutomatizacionesPage() {
   // Editor modal
   const [showEditor, setShowEditor]   = useState(false)
   const [editTarget, setEditTarget]   = useState<Automation | null>(null)
+  const [systemTarget, setSystemTarget] = useState<Automation | null>(null)
   const [form, setForm]               = useState({ ...BLANK_FORM })
   const [saving, setSaving]           = useState(false)
   const [saveError, setSaveError]     = useState<string | null>(null)
@@ -383,6 +385,7 @@ export default function AutomatizacionesPage() {
                           <tr key={item.id} className="hover:bg-background">
                             <td className="px-4 py-3">
                               <div className="font-medium text-foreground">{item.name}</div>
+                              {item.system_managed && <div className="mt-1 text-xs text-primary">Automatización del sistema</div>}
                               {item.description && (
                                 <div className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{item.description}</div>
                               )}
@@ -402,16 +405,19 @@ export default function AutomatizacionesPage() {
                               {item.type === 'reply' && tc.once_per_chat === true && (
                                 <div className="mt-1 text-xs font-medium text-primary">Una vez por chat</div>
                               )}
+                              {item.system_managed && <div className="mt-1 text-xs font-medium text-primary">Una vez por solicitud</div>}
                             </td>
                             <td className="px-4 py-3">
                               <Badge className={`text-xs border-0 ${item.is_active ? 'bg-success/15 text-success' : 'bg-muted text-muted-foreground'}`}>
                                 {item.is_active ? 'Activa' : 'Pausada'}
                               </Badge>
                             </td>
-                            <td className="px-4 py-3 text-xs text-muted-foreground text-center">{item.priority}</td>
-                            <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{fmt(item.updated_at)}</td>
+                            <td className="px-4 py-3 text-xs text-muted-foreground text-center">{item.system_managed ? 'Primera' : item.priority}</td>
+                            <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">{item.updated_at ? fmt(item.updated_at) : '—'}</td>
                             <td className="px-4 py-3">
-                              <div className="flex items-center gap-1">
+                              {item.system_managed ? (
+                                <Button variant="outline" size="sm" onClick={() => setSystemTarget(item)}>Ver respuesta</Button>
+                              ) : <div className="flex items-center gap-1">
                                 <button
                                   onClick={() => handleToggle(item)}
                                   className={`p-1.5 rounded transition-colors ${item.is_active ? 'text-success hover:bg-success/10' : 'text-muted-foreground hover:bg-muted'}`}
@@ -429,7 +435,7 @@ export default function AutomatizacionesPage() {
                                   title="Eliminar">
                                   <Trash2 size={14} />
                                 </button>
-                              </div>
+                              </div>}
                             </td>
                           </tr>
                         )
@@ -441,6 +447,22 @@ export default function AutomatizacionesPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        <Dialog open={systemTarget !== null} onOpenChange={open => { if (!open) setSystemTarget(null) }}>
+          <DialogContent aria-describedby="baja-description">
+            <DialogHeader><DialogTitle>{systemTarget?.name}</DialogTitle></DialogHeader>
+            <div className="space-y-4 text-sm">
+              <Badge className="border-0 bg-success/15 text-success">Activa</Badge>
+              <p id="baja-description">Cuando el contacto escribe BAJA o toca ese botón, se registra la baja y se responde desde la misma línea.</p>
+              <blockquote className="rounded-lg border bg-muted/40 p-4 whitespace-pre-wrap">
+                {(systemTarget?.action_config as ReplyActionConfig | undefined)?.message}
+              </blockquote>
+              <p>El contacto queda excluido de campañas en todas las líneas. La confirmación se envía una vez por solicitud.</p>
+              <p className="text-muted-foreground">Esta respuesta está siempre activa. Podés consultar el mensaje enviado en Conversaciones y la baja en Blacklist.</p>
+              <div className="flex justify-end"><Button onClick={() => setSystemTarget(null)}>Cerrar</Button></div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* ── Tab: Logs ── */}
         <TabsContent value="logs" className="space-y-4 mt-4">
