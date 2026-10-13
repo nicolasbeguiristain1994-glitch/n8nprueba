@@ -6,6 +6,7 @@ import { scopedConversationMessages } from '@/lib/conversation-messages'
 import { CONVERSATION_MEDIA_JOIN, conversationMediaUrl, type ConversationMediaRow } from '@/lib/conversation-media'
 import { getTokenForNumber } from '@/lib/cloud-api/token-store'
 import { downloadInboundMedia, MediaUnavailableError } from '@/lib/cloud-api/infrastructure/inbound-media'
+import { mediaRange } from '@/lib/media-range'
 
 const privateHeaders = { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' }
 
@@ -30,13 +31,26 @@ export async function GET(req: NextRequest) {
     }
     // Authorization precedes credential lookup and every provider request.
     const token = await getTokenForNumber(media.phone_number_id)
-    const { bytes, mime } = await downloadInboundMedia(media.media_id!, media.phone_number_id, token)
-    return new NextResponse(new Uint8Array(bytes), { headers: {
+    const { bytes, mime } = await downloadInboundMedia(media.media_id!, media.phone_number_id, token, media.media_type ?? 'image')
+    const headers = {
       ...privateHeaders, 'Content-Type': mime, 'Content-Length': String(bytes.length),
       'Content-Disposition': 'inline', 'Cross-Origin-Resource-Policy': 'same-origin',
-    } })
+      'Accept-Ranges': 'bytes',
+    }
+    const requestedRange = req.headers.get('range')
+    if (requestedRange) {
+      const range = mediaRange(requestedRange, bytes.length)
+      if (!range) return new NextResponse(null, { status: 416, headers: {
+        ...privateHeaders, 'Content-Range': `bytes */${bytes.length}`, 'Accept-Ranges': 'bytes',
+      } })
+      const { start, end } = range
+      return new NextResponse(new Uint8Array(bytes.subarray(start, end + 1)), { status: 206, headers: {
+        ...headers, 'Content-Length': String(end - start + 1), 'Content-Range': `bytes ${start}-${end}/${bytes.length}`,
+      } })
+    }
+    return new NextResponse(new Uint8Array(bytes), { headers })
   } catch (error) {
-    // Do not log signed URLs, provider responses, tokens or private image bytes.
+    // Do not log signed URLs, provider responses, tokens or private media bytes.
     const unavailable = error instanceof MediaUnavailableError
     if (!unavailable) console.error('[/api/conversations/media] Could not retrieve media')
     return NextResponse.json({ error: unavailable ? error.message : 'No se pudo cargar el archivo. Reintentá.' },

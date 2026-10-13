@@ -59,7 +59,9 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
  })
  afterEach(async()=>{await db.query('ROLLBACK TO SAVEPOINT test_case')})
  afterAll(async()=>{if(db){await db.query('ROLLBACK');await db.end()}})
- it.each(['image','sticker'])('renders stored inbound %s through an authorized URL, including legacy duplicates',async type=>{
+ it.each(['image','sticker','audio'])('renders stored inbound %s through an authorized URL, including legacy duplicates',async type=>{
+  const mime=type==='audio'?'audio/ogg':'image/webp'
+  mediaMocks.download.mockResolvedValue({bytes:Buffer.from('test-media'),mime})
   await db.query(`UPDATE cloud_messages SET message_type=$1,content=jsonb_build_object($1::text,jsonb_build_object('id','123456','caption','Mi archivo')) WHERE wamid='wamid.button'`,[type])
   let messages=(await(await GET(request('?phone='+phone))).json()).messages
   const media=messages.find((m:{media_type:string})=>m.media_type===type)
@@ -67,8 +69,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect(media.media_id).toBeUndefined();expect(media.content).toBeUndefined()
   let response=await mediaGET(request('?message='+media.id))
   expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toBe('private, no-store')
-  expect(response.headers.get('content-type')).toBe('image/webp')
-  expect(mediaMocks.download).toHaveBeenCalledWith('123456','10001','private-token')
+  expect(response.headers.get('content-type')).toBe(mime)
+  expect(mediaMocks.download).toHaveBeenCalledWith('123456','10001','private-token',type)
   await db.query(`INSERT INTO whatsapp_messages(id,phone_number,message_body,direction,status,created_at,evolution_message_id)
     VALUES($1,$2,'[image]','inbound','received',NOW(),'wamid.button')`,[id(500),phone])
   messages=(await(await GET(request('?phone='+phone))).json()).messages
@@ -82,6 +84,24 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   mocks.lines.mockResolvedValue([id(10)])
   await db.query('UPDATE contacts SET deleted_at=NOW()')
   expect((await mediaGET(request('?message='+id(500)))).status).toBe(404)
+  expect(mediaMocks.token).not.toHaveBeenCalled();expect(mediaMocks.download).not.toHaveBeenCalled()
+ })
+ it('serves authorized audio byte ranges for playback and seeking',async()=>{
+  await db.query(`UPDATE cloud_messages SET message_type='audio',content='{"audio":{"id":"123456","mime_type":"audio/ogg; codecs=opus","voice":true}}' WHERE wamid='wamid.button'`)
+  const audioId=(await db.query("SELECT id FROM cloud_messages WHERE wamid='wamid.button'")).rows[0].id
+  mediaMocks.download.mockResolvedValue({bytes:Buffer.from('0123456789'),mime:'audio/ogg'})
+  const ranged=(range:string)=>new NextRequest('https://panel.test/api/conversations/media?message='+audioId,{headers:{range}})
+  for(const [range,body,contentRange] of [['bytes=0-1','01','bytes 0-1/10'],['bytes=5-','56789','bytes 5-9/10'],['bytes=-3','789','bytes 7-9/10']]) {
+    const response=await mediaGET(ranged(range))
+    expect(response.status).toBe(206);expect(await response.text()).toBe(body)
+    expect(response.headers.get('content-range')).toBe(contentRange)
+    expect(response.headers.get('content-length')).toBe(String(body.length))
+    expect(response.headers.get('content-type')).toBe('audio/ogg')
+    expect(response.headers.get('cache-control')).toBe('private, no-store')
+  }
+  expect((await mediaGET(ranged('bytes=10-'))).status).toBe(416)
+  mediaMocks.token.mockClear();mediaMocks.download.mockClear();mocks.lines.mockResolvedValue([])
+  expect((await mediaGET(ranged('bytes=0-1'))).status).toBe(404)
   expect(mediaMocks.token).not.toHaveBeenCalled();expect(mediaMocks.download).not.toHaveBeenCalled()
  })
  it('does not download hidden-line media for the same contact or malformed/non-media messages',async()=>{

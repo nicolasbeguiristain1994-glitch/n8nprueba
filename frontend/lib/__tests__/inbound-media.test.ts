@@ -38,4 +38,27 @@ describe('private inbound WhatsApp media',()=>{
     vi.stubGlobal('fetch',fetcher)
     await expect(downloadInboundMedia('123','456','secret')).rejects.toThrow()
   })
+  it.each([
+    [Buffer.concat([Buffer.from('OggS'),Buffer.alloc(24),Buffer.from('OpusHead')]),'audio/ogg'],
+    [Buffer.from('ID3\x04\x00\x00\x00\x00\x00\x00'),'audio/mpeg'],
+    [Buffer.from([0xff,0xfb,0x90,0,0,0,0,0,0,0]),'audio/mpeg'],
+    [Buffer.from([0xff,0xf1,0x50,0x80,0,0,0]),'audio/aac'],
+    [Buffer.from('\x00\x00\x00\x18ftypM4A '),'audio/mp4'],
+    [Buffer.from('#!AMR\n'),'audio/amr'],
+  ])('detects audio from its bytes and preserves it for playback (%s)',async(bytes,mime)=>{
+    const fetcher=vi.fn().mockResolvedValueOnce(info()).mockResolvedValueOnce(new Response(new Uint8Array(bytes as Buffer)))
+    vi.stubGlobal('fetch',fetcher)
+    const result=await downloadInboundMedia('123','456','secret','audio')
+    expect(result.bytes).toEqual(bytes);expect(result.mime).toBe(mime)
+  })
+  it('rejects HTML disguised as audio',async()=>{
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValueOnce(Response.json({url,mime_type:'audio/ogg'})).mockResolvedValueOnce(new Response('<html>not audio</html>')))
+    await expect(downloadInboundMedia('123','456','secret','audio')).rejects.toThrow('Unsupported audio format')
+  })
+  it('bounds audio downloads to 16 MB',async()=>{
+    const fetcher=vi.fn().mockResolvedValueOnce(Response.json({url,file_size:16*1024*1024+1}))
+    vi.stubGlobal('fetch',fetcher)
+    await expect(downloadInboundMedia('123','456','secret','audio')).rejects.toThrow('Media too large')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
 })

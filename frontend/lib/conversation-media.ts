@@ -9,13 +9,13 @@ export const CONVERSATION_MEDIA_JOIN = `LEFT JOIN LATERAL (
   JOIN cloud_numbers cn ON cn.phone_number_id=cm.phone_number_id
   WHERE (cm.id=recent.id OR cm.wamid=recent.evolution_message_id)
     AND REPLACE(cc.contact_phone,'+','')=REPLACE(recent.phone_number,'+','')
-    AND cm.direction='inbound' AND cm.message_type IN ('image','sticker')
+    AND cm.direction='inbound' AND cm.message_type IN ('image','sticker','audio')
     AND ($1::uuid[] IS NULL OR cn.whatsapp_line_id=ANY($1::uuid[]))
   ORDER BY cm.id LIMIT 1
 ) media ON true`
 
 export type ConversationMediaRow = {
-  media_type: 'image' | 'sticker' | null
+  media_type: 'image' | 'sticker' | 'audio' | null
   media_id: string | null
   media_caption: string | null
   phone_number_id: string
