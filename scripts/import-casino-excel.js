@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict'
+const { secureDatabaseTransport } = require('../frontend/lib/database-tls')
 
 const fs = require('fs')
 const path = require('path')
@@ -26,7 +27,7 @@ async function main() {
   console.log(JSON.stringify({ mode: summary.mode, files: reports.length, unique_transactions: transactions.length, platforms: summary.platforms }))
   if (!apply) return
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL requerida para --apply')
-  const c = new Client({ connectionString: process.env.DATABASE_URL, connectionTimeoutMillis: 30000 })
+  const c = new Client({ ...secureDatabaseTransport(process.env.DATABASE_URL), connectionTimeoutMillis: 30000 })
   await c.connect()
   try {
     if (args.includes('--migrate')) {

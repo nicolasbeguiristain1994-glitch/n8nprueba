@@ -1,3 +1,4 @@
+const { secureDatabaseTransport } = require('../frontend/lib/database-tls');
 /**
  * Carga (o actualiza) los datos de segmentación de jugadores en la DB.
  *
@@ -32,7 +33,7 @@ if (!connectionString) {
 }
 
 async function main() {
-  const pool = new Pool({ connectionString, ssl: { rejectUnauthorized: false } });
+  const pool = new Pool({ ...secureDatabaseTransport(connectionString) });
 
   console.log('📂 Leyendo jugadores_metricas.json...');
   const jugadores = JSON.parse(fs.readFileSync(METRICS_FILE, 'utf8'));
