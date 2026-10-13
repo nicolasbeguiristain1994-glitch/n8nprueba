@@ -383,9 +383,12 @@ describe('getContactEligibilityBreakdown', () => {
 // ── sendViaEvolution — API key fallback ────────────────────────────────────────
 
 describe('sendViaEvolution — API key fallback', () => {
+  const consentQuery = vi.fn()
   const evoLine = makeLine({ evolution_url: 'http://evo:8080', evolution_instance: 'wa-01' })
 
   beforeEach(() => {
+    consentQuery.mockReset().mockResolvedValue({rows:[]})
+    vi.mocked(db.withTransaction).mockImplementation(async fn => fn({query:consentQuery} as never))
     mockFetch.mockReset()
     mockFetch.mockResolvedValue({
       ok:   true,
@@ -396,6 +399,13 @@ describe('sendViaEvolution — API key fallback', () => {
   afterEach(() => {
     delete process.env.EVOLUTION_API_KEY
     delete process.env.EVOLUTION_GLOBAL_API_KEY
+  })
+
+  it('never calls Evolution when the global send gate finds an opt-out', async () => {
+    process.env.EVOLUTION_API_KEY = 'test-key'
+    consentQuery.mockResolvedValueOnce({rows:[]}).mockResolvedValueOnce({rows:[{blocked:1}]})
+    await expect(sendViaEvolution(evoLine, '+5491100000', 'hola')).rejects.toThrow('Baja global')
+    expect(mockFetch).not.toHaveBeenCalled()
   })
 
   it('usa EVOLUTION_API_KEY cuando EVOLUTION_GLOBAL_API_KEY no está seteado', async () => {
