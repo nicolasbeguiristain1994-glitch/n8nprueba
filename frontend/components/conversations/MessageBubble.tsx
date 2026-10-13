@@ -1,4 +1,4 @@
-import { fmtTime, type Message } from '@/lib/scoring/conversation-scoring'
+import type { Message } from '@/lib/scoring/conversation-scoring'
 import { MsgStatus } from './PriorityBadge'
 import { MessageMedia } from './MessageMedia'
 
@@ -8,6 +8,10 @@ export function MessageBubble({ m }: { m: Message }) {
   const out    = m.direction === 'outbound'
   const failed = m.status === 'failed'
   const imgUrl = m.media_url || (m.media_type==='sticker' && m.sticker_preview?.startsWith('data:image/webp;base64,') ? m.sticker_preview : IMG_URL_RE.test(m.message_body.trim()) ? m.message_body.trim() : null)
+  const sentAt = new Date(m.created_at)
+  const timeZone = 'America/Argentina/Buenos_Aires'
+  const date = sentAt.toLocaleDateString('es-AR', { timeZone, day: '2-digit', month: '2-digit' })
+  const time = sentAt.toLocaleTimeString('es-AR', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 
   return (
     <div className={`flex ${out ? 'justify-end' : 'justify-start'}`}>
@@ -25,7 +29,13 @@ export function MessageBubble({ m }: { m: Message }) {
         <div className={`flex items-center justify-end gap-1 text-[10px] mt-1 ${
           out ? (failed ? 'text-red-400' : 'text-green-100') : 'text-muted-foreground'
         }`}>
-          {fmtTime(m.created_at)}
+          <time
+            dateTime={m.created_at}
+            title={`${sentAt.toLocaleString('es-AR', { timeZone, hourCycle: 'h23' })} (hora de Argentina)`}
+            className="whitespace-nowrap"
+          >
+            {date} · {time}
+          </time>
           {out && <MsgStatus status={m.status} />}
         </div>
       </div>

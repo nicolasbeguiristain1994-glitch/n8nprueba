@@ -12,7 +12,6 @@ import { VirtualizedConvList }    from '@/components/conversations/VirtualizedCo
 import { ConversationFilters }    from '@/components/conversations/ConversationFilters'
 import { ConversationHeader }     from '@/components/conversations/ConversationHeader'
 import { MessageBubble }          from '@/components/conversations/MessageBubble'
-import { QuickTemplates }         from '@/components/conversations/QuickTemplates'
 import { ConversationSidebar }    from '@/components/conversations/ConversationSidebar'
 import { AssignedLineActions } from '@/components/conversations/AssignedLineActions'
 import { CloudWindowIndicator } from '@/components/conversations/CloudWindowIndicator'
@@ -171,10 +170,6 @@ export default function Conversations() {
                   <div className="flex flex-wrap gap-2 items-end">
                     <div className="relative flex w-full items-center gap-1 md:w-auto">
                     <StickerPicker key={selected} disabled={sending} onSend={sendSticker} />
-                    <QuickTemplates
-                      contactName={selectedConv?.first_name}
-                      onSelect={setReply}
-                    />
 
                     {/* Emoji picker */}
                     <div className="md:relative">
