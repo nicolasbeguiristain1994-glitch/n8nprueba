@@ -1,3 +1,4 @@
+const { secureDatabaseTransport } = require('../frontend/lib/database-tls');
 /**
  * Crea (o actualiza) las listas de difusión pre-segmentadas de casino en la DB.
  *
@@ -13,7 +14,7 @@
  *   contact_tags actuales (útil después de importar contactos nuevos).
  */
 
-const { Pool } = require('/Users/nicobegui/Desktop/whatsapp-automation-platform/frontend/node_modules/pg');
+const { Pool } = require('pg');
 
 const connectionString = process.argv[2]
 if (!connectionString) {
@@ -22,7 +23,7 @@ if (!connectionString) {
 }
 const REPOBLAR = process.argv.includes('--repoblar')
 
-const pool = new Pool({ connectionString, ssl: { rejectUnauthorized: false }, family: 4 })
+const pool = new Pool({ ...secureDatabaseTransport(connectionString), family: 4 })
 
 // ── Definición de listas — single source of truth ────────────────────────────
 // Loaded from the shared JSON file consumed by both this script and the app route.

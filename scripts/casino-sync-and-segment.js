@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 'use strict'
+const { secureDatabaseTransport } = require('../frontend/lib/database-tls')
 
 /**
  * Encadena sync de casino → segmentación, sin shell.
@@ -54,7 +55,7 @@ function runNode(script, args) {
 }
 
 async function main() {
-  const pool  = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL, max: 2 }) : null
+  const pool  = process.env.DATABASE_URL ? new Pool({ ...secureDatabaseTransport(process.env.DATABASE_URL), max: 2 }) : null
   const store = pool ? new SyncRunStore(pool) : null
   let exitCode = EXIT.FAILED
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import path from 'node:path';
+import { secureDatabaseTransport } from '../../frontend/lib/database-tls.js';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { loadCatalog, status, fingerprint, adoptBaseline, applyMigrations, reconcile } from './migration-engine.mjs';
@@ -22,14 +23,11 @@ async function main(){
  const url=connectionString?new URL(connectionString):null;
  const host=url?.hostname??process.env.DB_POSTGRESDB_HOST??process.env.DB_HOST;
  if(!host)throw Error('DATABASE_URL or DB_POSTGRESDB_HOST is required');
- const local=['localhost','127.0.0.1','::1'].includes(host);
+ const local=['localhost','127.0.0.1','::1','[::1]'].includes(host);
  const write=['--baseline','--apply','--reconcile','--record-manual'].includes(command);
  if(write&&!local&&!flag('--yes-i-know-this-is-production'))throw Error('Remote writes require --yes-i-know-this-is-production');
- const sslValue=process.env.DB_POSTGRESDB_SSL??process.env.DB_SSL;
- let ssl=local||sslValue==='false'?false:{rejectUnauthorized:process.env.DB_SSL_REJECT_UNAUTHORIZED!=='false'};
- // Explicit TLS policy must not be silently replaced by connection-string options.
- if(url)for(const key of ['sslmode','sslcert','sslkey','sslrootcert','uselibpqcompat'])url.searchParams.delete(key);
- const client=new pg.Client({...(url?{connectionString:url.toString()}:{host,port:Number(process.env.DB_POSTGRESDB_PORT??process.env.DB_PORT??5432),database:process.env.DB_POSTGRESDB_DATABASE??process.env.DB_NAME,user:process.env.DB_POSTGRESDB_USER??process.env.DB_USER,password:process.env.DB_POSTGRESDB_PASSWORD??process.env.DB_PASSWORD}),ssl,connectionTimeoutMillis:15000,application_name:'verified-migrations'});
+ const transport=secureDatabaseTransport(connectionString,host);
+ const client=new pg.Client({...(url?{connectionString:transport.connectionString}:{host,port:Number(process.env.DB_POSTGRESDB_PORT??process.env.DB_PORT??5432),database:process.env.DB_POSTGRESDB_DATABASE??process.env.DB_NAME,user:process.env.DB_POSTGRESDB_USER??process.env.DB_USER,password:process.env.DB_POSTGRESDB_PASSWORD??process.env.DB_PASSWORD}),ssl:transport.ssl,connectionTimeoutMillis:15000,application_name:'verified-migrations'});
  await client.connect();
  try{
   await client.query("SET statement_timeout='10min'; SET lock_timeout='10s'; SET idle_in_transaction_session_timeout='60s'");

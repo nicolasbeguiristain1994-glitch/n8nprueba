@@ -34,6 +34,7 @@ COPY --from=builder /app/.next/static      ./.next/static
 COPY scripts /scripts
 COPY src     /src
 COPY frontend/lib/casino-segmentation.js /frontend/lib/casino-segmentation.js
+COPY frontend/lib/database-tls.js /frontend/lib/database-tls.js
 COPY db/migrations /db/migrations
 
 # Módulos raíz en /node_modules → Node los encuentra al subir el árbol desde /scripts/

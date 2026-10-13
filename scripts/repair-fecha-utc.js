@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const { secureDatabaseTransport } = require('../frontend/lib/database-tls')
 /**
  * repair-fecha-utc.js
  *
@@ -37,7 +38,7 @@ if (!API_KEY || !PLAYER_TOKEN) {
 }
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  ...secureDatabaseTransport(process.env.DATABASE_URL),
   keepAlive: true,
   keepAliveInitialDelayMillis: 10_000,
   idleTimeoutMillis: 600_000,

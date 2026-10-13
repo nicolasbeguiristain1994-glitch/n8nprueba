@@ -38,6 +38,10 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Install locked frontend dependencies
         run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Audit runtime dependencies
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm audit --prefix frontend --omit=dev --audit-level=high
       - name: Validate exact Git version, real migrations, frontend and build
         run: node scripts/ops/release.mjs validate
       - uses: actions/upload-artifact@v4

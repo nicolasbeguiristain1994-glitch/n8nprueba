@@ -35,9 +35,9 @@ directorio de `pg_dump` y `pg_restore`.
    el certificado CA del proveedor, tanto para Node como para las herramientas
    PostgreSQL. Obtenerlo desde el dashboard o los certificados distribuidos en el
    [CLI oficial de Supabase](https://github.com/supabase/cli/tree/main/apps/cli-go/internal/gen/types/templates).
-   `DB_SSL_REJECT_UNAUTHORIZED=false` conserva
-   TLS pero desactiva la verificación de CA: solo usarlo si la configuración de
-   conexión existente lo exige, y documentar esa limitación.
+   Las conexiones remotas exigen verificación de CA y hostname (`verify-full`).
+   `DB_SSL_REJECT_UNAUTHORIZED=false` se rechaza. Corregir la CA o el hostname
+   ante un error de certificado; no desactivar la verificación.
 3. Ejecutar en una carpeta nueva dentro de una ubicación privada:
 
 ```sh

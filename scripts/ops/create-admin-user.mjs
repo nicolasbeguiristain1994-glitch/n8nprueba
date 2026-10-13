@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { secureDatabaseTransport } from '../../frontend/lib/database-tls.js';
 /**
  * create-admin-user.mjs
  * Creates or updates an admin user in the users table.
@@ -75,14 +76,7 @@ const DB_CONFIG = {
   database: process.env.DB_POSTGRESDB_DATABASE  || process.env.DB_NAME,
   user:     process.env.DB_POSTGRESDB_USER      || process.env.DB_USER,
   password: process.env.DB_POSTGRESDB_PASSWORD  || process.env.DB_PASSWORD || '',
-  ssl:      (() => {
-    const sslVal = process.env.DB_POSTGRESDB_SSL ?? process.env.DB_SSL;
-    if (sslVal === 'false') return false;
-    if (sslVal === 'true')  return { rejectUnauthorized: false };
-    const host = process.env.DB_POSTGRESDB_HOST || process.env.DB_HOST || '';
-    if (sslVal === undefined && (host === 'localhost' || host === '127.0.0.1' || host === '')) return false;
-    return { rejectUnauthorized: false };
-  })(),
+  ...secureDatabaseTransport(undefined, process.env.DB_POSTGRESDB_HOST || process.env.DB_HOST),
 };
 
 // ─── Production guard ─────────────────────────────────────────────────────────

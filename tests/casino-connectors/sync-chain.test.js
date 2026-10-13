@@ -10,7 +10,7 @@ async function runFixture({ codes = [0, 0], record = true, spawnError = false } 
   const runId = '11111111-1111-4111-8111-111111111111'
   const mockProcess = {
     argv: ['node', scriptPath, `--run-id=${runId}`, '--auto'],
-    execPath: '/synthetic/node', env: { DATABASE_URL: 'synthetic-unused' },
+    execPath: '/synthetic/node', env: { DATABASE_URL: 'postgresql://fixture:synthetic@fixture.invalid/test' },
     once: jest.fn(), exit: jest.fn(), exitCode: 0,
   }
   const setSegmentationStatus = jest.fn(async () => {
@@ -31,6 +31,7 @@ async function runFixture({ codes = [0, 0], record = true, spawnError = false } 
   })
   const log = { error: jest.fn(), info: jest.fn(), warn: jest.fn() }
   const modules = {
+    '../frontend/lib/database-tls': require('../../frontend/lib/database-tls'),
     child_process: { spawn }, path,
     pg: { Pool: function () { this.end = end } },
     '../src/casino-connectors/sync/cli-args': { parseSyncArgs: () => ({ ok: true, value: { runId } }) },
