@@ -1,6 +1,7 @@
 // @vitest-environment node
 import {beforeEach,it,expect,vi} from 'vitest'
-const m=vi.hoisted(()=>({receive:vi.fn(),record:vi.fn(),stop:vi.fn(),automation:vi.fn(),emit:vi.fn()}))
+const m=vi.hoisted(()=>({receive:vi.fn(),record:vi.fn(),stop:vi.fn(),automation:vi.fn(),emit:vi.fn(),confirm:vi.fn()}))
+vi.mock('@/lib/opt-out-confirmation',()=>({sendOptOutConfirmation:m.confirm}))
 vi.mock('@/lib/cloud-api/repositories/conversation.repository',()=>({conversationRepository:{receive:m.receive,updateContactDisplayName:vi.fn()}}))
 vi.mock('@/lib/cloud-api/repositories/compliance.repository',()=>({complianceRepository:{recordOptOut:m.record,matchesStopKeyword:m.stop}}))
 vi.mock('@/lib/automation-engine',()=>({evaluateAutomations:m.automation}))
@@ -20,6 +21,8 @@ it.each([
   await handleInboundMessage('line-4',{...base,...content} as WebhookMessage,[],'test')
   expect(m.record).toHaveBeenCalledOnce();expect(m.record).toHaveBeenCalledWith(expect.objectContaining({phone:'+5491100000001',phoneNumberId:'line-4',wamid:'baja-event'}))
   expect(m.automation).not.toHaveBeenCalled()
+  expect(m.confirm).toHaveBeenCalledWith({phone:'+5491100000001',sourceId:'line-4',messageId:'baja-event',provider:'cloud'})
+  expect(m.record.mock.invocationCallOrder[0]).toBeLessThan(m.confirm.mock.invocationCallOrder[0])
 })
 it.each([
   {type:'text',text:{body:'¿Cómo funciona la baja?'}},
@@ -28,11 +31,13 @@ it.each([
 ])('does not opt out for unrelated text or media: %j',async(content)=>{
   await handleInboundMessage('line-4',{...base,...content} as WebhookMessage,[],'test')
   expect(m.record).not.toHaveBeenCalled()
+  expect(m.confirm).not.toHaveBeenCalled()
 })
 it('propagates consent storage failures so the webhook can retry without sending',async()=>{
   m.record.mockRejectedValue(Error('database unavailable'))
   await expect(handleInboundMessage('line-4',{...base,type:'text',text:{body:'BAJA'}},[],'test')).rejects.toThrow('database unavailable')
   expect(m.automation).not.toHaveBeenCalled()
+  expect(m.confirm).not.toHaveBeenCalled()
 })
 it('accepts Evolution button IDs and titles but excludes media captions',()=>{
   expect(evolutionOptOutCandidates({buttonsResponseMessage:{selectedButtonId:'BAJA',selectedDisplayText:'Salir'}})).toEqual(['BAJA','Salir'])

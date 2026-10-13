@@ -39,6 +39,7 @@ export async function withGlobalSendGuard<T>(phone: string, send: (db: PoolClien
 export async function recordGlobalOptOut(opts: {
   phone: string; sourceId: string; messageId?: string; text?: string;
   provider: 'cloud' | 'evolution'; metadata?: Record<string, unknown>; agentUserId?: string
+  confirmation?: boolean
 }): Promise<void> {
   const key = phoneKey(opts.phone)
   const sourceId = opts.provider === 'cloud' ? opts.sourceId : `evolution:${opts.sourceId}`
@@ -68,7 +69,9 @@ export async function recordGlobalOptOut(opts: {
       (contact_phone,phone_number_id,event,source,message_wamid,agent_user_id,metadata)
       VALUES($1,$2,'opt_out',$3,$4,$5,$6::jsonb)`, ['+'+key,sourceId,
       opts.messageId ? 'inbound_message' : 'agent_action',opts.messageId ?? null,opts.agentUserId ?? null,
-      JSON.stringify({...opts.metadata,provider:opts.provider,scope:'global',blacklist_id:inserted.rows[0].id,campaign_id:campaignId})])
+      JSON.stringify({...opts.metadata,provider:opts.provider,scope:'global',blacklist_id:inserted.rows[0].id,campaign_id:campaignId,
+        confirmation: opts.confirmation && opts.messageId && opts.text?.trim().toUpperCase()==='BAJA'
+          ? {status:'pending'} : undefined})])
 
     // Pending work is terminal even if consent is restored before a worker wakes.
     await db.query(`UPDATE campaign_recipients SET status='skipped',locked_at=NULL,

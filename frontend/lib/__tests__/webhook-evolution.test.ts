@@ -20,6 +20,9 @@ import { NextRequest } from 'next/server'
 // ── Mocks top-level ────────────────────────────────────────────────────────────
 
 const mockQuery = vi.fn().mockResolvedValue([])
+const consent = vi.hoisted(()=>({record:vi.fn(),confirm:vi.fn()}))
+vi.mock('@/lib/global-opt-out',()=>({recordGlobalOptOut:consent.record}))
+vi.mock('@/lib/opt-out-confirmation',()=>({sendOptOutConfirmation:consent.confirm}))
 vi.mock('@/lib/db', () => ({ query: mockQuery }))
 vi.mock('@/lib/notify',           () => ({ notify: vi.fn() }))
 vi.mock('@/lib/automation-engine', () => ({ evaluateAutomations: vi.fn().mockResolvedValue(undefined) }))
@@ -37,6 +40,20 @@ vi.stubGlobal('fetch', mockFetch)
 // ── Constantes de prueba ───────────────────────────────────────────────────────
 
 const SECRET = 'test-webhook-secret-xyz'
+
+it('confirms Evolution BAJA only after persisting consent, on the inbound instance',async()=>{
+  process.env.EVOLUTION_WEBHOOK_SECRET=SECRET
+  mockQuery.mockResolvedValue([]);consent.record.mockReset();consent.confirm.mockReset()
+  const {POST}=await import('@/app/api/webhook/evolution/route')
+  const event={event:'messages.upsert',instance:'nexus-inbound',data:{key:{fromMe:false,remoteJid:'5491100000001@s.whatsapp.net',id:'baja-evo'},message:{conversation:' baja '},messageTimestamp:Math.floor(Date.now()/1000)}}
+  expect((await POST(makeReq(event))).status).toBe(200)
+  expect(consent.record).toHaveBeenCalledWith(expect.objectContaining({confirmation:true,sourceId:'nexus-inbound'}))
+  expect(consent.confirm).toHaveBeenCalledWith({phone:'5491100000001',sourceId:'nexus-inbound',messageId:'baja-evo',provider:'evolution'})
+  expect(consent.record.mock.invocationCallOrder[0]).toBeLessThan(consent.confirm.mock.invocationCallOrder[0])
+  consent.confirm.mockClear();consent.record.mockRejectedValueOnce(Error('storage unavailable'))
+  expect((await POST(makeReq(event))).status).toBe(500)
+  expect(consent.confirm).not.toHaveBeenCalled()
+})
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 

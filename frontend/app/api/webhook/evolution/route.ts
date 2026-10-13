@@ -4,6 +4,7 @@ import { query } from '@/lib/db'
 import { recordGlobalOptOut } from '@/lib/global-opt-out'
 import { complianceRepository } from '@/lib/cloud-api/repositories/compliance.repository'
 import { evolutionOptOutCandidates } from '@/lib/opt-out-command'
+import { sendOptOutConfirmation } from '@/lib/opt-out-confirmation'
 import { evaluateAutomations } from '@/lib/automation-engine'
 import { notify } from '@/lib/notify'
 import { parseInstancesResponse } from '@/lib/evolution-utils'
@@ -147,8 +148,12 @@ export async function POST(req: NextRequest) {
       // an automation or acknowledge an opt-out that was not durably applied.
       for (const command of evolutionOptOutCandidates(msg)) {
         if (await complianceRepository.matchesStopKeyword(command)) {
-          await recordGlobalOptOut({phone,sourceId: typeof body.instance === 'string' ? body.instance : 'unknown',
-            provider:'evolution',messageId:msgId || undefined,text:command,metadata:{input_type:msg?.conversation || msg?.extendedTextMessage ? 'text' : 'button'}})
+          const sourceId = typeof body.instance === 'string' ? body.instance : 'unknown'
+          const confirmation = command.trim().toUpperCase() === 'BAJA'
+          await recordGlobalOptOut({phone,sourceId,
+            provider:'evolution',messageId:msgId || undefined,text:command,confirmation,
+            metadata:{input_type:msg?.conversation || msg?.extendedTextMessage ? 'text' : 'button'}})
+          if (confirmation && msgId) await sendOptOutConfirmation({phone,sourceId,messageId:msgId,provider:'evolution'})
           sseEmitter.emit('update', {source:'message',phone})
           return NextResponse.json({ok:true})
         }
