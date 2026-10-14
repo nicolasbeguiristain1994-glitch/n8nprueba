@@ -30,11 +30,11 @@ const CAMPAIGN_SENDS_SQL = `
 // owners before checking c.id. Sender line + recipient must both match.
 export const CAMPAIGN_REPLIES_SQL = `
   WITH campaign_sends AS NOT MATERIALIZED (${CAMPAIGN_SENDS_SQL})
-  SELECT reply.id, COALESCE(reply.sent_at,reply.created_at) AS created_at
+  SELECT reply.id, COALESCE(reply.sent_at,reply.created_at) AS created_at, 'cloud' AS source
   FROM cloud_messages reply
   WHERE reply.direction='inbound' AND reply.campaign_id=c.id
   UNION ALL
-  SELECT reply.id, COALESCE(reply.sent_at,reply.created_at) AS created_at
+  SELECT reply.id, COALESCE(reply.sent_at,reply.created_at) AS created_at, 'cloud' AS source
   FROM (
     SELECT DISTINCT conversation.id AS conversation_id,sent.phone_number_id,sent.phone
     FROM campaign_sends sent JOIN cloud_conversations conversation
@@ -63,7 +63,7 @@ export const CAMPAIGN_REPLIES_SQL = `
         ORDER BY sent.sent_at DESC,sent.id DESC LIMIT 1
       ) END)=c.id
   UNION ALL
-  SELECT reply.id, reply.created_at FROM whatsapp_messages reply
+  SELECT reply.id, reply.created_at, 'legacy' AS source FROM whatsapp_messages reply
   WHERE reply.campaign_id=c.id AND reply.direction='inbound'
     AND NOT EXISTS (
       SELECT 1 FROM cloud_messages cloud WHERE cloud.direction='inbound'

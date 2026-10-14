@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { campaignStatistics, statisticsSeries, statisticsRange, csvCell, STATS_TIMEZONE } from '@/lib/statistics'
+import type { CampaignResponseSummary } from '@/lib/campaign-response-summary'
 export async function GET(req: NextRequest) {
   const auth=await checkPermissionWithUser(req,'estadisticas','read')
   if (!auth.ok) return auth.response
@@ -16,7 +17,10 @@ export async function GET(req: NextRequest) {
         'Monto cargado (24 h)':c.monto_cargado_24h,'Monto apostado (24 h)':'No disponible',
         'Ventanas abiertas':c.ventanas_abiertas,'Sin cuenta vinculada':c.sin_cuenta,
         'Sin hora de envío':c.sin_hora_envio,'Cargas sin hora (no atribuidas)':c.cargas_sin_hora,
-        'Fecha creación':new Date(c.created_at as string).toLocaleDateString('es-AR',{timeZone:STATS_TIMEZONE})}))
+        'Fecha creación':new Date(c.created_at as string).toLocaleDateString('es-AR',{timeZone:STATS_TIMEZONE}),
+        'Intentados':Number(c.enviados)+Number(c.fallidos),
+        'Personas que respondieron':(c.respuestas_detalle as CampaignResponseSummary).personas,
+        'Respuestas por opción':(c.respuestas_detalle as CampaignResponseSummary).opciones.map(option=>`${option.label}: ${option.personas} personas / ${option.mensajes} mensajes`).join('; ')}))
       : (await statisticsSeries(range.from,range.to,owner)).map(c=>({'Fecha':c.dia,'Enviados':c.enviados,'Entregados':c.entregados,'Leídos':c.leidos,'Fallidos':c.fallidos,'Respuestas':c.respuestas}))
     if (!rows.length) return NextResponse.json({error:'Sin datos para exportar'},{status:404})
     const headers=Object.keys(rows[0]),csv=[headers.map(csvCell).join(','),...rows.map(r=>headers.map(h=>csvCell(r[h])).join(','))].join('\r\n')

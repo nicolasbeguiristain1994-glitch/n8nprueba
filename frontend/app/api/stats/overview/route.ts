@@ -22,7 +22,8 @@ export async function GET(req: NextRequest) {
     ])
     const k=kpis[0]??{}
     const pct=(value:number)=>k.enviados?Math.round(1000*value/k.enviados)/10:null
-    return NextResponse.json({kpis:{...k,tasa_entrega:pct(k.entregados),tasa_lectura:pct(k.leidos),tasa_respuesta:pct(k.respuestas)},series,distribution,
+    const attempted=k.enviados+k.fallidos
+    return NextResponse.json({kpis:{...k,tasa_entrega:attempted?Math.round(1000*k.entregados/attempted)/10:null,tasa_lectura:pct(k.leidos),tasa_respuesta:pct(k.respuestas)},series,distribution,
       topCampaigns:campaigns.slice(0,6).map(c=>({...c,total:c.enviados})),campaignCount:counts[0]??{},timezone:STATS_TIMEZONE})
   } catch { return NextResponse.json({error:'No se pudieron cargar las estadísticas'},{status:500}) }
 }

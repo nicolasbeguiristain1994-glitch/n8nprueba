@@ -3,6 +3,7 @@ import { argentinaToday, shiftDate, validDateRange } from '@/lib/dashboard-forma
 import { CAMPAIGN_STATS_SQL } from '@/lib/campaign-stats'
 import { CAMPAIGN_REPLIES_SQL } from '@/lib/campaign-replies'
 import { campaignEffectiveness } from '@/lib/campaign-effectiveness'
+import { campaignResponseBreakdowns } from '@/lib/campaign-response-breakdown'
 
 export const STATS_TIMEZONE = 'America/Argentina/Buenos_Aires'
 export function statisticsRange(params: URLSearchParams) {
@@ -21,7 +22,7 @@ export async function campaignStatistics(from: string, to: string, owner: string
       stats.sent AS enviados,stats.delivered AS entregados,stats.read AS leidos,
       stats.failed AS fallidos,stats.skipped AS omitidos,
       (SELECT count(*)::int FROM (${CAMPAIGN_REPLIES_SQL}) replies) AS respuestas,
-      round(100.0*stats.delivered/NULLIF(stats.sent,0),1) AS tasa_entrega,
+      round(100.0*stats.delivered/NULLIF(stats.sent+stats.failed,0),1) AS tasa_entrega,
       round(100.0*stats.read/NULLIF(stats.sent,0),1) AS tasa_lectura
     FROM campaigns c CROSS JOIN LATERAL (${CAMPAIGN_STATS_SQL}) stats
     WHERE c.created_at >= ${STATS_FROM} AND c.created_at < ${STATS_TO}
@@ -29,8 +30,9 @@ export async function campaignStatistics(from: string, to: string, owner: string
       AND ($4::text='' OR c.status::text=$4) AND ($5::text='' OR c.name ILIKE $6)
     ORDER BY stats.sent DESC,c.created_at DESC LIMIT 100`, [from,to,owner,status,search,`%${search}%`])
   if (!includeEffectiveness) return rows
-  const effectiveness = await campaignEffectiveness(rows.map(row => row.id as string))
-  return rows.map(row => ({ ...row, ...effectiveness.get(row.id as string) }))
+  const ids = rows.map(row => row.id as string)
+  const [effectiveness, responses] = await Promise.all([campaignEffectiveness(ids), campaignResponseBreakdowns(ids)])
+  return rows.map(row => ({ ...row, ...effectiveness.get(row.id as string), respuestas_detalle: responses.get(row.id as string) }))
 }
 
 // Activity metrics count each successful manual message and the latest attempt

@@ -3,6 +3,8 @@
 import { PageHeader } from '@/components/layout/PageHeader'
 import { argentinaToday, shiftDate, formatPesos } from '@/lib/dashboard-format'
 import { CampaignEffectivenessPanel } from '@/components/campaigns/CampaignEffectivenessPanel'
+import { CampaignResponsesPanel } from '@/components/campaigns/CampaignResponsesPanel'
+import type { CampaignResponseSummary } from '@/lib/campaign-response-summary'
 import type { CampaignEffectiveness, EffectiveRecipient } from '@/lib/campaign-effectiveness'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import {
@@ -33,12 +35,14 @@ interface TopCampaign { id: string; name: string; type: string; status: string; 
 interface CampaignCount { total: number; completadas: number; activas: number; programadas: number }
 
 interface Campaign extends CampaignEffectiveness {
+  respuestas_detalle: CampaignResponseSummary
   id: string; name: string; type: string; status: string
   created_at: string; completed_at: string | null
   enviados: number; entregados: number; leidos: number; fallidos: number; respuestas: number
   tasa_entrega: string | null; tasa_lectura: string | null
 }
 interface CampaignDetail {
+  respuestas_detalle: CampaignResponseSummary
   kpis: Omit<CampaignEffectiveness, 'efectivos_detalle'> & { enviados: number; entregados: number; leidos: number; fallidos: number; respuestas: number; tasa_entrega: string; tasa_lectura: string }
   efectivos: EffectiveRecipient[]
   series: SeriesPoint[]
@@ -257,12 +261,12 @@ export default function EstadisticasPage() {
   const loadLines = useCallback(async () => {
     setLoadingLn(true); setErrorLn(null)
     try {
-      const res  = await fetch('/api/stats/lines')
+      const res  = await fetch(`/api/stats/lines?from=${from}&to=${to}`)
       const data = await res.json() as { lines?: LineStats[]; error?: string }
       if (!res.ok) { setErrorLn(data.error || `Error ${res.status}`); return }
       setLines(data.lines ?? [])
     } catch { setErrorLn('Error de red') } finally { setLoadingLn(false) }
-  }, [])
+  }, [from, to])
 
   const loadTemplates = useCallback(async () => {
     setLoadingTpl(true); setErrorTpl(null)
@@ -350,7 +354,7 @@ export default function EstadisticasPage() {
       {exportError && <p role="alert" className="text-sm text-destructive">{exportError}</p>}
       {/* Header */}
       <PageHeader title="Estadísticas" className="mb-0"
-        description="Métricas en hora argentina. Campañas: resultado actual por destinatario; Resumen: actividad del período." />
+        description="Métricas en hora argentina. Campañas: resultado actual por destinatario; Resumen: actividad del período. La tasa de entrega se calcula sobre enviados + fallidos." />
       <div className="filter-bar">
         {/* Presets */}
         <div className="flex max-w-full flex-wrap gap-1 bg-muted rounded-lg p-1">
@@ -373,7 +377,7 @@ export default function EstadisticasPage() {
             onChange={e => { setTo(e.target.value); setCustom(true); setPreset(-1) }}
             className="h-8 text-xs w-36" />
         </div>
-        <Button variant="ghost" size="sm" onClick={() => { void loadOverview(); if (tab === 'campanas') { void loadCampaigns(); if (detail) void loadDetail(detail) } }} className="h-8">
+        <Button variant="ghost" size="sm" onClick={() => { void loadOverview(); if (tab === 'campanas') { void loadCampaigns(); if (detail) void loadDetail(detail) } if (tab === 'lineas') void loadLines(); if (tab === 'plantillas') void loadTemplates() }} className="h-8">
           <RefreshCw size={13} aria-label="Actualizar estadísticas" />
         </Button>
       </div>
@@ -537,6 +541,7 @@ export default function EstadisticasPage() {
 
         {/* ── TAB: CAMPAÑAS ────────────────────────────────────────────────── */}
         <TabsContent value="campanas" className="space-y-4 mt-4">
+          <p className="text-xs text-muted-foreground">Tasa de entrega = entregados / intentados (enviados + fallidos). Los leídos también cuentan como entregados; pendientes y omitidos quedan fuera.</p>
           <p className="text-xs text-muted-foreground">Respuestas cuenta mensajes recibidos, no personas únicas. Se asignan al mensaje citado o al último envío de campaña de esa conversación.</p>
           <p className="text-xs text-muted-foreground">Efectivos: destinatarios con una carga confirmada dentro de las 24 horas posteriores a su envío. Los montos corresponden a cargas, sin bonos.</p>
           {detail ? (
@@ -562,7 +567,7 @@ export default function EstadisticasPage() {
                 <>
                   <CampaignEffectivenessPanel key={detail} stats={detailData.kpis} recipients={detailData.efectivos} />
                   <div className="grid grid-cols-2 xl:grid-cols-5 gap-4">
-                    <KpiCard label="Enviados"   value={fmt(detailData.kpis.enviados)}   icon={Send}         color="blue" />
+                    <KpiCard label="Enviados"   value={fmt(detailData.kpis.enviados)}   icon={Send}         color="blue" sub={`${fmt(detailData.kpis.enviados + detailData.kpis.fallidos)} intentados en total`} />
                     <KpiCard label="Entregados" value={fmt(detailData.kpis.entregados)} icon={CheckCheck}   color="green"
                       sub={pct(detailData.kpis.tasa_entrega) + ' tasa entrega'} />
                     <KpiCard label="Leídos"     value={fmt(detailData.kpis.leidos)}     icon={Eye}          color="purple"
@@ -571,6 +576,7 @@ export default function EstadisticasPage() {
                       sub="Mensajes recibidos" />
                     <KpiCard label="Fallidos"   value={fmt(detailData.kpis.fallidos)}   icon={AlertCircle}  color="red" />
                   </div>
+                  <CampaignResponsesPanel summary={detailData.respuestas_detalle} />
                   <Card className="border border-border">
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm font-medium text-foreground">Evolución diaria</CardTitle>
@@ -655,7 +661,10 @@ export default function EstadisticasPage() {
                           <td className="px-4 py-3 text-foreground whitespace-nowrap">{formatPesos(c.monto_cargado_24h)}</td>
                           <td className="px-4 py-3 text-foreground">{fmt(c.entregados)}</td>
                           <td className="px-4 py-3 text-foreground">{fmt(c.leidos)}</td>
-                          <td className="px-4 py-3 text-foreground">{fmt(c.respuestas)}</td>
+                          <td className="px-4 py-3 text-foreground">
+                            {fmt(c.respuestas)}
+                            <span className="block text-xs text-muted-foreground whitespace-nowrap">{c.respuestas_detalle.opciones.filter(option => option.label !== 'Otras respuestas').map(option => `${option.label}: ${fmt(option.personas)} personas`).join(' · ')}</span>
+                          </td>
                           <td className="px-4 py-3 text-red-500">{fmt(c.fallidos)}</td>
                           <td className="px-4 py-3 text-muted-foreground">{pct(c.tasa_entrega)}</td>
                           <td className="px-4 py-3 text-muted-foreground">{pct(c.tasa_lectura)}</td>
@@ -672,6 +681,7 @@ export default function EstadisticasPage() {
 
         {/* ── TAB: LÍNEAS ──────────────────────────────────────────────────── */}
         <TabsContent value="lineas" className="space-y-4 mt-4">
+          <p className="text-xs text-muted-foreground">Estado actual de los envíos del período con línea identificada. Tasa de entrega = entregados / (enviados + fallidos); incluye los leídos. Hoy muestra el consumo diario de la línea.</p>
           {loadingLn ? (
             <div className="flex items-center justify-center h-40"><Loader2 size={20} className="animate-spin text-muted-foreground/60" /></div>
           ) : errorLn ? (
@@ -685,7 +695,7 @@ export default function EstadisticasPage() {
               {/* BarChart de líneas */}
               <Card className="border border-border">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-foreground">Mensajes totales por línea</CardTitle>
+                  <CardTitle className="text-sm font-medium text-foreground">Mensajes por línea · período seleccionado</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <ResponsiveContainer width="100%" height={200}>
@@ -702,11 +712,11 @@ export default function EstadisticasPage() {
               </Card>
 
               {/* Tabla */}
-              <div className="border border-border rounded-xl overflow-hidden">
+              <div className="border border-border rounded-xl overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-background border-b border-border">
                     <tr>
-                      {['Línea','Estado','Hoy','Capacidad/día','Total enviados','Entregados','Fallidos','T. entrega','T. error'].map(h => (
+                      {['Línea','Estado','Hoy','Capacidad/día','Enviados','Entregados','Fallidos','T. entrega','T. error'].map(h => (
                         <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide whitespace-nowrap">{h}</th>
                       ))}
                     </tr>

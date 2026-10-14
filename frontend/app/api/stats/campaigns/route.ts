@@ -6,6 +6,7 @@ import { campaignStatistics, statisticsRange, STATS_TIMEZONE } from '@/lib/stati
 import { CAMPAIGN_STATS_SQL, CAMPAIGN_OUTCOME_SQL } from '@/lib/campaign-stats'
 import { CAMPAIGN_REPLIES_SQL } from '@/lib/campaign-replies'
 import { campaignEffectiveness } from '@/lib/campaign-effectiveness'
+import { campaignResponseBreakdowns } from '@/lib/campaign-response-breakdown'
 
 export async function GET(req: NextRequest) {
   const auth=await checkPermissionWithUser(req,'estadisticas','read')
@@ -20,7 +21,7 @@ export async function GET(req: NextRequest) {
       const rows=await query<Record<string, unknown>>(`SELECT c.created_at,
         s.sent AS enviados,s.delivered AS entregados,s.read AS leidos,s.failed AS fallidos,s.skipped AS omitidos,
         (SELECT count(*)::int FROM (${CAMPAIGN_REPLIES_SQL}) replies) AS respuestas,
-        round(100.0*s.delivered/NULLIF(s.sent,0),1) AS tasa_entrega,
+        round(100.0*s.delivered/NULLIF(s.sent+s.failed,0),1) AS tasa_entrega,
         round(100.0*s.read/NULLIF(s.sent,0),1) AS tasa_lectura
         FROM campaigns c CROSS JOIN LATERAL (${CAMPAIGN_STATS_SQL}) s
         WHERE c.id=$1 AND ($2::uuid IS NULL OR c.owned_by=$2)`,[id,owner])
@@ -48,7 +49,8 @@ export async function GET(req: NextRequest) {
         FROM outbound_days FULL JOIN reply_days USING (dia) ORDER BY dia`,[id])
       const effectiveness=(await campaignEffectiveness([id],true)).get(id)!
       const {efectivos_detalle,...effectivenessKpis}=effectiveness
-      return NextResponse.json({kpis:{...rows[0],...effectivenessKpis},efectivos:efectivos_detalle,series,timezone:STATS_TIMEZONE,metricScope:'campaign_recipients'})
+      const respuestas_detalle=(await campaignResponseBreakdowns([id])).get(id)
+      return NextResponse.json({kpis:{...rows[0],...effectivenessKpis},efectivos:efectivos_detalle,respuestas_detalle,series,timezone:STATS_TIMEZONE,metricScope:'campaign_recipients'})
     }
     const campaigns=await campaignStatistics(range.from,range.to,owner,req.nextUrl.searchParams.get('status')||'',req.nextUrl.searchParams.get('q')||'',true)
     return NextResponse.json({campaigns,timezone:STATS_TIMEZONE,metricScope:'campaign_recipients'})

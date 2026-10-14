@@ -2,13 +2,15 @@
 import {afterAll,beforeAll,describe,it,expect,vi} from 'vitest'
 import {Client} from 'pg'
 import {NextRequest} from 'next/server'
-const m=vi.hoisted(()=>({query:vi.fn(),auth:vi.fn()}))
+const m=vi.hoisted(()=>({query:vi.fn(),auth:vi.fn(),lineIds:vi.fn()}))
 vi.mock('@/lib/db',()=>({query:m.query}))
 vi.mock('@/lib/permissions',()=>({checkPermissionWithUser:m.auth}))
+vi.mock('@/lib/line-visibility',async(importOriginal)=>({...await importOriginal<typeof import('@/lib/line-visibility')>(),getAccessibleLineIds:m.lineIds}))
 import {GET as overview} from '@/app/api/stats/overview/route'
 import {GET as campaigns} from '@/app/api/stats/campaigns/route'
 import {GET as exportCsv} from '@/app/api/stats/export/route'
 import {GET as templates} from '@/app/api/stats/templates/route'
+import {GET as lines} from '@/app/api/stats/lines/route'
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`
 const req=(suffix:string)=>new NextRequest('http://localhost/api/stats/'+suffix+(suffix.includes('?')?'&':'?')+'from=2026-09-30&to=2026-09-30')
 describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('statistics metrics, scope and calendar days',()=>{
@@ -55,11 +57,67 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
    CREATE VIEW casino_players AS SELECT DISTINCT md5(platform || ':' || username_lower)::uuid AS id,platform,username_lower,'admin'::text AS agente FROM casino_contact_account_links;
    CREATE TABLE casino_transactions(id bigint,platform text,username text,tipo text,monto numeric,fecha date,fecha_hora_utc timestamptz,raw_detalles text);
    ALTER TABLE casino_transactions ADD source_id text, ADD agente text;
-   CREATE TABLE casino_financial_source_records(transaction_id bigint,platform text,kind text,monto numeric);`)
+   CREATE TABLE casino_financial_source_records(transaction_id bigint,platform text,kind text,monto numeric);
+   ALTER TABLE campaigns ADD template_id uuid,ADD template_params jsonb;
+   ALTER TABLE whatsapp_templates ADD components jsonb;
+   ALTER TABLE cloud_messages ADD message_type text;
+   ALTER TABLE whatsapp_messages ADD message_body text;
+   CREATE TABLE whatsapp_lines(id uuid,line_key text,display_name text,phone_number text,status text,is_connected boolean,msgs_sent_today int,msg_per_day int,total_sent int,total_failed int,total_delivered int,last_seen_at timestamptz,priority int);
+   INSERT INTO whatsapp_lines VALUES('${id(60)}','line','Visible',NULL,'active',true,9,50,999,0,0,NULL,1),('${id(61)}','other','Hidden',NULL,'active',true,0,50,999,0,0,NULL,2);`)
   m.query.mockImplementation(async(sql,params)=>(await db.query(sql,params)).rows)
   m.auth.mockResolvedValue({ok:true,user:{role:'operator',user_id:id(10)}})
+  m.lineIds.mockResolvedValue([id(60)])
  })
  afterAll(async()=>{await db.query('ROLLBACK');await db.end()})
+ it('uses delivery receipts, deduplicates retries/Cloud copies and applies date and line visibility',async()=>{
+  const r=await lines(req('lines'));expect(r.status).toBe(200)
+  expect((await r.json()).lines).toEqual([expect.objectContaining({id:id(60),total_sent:2,total_delivered:2,total_failed:0,tasa_entrega:'100.0',msgs_sent_today:9})])
+  const empty=await lines(new NextRequest('http://localhost/api/stats/lines?from=2026-10-01&to=2026-10-01'))
+  expect((await empty.json()).lines[0]).toMatchObject({total_sent:0,total_delivered:0,tasa_entrega:null})
+  expect((await lines(new NextRequest('http://localhost/api/stats/lines?from=2026-02-30'))).status).toBe(400)
+  m.lineIds.mockResolvedValueOnce([])
+  expect((await(await lines(req('lines'))).json()).lines).toEqual([])
+ })
+ it('includes failed recipients in delivery denominators, but excludes pending retries and skipped',async()=>{
+  await db.query('SAVEPOINT delivery_denominator')
+  try {
+   await db.query(`INSERT INTO campaign_recipients(campaign_id,phone_number,status,line_id) VALUES
+    ('${id(1)}','5491199','failed','${id(60)}'),('${id(1)}','5491198','pending','${id(60)}'),('${id(1)}','5491197','skipped','${id(60)}');
+    INSERT INTO whatsapp_messages(id,campaign_id,phone_number,direction,status,created_at) VALUES
+    ('${id(501)}','${id(1)}','5491199','outbound','queued','2026-09-30T22:00:00Z'),
+    ('${id(502)}','${id(1)}','5491198','outbound','failed','2026-09-30T22:00:00Z'),
+    ('${id(503)}','${id(1)}','5491197','outbound','failed','2026-09-30T22:00:00Z')`)
+   const detail=await(await campaigns(req('campaigns?id='+id(1)))).json()
+   expect(detail.kpis).toMatchObject({enviados:1,entregados:1,fallidos:1,omitidos:1,tasa_entrega:'50.0'})
+   const list=await(await campaigns(req('campaigns'))).json();expect(list.campaigns[0].tasa_entrega).toBe('50.0')
+   const line=await(await lines(req('lines'))).json();expect(line.lines[0]).toMatchObject({total_sent:2,total_delivered:2,total_failed:1,tasa_entrega:'66.7',tasa_error:'33.3'})
+   expect(await(await exportCsv(req('export?type=campaigns'))).text()).toContain('"50.0"')
+  } finally {await db.query('ROLLBACK TO SAVEPOINT delivery_denominator')}
+ })
+ it('breaks down configured replies and BAJA by messages and unique phones, including legacy deduplication',async()=>{
+  await db.query('SAVEPOINT response_options')
+  try {
+   await db.query(`UPDATE campaigns SET template_id='${id(90)}',template_params='{"buttons":[{"index":0,"sub_type":"quick_reply","payload":"offer-42"}]}' WHERE id='${id(1)}';
+    UPDATE whatsapp_templates SET components='[{"type":"BUTTONS","buttons":[{"type":"QUICK_REPLY","text":"EXTRA"},{"type":"QUICK_REPLY","text":"BAJA"},{"type":"QUICK_REPLY","text":"INFO"}]}]';
+    INSERT INTO cloud_conversations VALUES('${id(82)}','5491100000002','phone');
+    INSERT INTO cloud_messages(id,campaign_id,conversation_id,phone_number_id,direction,status,sent_at,created_at,message_type,content,wamid) VALUES
+    ('${id(510)}','${id(1)}','${id(80)}','phone','inbound','delivered',NOW(),NOW(),'button','{"button":{"payload":"offer-42","text":"EXTRA"}}','option.extra'),
+    ('${id(511)}','${id(1)}','${id(80)}','phone','inbound','delivered',NOW(),NOW(),'text','{"text":{"body":" extra "}}','option.extra2'),
+    ('${id(512)}','${id(1)}','${id(82)}','phone','inbound','delivered',NOW(),NOW(),'interactive','{"interactive":{"type":"button_reply","button_reply":{"id":"BAJA","title":"Baja"}}}','option.baja'),
+    ('${id(513)}','${id(1)}','${id(80)}','phone','inbound','delivered',NOW(),NOW(),'text','{"text":{"body":"no quiero BAJA"}}','option.other');
+    INSERT INTO whatsapp_messages(id,campaign_id,phone_number,direction,status,created_at,evolution_message_id,message_body) VALUES
+    ('${id(514)}','${id(1)}','54911 0000 0001','inbound','received',NOW(),'option.extra','EXTRA'),
+    ('${id(515)}','${id(1)}','54911 0000 0001','inbound','received',NOW(),'option.legacy','BAJA')`)
+   const detail=await(await campaigns(req('campaigns?id='+id(1)))).json()
+   expect(detail.kpis.respuestas).toBe(5)
+   expect(detail.respuestas_detalle).toEqual({personas:2,opciones:[
+    {label:'BAJA',mensajes:2,personas:2},{label:'EXTRA',mensajes:2,personas:1},
+    {label:'INFO',mensajes:0,personas:0},{label:'Otras respuestas',mensajes:1,personas:1},
+   ]})
+   const list=await(await campaigns(req('campaigns'))).json();expect(list.campaigns[0].respuestas_detalle).toEqual(detail.respuestas_detalle)
+   const csv=await(await exportCsv(req('export?type=campaigns'))).text();expect(csv).toContain('BAJA: 2 personas / 2 mensajes; EXTRA: 1 personas / 2 mensajes')
+  } finally {await db.query('ROLLBACK TO SAVEPOINT response_options')}
+ })
  it('counts latest retries once, reads as delivered, manual Cloud and Argentina midnight',async()=>{
   const r=await overview(req('overview'));expect(r.status).toBe(200)
   const d=await r.json();expect(d.kpis).toMatchObject({enviados:2,entregados:2,leidos:1,fallidos:0,respuestas:0})
