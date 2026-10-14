@@ -17,6 +17,7 @@ describe.skipIf(process.env.RUN_DASHBOARD_PG_TESTS !== '1')('dashboard message m
     db = new Client({ connectionString: url.toString(), ssl: false }); await db.connect()
     await db.query(`BEGIN; CREATE SCHEMA dashboard_metrics_${process.pid}; SET LOCAL search_path=dashboard_metrics_${process.pid};
       CREATE TABLE campaigns(id uuid,owned_by uuid);
+      CREATE TABLE campaign_recipients(campaign_id uuid,phone_number text,status text);
       CREATE TABLE whatsapp_messages(id uuid,campaign_id uuid,template_id uuid,phone_number text,direction text,status text,created_at timestamptz,evolution_message_id text,whatsapp_message_id text);
       CREATE TABLE cloud_messages(id uuid,campaign_id uuid,conversation_id uuid,phone_number_id text,direction text,status text,sent_at timestamptz,created_at timestamptz,template_name text,content jsonb,wamid text);
       CREATE TABLE cloud_conversations(id uuid,contact_phone text);
