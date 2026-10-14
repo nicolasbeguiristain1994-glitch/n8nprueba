@@ -1,6 +1,6 @@
 import { query } from '@/lib/db'
 import { argentinaToday, shiftDate, validDateRange } from '@/lib/dashboard-format'
-import { CAMPAIGN_STATS_SQL } from '@/lib/campaign-stats'
+import { CAMPAIGN_STATS_SQL, CAMPAIGN_OUTCOME_SQL } from '@/lib/campaign-stats'
 import { CAMPAIGN_REPLIES_SQL } from '@/lib/campaign-replies'
 import { campaignEffectiveness } from '@/lib/campaign-effectiveness'
 import { campaignResponseBreakdowns } from '@/lib/campaign-response-breakdown'
@@ -39,7 +39,13 @@ export async function campaignStatistics(from: string, to: string, owner: string
 // per campaign recipient. A retry supersedes its earlier failure. Visibility is
 // enforced before aggregation; parameters: from, to, owner (null = admin).
 export const ACTIVITY_CTE = `WITH stats_messages AS (
-  SELECT id,campaign_id,template_id,phone_number,direction::text,status::text,created_at FROM whatsapp_messages
+  SELECT m.id,m.campaign_id,m.template_id,m.phone_number,m.direction::text,
+    CASE WHEN cr.status IS NOT NULL THEN ${CAMPAIGN_OUTCOME_SQL} ELSE m.status::text END AS status,m.created_at
+  FROM whatsapp_messages m LEFT JOIN LATERAL (
+    SELECT cr.status FROM campaign_recipients cr
+    WHERE cr.campaign_id=m.campaign_id
+      AND regexp_replace(cr.phone_number,'[^0-9]','','g')=regexp_replace(m.phone_number,'[^0-9]','','g') LIMIT 1
+  ) cr ON m.direction='outbound'
   UNION ALL
   SELECT cm.id,cm.campaign_id,t.id,cc.contact_phone,
     CASE WHEN cm.direction='inbound' THEN 'inbound' ELSE 'outbound' END,cm.status,

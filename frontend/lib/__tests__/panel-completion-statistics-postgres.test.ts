@@ -91,6 +91,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
    expect(detail.kpis).toMatchObject({enviados:1,entregados:1,fallidos:1,omitidos:1,tasa_entrega:'50.0'})
    const list=await(await campaigns(req('campaigns'))).json();expect(list.campaigns[0].tasa_entrega).toBe('50.0')
    const line=await(await lines(req('lines'))).json();expect(line.lines[0]).toMatchObject({total_sent:2,total_delivered:2,total_failed:1,tasa_entrega:'66.7',tasa_error:'33.3'})
+   const summary=await(await overview(req('overview'))).json();expect(summary.kpis).toMatchObject({enviados:2,entregados:2,fallidos:1,tasa_entrega:66.7})
    expect(await(await exportCsv(req('export?type=campaigns'))).text()).toContain('"50.0"')
   } finally {await db.query('ROLLBACK TO SAVEPOINT delivery_denominator')}
  })
