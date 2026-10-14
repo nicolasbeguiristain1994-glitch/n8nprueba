@@ -1,3 +1,6 @@
+import { segmentationSQL } from '@/lib/contact-segmentation'
+import { relativeRanking, recentPriorityOrderSQL, type RelativeRanking } from './priority-details'
+import type { SegmentationProfile } from '@/lib/contact-segmentation'
 import { PRIORITY_BUSY_SQL, PRIORITY_BATCH_JOINS } from './broadcasts'
 import { Client } from 'pg'
 import { priorityAccess, type PriorityAccess } from './access'
@@ -31,6 +34,12 @@ interface MetricsDbRow {
 }
 
 interface PrioritizedDbRow {
+  segmentation_profile: SegmentationProfile | null
+  segment_is_manual: boolean
+  value_score: number
+  urgency_score: number
+  computed_at: Date
+  relative_ranking?: RelativeRanking | null
   id:                      string
   phone_number:            string
   first_name:              string | null
@@ -81,28 +90,6 @@ export class UserPrioritizationRepository {
     if (!this.client) throw new Error('Recompute requires a dedicated transaction')
     await this.client.query('BEGIN')
     this.prepared = true
-    await this.client.query(`CREATE TEMP TABLE priority_links ON COMMIT DROP AS
-      SELECT DISTINCT contact_id, platform, username_lower FROM casino_contact_account_links`)
-    await this.client.query(`CREATE INDEX ON priority_links(contact_id); ANALYZE priority_links`)
-    await this.client.query(`
-      CREATE TEMP TABLE priority_movements ON COMMIT DROP AS
-      WITH movements AS MATERIALIZED (
-        SELECT platform, lower(username) username_lower, max(fecha) last_movement
-        FROM casino_transactions WHERE tipo IN ('carga','retiro') AND platform IN ('zeus','bet30','ganamos','argenbet') AND fecha <= (CURRENT_TIMESTAMP AT TIME ZONE 'America/Argentina/Buenos_Aires')::date
-        GROUP BY platform, lower(username)
-      )
-      SELECT l.contact_id, (max(t.last_movement)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') last_movement
-      FROM priority_links l JOIN movements t USING(platform,username_lower) GROUP BY l.contact_id`)
-    await this.client.query(`      CREATE UNIQUE INDEX ON priority_movements(contact_id); ANALYZE priority_movements;
-      CREATE TEMP TABLE priority_ltv(contact_id uuid, ltv_score int, ltv_tier text) ON COMMIT DROP;
-      CREATE UNIQUE INDEX ON priority_ltv(contact_id)`)
-    const [ltv] = await this.query<{ available: boolean }>("SELECT to_regclass('player_ltv') IS NOT NULL AS available")
-    if (ltv.available) await this.client.query(`INSERT INTO priority_ltv
-      SELECT DISTINCT ON (l.contact_id) l.contact_id, pl.ltv_score, pl.tier_ltv
-      FROM priority_links l JOIN casino_players cp
-        ON cp.username_lower=l.username_lower AND cp.platform IS NOT DISTINCT FROM l.platform
-      JOIN player_ltv pl ON pl.casino_player_id=cp.id
-      ORDER BY l.contact_id, pl.ltv_score DESC NULLS LAST`)
 
   }
 
@@ -123,16 +110,15 @@ export class UserPrioritizationRepository {
         c.first_name,
         c.last_name,
         c.status,
-        c.segment,
-        ${this.prepared ? 'GREATEST(c.last_deposit_at, m.last_movement)' : 'c.last_deposit_at'} AS last_deposit_at,
+        ${segmentationSQL('c').segment} AS segment,
+        CASE WHEN c.segmentation_profile IS NOT NULL THEN ((c.segmentation_profile->>'last_date')::date::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') ELSE c.last_deposit_at END AS last_deposit_at,
         c.total_deposits,
-        c.total_deposit_amount,
+        COALESCE((c.segmentation_profile->>'amount')::numeric,c.total_deposit_amount) AS total_deposit_amount,
         c.last_deposit_amount,
         (c.do_not_contact OR EXISTS (SELECT 1 FROM blacklist b WHERE b.phone_number_normalized IN (c.phone_number,regexp_replace(c.phone_number,'[^0-9]','','g')) AND b.removed_at IS NULL)) AS do_not_contact,
         c.opt_in_marketing,
         c.deleted_at
       FROM contacts c
-      ${this.prepared ? 'LEFT JOIN priority_movements m ON m.contact_id=c.id' : ''}
       WHERE c.phone_number IS NOT NULL
         AND c.phone_number <> ''
         ${afterId ? 'AND c.id > $2' : ''}
@@ -152,10 +138,10 @@ export class UserPrioritizationRepository {
         c.first_name,
         c.last_name,
         c.status,
-        c.segment,
-        c.last_deposit_at,
+        ${segmentationSQL('c').segment} AS segment,
+        CASE WHEN c.segmentation_profile IS NOT NULL THEN ((c.segmentation_profile->>'last_date')::date::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') ELSE c.last_deposit_at END AS last_deposit_at,
         c.total_deposits,
-        c.total_deposit_amount,
+        COALESCE((c.segmentation_profile->>'amount')::numeric,c.total_deposit_amount) AS total_deposit_amount,
         c.last_deposit_amount,
         c.do_not_contact,
         c.opt_in_marketing,
@@ -165,6 +151,32 @@ export class UserPrioritizationRepository {
     `
     const rows = await this.query<MetricsDbRow>(sql, [contactId])
     return rows[0] ? mapMetrics(rows[0]) : null
+  }
+
+  // Page-scoped explicit accounts avoid evaluating the global linking view on
+  // every request. Segmentation has already resolved and stored these identities.
+  async getRelativeRankingsForContacts(contactIds: string[]): Promise<Map<string, RelativeRanking>> {
+    if (!contactIds.length) return new Map()
+    try {
+      const rows = await this.query<{id: string; ranking: Record<string, unknown> | null}>(`
+        SELECT c.id, to_jsonb(r) AS ranking FROM contacts c
+        LEFT JOIN LATERAL (
+          SELECT pl.ltv_percentil AS percentile, pl.ngr_total AS net,
+            pl.calculado_en AS calculated_at, cp.platform, cp.agente AS agent
+          FROM jsonb_array_elements(COALESCE(c.segmentation_profile->'accounts', c.casino_accounts, '[]'::jsonb)) a
+          JOIN casino_players cp ON cp.username_lower=lower(a->>'username') AND cp.platform=a->>'platform'
+          JOIN player_ltv pl ON pl.casino_player_id=cp.id
+          ORDER BY (pl.calculado_en BETWEEN NOW()-INTERVAL '36 hours' AND NOW()) DESC,
+            pl.ltv_percentil DESC NULLS LAST, cp.id LIMIT 1
+        ) r ON true WHERE c.id=ANY($1::uuid[])`, [contactIds])
+      return new Map(rows.flatMap(row => {
+        const ranking = relativeRanking(row.ranking)
+        return ranking ? [[row.id, ranking] as const] : []
+      }))
+    } catch {
+      // The commercial score remains available when the optional ranking is not.
+      return new Map()
+    }
   }
 
   /**
@@ -368,15 +380,17 @@ export class UserPrioritizationRepository {
         c.phone_number,
         c.first_name,
         c.last_name,
-        c.segment,
+        ${segmentationSQL('c').segment} AS segment,
         c.platforms,
         c.panel,
-        c.last_deposit_at,
+        CASE WHEN c.segmentation_profile IS NOT NULL THEN ((c.segmentation_profile->>'last_date')::date::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires') ELSE c.last_deposit_at END AS last_deposit_at,
         cps.is_broadcasted,
         cps.broadcasted_at,
         cps.broadcasted_by,
-        c.total_deposit_amount,
+        COALESCE((c.segmentation_profile->>'amount')::numeric,c.total_deposit_amount) AS total_deposit_amount,
         cps.priority_score,
+        cps.value_score, cps.urgency_score, cps.computed_at,
+        c.segmentation_profile, c.segment_is_manual,
         cps.reactivation_segment,
         cps.value_tier,
         cps.days_inactive,
@@ -399,10 +413,12 @@ export class UserPrioritizationRepository {
         LIMIT 1
       ) csh ON true
       ${where}
-      ORDER BY cps.priority_score DESC, cps.reactivation_segment, c.id
+      ORDER BY cps.priority_score DESC, ${recentPriorityOrderSQL('c')}, cps.reactivation_segment, c.id
       LIMIT $${p++} OFFSET $${p++}
     `
     const rows = await this.query<PrioritizedDbRow>(dataSql, [...params, pageSize, offset])
+    const rankings = await this.getRelativeRankingsForContacts(rows.map(r => r.id))
+    for (const row of rows) row.relative_ranking = rankings.get(row.id) ?? null
     // Fetch queue state only for this page, never for the entire scored audience.
     if(rows.length) {
       const states=await this.query<{id:string;state:string|null;busy:boolean}>(`
@@ -423,11 +439,12 @@ export class UserPrioritizationRepository {
     }
 
 
-    const [job] = await this.query<{ computed_at: Date | null; is_running: boolean }>(
-      `SELECT last_success_at AS computed_at, is_running FROM system_jobs WHERE job_name='prioritization_recompute'`)
+    const [job] = await this.query<{ computed_at: Date | null; is_running: boolean; ranking_at: Date | null }>(
+      `SELECT last_success_at AS computed_at, is_running, (SELECT last_success_at FROM system_jobs WHERE job_name='ltv_recompute') AS ranking_at FROM system_jobs WHERE job_name='prioritization_recompute'`)
     return {
       computedAt: job?.computed_at ? new Date(job.computed_at).toISOString() : null,
       recomputing: job?.is_running ?? false,
+      rankingComputedAt: job?.ranking_at ? new Date(job.ranking_at).toISOString() : null,
       data:       rows.map(mapPrioritized),
       total,
       page,
@@ -483,11 +500,6 @@ export class UserPrioritizationRepository {
   ): Promise<Map<string, { ltvScore: number; ltvTier: ValueTier }>> {
     if (contactIds.length === 0) return new Map()
 
-    if (this.prepared) {
-      const rows = await this.query<LtvDbRow>('SELECT contact_id, ltv_score, ltv_tier FROM priority_ltv WHERE contact_id=ANY($1::uuid[])', [contactIds])
-      return new Map(rows.map(r => [r.contact_id, { ltvScore: Number(r.ltv_score), ltvTier: r.ltv_tier as ValueTier }]))
-    }
-
     const sql = `
       SELECT DISTINCT ON (l.contact_id)
         l.contact_id AS contact_id,
@@ -499,6 +511,7 @@ export class UserPrioritizationRepository {
        AND cp.platform IS NOT DISTINCT FROM l.platform
       JOIN player_ltv pl ON pl.casino_player_id = cp.id
       WHERE l.contact_id = ANY($1::uuid[])
+        AND pl.calculado_en BETWEEN NOW()-INTERVAL '36 hours' AND NOW()
       ORDER BY l.contact_id, pl.ltv_score DESC NULLS LAST
     `
     try {
@@ -726,6 +739,12 @@ function mapPrioritized(row: PrioritizedDbRow): PrioritizedContact {
     broadcastedBy:       row.broadcasted_by ?? null,
     broadcastState:      row.broadcast_state ?? null,
     broadcastBusy:       row.broadcast_busy ?? false,
+    explanation: {
+      valueScore: Number(row.value_score), urgencyScore: Number(row.urgency_score),
+      calculatedAt: row.computed_at ? new Date(row.computed_at).toISOString() : null,
+      profile: row.segmentation_profile ?? null, manualLevel: row.segment_is_manual ?? false,
+      ranking: row.relative_ranking ?? null,
+    },
     ltvScore:            row.ltv_score != null ? Number(row.ltv_score) : null,
     ltvTier:             (row.ltv_tier as ValueTier | null) ?? null,
   }

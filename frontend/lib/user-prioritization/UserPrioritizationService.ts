@@ -1,3 +1,4 @@
+import { LtvService } from '@/lib/ltv/LtvService'
 import type { PriorityAccess } from './access'
 import { randomUUID } from 'crypto'
 import { checkEligibility } from './prioritization-rules'
@@ -70,6 +71,7 @@ const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000   // renovar TTL cada 5 minutos
 export class UserPrioritizationService {
   constructor(
     private readonly repo: UserPrioritizationRepository = new UserPrioritizationRepository(),
+    private readonly ranking: Pick<LtvService, 'recomputeAll'> = new LtvService(),
   ) {}
 
   /**
@@ -86,7 +88,7 @@ export class UserPrioritizationService {
   async recomputeAll(
     options: { batchSize?: number; heartbeatIntervalMs?: number } = {},
   ): Promise<RecomputeResult> {
-    return this.repo.withRecomputeSession(repo => new UserPrioritizationService(repo).recomputeInSession(options))
+    return this.repo.withRecomputeSession(repo => new UserPrioritizationService(repo, this.ranking).recomputeInSession(options))
   }
 
   private async recomputeInSession(options: { batchSize?: number; heartbeatIntervalMs?: number }): Promise<RecomputeResult> {
@@ -126,7 +128,14 @@ export class UserPrioritizationService {
       })
     }, heartbeatIntervalMs)
 
+    let rankingStatus: 'updated' | 'unavailable' = 'updated'
     try {
+      // The nightly hook already calls this service after segmentation. Refresh
+      // the diagnostic ranking first, under its own distributed lock.
+      try { await this.ranking.recomputeAll() } catch (error) {
+        rankingStatus = 'unavailable'
+        logRecomputeError({ run_id: lockToken, status: 'failed', error: `Relative ranking unavailable: ${error instanceof Error ? error.name : 'unknown'}` })
+      }
       await this.repo.prepareMetrics()
       while (true) {
         const contacts = await this.repo.fetchContactMetrics(batchSize, lastId)
@@ -134,19 +143,9 @@ export class UserPrioritizationService {
         if (contacts.length === 0) break
 
         const contactIds      = contacts.map(c => c.contactId)
-        const [lastMessagedMap, ltvMap] = await Promise.all([
-          this.repo.getLastMessagedDaysMap(contactIds),
-          this.repo.getLtvMapForContacts(contactIds),
-        ])
+        const lastMessagedMap = await this.repo.getLastMessagedDaysMap(contactIds)
         if (heartbeatRevoked) throw new LockRevokedError()
-
-        // Enriquecer cada ContactMetricsRow con su LTV dinámico (si existe)
-        const enriched = contacts.map(c => {
-          const ltv = ltvMap.get(c.contactId)
-          return ltv ? { ...c, ltvScore: ltv.ltvScore, ltvTier: ltv.ltvTier } : c
-        })
-
-        const scores = enriched.map(contact =>
+        const scores = contacts.map(contact =>
           this.scoreContact(contact, lastMessagedMap.get(contact.contactId) ?? null, tierCfg),
         )
 
@@ -175,7 +174,7 @@ export class UserPrioritizationService {
       clearInterval(heartbeatTimer)
 
       const durationMs = Date.now() - start
-      const result     = { processed, eligible, skipped, durationMs }
+      const result     = { processed, eligible, skipped, durationMs, rankingStatus }
 
       // Release BEFORE logging success — si falla o devuelve false (0 rows),
       // el catch emite el único logRecomputeEnd. Garantiza un solo evento por run_id.
@@ -243,19 +242,13 @@ export class UserPrioritizationService {
     const contact = await this.repo.fetchContactById(contactId)
     if (!contact) throw new Error(`Contact not found: ${contactId}`)
 
-    const [lastMessagedMap, lastRunId, tierCfg, ltvMap] = await Promise.all([
+    const [lastMessagedMap, lastRunId, tierCfg] = await Promise.all([
       this.repo.getLastMessagedDaysMap([contactId]),
       this.repo.getLastCompleteRunId(),
       getAllTiers().then(buildTierRuntimeConfigs).catch(() => undefined),
-      this.repo.getLtvMapForContacts([contactId]),
     ])
 
-    const ltv = ltvMap.get(contactId)
-    const enrichedContact = ltv
-      ? { ...contact, ltvScore: ltv.ltvScore, ltvTier: ltv.ltvTier }
-      : contact
-
-    const score = this.scoreContact(enrichedContact, lastMessagedMap.get(contactId) ?? null, tierCfg)
+    const score = this.scoreContact(contact, lastMessagedMap.get(contactId) ?? null, tierCfg)
     await this.repo.upsertScores([score], lastRunId ?? undefined)
     return score as ContactPriorityScore
   }
@@ -302,7 +295,6 @@ export class UserPrioritizationService {
       : null
 
     const { eligible, skipReasons, valueTier } = checkEligibility({
-      ltvTier:             contact.ltvTier,
       status:              contact.status,
       doNotContact:        contact.doNotContact,
       optInMarketing:      contact.optInMarketing,
@@ -319,8 +311,6 @@ export class UserPrioritizationService {
           daysInactive,
           segment:            contact.segment,
           totalDepositAmount: contact.totalDepositAmount,
-          ltvScore:           contact.ltvScore,
-          ltvTier:            contact.ltvTier,
         }, tierCfg?.scoring)
       : null
 
@@ -337,8 +327,8 @@ export class UserPrioritizationService {
       isEligible:          eligible,
       skipReasons,
       computedAt:          new Date(),
-      ltvScore:            contact.ltvScore,
-      ltvTier:             contact.ltvTier,
+      ltvScore:            null,
+      ltvTier:             null,
     }
   }
 }

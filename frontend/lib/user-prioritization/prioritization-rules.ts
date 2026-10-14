@@ -65,7 +65,8 @@ export function checkEligibility(
   cfg:   EligibilityConfig = DEFAULT_ELIGIBILITY_CONFIG,
 ): EligibilityResult {
   const reasons: string[] = []
-  const valueTier = input.ltvTier ?? resolveValueTier(input.segment, input.totalDepositAmount, cfg.depositAmountTiers)
+  const valueTier = resolveValueTier(input.segment, null)
+  if (!['super_vip','vip_alto','vip_medio','vip','medio','bajo'].includes(input.segment ?? '')) reasons.push('unknown_value_tier')
   const window    = cfg.inactivityWindows[valueTier]
   if (cfg.enabledTiers && !cfg.enabledTiers.includes(valueTier)) reasons.push('tier_disabled')
 

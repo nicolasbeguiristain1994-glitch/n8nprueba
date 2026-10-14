@@ -282,11 +282,11 @@ describe('computeScore — escenarios de negocio', () => {
     expect(c.total).toBeGreaterThan(d.total)
   })
 
-  it('monto disponible overridea segment para el tier', () => {
+  it('el total histórico no reemplaza el nivel mensual de Contactos', () => {
     const r = computeScore({ daysInactive: 10, segment: 'bajo', totalDepositAmount: 3_200_000 })
-    expect(r.valueTier).toBe('super_vip')
-    expect(r.valueScore).toBe(60)
-    expect(r.reactivationSegment).toBe('REACTIVACION_URGENTE')
+    expect(r.valueTier).toBe('bajo')
+    expect(r.valueScore).toBe(10)
+    expect(r.reactivationSegment).toBeNull()
   })
 
   it('MEDIO inactivo 45 días → ESTANDAR', () => {

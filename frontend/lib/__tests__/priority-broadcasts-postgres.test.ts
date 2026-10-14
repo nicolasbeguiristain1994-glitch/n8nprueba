@@ -25,10 +25,10 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('Priority broadcasts: r
     await pool.query(`CREATE TABLE users(id uuid PRIMARY KEY,role text,is_active boolean,sectors text[],allowed_agents text[]);
       CREATE TABLE contacts(id uuid PRIMARY KEY,phone_number text,first_name text,last_name text,panel text,status text DEFAULT 'active',
         deleted_at timestamptz,opt_in_marketing boolean DEFAULT true,do_not_contact boolean DEFAULT false,
-        segment text,platforms text[] DEFAULT '{}',last_deposit_at timestamptz,total_deposit_amount numeric);
+        total_deposits int DEFAULT 0,last_deposit_amount numeric,segment text,segment_is_manual boolean DEFAULT false,segmentation_profile jsonb,casino_accounts jsonb DEFAULT '[]',platforms text[] DEFAULT '{}',last_deposit_at timestamptz,total_deposit_amount numeric);
       CREATE TABLE contact_priority_scores(contact_id uuid PRIMARY KEY REFERENCES contacts(id),is_eligible boolean DEFAULT true,is_broadcasted boolean DEFAULT false,
         broadcasted_at timestamptz,broadcasted_by text,run_id uuid,priority_score numeric DEFAULT 90,reactivation_segment text,value_tier text DEFAULT 'vip',
-        days_inactive int,ltv_score int,ltv_tier text);
+        days_inactive int,ltv_score int,ltv_tier text,value_score int DEFAULT 45,urgency_score int DEFAULT 40,computed_at timestamptz DEFAULT now());
       CREATE TABLE system_jobs(job_name text,last_complete_run_id uuid,last_success_at timestamptz,is_running boolean DEFAULT false);
       CREATE TABLE blacklist(phone_number_normalized text,removed_at timestamptz);
       CREATE TABLE operator_contact_visibility(operator_id uuid,contact_id uuid);
@@ -49,6 +49,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('Priority broadcasts: r
         direction text DEFAULT 'outbound',status text DEFAULT 'queued',sent_at timestamptz,error_detail text);
       CREATE TABLE contact_send_history(contact_id uuid,sent_at timestamptz);`)
     await pool.query('BEGIN;'+readFileSync('../db/migrations/147_priority_broadcasts.sql','utf8').replaceAll('public.',schema+'.').replace('search_path=public,','search_path='+schema+',')+'COMMIT;')
+    await pool.query("CREATE FUNCTION casino_monthly_value_tier(numeric) RETURNS text LANGUAGE sql AS $$ SELECT CASE WHEN $1>=3200000 THEN 'super_vip' WHEN $1>=500000 THEN 'vip' WHEN $1>=100000 THEN 'medio' ELSE 'bajo' END $$")
+    await pool.query('CREATE TABLE casino_players(id uuid PRIMARY KEY,username_lower text,platform text,agente text); CREATE TABLE player_ltv(casino_player_id uuid,ltv_percentil numeric,ngr_total numeric,calculado_en timestamptz)')
     dbMock.query.mockImplementation(async(sql,params)=>(await pool.query(sql,params)).rows)
     dbMock.transaction.mockImplementation(async(fn)=>{
       const client=await pool.connect()
@@ -57,7 +59,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('Priority broadcasts: r
     })
   })
   beforeEach(async()=>{
-    await pool.query(`TRUNCATE users,contacts,system_jobs,blacklist,operator_contact_visibility,whatsapp_templates,cloud_numbers,
+    await pool.query(`TRUNCATE casino_players,player_ltv,users,contacts,system_jobs,blacklist,operator_contact_visibility,whatsapp_templates,cloud_numbers,
       contact_lists,contact_list_members,campaigns,campaign_recipients,whatsapp_messages,contact_send_history CASCADE`)
     await pool.query(`INSERT INTO users VALUES($1,'admin',true,'{}','{}'),($2,'operator',true,'{contacts,campaigns,send}','{royal}');
     `,[owner,other])
@@ -148,4 +150,33 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('Priority broadcasts: r
     const security=(await pool.query("SELECT relrowsecurity FROM pg_class WHERE oid='priority_broadcasts'::regclass")).rows[0]
     expect(security.relrowsecurity).toBe(true)
   })
+  const profile=(amount:number,count:number,extra:Record<string,unknown>={})=>({monthly_average:30000,amount:150000,deposits:22,withdrawals:1,active_months:5,first_date:'2026-05-11',last_date:'2026-09-30',estimated:false,partial_history:false,as_of:new Date().toISOString().slice(0,10),calculated_at:new Date().toISOString(),amount_90d:amount,deposits_90d:count,amount_30d:3000,deposits_30d:1,accounts:[{username:'fixture-player',platform:'zeus',last_sync_at:new Date().toISOString()}],...extra})
+  it('reads the same monthly level and deposit date as Contacts, preserving explicit manual levels',async()=>{
+    await pool.query("UPDATE contacts SET segment='super_vip',last_deposit_at=now(),segmentation_profile=$2 WHERE id=$1",[contact,profile(25000,5)])
+    const repo=new UserPrioritizationRepository()
+    expect(await repo.fetchContactById(contact)).toMatchObject({segment:'bajo',totalDepositAmount:150000,lastDepositAt:new Date('2026-09-30T03:00:00Z')})
+    await pool.query('UPDATE contacts SET segment_is_manual=true WHERE id=$1',[contact])
+    expect(await repo.fetchContactById(contact)).toMatchObject({segment:'super_vip'})
+  })
+  it('breaks equal score ties by complete recent deposits, not estimated history',async()=>{
+    await pool.query('UPDATE contacts SET segmentation_profile=$2 WHERE id=$1',[contact,profile(1000,1)])
+    await pool.query('UPDATE contacts SET segmentation_profile=$2 WHERE id=$1',[second,profile(9000,3)])
+    const repo=new UserPrioritizationRepository()
+    expect((await repo.getPrioritizedContacts({})).data.map(c=>c.id)).toEqual([second,contact])
+    await pool.query('UPDATE contacts SET segmentation_profile=$2 WHERE id=$1',[second,profile(9000,3,{estimated:true})])
+    expect((await repo.getPrioritizedContacts({})).data.map(c=>c.id)).toEqual([contact,second])
+    await pool.query('UPDATE contacts SET segmentation_profile=$2 WHERE id=$1',[second,profile(9000,3,{calculated_at:'2026-01-01T00:00:00Z'})])
+    expect((await repo.getPrioritizedContacts({})).data.map(c=>c.id)).toEqual([contact,second])
+  })
+  it('shows a platform-specific percentile with its date, independently of the commercial score',async()=>{
+    await pool.query('UPDATE contacts SET segmentation_profile=$2 WHERE id=$1',[contact,profile(25000,5)])
+    await pool.query("INSERT INTO casino_players VALUES($1,'fixture-player','zeus','fixture-agent'),($2,'fixture-player','bet30','fixture-agent')",[contact,second])
+    await pool.query('INSERT INTO player_ltv VALUES($1,52.5,125000,now()),($2,100,99999999,now())',[contact,second])
+    const row=(await new UserPrioritizationRepository().getPrioritizedContacts({})).data.find(c=>c.id===contact)!
+    expect(row.priorityScore).toBe(90)
+    expect(row.explanation).toMatchObject({valueScore:45,urgencyScore:40,profile:{amount_90d:25000,deposits_90d:5},ranking:{percentile:52.5,platform:'zeus',agent:'fixture-agent',status:'fresh'}})
+    await pool.query("UPDATE player_ltv SET calculado_en=now()-interval '14 days'")
+    expect((await new UserPrioritizationRepository().getRelativeRankingsForContacts([contact])).get(contact)?.status).toBe('stale')
+  })
+
 })

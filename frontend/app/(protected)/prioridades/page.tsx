@@ -1,4 +1,6 @@
 'use client'
+import { PriorityExplanationDialog, priorityMoney } from '@/components/priorities/PriorityExplanationDialog'
+import { isFreshCalculation, type PriorityExplanation } from '@/lib/user-prioritization/priority-details'
 import { PriorityBroadcastComposer, broadcastRequest, type BroadcastContact } from '@/components/priorities/PriorityBroadcastComposer'
 import { PriorityBroadcastProgress } from '@/components/priorities/PriorityBroadcastProgress'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -18,6 +20,7 @@ import { useCurrentUser } from '@/lib/useCurrentUser'
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
 interface PrioritizedContact {
+  explanation?: PriorityExplanation
   id:                  string
   phoneNumber:         string
   firstName:           string | null
@@ -49,6 +52,7 @@ interface PaginatedResult {
   totalPages: number
   computedAt?: string | null
   recomputing?: boolean
+  rankingComputedAt?: string | null
 }
 
 interface RecomputeResult {
@@ -117,8 +121,9 @@ function ScoringHelpModal({ open, onClose }: { open: boolean; onClose: () => voi
       <DialogHeader><DialogTitle>Cómo se calculan las prioridades</DialogTitle></DialogHeader>
       <div className="space-y-3 text-sm text-muted-foreground">
         <p>El puntaje suma valor (hasta 60 puntos) y urgencia (hasta 40 puntos).</p>
-        <p>Cuando hay LTV disponible, se usa su nivel y puntaje. En los demás casos se usan el monto o nivel registrado y la configuración de segmentación vigente.</p>
-        <p>La urgencia disminuye a medida que pasan los días dentro de la ventana configurada para ese nivel. Se toma la fecha de actividad más reciente disponible entre los movimientos importados y el historial del contacto.</p>
+        <p>El nivel comercial y los puntos de valor usan la misma clasificación monetaria de Contactos. El ranking relativo por agente y plataforma se muestra por separado y es informativo.</p>
+        <p>En empates de puntaje se priorizan el importe y la cantidad de cargas de los últimos 90 días, luego de 30 días. Sólo se comparan ventanas de historial registrado, completo y actualizado.</p>
+        <p>La urgencia disminuye a medida que pasan los días dentro de la ventana configurada para ese nivel. Se toma la fecha del último depósito del perfil de Contactos; los retiros no reinician ese contador.</p>
         <p>Se excluyen contactos borrados, bloqueados, sin consentimiento, fuera de su ventana o contactados recientemente. Los permisos del operador también limitan la lista.</p>
         <p>La fecha del último cálculo indica cuándo se generó la lista. Los movimientos disponibles dependen de la última sincronización de cada plataforma.</p>
         <p>Seleccioná contactos, elegí una plantilla aprobada y confirmá el envío. Sólo los envíos confirmados por WhatsApp pasan automáticamente a Difundidos. Los fallidos permanecen para revisión y reintento en la misma difusión.</p>
@@ -141,6 +146,7 @@ function formatDate(iso: string | null) {
 // ── Componente ────────────────────────────────────────────────────────────────
 
 export default function PrioridadesPage() {
+  const [detail, setDetail] = useState<PrioritizedContact | null>(null)
   const { user, permissions } = useCurrentUser()
   const isAdmin  = user?.role === 'admin'
 
@@ -271,6 +277,7 @@ export default function PrioridadesPage() {
     <div className="flex min-w-0 flex-col gap-4">
 
       {compose&&canSend&&<PriorityBroadcastComposer contacts={compose} onClose={()=>{setCompose(null);setBroadcastVersion(v=>v+1)}} onPrepared={id=>void startBroadcast(id)} />}
+      <PriorityExplanationDialog contact={detail ? {name:contactName(detail),level:TIER_LABEL[detail.valueTier]??detail.valueTier,score:detail.priorityScore,daysInactive:detail.daysInactive,explanation:detail.explanation} : null} onClose={()=>setDetail(null)} />
       <ScoringHelpModal open={showHelp} onClose={() => setShowHelp(false)} />
 
       {/* Header */}
@@ -302,6 +309,7 @@ export default function PrioridadesPage() {
         {result.recomputing && <span className="ml-3">Actualización en curso; se muestra el último cálculo completo.</span>}
         {result.computedAt && Date.now() - Date.parse(result.computedAt) > 36 * 3600000 && <span className="ml-3 text-warning">El cálculo tiene más de 36 horas. Actualizalo para incorporar movimientos recientes.</span>}
       </div>}
+      {result && !isFreshCalculation(result.rankingComputedAt) && <p role="status" className="rounded-lg bg-warning/10 px-3 py-2 text-sm text-warning">Ranking relativo sin actualizar: {result.rankingComputedAt ? new Date(result.rankingComputedAt).toLocaleString('es-AR') : 'sin cálculo disponible'}. El nivel y el puntaje usan la clasificación monetaria de Contactos.</p>}
       {actionError && <p role="alert" className="rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">{actionError}</p>}
 
       {broadcastNotice&&<p role="status" className="rounded-xl bg-primary/10 p-3 text-sm text-primary">{broadcastNotice}</p>}
@@ -461,9 +469,10 @@ export default function PrioridadesPage() {
                   <th className="px-4 py-3 text-left">Contacto</th>
                   <th className="px-4 py-3 text-left w-24">Agente</th>
                   <th className="px-4 py-3 text-left">Segmento</th>
-                  <th className="px-4 py-3 text-left w-24">Nivel</th>
-                  <th className="px-4 py-3 text-right w-20">LTV</th>
-                  <th className="px-4 py-3 text-right w-28">Días inactivo</th>
+                  <th className="px-4 py-3 text-left w-24">Nivel comercial</th>
+                  <th className="px-4 py-3 text-right w-20">Ranking relativo</th>
+                  <th className="px-4 py-3 text-right">Cargas 90 días</th>
+                  <th className="px-4 py-3 text-right w-28">Días sin depositar</th>
                   <th className="px-4 py-3 text-left">Plataformas</th>
                   {tab === 'broadcasted' && (
                     <th className="px-4 py-3 text-left w-32">Difundido</th>
@@ -484,6 +493,7 @@ export default function PrioridadesPage() {
                     <td className="px-4 py-3">
                       <div className="font-medium text-foreground">{contactName(c)}</div>
                       <div className="text-xs text-muted-foreground">{c.phoneNumber}</div>
+                      <button className="mt-1 text-xs font-medium text-primary hover:underline" onClick={()=>setDetail(c)} aria-label={`Ver detalle de ${contactName(c)}`}>Ver detalle</button>
                       {tab==='pending'&&c.broadcastState&&c.broadcastState!=='cancelled'&&c.broadcastState!=='sent'&&<span className="mt-1 inline-flex rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">{{pending:'En difusión',failed:'Falló · revisar difusión',skipped:'Omitido · revisar difusión',review:'Pendiente de confirmación'}[c.broadcastState]||'Revisar difusión'}</span>}
                     </td>
 
@@ -509,16 +519,16 @@ export default function PrioridadesPage() {
                     </td>
 
                     <td className="px-4 py-3 text-right">
-                      {c.ltvScore != null ? (
-                        <span
-                          title={`LTV Tier: ${TIER_LABEL[c.ltvTier ?? ''] ?? c.ltvTier ?? '—'}`}
-                          className={`inline-flex items-center justify-center w-8 h-6 rounded text-xs font-semibold tabular-nums ${TIER_STYLE[c.ltvTier ?? ''] ?? 'bg-muted text-muted-foreground'}`}
-                        >
-                          {c.ltvScore}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground/60 text-xs">—</span>
-                      )}
+                      {c.explanation?.ranking ? <div className="text-xs">
+                        <span className="font-semibold">P{c.explanation.ranking.percentile.toLocaleString('es-AR',{maximumFractionDigits:2})}</span>
+                        <div className="text-muted-foreground">{c.explanation.ranking.agent} / {c.explanation.ranking.platform}</div>
+                        {c.explanation.ranking.status==='stale' && <span className="text-warning">Vencido</span>}
+                      </div> : <span className="text-xs text-muted-foreground">Sin ranking</span>}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums">
+                      <div>{priorityMoney(c.explanation?.profile?.amount_90d)}</div>
+                      <div className="text-xs text-muted-foreground">{c.explanation?.profile?.deposits_90d == null ? 'Frecuencia sin datos' : `${c.explanation.profile.deposits_90d} cargas`}</div>
+                      {(c.explanation?.profile?.estimated||c.explanation?.profile?.partial_history) && <div className="text-xs text-warning">Historial {c.explanation.profile.estimated?'estimado':'parcial'}</div>}
                     </td>
 
                     <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">

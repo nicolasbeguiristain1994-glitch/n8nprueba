@@ -18,6 +18,7 @@ import { UserPrioritizationRepository } from '@/lib/user-prioritization/UserPrio
 import type { ContactMetricsRow, ContactPriorityScore } from '@/lib/user-prioritization/types'
 
 vi.mock('@/lib/user-prioritization/UserPrioritizationRepository')
+vi.mock('@/lib/ltv/LtvService', () => ({ LtvService: class { async recomputeAll() { return {} } } }))
 // La configuración remota es otra frontera de I/O. Los tests de orquestación
 // usan los defaults del dominio sin abrir conexiones ni bloquear fake timers.
 vi.mock('@/lib/segmentation-config-service', () => ({

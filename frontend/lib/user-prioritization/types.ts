@@ -1,3 +1,4 @@
+import type { PriorityExplanation } from './priority-details'
 // Re-exportamos los tipos del dominio desde config para que los consumers
 // solo importen desde este módulo (facade).
 export type { ReactivationSegment, ValueTier } from './config'
@@ -64,6 +65,7 @@ export interface ContactPriorityScore {
 // ── DTO público para el listado de operadores ─────────────────────────────────
 
 export interface PrioritizedContact {
+  explanation?: PriorityExplanation
   id:                  string
   phoneNumber:         string
   firstName:           string | null
@@ -116,11 +118,13 @@ export interface PaginatedResult<T> {
   totalPages: number
   computedAt?: string | null
   recomputing?: boolean
+  rankingComputedAt?: string | null
 }
 
 // ── Resultado del recompute batch ─────────────────────────────────────────────
 
 export interface RecomputeResult {
+  rankingStatus?: 'updated' | 'unavailable'
   processed:  number
   eligible:   number
   skipped:    number
