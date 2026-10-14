@@ -1,5 +1,13 @@
-import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {execFileSync}from'node:child_process';
-import {sourceIdentity,prepare,verifyArtifact}from'../release.mjs';import{sha256,loadCatalog}from'../migration-engine.mjs';
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import {execFileSync,spawnSync}from'node:child_process';
+import {ROOT,sourceIdentity,prepare,verifyArtifact}from'../release.mjs';import{sha256,loadCatalog}from'../migration-engine.mjs';
+test('deployment ignore rules preserve all tracked source files and still exclude private runtime files',()=>{
+ const files=execFileSync('git',['ls-files','-z'],{cwd:ROOT});
+ const result=spawnSync('git',['check-ignore','--no-index','--stdin','-z'],{cwd:ROOT,input:files});
+ assert.equal(result.status,1,`Tracked source would be omitted from upload: ${result.stdout.toString().replaceAll('\0',', ')}`);
+ const privateFiles=['logs/runtime.txt','frontend/logs/runtime.txt','.env','.local-tools/session.json'];
+ const excluded=spawnSync('git',['check-ignore','--no-index','--stdin'],{cwd:ROOT,input:privateFiles.join('\n')+'\n',encoding:'utf8'});
+ assert.equal(excluded.status,0);assert.deepEqual(excluded.stdout.trim().split('\n'),privateFiles);
+});
 test('release requires clean exact validated commit and detects any artifact mutation',()=>{
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'release-test-')),output=root+'-artifact';const git=(...args)=>execFileSync('git',args,{cwd:root,stdio:'pipe'});
  try{

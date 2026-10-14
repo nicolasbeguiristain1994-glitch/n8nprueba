@@ -83,6 +83,9 @@ desktop.ini
 # LOGS Y TEMPORALES
 # ============================================
 logs/
+# This application route is source code, not a runtime log directory.
+!frontend/app/api/automations/logs/
+!frontend/app/api/automations/logs/**
 *.log
 tmp/
 temp/
