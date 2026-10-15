@@ -1,3 +1,5 @@
+import { hasInactivityFilter } from './inactivity-range'
+import type { ContactMovementRow } from './contact-last-movement'
 import { contactBroadcastClause } from './contact-broadcast'
 import { segmentationSQL } from './contact-segmentation'
 import { getLongRunningClient } from '@/lib/db'
@@ -77,22 +79,22 @@ export function contactFilters(sp: URLSearchParams, user: {
 }
 
 
-/** Resolve movements once with indexed contact keys and a date-bounded history scan. */
+/** Resolve the movement audience once for listing, count, selection and export. */
 export async function resolvedContactFilters(sp: URLSearchParams, user: Parameters<typeof contactFilters>[1]) {
   const audience = contactFilters(sp, user)
   let range
   try { range = readInactivityRange(sp) }
   catch (error) { throw new ContactFilterError((error as Error).message) }
-  const movementDays = new Map<string, number>()
-  if (range.min === '' && range.max === '') return { ...audience, movementDays, movementMode: range.mode }
+  const movementHistory = new Map<string, ContactMovementRow>()
+  if (!hasInactivityFilter(range)) return { ...audience, movementHistory, movementMode: range.mode }
   const platform = sp.get('plataforma') || ''
   const client = await getLongRunningClient()
   try {
     await client.query('BEGIN')
     await client.query("SET LOCAL statement_timeout='30s'; SET LOCAL lock_timeout='5s'; SET LOCAL TIME ZONE 'America/Argentina/Buenos_Aires'; SET LOCAL work_mem='32MB'; SET LOCAL enable_mergejoin=off")
     const movementQuery = contactMovementQuery(audience, range, platform)
-    const { rows } = await client.query<{ contact_id: string; days_inactive: number }>(movementQuery.sql, movementQuery.params)
-    for (const row of rows) movementDays.set(row.contact_id, Number(row.days_inactive))
+    const { rows } = await client.query<ContactMovementRow>(movementQuery.sql, movementQuery.params)
+    for (const row of rows) movementHistory.set(row.contact_id, row)
     await client.query('COMMIT')
   } catch (error) {
     await client.query('ROLLBACK')
@@ -100,7 +102,7 @@ export async function resolvedContactFilters(sp: URLSearchParams, user: Paramete
   } finally {
     await client.end()
   }
-  audience.params.push([...movementDays.keys()])
+  audience.params.push([...movementHistory.keys()])
   audience.sql += ` AND contacts.id = ANY($${audience.params.length}::uuid[])`
-  return { ...audience, movementDays, movementMode: range.mode }
+  return { ...audience, movementHistory, movementMode: range.mode }
 }

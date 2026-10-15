@@ -44,6 +44,19 @@ describe('Personal contact views', () => {
     render(<SavedContactViews userId="one" state={state} onApply={vi.fn()} />)
     expect(screen.getByRole('alert')).toHaveTextContent('No se pudieron leer')
   })
+  it('restores historical browser ranges as last-movement ranges and preserves missing-history views', () => {
+    localStorage.setItem('crm:contact-views:one', JSON.stringify([
+      { id:'legacy', name:'Anterior', state:{...state,inactivity:{min:'15',max:'60',mode:'period'}} },
+      { id:'missing', name:'Sin historial', state:{...state,inactivity:{min:'',max:'',mode:'missing'}} },
+    ]))
+    const onApply=vi.fn()
+    render(<SavedContactViews userId="one" state={DEFAULT_CONTACT_VIEW} onApply={onApply}/>)
+    fireEvent.change(screen.getByLabelText('Vista de contactos'),{target:{value:'legacy'}})
+    expect(onApply).toHaveBeenLastCalledWith({...state,inactivity:{min:'15',max:'60'}})
+    fireEvent.change(screen.getByLabelText('Vista de contactos'),{target:{value:'missing'}})
+    expect(onApply).toHaveBeenLastCalledWith({...state,inactivity:{min:'',max:'',mode:'missing'}})
+  })
+
   it('does not claim success when browser storage is unavailable', () => {
     vi.spyOn(localStorage, 'setItem').mockImplementation(() => { throw new Error('Quota') })
     render(<SavedContactViews userId="one" state={state} onApply={vi.fn()} />)
@@ -53,4 +66,5 @@ describe('Personal contact views', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('No se pudo guardar')
     expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
+
 })

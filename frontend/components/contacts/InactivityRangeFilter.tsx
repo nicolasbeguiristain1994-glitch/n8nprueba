@@ -2,14 +2,14 @@
 import { useId, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { EMPTY_INACTIVITY, inactivityError, inactivityLabel, type InactivityRange } from '@/lib/inactivity-range'
+import { EMPTY_INACTIVITY, hasInactivityFilter, normalizeContactInactivity, inactivityError, inactivityLabel, type InactivityRange } from '@/lib/inactivity-range'
 
 export function InactivityRangeFilter({ value, onChange, period = false }: { period?: boolean; value: InactivityRange; onChange: (range: InactivityRange) => void }) {
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState(value)
   const id = useId()
   const error = inactivityError(draft)
-  const active = value.min !== '' || value.max !== ''
+  const active = hasInactivityFilter(value)
   return <div className="relative">
     <Button type="button" variant={active ? 'secondary' : 'outline'} className="h-9 font-normal"
       aria-expanded={open} aria-controls={`${id}-range`}
@@ -19,7 +19,15 @@ export function InactivityRangeFilter({ value, onChange, period = false }: { per
     {open && <div id={`${id}-range`} className="absolute left-0 top-full z-50 mt-1 w-80 max-w-[calc(100vw-2rem)] space-y-3 rounded-md border bg-popover p-4 shadow-md"
       onKeyDown={e => { if (e.key === 'Escape') setOpen(false) }}>
       <p className="text-sm font-medium">{period ? 'Movimientos ocurridos hace…' : 'Días desde el último movimiento'}</p>
-      <div className="grid grid-cols-2 gap-3">
+      {!period && <label className="block space-y-1 text-sm">Historial
+        <select aria-label="Historial de movimientos" className="h-9 w-full rounded-md border bg-background px-2"
+          value={draft.mode === 'missing' ? 'missing' : 'latest'}
+          onChange={e => setDraft(e.target.value === 'missing' ? { min: '', max: '', mode: 'missing' } : EMPTY_INACTIVITY)}>
+          <option value="latest">Último movimiento</option>
+          <option value="missing">Sin movimientos registrados</option>
+        </select>
+      </label>}
+      {draft.mode !== 'missing' && <div className="grid grid-cols-2 gap-3">
         <label htmlFor={`${id}-min`} className="space-y-1 text-sm">Más de
           <Input id={`${id}-min`} type="number" min={0} max={36500} step={1} placeholder="Sin mínimo" value={draft.min}
             onChange={e => setDraft({ ...draft, min: e.target.value })} />
@@ -28,10 +36,12 @@ export function InactivityRangeFilter({ value, onChange, period = false }: { per
           <Input id={`${id}-max`} type="number" min={0} max={36500} step={1} placeholder="Sin máximo" value={draft.max}
             onChange={e => setDraft({ ...draft, max: e.target.value })} />
         </label>
-      </div>
+      </div>}
       <p className="text-xs text-muted-foreground">{period
         ? 'Incluye a quienes tuvieron al menos una carga o retiro en ese período, aunque también hayan tenido movimientos más recientes. Días calendario de Argentina; se respeta la plataforma elegida.'
-        : 'Se cuenta desde la última carga o retiro, en días calendario de Argentina. Quienes superan el máximo o no tienen movimientos identificables quedan fuera. Se respeta la plataforma elegida.'}</p>
+        : draft.mode === 'missing'
+          ? 'Solo contactos sin cargas ni retiros identificables en sus cuentas vinculadas. No se consideran inactivos por una cantidad de días.'
+          : 'Última carga o retiro entre todas las cuentas vinculadas, en días calendario de Argentina. Una actividad más reciente en cualquier plataforma los excluye del rango. Sin historial queda fuera.'}</p>
       {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" size="sm" onClick={() => { onChange(EMPTY_INACTIVITY); setOpen(false) }}>Limpiar rango</Button>
@@ -41,8 +51,7 @@ export function InactivityRangeFilter({ value, onChange, period = false }: { per
   </div>
 }
 
-// Keep legacy inactivity ranges separate from the movement-period control.
+// The contact selector always expresses inactivity, including older browser views.
 export function MovementRangeFilters({ value, onChange }: { value: InactivityRange; onChange: (range: InactivityRange) => void }) {
-  return <InactivityRangeFilter period value={value.mode === 'period' ? value : EMPTY_INACTIVITY}
-    onChange={range => onChange(range.min === '' && range.max === '' ? EMPTY_INACTIVITY : { ...range, mode: 'period' })} />
+  return <InactivityRangeFilter value={normalizeContactInactivity(value)} onChange={onChange} />
 }

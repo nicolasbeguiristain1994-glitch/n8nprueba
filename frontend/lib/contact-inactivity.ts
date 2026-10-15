@@ -2,9 +2,10 @@ import { inactivityError, type InactivityRange } from './inactivity-range'
 
 export function readInactivityRange(params: URLSearchParams): InactivityRange {
   const mode = params.get('movimiento_modo')
-  if (mode && mode !== 'periodo') throw new Error('Modo de movimientos inválido.')
+  if (mode && !['periodo', 'sin_historial'].includes(mode)) throw new Error('Modo de movimientos inválido.')
   const range: InactivityRange = {
     ...(mode === 'periodo' ? { mode: 'period' as const } : {}),
+    ...(mode === 'sin_historial' ? { mode: 'missing' as const } : {}),
     min: params.get('inactividad_desde') ?? params.get('inactividad_dias') ?? '',
     max: params.get('inactividad_hasta') ?? '',
   }

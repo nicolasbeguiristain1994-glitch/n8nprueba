@@ -1,4 +1,5 @@
 'use client'
+import { MovementAge } from '@/components/contacts/MovementAge'
 import { BroadcastAge } from '@/components/contacts/BroadcastAge'
 import { SegmentationDetails } from '@/components/contacts/SegmentationDetails'
 import { QUALITY_LABELS, type SegmentationProfile } from '@/lib/contact-segmentation'
@@ -22,7 +23,7 @@ import { useCurrentUser } from '@/lib/useCurrentUser'
 import { BroadcastFilter } from '@/components/contacts/BroadcastFilter'
 import { EMPTY_BROADCAST, broadcastParams, broadcastLabel } from '@/lib/broadcast-range'
 import { MovementRangeFilters } from '@/components/contacts/InactivityRangeFilter'
-import { EMPTY_INACTIVITY, inactivityParams, inactivityLabel, type InactivityRange } from '@/lib/inactivity-range'
+import { EMPTY_INACTIVITY, hasInactivityFilter, normalizeContactInactivity, inactivityParams, inactivityLabel, type InactivityRange } from '@/lib/inactivity-range'
 import { DownloadContactsModal } from '@/components/contacts/DownloadContactsModal'
 import { SavedContactViews, CONTACT_COLUMNS, DEFAULT_CONTACT_VIEW, normalizeContactLines, type ContactViewState } from '@/components/contacts/SavedContactViews'
 import { ContactLineFilter } from '@/components/contacts/ContactLineFilter'
@@ -52,6 +53,7 @@ const MissingPhoneTab = dynamic(loadMissingPhoneTab, { loading: tabLoading })
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Contact {
+  last_movement_date?: string | null; days_since_last_movement?: number | null
   last_broadcast_at?: string | null; days_since_last_broadcast?: number | null
   id: string; phone_number: string; first_name: string; last_name: string
   email: string; status: string; opt_in: boolean; created_at: string; segment: string; panel: string; gaming: string; linea: number | null; linea_sub: string | null
@@ -236,7 +238,7 @@ export default function Contacts() {
   const [lists, setLists]             = useState<ContactList[]>([])
   const [filterList, setFilterList]   = useState('')
   const hasActiveFilters = !!(search || segments.length > 0 || filterGaming || filterPanel || filterLinea.length > 0 || filterLineaSub ||
-    broadcast.mode || filterRecent || filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag || filterList || inactivity.min || inactivity.max)
+    broadcast.mode || filterRecent || filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag || filterList || hasInactivityFilter(inactivity))
 
   const [showListsMenu, setShowListsMenu] = useState(false)
   const [deletingListId, setDeletingListId] = useState<string | null>(null)
@@ -464,9 +466,9 @@ export default function Contacts() {
   const resetPage = useCallback(() => setPagination(p => ({ ...p, pageIndex: 0 })), [])
   const viewState: ContactViewState = {broadcast,quality:'',recent:filterRecent,search,segments,gaming:filterGaming,panel:filterPanel,linea:filterLinea,lineaSub:filterLineaSub,inactivity,actividad:filterActividad,antiguedad:filterAntiguedad,plataforma:filterPlataforma,sinMovimiento:filterSinMovimiento,tag:filterTag,list:filterList,columns:contactColumns}
   const applyView = (v: ContactViewState) => {
-    setBroadcast(v.broadcast || EMPTY_BROADCAST);setFilterRecent(v.recent||'');setSearch(v.search);setSegments(v.segments);setFilterGaming(v.gaming);setFilterPanel(v.panel);setFilterLinea(normalizeContactLines(v.linea));setFilterLineaSub(v.lineaSub);setInactivity(v.inactivity);setFilterActividad(v.actividad);setFilterAntiguedad(v.antiguedad);setFilterPlataforma(v.plataforma);setFilterSinMovimiento(v.sinMovimiento);setFilterTag(v.tag);setFilterList(v.list);setContactColumns(v.columns);setRowSelection({});resetPage()
+    setBroadcast(v.broadcast || EMPTY_BROADCAST);setFilterRecent(v.recent||'');setSearch(v.search);setSegments(v.segments);setFilterGaming(v.gaming);setFilterPanel(v.panel);setFilterLinea(normalizeContactLines(v.linea));setFilterLineaSub(v.lineaSub);setInactivity(normalizeContactInactivity(v.inactivity));setFilterActividad(v.actividad);setFilterAntiguedad(v.antiguedad);setFilterPlataforma(v.plataforma);setFilterSinMovimiento(v.sinMovimiento);setFilterTag(v.tag);setFilterList(v.list);setContactColumns(v.columns);setRowSelection({});resetPage()
   }
-  const activeFilterLabels = [broadcast.mode&&broadcastLabel(broadcast),filterRecent&&`Depósitos ${filterRecent}d (último cálculo)`,search&&`Búsqueda: ${search}`,segments.length&&`Nivel: ${segments.map(v=>NIVEL_LABEL[v]||v).join(', ')}`,filterPanel&&`Agente: ${filterPanel}`,filterLinea.length>0&&`${filterLinea.length===1?'Línea':'Líneas'}: ${filterLinea.join(', ')}`,filterLineaSub&&`Variante: ${filterLineaSub}`,filterGaming&&`Juego: ${filterGaming}`,filterPlataforma&&`Plataforma: ${filterPlataforma}`,filterActividad.length&&`Actividad: ${filterActividad.join(', ')}`,filterAntiguedad.length&&`Antigüedad: ${filterAntiguedad.join(', ')}`,(inactivity.min||inactivity.max)&&inactivityLabel(inactivity),filterSinMovimiento&&'12 meses sin depósitos registrados',filterTag&&`Etiqueta: ${filterTag}`,filterList&&`Lista: ${lists.find(l=>l.id===filterList)?.name||'seleccionada'}`].filter(Boolean)
+  const activeFilterLabels = [broadcast.mode&&broadcastLabel(broadcast),filterRecent&&`Depósitos ${filterRecent}d (último cálculo)`,search&&`Búsqueda: ${search}`,segments.length&&`Nivel: ${segments.map(v=>NIVEL_LABEL[v]||v).join(', ')}`,filterPanel&&`Agente: ${filterPanel}`,filterLinea.length>0&&`${filterLinea.length===1?'Línea':'Líneas'}: ${filterLinea.join(', ')}`,filterLineaSub&&`Variante: ${filterLineaSub}`,filterGaming&&`Juego: ${filterGaming}`,filterPlataforma&&`Plataforma: ${filterPlataforma}`,filterActividad.length&&`Actividad: ${filterActividad.join(', ')}`,filterAntiguedad.length&&`Antigüedad: ${filterAntiguedad.join(', ')}`,(hasInactivityFilter(inactivity))&&inactivityLabel(inactivity),filterSinMovimiento&&'12 meses sin depósitos registrados',filterTag&&`Etiqueta: ${filterTag}`,filterList&&`Lista: ${lists.find(l=>l.id===filterList)?.name||'seleccionada'}`].filter(Boolean)
 
 
   // ── Inline edits ──────────────────────────────────────────────────────────
@@ -690,7 +692,7 @@ export default function Contacts() {
 
   const buildFilterStr = () =>
     [
-      (inactivity.min || inactivity.max) && `${inactivity.mode === 'period' ? 'con-movimientos' : 'inactividad'}-${inactivity.min || '0'}-${inactivity.max || 'sin-maximo'}`,
+      hasInactivityFilter(inactivity) && (inactivity.mode === 'missing' ? 'sin-movimientos-registrados' : `inactividad-${inactivity.min || '0'}-${inactivity.max || 'sin-maximo'}`),
       filterPanel      && `panel-${filterPanel}`,
       filterGaming     && `juego-${filterGaming}`,
       segments.length  && `nivel-${segments.join('-')}`,
@@ -1012,6 +1014,14 @@ export default function Contacts() {
       enableSorting: false,
       cell: ({ row }) => <BroadcastAge days={row.original.days_since_last_broadcast} sentAt={row.original.last_broadcast_at} />,
       meta: { mobileLabel: 'Días desde última difusión' },
+    },
+    {
+      id: 'days_since_last_movement',
+      accessorKey: 'days_since_last_movement',
+      header: () => <span className="block w-28 whitespace-normal">Días sin movimientos</span>,
+      enableSorting: false,
+      cell: ({ row }) => <MovementAge days={row.original.days_since_last_movement} date={row.original.last_movement_date} />,
+      meta: { mobileLabel: 'Días sin movimientos' },
     },
     {
       id: 'panel',
@@ -1654,7 +1664,7 @@ export default function Contacts() {
           )}
         </div>
 
-        {(filterActividad.length > 0 || filterAntiguedad.length > 0 || inactivity.min !== '' || inactivity.max !== '') && (
+        {(filterActividad.length > 0 || filterAntiguedad.length > 0 || hasInactivityFilter(inactivity)) && (
           <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground h-8 px-2"
             onClick={() => { setFilterActividad([]); setFilterAntiguedad([]); setInactivity(EMPTY_INACTIVITY); setRowSelection({}); resetPage() }}>
             <X size={13} className="mr-1" /> Limpiar casino
@@ -1983,7 +1993,7 @@ export default function Contacts() {
                       {search && <span className="text-xs bg-muted text-foreground px-2 py-0.5 rounded-full">Búsqueda: &quot;{search}&quot;</span>}
                       {filterPanel && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Agente: {filterPanel}</span>}
                       {segments.length > 0 && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">Nivel: {segments.join(', ')}</span>}
-                      {(inactivity.min !== '' || inactivity.max !== '') && <span className="text-xs bg-success/15 text-success px-2 py-0.5 rounded-full">{inactivityLabel(inactivity)}</span>}
+                      {(hasInactivityFilter(inactivity)) && <span className="text-xs bg-success/15 text-success px-2 py-0.5 rounded-full">{inactivityLabel(inactivity)}</span>}
                       {filterActividad.length > 0 && <span className="text-xs bg-success/15 text-success px-2 py-0.5 rounded-full">Actividad: {filterActividad.join(', ')}</span>}
                       {filterAntiguedad.length > 0 && <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">Antigüedad: {filterAntiguedad.join(', ')}</span>}
                       {filterPlataforma && <span className="text-xs bg-accent text-primary px-2 py-0.5 rounded-full">Plataforma: {filterPlataforma}</span>}
@@ -2500,7 +2510,7 @@ export default function Contacts() {
               <div className="flex flex-wrap gap-1.5 p-2 bg-muted/50 rounded-lg">
                 {filterPanel && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Agente: {filterPanel}</span>}
                 {segments.length > 0 && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">Nivel: {segments.join(', ')}</span>}
-                {(inactivity.min !== '' || inactivity.max !== '') && <span className="text-xs bg-success/15 text-success px-2 py-0.5 rounded-full">{inactivityLabel(inactivity)}</span>}
+                {(hasInactivityFilter(inactivity)) && <span className="text-xs bg-success/15 text-success px-2 py-0.5 rounded-full">{inactivityLabel(inactivity)}</span>}
                       {filterActividad.length > 0 && <span className="text-xs bg-success/15 text-success px-2 py-0.5 rounded-full">Actividad: {filterActividad.join(', ')}</span>}
                 {filterAntiguedad.length > 0 && <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">Antigüedad: {filterAntiguedad.join(', ')}</span>}
                 {filterPlataforma && <span className="text-xs bg-accent text-primary px-2 py-0.5 rounded-full">Plataforma: {filterPlataforma}</span>}

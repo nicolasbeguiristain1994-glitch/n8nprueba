@@ -13,7 +13,7 @@ describe.skipIf(!url)('Dynamic audiences on local PostgreSQL',()=>{
  const schema=`dynamic_audiences_${process.pid}`
  beforeAll(async()=>{
   const parsed=new URL(url!);if(!['localhost','127.0.0.1'].includes(parsed.hostname)||parsed.search)throw Error('Local database required')
-  db=new Client({connectionString:url});await db.connect();await db.query(`CREATE SCHEMA ${schema};SET search_path=${schema},public`)
+  db=new Client({connectionString:url});await db.connect();await db.query(`CREATE SCHEMA ${schema};SET search_path=${schema},public; SET TIME ZONE 'America/Argentina/Buenos_Aires'`)
   await db.query(readFileSync('../db/migrations/028_casino_transactions.sql','utf8'))
   await db.query(`ALTER TABLE casino_transactions ADD platform text,ADD fecha_hora_utc timestamptz;
     CREATE TABLE contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number text,first_name text,last_name text,segment text,panel text,linea smallint,linea_sub text,panels_assigned text[] DEFAULT '{}',deleted_at timestamptz,last_deposit_at timestamptz,platforms text[] DEFAULT '{}');
@@ -24,12 +24,18 @@ describe.skipIf(!url)('Dynamic audiences on local PostgreSQL',()=>{
     CREATE TABLE users(id uuid PRIMARY KEY,role text,allowed_agents text[],is_active bool);
     CREATE TABLE operator_contact_visibility(operator_id uuid,contact_id uuid);
     CREATE TABLE contact_tags(contact_id uuid,tag text);`)
+  await db.query(`ALTER TABLE casino_transactions ADD source_id text;
+    ALTER TABLE contacts ADD casino_accounts jsonb NOT NULL DEFAULT '[]';
+    CREATE TABLE casino_players(id uuid,username_lower text,platform text,agente text);`)
+  database.getLongRunningClient.mockImplementation(async()=>{
+    const client=new Client({connectionString:url});await client.connect();await client.query(`SET search_path=${schema},public`);return client
+  })
   await createRequire(import.meta.url)('../../../tests/helpers/segmentation-profile-schema.cjs').install(db,schema)
   database.query.mockImplementation(async(q,p)=>(await db.query(q,p)).rows)
   database.withTransaction.mockImplementation(async fn=>{await db.query('BEGIN');try{const r=await fn(db);await db.query('COMMIT');return r}catch(e){await db.query('ROLLBACK');throw e}})
  })
  beforeEach(async()=>{
-  await db.query('TRUNCATE contacts,contact_lists,campaigns,contact_list_members,campaign_recipients,users,operator_contact_visibility CASCADE')
+  await db.query('TRUNCATE casino_transactions,casino_players,contacts,contact_lists,campaigns,contact_list_members,campaign_recipients,users,operator_contact_visibility CASCADE')
   await db.query("INSERT INTO users VALUES($1,'admin','{}',true)",[admin])
  })
  afterAll(async()=>{if(db){await db.query(`DROP SCHEMA ${schema} CASCADE`);await db.end()}})
@@ -104,4 +110,25 @@ describe.skipIf(!url)('Dynamic audiences on local PostgreSQL',()=>{
   expect(await members(next,l)).toEqual([one])
   expect(await members(first,l)).toEqual(expected)
  })
+ it('saves inactivity criteria and freezes the same global audience, including missing-history mode',async()=>{
+  const inactive=await person(500000),recent=await person(500000),missing=await person(500000)
+  await db.query(`UPDATE contacts SET first_name='inactive20',platforms=ARRAY['zeus'] WHERE id=$1`,[inactive])
+  await db.query(`UPDATE contacts SET first_name='recent20',platforms=ARRAY['zeus','bet30'],casino_accounts='[{"username":"recent20","platform":"zeus"},{"username":"recent2","platform":"bet30"}]' WHERE id=$1`,[recent])
+  await db.query(`UPDATE contacts SET first_name='missing',platforms=ARRAY['zeus'] WHERE id=$1`,[missing])
+  await db.query(`INSERT INTO casino_transactions(username,platform,agente,tipo,monto,fecha,source_id) VALUES
+    ('inactive20','zeus','royal','carga',100,current_date-20,'one'),
+    ('recent20','zeus','royal','carga',100,current_date-20,'two'),
+    ('recent2','bet30','royal','retiro',10,current_date-2,'three')`)
+  for(const [criteria,expected] of [
+    [{plataforma:'zeus',inactividad_desde:'15',inactividad_hasta:'60'},inactive],
+    [{plataforma:'zeus',movimiento_modo:'sin_historial'},missing],
+  ] as const){
+    const filters={...criteria,segment:'vip'}
+    expect(await resolveSavedAudience(filters,{role:'admin',user_id:admin})).toEqual([expected])
+    const listId=await list(filters),campaignId=await campaign(listId)
+    await ensureCampaignAudienceSnapshot(campaignId,listId)
+    expect(await members(campaignId,listId)).toEqual([expected])
+  }
+ })
+
 })

@@ -5,7 +5,7 @@ import { Bookmark, Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { EMPTY_INACTIVITY, type InactivityRange } from '@/lib/inactivity-range'
+import { EMPTY_INACTIVITY, inactivityError, normalizeContactInactivity, type InactivityRange } from '@/lib/inactivity-range'
 
 export interface ContactViewState {
   broadcast?: BroadcastRange
@@ -22,7 +22,7 @@ export function normalizeContactLines(value: string | string[]): string[] {
   return [...new Set((Array.isArray(value) ? value : value.split(',')).map(line => line.trim()).filter(Boolean))]
     .sort((a, b) => Number(a) - Number(b))
 }
-const normalizeView = (state: ContactViewState): ContactViewState => ({ ...state, linea: normalizeContactLines(state.linea) })
+const normalizeView = (state: ContactViewState): ContactViewState => ({ ...state, linea: normalizeContactLines(state.linea), inactivity: normalizeContactInactivity(state.inactivity) })
 
 export function isContactView(value: unknown): value is ContactViewState {
   if (!value || typeof value !== 'object') return false
@@ -30,7 +30,7 @@ export function isContactView(value: unknown): value is ContactViewState {
   return (v.broadcast===undefined || (v.broadcast!==null && typeof v.broadcast==='object' && ['mode','period','days','from','to'].every(k=>typeof v.broadcast![k as keyof BroadcastRange]==='string') && !broadcastError(v.broadcast))) && (v.quality===undefined||typeof v.quality==='string') && (v.recent===undefined||typeof v.recent==='string') && ['search','gaming','panel','lineaSub','plataforma','tag','list'].every(k=>typeof v[k as keyof ContactViewState]==='string') &&
     (typeof v.linea==='string' || (Array.isArray(v.linea) && v.linea.every(line=>typeof line==='string'))) &&
     [v.segments,v.actividad,v.antiguedad].every(a=>Array.isArray(a)&&a.every(x=>typeof x==='string')) &&
-    typeof v.sinMovimiento==='boolean' && !!v.inactivity && typeof v.inactivity.min==='string' && typeof v.inactivity.max==='string' && (v.inactivity.mode===undefined || v.inactivity.mode==='period') &&
+    typeof v.sinMovimiento==='boolean' && !!v.inactivity && typeof v.inactivity.min==='string' && typeof v.inactivity.max==='string' && (v.inactivity.mode===undefined || v.inactivity.mode==='period' || v.inactivity.mode==='missing') && !inactivityError(v.inactivity) &&
     !!v.columns && typeof v.columns==='object' && !Array.isArray(v.columns) && Object.values(v.columns).every(x=>typeof x==='boolean')
 }
 interface SavedView { id: string; name: string; state: ContactViewState }

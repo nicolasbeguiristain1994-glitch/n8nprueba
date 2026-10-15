@@ -160,26 +160,26 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
     expect(downloaded.contacts).toEqual(listed.contacts)
     expect(selected.phones.sort()).toEqual(expected)
   })
-  it.each(['inactividad_desde=30&inactividad_hasta=10','movimiento_modo=invalid','inactividad_dias=-1'])('rejects invalid movement ranges: %s', async criteria => {
+  it.each(['inactividad_desde=30&inactividad_hasta=10','movimiento_modo=invalid','inactividad_dias=-1','movimiento_modo=sin_historial&inactividad_desde=7'])('rejects invalid movement ranges: %s', async criteria => {
     expect((await list(new NextRequest(`http://localhost/api/contacts?${criteria}`))).status).toBe(400)
   })
 
-  it('keeps ambiguity global when another platform has no movements inside the period', async () => {
+  it.each(['', '&movimiento_modo=periodo'])('keeps ambiguity global across platforms %s', async mode => {
     await c.query(`INSERT INTO casino_transactions(username,platform,agente,tipo,monto,fecha,source_id) VALUES
       ('namesake99','ganamos','royal','carga',100,current_date-20,'old'),
       ('namesake99','argenbet','royal','carga',100,current_date-2,'recent')`)
     await c.query(`INSERT INTO contacts(first_name,phone_number,platforms) VALUES('namesake99','+5491111111191',ARRAY['ganamos'])`)
-    const path='http://localhost/api/contacts?plataforma=ganamos&inactividad_desde=15&inactividad_hasta=60&movimiento_modo=periodo'
+    const path='http://localhost/api/contacts?plataforma=ganamos&inactividad_desde=15&inactividad_hasta=60'+mode
     expect((await (await list(new NextRequest(path))).json()).total).toBe(0)
     await c.query(`UPDATE contacts SET casino_accounts='[{"username":"namesake99","platform":"ganamos"}]'`)
     expect((await (await list(new NextRequest(path))).json()).total).toBe(1)
   })
-  it('keeps the exclusive lower and inclusive upper date boundaries', async () => {
+  it.each(['', '&movimiento_modo=periodo'])('keeps the exclusive lower and inclusive upper date boundaries %s', async mode => {
     for (const days of [15,16,60,61]) {
       await c.query(`INSERT INTO casino_transactions(username,platform,agente,tipo,monto,fecha,source_id) VALUES($1::text,'ganamos','royal','retiro',100,current_date-$2::int,$1::text)`,['boundary'+days,days])
       await c.query(`INSERT INTO contacts(first_name,phone_number,platforms) VALUES($1,$2,ARRAY['ganamos'])`,['boundary'+days,'+54911111111'+days])
     }
-    const result=await (await list(new NextRequest('http://localhost/api/contacts?inactividad_desde=15&inactividad_hasta=60&movimiento_modo=periodo'))).json()
+    const result=await (await list(new NextRequest('http://localhost/api/contacts?inactividad_desde=15&inactividad_hasta=60'+mode))).json()
     expect(result.contacts.map((r:{first_name:string})=>r.first_name).sort()).toEqual(['boundary16','boundary60'])
   })
   it('does not replace an unmatched explicit agent with a name-only match', async () => {
@@ -196,6 +196,39 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
     const url='http://localhost/api/contacts?inactividad_desde=0&inactividad_hasta=30'
     expect((await (await list(new NextRequest(url))).json()).total).toBe(0)
     expect((await (await list(new NextRequest(url+'&movimiento_modo=periodo'))).json()).total).toBe(1)
+  })
+
+  it('uses the latest movement across accounts even with a platform filter, and separates missing history', async () => {
+    await c.query(`INSERT INTO casino_transactions(username,platform,agente,tipo,monto,fecha,source_id) VALUES
+      ('crossold','zeus','royal','carga',100,current_date-20,'one'),
+      ('crossnew','bet30','royal','retiro',10,current_date-2,'two'),
+      ('inactive20','zeus','royal','carga',100,current_date-20,'three'),
+      ('expired61','zeus','royal','carga',100,current_date-61,'four')`)
+    await c.query(`INSERT INTO contacts(first_name,phone_number,platforms,casino_accounts) VALUES
+      ('cross','+5491111111401',ARRAY['zeus','bet30'],'[{"username":"crossold","platform":"zeus"},{"username":"crossnew","platform":"bet30"}]'),
+      ('inactive20','+5491111111402',ARRAY['zeus'],'[]'),
+      ('missing','+5491111111403',ARRAY['zeus'],'[]'),
+      ('expired61','+5491111111404',ARRAY['zeus'],'[]')`)
+    for (const [criteria, expected] of [
+      ['inactividad_desde=15&inactividad_hasta=60', ['inactive20']],
+      ['movimiento_modo=sin_historial', ['missing']],
+    ] as const) {
+      const url='http://localhost/api/contacts?plataforma=zeus&'+criteria
+      const listed=await (await list(new NextRequest(url))).json()
+      const exported=await (await list(new NextRequest(url+'&download=true'))).json()
+      const selected=await (await list(new NextRequest(url+'&select_all=true'))).json()
+      expect(listed.contacts.map((row:{first_name:string})=>row.first_name)).toEqual(expected)
+      expect(listed.total).toBe(1)
+      expect(exported.contacts).toEqual(listed.contacts)
+      expect(selected.ids).toEqual(listed.contacts.map((row:{id:string})=>row.id))
+    }
+    const all=await (await list(new NextRequest('http://localhost/api/contacts?plataforma=zeus'))).json()
+    const find=(name:string)=>all.contacts.find((row:{first_name:string})=>row.first_name===name)
+    const date=(await c.query('SELECT (current_date-2)::text AS date')).rows[0].date
+    expect(find('cross')).toMatchObject({days_since_last_movement:2,last_movement_date:date})
+    expect(find('inactive20')).toMatchObject({days_since_last_movement:20})
+    expect(find('expired61')).toMatchObject({days_since_last_movement:61})
+    expect(find('missing')).toMatchObject({days_since_last_movement:null,last_movement_date:null})
   })
 
 })
