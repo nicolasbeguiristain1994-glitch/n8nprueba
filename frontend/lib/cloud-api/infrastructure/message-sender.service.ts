@@ -1,6 +1,7 @@
 // Responsabilidad única: enviar mensajes via Graph API y construir sus payloads.
 
 import { withGlobalSendGuard } from '@/lib/global-opt-out'
+import { isReactionEmoji } from '@/lib/message-reactions'
 import { MetaHttpGateway } from './meta-http.gateway'
 import type { SendMessageRequest } from '../types/messages'
 
@@ -42,6 +43,7 @@ export function buildMessagePayload(req: SendMessageRequest): Record<string, unk
   const supported = ['text','template','image','video','audio','document','sticker','reaction','location','interactive']
   if (!supported.includes(req.type) || !req[req.type as keyof SendMessageRequest]) throw new Error('Tipo o contenido de mensaje inválido')
   if (req.type === 'text' && (!req.text?.body?.trim() || req.text.body.length > 4096)) throw new Error('El texto debe tener entre 1 y 4096 caracteres')
+  if (req.type === 'reaction' && (!req.reaction?.messageId?.trim() || !isReactionEmoji(req.reaction.emoji))) throw new Error('Reacción inválida')
   if (req.type === 'template' && (!req.template?.name || !req.template.language?.code)) throw new Error('Falta nombre o idioma de la plantilla')
   const base: Record<string, unknown> = {
     messaging_product: 'whatsapp',

@@ -136,6 +136,7 @@ export type CampaignForDispatch = {
 // Payload discriminado para sendViaCloud — separa texto de plantilla
 // sin sobrecargar la firma con parámetros opcionales ambiguos.
 type CloudSendPayload =
+  | { kind: 'reaction'; messageId: string; emoji: string }
   | { kind: 'sticker'; data: string }
   | { kind: 'text';     body: string; mediaUrl: string | null }
   | { kind: 'template'; content: TemplateContent; wabaId: string; templateId: string }
@@ -667,6 +668,8 @@ export async function sendViaCloud(
   let req: SendMessageRequest
   if (payload.kind === 'template') {
     req = { phoneNumberId, to, type: 'template', template: payload.content, campaignId }
+  } else if (payload.kind === 'reaction') {
+    req = {phoneNumberId,to,type:'reaction',reaction:{messageId:payload.messageId,emoji:payload.emoji}}
   } else if (payload.kind === 'sticker') {
     req = {phoneNumberId,to,type:'sticker',sticker:{id:'pending-upload'},campaignId}
   } else if (payload.mediaUrl) {

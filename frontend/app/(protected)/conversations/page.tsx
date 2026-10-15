@@ -20,7 +20,7 @@ import { EmojiPicker }            from '@/components/conversations/EmojiPicker'
 
 export default function Conversations() {
   const {
-    loading, loadError, messagesLoading, messagesError, refreshConversations,
+    loading, loadError, messagesLoading, messagesError, refreshConversations, refreshMessages,
     convs, visible, selected, selectedConv, messages, messagesEndRef,
     reply, setReply, sending, sendError, setSendError,
     filter, setFilter, search, setSearch,
@@ -146,7 +146,7 @@ export default function Conversations() {
                   {messagesError && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{messagesError}<button className="ml-2 underline" onClick={() => openConv(selected)}>Reintentar</button></p>}
                   {messagesLoading ? <p role="status" className="pt-10 text-center text-sm text-muted-foreground">Cargando mensajes…</p> : messagesError && messages.length === 0 ? null : messages.length === 0
                     ? <p className="text-center text-muted-foreground text-sm pt-10">Sin mensajes aún</p>
-                    : messages.map(m => <MessageBubble key={m.id} m={m} />)
+                    : messages.map(m => <MessageBubble key={m.id} m={m} onReactionChanged={() => refreshMessages(selected)} />)
                   }
                   <div ref={messagesEndRef} />
                 </div>

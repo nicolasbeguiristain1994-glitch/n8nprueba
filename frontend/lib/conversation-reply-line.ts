@@ -13,7 +13,7 @@ export async function findConversationReplyOrigin(phone: string, accessibleLineI
      JOIN cloud_numbers cn ON cn.phone_number_id=cm.phone_number_id
      JOIN whatsapp_lines wl ON wl.id=cn.whatsapp_line_id
      WHERE regexp_replace(cc.contact_phone,'[^0-9]','','g')=$1
-       AND cm.direction='inbound'
+       AND cm.direction='inbound' AND cm.message_type<>'reaction'
        AND ($2::uuid[] IS NULL OR cn.whatsapp_line_id=ANY($2::uuid[]))
      ORDER BY COALESCE(cm.sent_at,cm.created_at) DESC,cm.created_at DESC,cm.id DESC LIMIT 1`,
     [phone.replace(/\D/g, ''), accessibleLineIds],

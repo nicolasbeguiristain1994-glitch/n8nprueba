@@ -328,6 +328,7 @@ export function useConversations() {
     realtimeStatus,
     notifPermission, requestNotif,
     openConv, sendReply, sendSticker,
+    refreshMessages: (phone: string) => { if (selectedRef.current === phone) loadMessages(phone) },
     totalConvs, hasMore, loadingMore, loadMoreConvs,
   }
 }

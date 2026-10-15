@@ -5,6 +5,7 @@ import { conversationRepository, messageRepository } from '../repositories/conve
 import { cloudMetrics }                              from '../infrastructure/metrics'
 import { createLogger }                              from '../infrastructure/logger'
 import type { WebhookMessage }                       from '../types/webhooks'
+import { sseEmitter } from '@/lib/sse-events'
 
 export async function handleEchoMessage(
   phoneNumberId: string,
@@ -15,6 +16,12 @@ export async function handleEchoMessage(
 
   if (!msg.to) return
   const contactPhone = `+${msg.to.replace(/^\+/, '')}`
+
+  if (msg.type === 'reaction') {
+    await conversationRepository.receiveReaction(phoneNumberId,contactPhone,msg,'echo')
+    sseEmitter.emit('update', {source:'reaction',phone:contactPhone})
+    return
+  }
 
   // An outbound echo cannot open the customer's service window.
   const convId = await conversationRepository.upsertForOutbound(phoneNumberId, contactPhone)

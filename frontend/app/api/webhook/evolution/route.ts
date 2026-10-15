@@ -9,6 +9,7 @@ import { evaluateAutomations } from '@/lib/automation-engine'
 import { notify } from '@/lib/notify'
 import { parseInstancesResponse } from '@/lib/evolution-utils'
 import { sseEmitter } from '@/lib/sse-events'
+import { receiveEvolutionReaction } from '@/lib/evolution-reactions'
 
 // ── syncLinePhoneNumber ───────────────────────────────────────────────────────
 // Best-effort: fetch phone from Evolution and persist to DB when a line connects.
@@ -99,6 +100,12 @@ export async function POST(req: NextRequest) {
     const phone = jid.replace('@s.whatsapp.net', '')
 
     try {
+      const reaction = (data.message as Record<string,unknown> | null)?.reactionMessage
+      if (reaction && typeof reaction === 'object') {
+        await receiveEvolutionReaction({instance:body.instance,phone,eventId:msgId,fromMe,
+          reaction:reaction as Record<string,unknown>,timestamp:data.messageTimestamp})
+        return NextResponse.json({ok:true})
+      }
       // Mensaje propio (outbound): Evolution confirmó envío — guardar el ID para tracking
       if (fromMe) {
         if (msgId) {
@@ -135,10 +142,11 @@ export async function POST(req: NextRequest) {
       // Idempotent insert — unique index on evolution_message_id handles dedup
       await query(
         `INSERT INTO whatsapp_messages
-           (phone_number, message_body, direction, status, evolution_message_id, created_at)
-         VALUES ($1, $2, 'inbound', 'received', $3, $4)
+           (phone_number, message_body, direction, status, evolution_message_id, created_at,metadata)
+         VALUES ($1, $2, 'inbound', 'received', $3, $4,
+           COALESCE((SELECT jsonb_build_object('line_id',id) FROM whatsapp_lines WHERE evolution_instance=$5),'{}'::jsonb))
          ON CONFLICT (evolution_message_id) WHERE evolution_message_id IS NOT NULL DO NOTHING`,
-        [phone, body_text, msgId || null, sent_at]
+        [phone, body_text, msgId || null, sent_at, typeof body.instance==='string'?body.instance:'']
       )
 
       // Notificar en tiempo real a todos los clientes SSE conectados

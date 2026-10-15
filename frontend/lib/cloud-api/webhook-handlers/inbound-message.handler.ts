@@ -19,8 +19,14 @@ export async function handleInboundMessage(
 ): Promise<void> {
   const log = createLogger({ correlationId, phoneNumberId, operation: 'inbound_message' })
 
-  const contactPhone = `+${msg.from}`
+  const contactPhone = `+${msg.from.replace(/^\+/, '')}`
   const profileName  = contacts.find(c => c.wa_id === msg.from)?.profile.name ?? null
+
+  if (msg.type === 'reaction') {
+    await conversationRepository.receiveReaction(phoneNumberId,contactPhone,msg,'inbound')
+    sseEmitter.emit('update', {source:'reaction',phone:contactPhone})
+    return
+  }
 
   // Persist the original event once; retries must not reopen the 24-hour window.
   await conversationRepository.receive(phoneNumberId, contactPhone, msg)

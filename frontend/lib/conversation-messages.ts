@@ -10,6 +10,8 @@ function messagesCte(legacyScope = 'TRUE', cloudScope = 'TRUE') { return `WITH c
     wm.status::text AS status,wm.created_at,wm.evolution_message_id,wm.campaign_id
   FROM whatsapp_messages wm
   WHERE ${legacyScope}
+    AND COALESCE(to_jsonb(wm)->'metadata'->>'kind','')<>'reaction'
+    AND NOT EXISTS (SELECT 1 FROM cloud_messages reaction WHERE reaction.wamid=wm.evolution_message_id AND reaction.message_type='reaction')
     AND NOT EXISTS (SELECT 1 FROM cloud_messages linked
       JOIN cloud_numbers linked_number ON linked_number.phone_number_id=linked.phone_number_id
       WHERE linked.wamid=wm.evolution_message_id
@@ -23,7 +25,7 @@ function messagesCte(legacyScope = 'TRUE', cloudScope = 'TRUE') { return `WITH c
   FROM cloud_messages cm
   JOIN cloud_conversations cc ON cc.id=cm.conversation_id
   JOIN cloud_numbers cn ON cn.phone_number_id=cm.phone_number_id
-  WHERE ${cloudScope} AND ($1::uuid[] IS NULL OR cn.whatsapp_line_id=ANY($1::uuid[]))
+  WHERE ${cloudScope} AND cm.message_type<>'reaction' AND ($1::uuid[] IS NULL OR cn.whatsapp_line_id=ANY($1::uuid[]))
     AND NOT EXISTS (SELECT 1 FROM whatsapp_messages legacy
       WHERE cm.wamid IS NOT NULL AND legacy.evolution_message_id=cm.wamid)
 )` }

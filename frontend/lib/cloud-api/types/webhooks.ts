@@ -57,7 +57,7 @@ export interface WebhookMessage {
   audio?:       { mime_type: string; sha256: string; id: string; voice?: boolean }
   document?:    { caption?: string; filename: string; mime_type: string; sha256: string; id: string }
   sticker?:     { mime_type: string; sha256: string; id: string; animated: boolean }
-  reaction?:    { message_id: string; emoji: string }
+  reaction?:    { message_id: string; emoji?: string }
   location?:    { latitude: number; longitude: number; name?: string; address?: string }
   interactive?: {
     type:          string

@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
       logs.push({
         phone_number:         phone,
         message_body:         sticker ? '[Sticker]' : messageStr,
-        metadata: {media_type:sticker?'sticker':media_url?'image':'text',sticker_preview:preview},
+        metadata: {media_type:sticker?'sticker':media_url?'image':'text',sticker_preview:preview,line_id:line.id},
         status:               'sent',
         evolution_message_id: messageId ?? '',
         campaign_id:          campaign_id ?? '',

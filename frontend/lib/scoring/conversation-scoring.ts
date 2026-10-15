@@ -51,6 +51,10 @@ export interface Conv {
 }
 
 export interface Message {
+  reactions?: import('@/lib/message-reactions').MessageReaction[]
+  can_react?: boolean
+  reaction_unavailable?: string | null
+  reaction_error?: string | null
   media_type?: string
   sticker_preview?: string
   media_url?: string
