@@ -36,11 +36,11 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   m.tx.mockImplementation(async fn=>{const db=await pool.connect();try{await db.query('BEGIN');const r=await fn(db);await db.query('COMMIT');return r}catch(e){await db.query('ROLLBACK');throw e}finally{db.release()}})
  })
  beforeEach(async()=>{
-  await pool.query(`TRUNCATE automation_message_jobs,automation_inbound_receipts,automations,automation_logs,conversation_state,blacklist;UPDATE contacts SET panel='Panel',linea=NULL,linea_sub=NULL,deleted_at=NULL;UPDATE users SET is_active=true;UPDATE whatsapp_lines SET sending_enabled=true;
+  await pool.query(`TRUNCATE automation_message_jobs,automation_inbound_receipts,automations,automation_logs,conversation_state,blacklist;DELETE FROM agent_contact_lines WHERE agent_code='royal';UPDATE contacts SET panel='Panel',linea=NULL,linea_sub=NULL,deleted_at=NULL;UPDATE users SET is_active=true;UPDATE whatsapp_lines SET sending_enabled=true;
    INSERT INTO automations VALUES('${id(3)}','Reply','reply','contains','{"keywords":["información"]}','{"message":"Hola {{nombre}}"}','${id(1)}',true,1,NOW())`)
   m.send.mockReset().mockResolvedValue({status:'sent',wamid:'fake'});m.emit.mockClear()
   for (const [linea,variant,label,number] of OFIZEUS_LINES)
-    await pool.query("UPDATE agent_contact_lines SET label=$3,phone=$4,is_active=true WHERE linea=$1 AND variant=$2",[linea,variant,label,'+'+number])
+    await pool.query("UPDATE agent_contact_lines SET label=$3,phone=$4,is_active=true WHERE agent_code='ofizeus' AND linea=$1 AND variant=$2",[linea,variant,label,'+'+number])
  })
  afterAll(async()=>{await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.end()})
  it('deduplicates simultaneous webhook deliveries and keeps the inbound source line',async()=>{
@@ -122,6 +122,40 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
  it('does not send Ofizeus destinations to other agents',async()=>{
   await pool.query(`UPDATE contacts SET panel='royal',linea=3;UPDATE automations SET action_config='{"message":"Tu línea:","contact_line_directory":"ofizeus"}'`)
   await evaluateAutomations(phone,'información','routing-other',source)
+  expect(m.send).not.toHaveBeenCalled()
+ })
+
+ const royalRule=async(line=1,variant:string|null=null)=>{
+  await pool.query("UPDATE contacts SET panel='royal',linea=$1,linea_sub=$2",[line,variant])
+  await pool.query(`UPDATE automations SET trigger_type='keyword',trigger_config='{"keywords":["EXTRA","Mas info"],"once_per_chat":true}',action_config='{"message":"Ofizeus {{2}}","contact_line_directory":"ofizeus"}';
+   INSERT INTO automations VALUES('${id(9)}','Royal','reply','keyword','{"keywords":["EXTRA","Mas info"],"once_per_chat":true}','{"message":"Tu línea: {{2}}","contact_line_directory":"royal"}','${id(1)}',true,1,NOW());
+   INSERT INTO agent_contact_lines VALUES('royal',1,'','Royal 1','+5491100000001',true),('royal',1,'a','Royal 1A','+5491100000002',true)`)
+ }
+ it('selects Royal instead of the older Ofizeus rule, keeps the sender, and replies once across both keywords',async()=>{
+  await royalRule()
+  await Promise.all([evaluateAutomations(phone,'EXTRA','royal-first',source),evaluateAutomations(phone,'EXTRA','royal-first',source)])
+  await evaluateAutomations(phone,'Más info','royal-second',source)
+  expect(m.send).toHaveBeenCalledTimes(1)
+  expect(m.send).toHaveBeenCalledWith({request:{phoneNumberId:'phone-a',to:'+'+phone,type:'text',text:{body:'Tu línea: 549 | 1100 | 000001'}}})
+  expect((await pool.query('SELECT automation_id FROM automation_message_jobs')).rows).toEqual([{automation_id:id(9)}])
+ })
+ it('reads the edited Royal directory and exact variant',async()=>{
+  await royalRule(1,'a')
+  await pool.query("UPDATE agent_contact_lines SET phone='+5491100000003' WHERE agent_code='royal' AND variant='a'")
+  await evaluateAutomations(phone,'EXTRA','royal-variant',source)
+  expect(m.send.mock.calls[0][0].request.text.body).toBe('Tu línea: 549 | 1100 | 000003')
+ })
+ it.each(['missing','inactive','unknown-variant'])('hands off %s Royal assignments without borrowing an Ofizeus or another Royal number',async kind=>{
+  await royalRule(kind==='missing'?5:1,kind==='unknown-variant'?'b':null)
+  if(kind==='inactive')await pool.query("UPDATE agent_contact_lines SET is_active=false WHERE agent_code='royal'")
+  await evaluateAutomations(phone,'EXTRA','royal-'+kind,source)
+  expect(m.send).toHaveBeenCalledTimes(1)
+  expect(m.send.mock.calls[0][0].request.text.body).toBe('Gracias por escribirnos. Un asesor te atenderá para indicarte tu línea correspondiente.')
+  expect((await pool.query('SELECT is_escalated FROM conversation_state')).rows).toEqual([{is_escalated:true}])
+ })
+ it('ignores both directory rules for a different agent',async()=>{
+  await royalRule();await pool.query("UPDATE contacts SET panel='other'")
+  await evaluateAutomations(phone,'EXTRA','other-agent',source)
   expect(m.send).not.toHaveBeenCalled()
  })
  it('validates step limits and accents in keyword matching',()=>{

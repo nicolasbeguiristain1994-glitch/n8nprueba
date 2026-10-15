@@ -25,7 +25,7 @@ const rule = {
 }
 beforeEach(() => {
   vi.resetAllMocks()
-  mocks.fetch.mockImplementation(async (_url, init) => init?.method ? { ok: true } : { automations: [rule] })
+  mocks.fetch.mockImplementation(async (url, init) => init?.method ? { ok: true } : url === '/api/agents' ? { agents: [{ code:'royal', name:'Royal' },{ code:'ofizeus', name:'Ofizeus' }] } : { automations: [rule] })
 })
 afterEach(cleanup)
 
@@ -98,14 +98,33 @@ describe('once-per-chat automation setting', () => {
     const saved=JSON.parse(mocks.fetch.mock.calls.find(([,init])=>init?.method==='PATCH')![1].body)
     expect(saved.action_config).toEqual({message:'Hola, esta es tu línea:',contact_line_directory:'ofizeus'})
   })
-  it('enables the directory when adding {{2}} to an ordinary reply and previews only the number', async()=>{
+  it('requires an explicit agent when adding {{2}} and previews a synthetic number', async()=>{
     render(<Page/>);await screen.findByText('Bono EXTRA');fireEvent.click(screen.getByTitle('Editar'))
     fireEvent.change(screen.getByPlaceholderText(/Hola \{\{nombre\}\}/),{target:{value:'Lines designada: {{2}}'}})
-    expect(screen.getByLabelText('Vista previa de línea asignada')).toHaveTextContent('Lines designada: 549 | 1124 | 915455')
+    expect(screen.getByLabelText('Vista previa de línea asignada')).toHaveTextContent('Lines designada: 549 | 1100 | 000000')
+    fireEvent.click(screen.getByRole('button',{name:'Guardar cambios'}))
+    expect(await screen.findByText('Elegí el agente de la línea asignada para usar {{2}}')).toBeInTheDocument()
+    expect(mocks.fetch.mock.calls.some(([,init])=>init?.method==='PATCH')).toBe(false)
+    await screen.findByRole('option',{name:'Royal'})
+    fireEvent.change(screen.getByLabelText('Agente de la línea asignada'),{target:{value:'royal'}})
     fireEvent.click(screen.getByRole('button',{name:'Guardar cambios'}))
     await waitFor(()=>expect(mocks.fetch.mock.calls.some(([,init])=>init?.method==='PATCH')).toBe(true))
     const saved=JSON.parse(mocks.fetch.mock.calls.find(([,init])=>init?.method==='PATCH')![1].body)
-    expect(saved.action_config).toEqual({message:'Lines designada: {{2}}',contact_line_directory:'ofizeus'})
+    expect(saved.action_config).toEqual({message:'Lines designada: {{2}}',contact_line_directory:'royal'})
+  })
+  it('preserves Royal when editing its message', async()=>{
+    mocks.fetch.mockImplementation(async (url,init)=>init?.method?{ok:true}:url==='/api/agents'?{agents:[{code:'royal',name:'Royal'}]}:{automations:[{...rule,action_config:{message:'Tu línea: {{2}}',contact_line_directory:'royal'}}]})
+    render(<Page/>);await screen.findByText('Bono EXTRA');fireEvent.click(screen.getByTitle('Editar'))
+    expect(screen.getByLabelText('Agente de la línea asignada')).toHaveValue('royal')
+    fireEvent.change(screen.getByPlaceholderText(/Hola \{\{nombre\}\}/),{target:{value:'Contactá a {{2}}'}})
+    fireEvent.click(screen.getByRole('button',{name:'Guardar cambios'}))
+    await waitFor(()=>expect(mocks.fetch.mock.calls.some(([,init])=>init?.method==='PATCH')).toBe(true))
+    const saved=JSON.parse(mocks.fetch.mock.calls.find(([,init])=>init?.method==='PATCH')![1].body)
+    expect(saved.action_config).toEqual({message:'Contactá a {{2}}',contact_line_directory:'royal'})
+  })
+  it('validates directory codes without losing other action fields',()=>{
+    expect(UpdateAutomationSchema.parse({action_config:{message:'{{2}}',contact_line_directory:' Royal '}}).action_config).toEqual({message:'{{2}}',contact_line_directory:'royal'})
+    for(const value of ['',{},'royal / ofizeus']) expect(UpdateAutomationSchema.safeParse({action_config:{contact_line_directory:value}}).success).toBe(false)
   })
   it('rejects non-boolean values instead of silently making the reply repeatable', () => {
     expect(CreateAutomationSchema.safeParse({ ...rule, trigger_config: { once_per_chat: 'true' } }).success).toBe(false)

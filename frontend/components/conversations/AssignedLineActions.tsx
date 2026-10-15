@@ -10,7 +10,7 @@ export function AssignedLineActions({conv,onInsert,disabled=false}:{conv?:Conv;o
   const line = conv?.line_assignment_ambiguous ? null : conv?.assigned_line
   if (!line) return <p className="mb-2 text-xs text-muted-foreground">
     {conv?.line_assignment_ambiguous ? 'Revisá la línea asignada: este teléfono tiene contactos con asignaciones diferentes.'
-      : conv?.linea != null ? `${contactLineLabel(conv.linea,conv.linea_sub)} · Teléfono no cargado o línea inactiva.`
+      : conv?.linea != null ? `${conv.agent ? conv.agent + ' · ' : ''}${contactLineLabel(conv.linea,conv.linea_sub)} · Falta cargar o activar esta línea en Agentes para copiarla o pegarla.`
       : 'Este contacto no tiene una línea asignada.'}
   </p>
   const copy = async () => {

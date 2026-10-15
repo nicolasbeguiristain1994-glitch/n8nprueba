@@ -22,7 +22,7 @@ type AutomationType  = 'reply' | 'flow' | 'handoff'
 type TriggerType     = 'keyword' | 'contains' | 'any_inbound'
 
 interface TriggerConfig { keywords?: string[]; once_per_chat?: boolean }
-interface ReplyActionConfig { message: string; contact_line_directory?: 'ofizeus' }
+interface ReplyActionConfig { message: string; contact_line_directory?: string }
 interface FlowStep { message: string; delay_sec?: number }
 interface FlowActionConfig { steps: FlowStep[] }
 interface HandoffActionConfig { message?: string }
@@ -96,6 +96,7 @@ const BLANK_FORM = {
   trigger_type:  'contains' as TriggerType,
   keywords:      '',          // separados por coma
   message:       '',          // para reply / handoff
+  contact_line_directory: '',
   flow_steps:    '',          // para flow: un paso por línea
   handoff_msg:   '',
   priority:      '100',
@@ -128,6 +129,17 @@ export default function AutomatizacionesPage() {
   const [form, setForm]               = useState({ ...BLANK_FORM })
   const [saving, setSaving]           = useState(false)
   const [saveError, setSaveError]     = useState<string | null>(null)
+  const [directoryAgents, setDirectoryAgents] = useState<{code:string;name:string}[]>([])
+  const [directoryError, setDirectoryError] = useState(false)
+  useEffect(() => {
+    if (!showEditor) return
+    let cancelled=false
+    setDirectoryError(false)
+    void fetchJson<{agents:{code:string;name:string}[]}>('/api/agents')
+      .then(data=>{if(!cancelled)setDirectoryAgents(data.agents??[])})
+      .catch(()=>{if(!cancelled)setDirectoryError(true)})
+    return ()=>{cancelled=true}
+  },[showEditor])
 
   // Confirmación eliminar
   const [deleteTarget, setDeleteTarget] = useState<Automation | null>(null)
@@ -199,6 +211,7 @@ export default function AutomatizacionesPage() {
       trigger_type: a.trigger_type,
       keywords:     (tc.keywords ?? []).join(', '),
       message,
+      contact_line_directory: typeof ac.contact_line_directory === 'string' ? ac.contact_line_directory : '',
       flow_steps:   flowSteps,
       handoff_msg:  handoffMsg,
       priority:     String(a.priority),
@@ -251,7 +264,8 @@ export default function AutomatizacionesPage() {
     let action_config: ActionConfig
     if (form.type === 'reply') {
       if (!form.message.trim()) { setSaveError('El mensaje de respuesta es requerido'); return }
-      action_config = { message: form.message.trim(), ...(((editTarget?.action_config as ReplyActionConfig)?.contact_line_directory === 'ofizeus' || hasAssignedLineVariable(form.message)) ? { contact_line_directory: 'ofizeus' as const } : {}) }
+      if (hasAssignedLineVariable(form.message) && !form.contact_line_directory) { setSaveError('Elegí el agente de la línea asignada para usar {{2}}'); return }
+      action_config = { message: form.message.trim(), ...(form.contact_line_directory ? { contact_line_directory: form.contact_line_directory } : {}) }
     } else if (form.type === 'flow') {
       const steps = form.flow_steps.split('\n').map(l => l.trim()).filter(Boolean).map(l => ({ message: l }))
       if (steps.length === 0) { setSaveError('Ingresá al menos un paso'); return }
@@ -677,7 +691,15 @@ export default function AutomatizacionesPage() {
 
               {form.type === 'reply' && (
                 <div>
-                  <p className="mb-3 rounded-md border p-3 text-sm">Usá <code>{'{{2}}'}</code> donde quieras mostrar el número de la línea asignada de Ofizeus, separado por barras. Respeta la línea y variante del contacto. Si falta una asignación activa, avisa que lo atenderá un asesor y deriva la conversación.</p>
+                  <label htmlFor="automation-directory-agent" className="block text-xs text-muted-foreground mb-1">Agente de la línea asignada</label>
+                  <select id="automation-directory-agent" className="mb-2 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    value={form.contact_line_directory} onChange={e=>setForm(f=>({...f,contact_line_directory:e.target.value}))}>
+                    <option value="">Sin directorio de líneas</option>
+                    {form.contact_line_directory && !directoryAgents.some(a=>a.code===form.contact_line_directory) && <option value={form.contact_line_directory}>{form.contact_line_directory}</option>}
+                    {directoryAgents.map(a=><option key={a.code} value={a.code}>{a.name}</option>)}
+                  </select>
+                  {directoryError && <p className="mb-2 text-xs text-destructive">No se pudo cargar el directorio. Cerrá y volvé a abrir el editor para reintentar.</p>}
+                  <p className="mb-3 rounded-md border p-3 text-sm">Usá <code>{'{{2}}'}</code> donde quieras mostrar el número de la línea asignada, separado por barras. La respuesta se aplica solo al agente elegido y respeta la línea y variante del contacto. Si falta una asignación activa, avisa que lo atenderá un asesor y deriva la conversación.</p>
                   <label className="block text-xs text-muted-foreground mb-1">Mensaje de respuesta *</label>
                   <textarea
                     className="w-full border border-input rounded-md text-sm px-3 py-2 h-28 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"
@@ -689,14 +711,14 @@ export default function AutomatizacionesPage() {
                     Variables disponibles: <code className="bg-muted px-1 rounded">{'{{nombre}}'}</code>{' '}
                     <code className="bg-muted px-1 rounded">{'{{empresa}}'}</code>{' '}
                     <code className="bg-muted px-1 rounded">{'{{fecha}}'}</code>{' '}
-                    <code className="bg-muted px-1 rounded">{'{{2}}'}</code> (línea de Ofizeus)
+                    <code className="bg-muted px-1 rounded">{'{{2}}'}</code> (línea del agente elegido)
                   </p>
                 </div>
               )}
 
               {form.type === 'reply' && hasAssignedLineVariable(form.message) && <div className="rounded-md bg-muted/40 p-3" aria-label="Vista previa de línea asignada">
-                <p className="mb-2 text-xs font-medium text-muted-foreground">Ejemplo: contacto de Ofizeus, línea 3A</p>
-                <p className="whitespace-pre-wrap break-words text-sm">{replaceAssignedLineVariable(form.message, '549 | 1124 | 915455')}</p>
+                <p className="mb-2 text-xs font-medium text-muted-foreground">Ejemplo ilustrativo · {form.contact_line_directory || 'Elegí un agente'}</p>
+                <p className="whitespace-pre-wrap break-words text-sm">{replaceAssignedLineVariable(form.message, '549 | 1100 | 000000')}</p>
               </div>}
 
               {form.type === 'flow' && (

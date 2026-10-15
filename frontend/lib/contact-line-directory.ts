@@ -18,11 +18,25 @@ export const OFIZEUS_LINES = [
 ] as const
 export type RoutingContact = {first_name:string|null;panel:string|null;linea:number|string|null;linea_sub:string|null}
 export const ADVISOR_FALLBACK = 'Gracias por escribirnos. Un asesor te atenderá para indicarte tu línea correspondiente.'
-export function isOfizeus(contact: Pick<RoutingContact,'panel'>): boolean {return contact.panel?.trim().toLowerCase()==='ofizeus'}
+export function directoryAgentCode(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const code=value.trim().toLowerCase()
+  return /^[a-z0-9][a-z0-9_-]{0,99}$/.test(code) ? code : null
+}
+export function belongsToDirectory(contact: Pick<RoutingContact,'panel'>, agent: string): boolean {
+  return directoryAgentCode(contact.panel) === agent
+}
+export function isOfizeus(contact: Pick<RoutingContact,'panel'>): boolean {return belongsToDirectory(contact,'ofizeus')}
 export function ofizeusReply(contacts: RoutingContact[], prefix:string,
   directory: ReadonlyArray<readonly [number,string,string,string]> = OFIZEUS_LINES,
 ): {message:string;handoff:boolean} {
-  if (contacts.length!==1 || !isOfizeus(contacts[0])) return {message:ADVISOR_FALLBACK,handoff:true}
+  return agentLineReply(contacts,'ofizeus',prefix,directory)
+}
+export function agentLineReply(contacts: RoutingContact[], agent: string, prefix:string,
+  directory: ReadonlyArray<readonly [number,string,string,string]>,
+): {message:string;handoff:boolean} {
+  const code=directoryAgentCode(agent)
+  if (!code || contacts.length!==1 || !belongsToDirectory(contacts[0],code)) return {message:ADVISOR_FALLBACK,handoff:true}
   const c=contacts[0],variant=(c.linea_sub??'').trim().toLowerCase()
   const line=directory.find(([n,v])=>c.linea!==null && Number(c.linea)===n && variant===v)
   if (!line) return {message:ADVISOR_FALLBACK,handoff:true}
