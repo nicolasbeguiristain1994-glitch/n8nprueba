@@ -2,10 +2,11 @@ import type { Message } from '@/lib/scoring/conversation-scoring'
 import { MsgStatus } from './PriorityBadge'
 import { MessageMedia } from './MessageMedia'
 import { MessageAudio } from './MessageAudio'
+import { MessageReactions } from './MessageReactions'
 
 const IMG_URL_RE = /^https?:\/\/\S+\.(jpg|jpeg|png|gif|webp)(\?[^\s]*)?$/i
 
-export function MessageBubble({ m }: { m: Message }) {
+export function MessageBubble({ m, onReactionChanged }: { m: Message; onReactionChanged?: () => void }) {
   const out    = m.direction === 'outbound'
   const failed = m.status === 'failed'
   const isAudio = m.media_type === 'audio' || m.message_body.trim() === '[audio]'
@@ -17,7 +18,8 @@ export function MessageBubble({ m }: { m: Message }) {
 
   return (
     <div className={`flex ${out ? 'justify-end' : 'justify-start'}`}>
-      <div className={`${isAudio ? 'w-80 max-w-[95%] sm:max-w-[72%]' : 'max-w-[72%]'} rounded-2xl text-sm px-3 py-2 ${
+      <div className={isAudio ? 'w-80 max-w-[95%] sm:max-w-[72%]' : 'max-w-[80%] sm:max-w-[72%]'}>
+      <div className={`rounded-2xl text-sm px-3 py-2 ${
         out
           ? failed ? 'bg-destructive/15 text-red-900 border border-red-300 rounded-br-sm'
                    : 'bg-green-500 text-white rounded-br-sm'
@@ -42,6 +44,8 @@ export function MessageBubble({ m }: { m: Message }) {
           </time>
           {out && <MsgStatus status={m.status} />}
         </div>
+      </div>
+      <MessageReactions message={m} onChanged={onReactionChanged} />
       </div>
     </div>
   )

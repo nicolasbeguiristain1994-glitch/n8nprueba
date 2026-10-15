@@ -2,6 +2,8 @@
 
 import { query, withTransaction } from '@/lib/db'
 import { cloudMessageText, type CloudMessageContent } from '../message-content'
+import { isReactionEmoji } from '@/lib/message-reactions'
+import type { WebhookMessage } from '../types/webhooks'
 
 export interface ConversationRow {
   id:                  string
@@ -22,6 +24,22 @@ export interface UpsertConversationParams {
 }
 
 export const conversationRepository = {
+
+  async receiveReaction(phoneNumberId: string, contactPhone: string, msg: WebhookMessage, direction: 'inbound' | 'echo'): Promise<void> {
+    const timestamp = Number(msg.timestamp)
+    if (!msg.reaction?.message_id || !isReactionEmoji(msg.reaction.emoji === undefined ? '' : msg.reaction.emoji)
+      || !Number.isFinite(timestamp) || timestamp <= 0 || timestamp > Date.now()/1000+300) throw new Error('Invalid reaction event')
+    await withTransaction(async client => {
+      // Reactions must not open a service window, increment unread messages or
+      // trigger automations. Keep removals even if the original arrives later.
+      const conversation = await client.query<{id:string}>(`INSERT INTO cloud_conversations(phone_number_id,contact_phone)
+        VALUES($1,$2) ON CONFLICT(phone_number_id,contact_phone) DO UPDATE
+        SET contact_phone=EXCLUDED.contact_phone RETURNING id`, [phoneNumberId,contactPhone])
+      await client.query(`INSERT INTO cloud_messages(conversation_id,phone_number_id,wamid,direction,message_type,content,status,sent_at)
+        VALUES($1,$2,$3,$4,'reaction',$5,$6,to_timestamp($7)) ON CONFLICT(wamid) DO NOTHING`,
+        [conversation.rows[0].id,phoneNumberId,msg.id,direction,JSON.stringify(msg),direction==='inbound'?'delivered':'sent',timestamp])
+    })
+  },
 
   async receive(phoneNumberId: string, contactPhone: string, msg: CloudMessageContent & { id: string; timestamp: string; type: string }): Promise<void> {
     const timestamp = Number(msg.timestamp)

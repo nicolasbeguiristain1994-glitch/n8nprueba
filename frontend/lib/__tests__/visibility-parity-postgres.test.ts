@@ -75,6 +75,10 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
       CREATE TABLE mv_player_ltv(casino_player_id uuid,username text,agente text,seg_monto text,ngr_total numeric,arpu numeric,dias_activo int,ltv_percentil numeric,ltv_score numeric,tier_ltv text,calculado_en timestamptz);
     `)
     await db.query("CREATE TABLE casino_transactions(id bigint,platform text,username text,agente text,fecha date,fecha_hora_utc timestamptz,tipo text,monto numeric,raw_detalles text)")
+    await db.query(`ALTER TABLE whatsapp_messages ADD COLUMN metadata jsonb;
+      ALTER TABLE cloud_conversations ADD COLUMN phone_number_id text;
+      ALTER TABLE campaign_recipients ADD COLUMN id uuid, ADD COLUMN line_id uuid;
+      CREATE TABLE whatsapp_lines(id uuid,line_type text);`)
     await createRequire(import.meta.url)('../../../tests/helpers/segmentation-profile-schema.cjs').install(db,schema)
     mocks.query.mockImplementation(async (sql, params) => (await db.query(sql, params)).rows)
     mocks.poolQuery.mockImplementation((sql, params) => db.query(sql, params))

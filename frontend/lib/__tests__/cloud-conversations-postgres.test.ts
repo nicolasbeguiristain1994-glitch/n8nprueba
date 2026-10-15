@@ -2,15 +2,19 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Client } from 'pg'
 import { NextRequest } from 'next/server'
-const mocks=vi.hoisted(()=>({query:vi.fn(),transaction:vi.fn(),auth:vi.fn(),lines:vi.fn()}))
+const mocks=vi.hoisted(()=>({query:vi.fn(),transaction:vi.fn(),auth:vi.fn(),lines:vi.fn(),reaction:vi.fn()}))
 const mediaMocks=vi.hoisted(()=>({token:vi.fn(),download:vi.fn()}))
 vi.mock('@/lib/cloud-api/token-store',()=>({getTokenForNumber:mediaMocks.token}))
 vi.mock('@/lib/cloud-api/infrastructure/inbound-media',()=>({downloadInboundMedia:mediaMocks.download,MediaUnavailableError:class extends Error {}}))
 vi.mock('@/lib/db',()=>({query:mocks.query,withTransaction:mocks.transaction}))
-vi.mock('@/lib/permissions',()=>({checkPermissionWithUser:mocks.auth}))
+vi.mock('@/lib/permissions',async importOriginal=>({...await importOriginal<typeof import('@/lib/permissions')>(),checkPermissionWithUser:mocks.auth}))
+vi.mock('@/lib/send-message-reaction',()=>({sendMessageReaction:mocks.reaction}))
+vi.mock('@/lib/audit',()=>({audit:vi.fn()}))
 vi.mock('@/lib/line-visibility',()=>({getAccessibleLineIds:mocks.lines}))
 import { GET as windowGET } from '@/app/api/conversations/window/route'
 import { GET } from '@/app/api/conversations/route'
+import { POST as reactPOST } from '@/app/api/conversations/reactions/route'
+import { CloudSendOutcomeUnknownError } from '@/lib/campaign-distributor'
 import { GET as mediaGET } from '@/app/api/conversations/media/route'
 import { cloudMessageText,cloudMessageTextSql } from '../cloud-api/message-content'
 import { conversationRepository } from '../cloud-api/repositories/conversation.repository'
@@ -27,10 +31,11 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   if(!['localhost','127.0.0.1'].includes(url.hostname))throw Error('LOCAL_ONLY')
   db=new Client({connectionString:url.toString(),ssl:false});await db.connect();await db.query('BEGIN')
   await db.query(`SET LOCAL search_path=pg_temp,public;
-   CREATE TEMP TABLE whatsapp_messages(id uuid DEFAULT gen_random_uuid(),phone_number text,message_body text,direction text,status text,created_at timestamptz,evolution_message_id text,campaign_id uuid);
+   CREATE TEMP TABLE whatsapp_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number text,message_body text,direction text,status text,created_at timestamptz DEFAULT NOW(),evolution_message_id text,campaign_id uuid,sent_at timestamptz,metadata jsonb,updated_at timestamptz,failed_at timestamptz,error_detail text);
+   CREATE TEMP TABLE campaign_recipients(id uuid,line_id uuid);
    CREATE TEMP TABLE campaigns(id uuid PRIMARY KEY,name text);
    CREATE TEMP TABLE cloud_numbers(phone_number_id text,whatsapp_line_id uuid);
-   CREATE TEMP TABLE whatsapp_lines(id uuid,display_name text,line_key text);
+   CREATE TEMP TABLE whatsapp_lines(id uuid,display_name text,line_key text,line_type text DEFAULT 'cloud');
    CREATE TEMP TABLE cloud_conversations(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number_id text,contact_phone text,window_opens_at timestamptz,window_expires_at timestamptz,window_type text,last_message_at timestamptz,last_message_preview text,unread_count int DEFAULT 0,status text,updated_at timestamptz,UNIQUE(phone_number_id,contact_phone));
    CREATE TEMP TABLE cloud_messages(id uuid DEFAULT gen_random_uuid(),conversation_id uuid,phone_number_id text,wamid text UNIQUE,direction text,message_type text,content jsonb,status text,sent_at timestamptz,created_at timestamptz DEFAULT NOW(),campaign_id uuid);
    CREATE TEMP TABLE contacts(id uuid,phone_number text,first_name text,last_name text,segment text,deleted_at timestamptz,panel text,linea int,linea_sub text);
@@ -45,11 +50,12 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
  })
  beforeEach(async()=>{
   mediaMocks.token.mockReset().mockResolvedValue('private-token')
+  mocks.reaction.mockReset().mockImplementation(async()=>({messageId:'wamid.sent-reaction.'+crypto.randomUUID()}))
   mediaMocks.download.mockReset().mockResolvedValue({bytes:Buffer.from('test-image'),mime:'image/webp'})
   await db.query('SAVEPOINT test_case')
   mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'admin',is_super_admin:false}});mocks.lines.mockResolvedValue([id(10)])
   await db.query(`INSERT INTO cloud_numbers VALUES('10001',$1),('10002',$2)`,[id(10),id(11)])
-  await db.query(`INSERT INTO whatsapp_lines VALUES($1,'Difusion 1','a'),($2,'Difusion 2','b')`,[id(10),id(11)])
+  await db.query(`INSERT INTO whatsapp_lines(id,display_name,line_key) VALUES($1,'Difusion 1','a'),($2,'Difusion 2','b')`,[id(10),id(11)])
   await db.query(`INSERT INTO cloud_conversations(id,phone_number_id,contact_phone,last_message_preview) VALUES('${id(1)}','10001','+${phone}','[button]'),('${id(2)}','10002','+5491100000002','hidden');`)
   await db.query(`INSERT INTO whatsapp_messages(id,phone_number,message_body,direction,status,created_at,evolution_message_id) VALUES($1,$2,'[template:test]','outbound','delivered',NOW()-interval '2 minutes','wamid.out')`,[id(100),phone])
   await db.query(`INSERT INTO contacts VALUES('${id(20)}','+${phone}','Prueba',NULL,NULL,NULL,'royal',NULL,NULL);`)
@@ -300,6 +306,108 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
    expect((await (await windowGET(request('?phone='+phone))).json()).window.expiresAt).toBeNull()
    await db.query('UPDATE contacts SET deleted_at=NOW()')
    expect((await windowGET(request('?phone='+phone))).status).toBe(403)
+ })
+
+ const reactionRequest=(messageId:string,emoji:string,requestId=id(600))=>new NextRequest('https://panel.test/api/conversations/reactions',{
+  method:'POST',body:JSON.stringify({messageId,emoji,requestId}),headers:{'Content-Type':'application/json'},
+ })
+ const targetId=async()=> (await db.query("SELECT id FROM cloud_messages WHERE wamid='wamid.button'")).rows[0].id as string
+ it('sends, replaces and removes only our reaction on the original line, with a durable duplicate fence',async()=>{
+  const messageId=await targetId()
+  for(const [index,emoji] of ['👍','❤️',''].entries()) {
+   const response=await reactPOST(reactionRequest(messageId,emoji,id(600+index)))
+   expect(response.status).toBe(200)
+   expect(mocks.reaction).toHaveBeenLastCalledWith(expect.objectContaining({line_id:id(10),phone_number_id:'10001',target_wamid:'wamid.button',phone_number:'+'+phone}),emoji)
+   const messages=(await(await GET(request('?phone='+phone))).json()).messages
+   expect(messages).toHaveLength(2)
+   expect(messages.find((m:{id:string})=>m.id===messageId).reactions).toEqual(emoji?[{actor:'self',emoji}]:[])
+  }
+  expect((await reactPOST(reactionRequest(messageId,'',id(602)))).status).toBe(200)
+  expect(mocks.reaction).toHaveBeenCalledTimes(3)
+  expect((await reactPOST(reactionRequest(messageId,'🔥',id(602)))).status).toBe(409)
+ })
+ it('preserves the accepted reaction when a later delivery fails',async()=>{
+  const messageId=await targetId()
+  await reactPOST(reactionRequest(messageId,'👍'))
+  await reactPOST(reactionRequest(messageId,'❤️',id(601)))
+  await db.query("UPDATE whatsapp_messages SET status='failed' WHERE id=$1",[id(601)])
+  const messages=(await(await GET(request('?phone='+phone))).json()).messages
+  expect(messages.find((m:{id:string})=>m.id===messageId)).toMatchObject({reactions:[{actor:'self',emoji:'👍'}],reaction_error:'WhatsApp no pudo aplicar la última reacción.'})
+ })
+ it('keeps unknown provider outcomes fenced and never automatically resends them',async()=>{
+  mocks.reaction.mockRejectedValue(new CloudSendOutcomeUnknownError())
+  const messageId=await targetId()
+  expect((await reactPOST(reactionRequest(messageId,'👍'))).status).toBe(503)
+  expect((await reactPOST(reactionRequest(messageId,'👍'))).status).toBe(409)
+  expect(mocks.reaction).toHaveBeenCalledTimes(1)
+  expect((await db.query('SELECT status FROM whatsapp_messages WHERE id=$1',[id(600)])).rows[0].status).toBe('queued')
+ })
+ it('reconciles a provider echo that arrives before the send response without a duplicate reaction',async()=>{
+  const messageId=await targetId()
+  mocks.reaction.mockImplementation(async()=>{
+   await db.query(`INSERT INTO whatsapp_messages(id,phone_number,message_body,direction,status,evolution_message_id,metadata)
+     VALUES($1,$2,'[Reacción]','outbound','sent','wamid.early-echo',$3::jsonb)`,
+     [id(700),phone,JSON.stringify({kind:'reaction',line_id:id(10),target_wamid:'wamid.button',emoji:'👍'})])
+   return {messageId:'wamid.early-echo'}
+  })
+  expect((await reactPOST(reactionRequest(messageId,'👍'))).status).toBe(200)
+  expect((await db.query('SELECT metadata FROM whatsapp_messages WHERE id=$1',[id(600)])).rows[0].metadata.duplicate_of).toBe(id(700))
+  const messages=(await(await GET(request('?phone='+phone))).json()).messages
+  expect(messages.find((m:{id:string})=>m.id===messageId).reactions).toEqual([{actor:'self',emoji:'👍'}])
+  await db.query("UPDATE whatsapp_messages SET status='failed' WHERE id=$1",[id(700)])
+  const after=(await(await GET(request('?phone='+phone))).json()).messages
+  expect(after.find((m:{id:string})=>m.id===messageId).reactions).toEqual([])
+ })
+ it('blocks viewers, inaccessible contacts and lines, missing origins, expired targets and invalid emoji before sending',async()=>{
+  const messageId=await targetId()
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'viewer',sectors:['conversations','send']}})
+  expect((await reactPOST(reactionRequest(messageId,'👍'))).status).toBe(403)
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'admin'}})
+  expect((await reactPOST(reactionRequest(messageId,'text'))).status).toBe(400)
+  expect((await reactPOST(reactionRequest(messageId,'👍❤️'))).status).toBe(400)
+  expect((await reactPOST(reactionRequest(id(100),'👍'))).status).toBe(404)
+  mocks.lines.mockResolvedValue([])
+  expect((await reactPOST(reactionRequest(messageId,'👍'))).status).toBe(404)
+  mocks.lines.mockResolvedValue([id(10)])
+  await db.query("UPDATE cloud_messages SET sent_at=NOW()-interval '31 days' WHERE id=$1",[messageId])
+  expect((await reactPOST(reactionRequest(messageId,'👍'))).status).toBe(409)
+  await db.query('UPDATE contacts SET deleted_at=NOW()')
+  expect((await reactPOST(reactionRequest(messageId,'👍'))).status).toBe(404)
+  expect(mocks.reaction).not.toHaveBeenCalled()
+ })
+ it('receives reactions, replacements and removals without new bubbles, unread counts or a service window',async()=>{
+  const messageId=await targetId()
+  const start=Math.floor(Date.now()/1000)-30
+  const event=(n:number,emoji:string)=>({id:'wamid.react.'+n,from:phone,type:'reaction' as const,timestamp:String(start+n),reaction:{message_id:'wamid.button',emoji}})
+  await conversationRepository.receiveReaction('10001','+'+phone,event(1,'❤️'),'inbound')
+  await conversationRepository.receiveReaction('10001','+'+phone,event(1,'❤️'),'inbound')
+  let messages=(await(await GET(request('?phone='+phone))).json()).messages
+  expect(messages).toHaveLength(2)
+  expect(messages.find((m:{id:string})=>m.id===messageId).reactions).toEqual([{actor:'contact',emoji:'❤️'}])
+  await conversationRepository.receiveReaction('10001','+'+phone,{...event(3,''),reaction:{message_id:'wamid.button'}},'inbound')
+  await conversationRepository.receiveReaction('10001','+'+phone,event(2,'😂'),'inbound') // out of order
+  await conversationRepository.receiveReaction('10001','+'+phone,event(4,'🔥'),'echo')
+  messages=(await(await GET(request('?phone='+phone))).json()).messages
+  expect(messages.find((m:{id:string})=>m.id===messageId).reactions).toEqual([{actor:'self',emoji:'🔥'}])
+  const conv=(await db.query('SELECT * FROM cloud_conversations WHERE id=$1',[id(1)])).rows[0]
+  expect(conv.unread_count).toBe(0);expect(conv.window_expires_at).toBeNull();expect(conv.last_message_preview).toBe('[button]')
+  expect((await(await GET(request())).json()).conversations[0].last_message).toBe('Mas información')
+ })
+ it('does not leak reactions from another line or attach them to an unrelated contact',async()=>{
+  const event={id:'wamid.hidden-reaction',from:phone,type:'reaction' as const,timestamp:String(Math.floor(Date.now()/1000)),reaction:{message_id:'wamid.button',emoji:'🔥'}}
+  await conversationRepository.receiveReaction('10002','+'+phone,event,'inbound')
+  await conversationRepository.receiveReaction('10001','+5491199999999',{...event,id:'wamid.wrong-contact'},'inbound')
+  const messages=(await(await GET(request('?phone='+phone))).json()).messages
+  expect(messages.every((m:{reactions:unknown[]})=>m.reactions.length===0)).toBe(true)
+ })
+ it('resolves legacy duplicates and newly logged manual replies through their exact source line',async()=>{
+  await db.query(`UPDATE whatsapp_messages SET metadata=jsonb_build_object('line_id',$1::text) WHERE id=$2`,[id(10),id(100)])
+  expect((await reactPOST(reactionRequest(id(100),'👍'))).status).toBe(200)
+  expect(mocks.reaction).toHaveBeenCalledWith(expect.objectContaining({target_wamid:'wamid.out',line_id:id(10)}),'👍')
+  await db.query(`INSERT INTO whatsapp_messages(id,phone_number,message_body,direction,status,evolution_message_id)
+    VALUES($1,$2,'Mas información','inbound','received','wamid.button')`,[id(101),phone])
+  expect((await reactPOST(reactionRequest(id(101),'❤️',id(601)))).status).toBe(200)
+  expect(mocks.reaction).toHaveBeenLastCalledWith(expect.objectContaining({target_wamid:'wamid.button',phone_number_id:'10001'}),'❤️')
  })
 
 })
