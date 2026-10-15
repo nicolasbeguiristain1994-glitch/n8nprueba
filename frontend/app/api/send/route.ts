@@ -12,6 +12,7 @@ import { getAccessibleLineIds } from '@/lib/line-visibility'
 import { findConversationReplyLine } from '@/lib/conversation-reply-line'
 
 type LogEntry = {
+  created_at: string
   metadata?: Record<string,unknown>
   phone_number:         string
   message_body:         string
@@ -126,7 +127,9 @@ export async function POST(req: NextRequest) {
           ? sendViaCloud(line, phone, payload, campaign_id ?? undefined)
           : sendViaEvolution(line, phone, messageStr, sticker ? sticker_data!.replace(/^data:image\/webp;base64,/,'') : media_url || null, sticker ? 'sticker' : undefined))
 
+      const sentAt = new Date().toISOString()
       logs.push({
+        created_at: sentAt,
         phone_number:         phone,
         message_body:         sticker ? '[Sticker]' : messageStr,
         metadata: {media_type:sticker?'sticker':media_url?'image':'text',sticker_preview:preview,line_id:line.id},
@@ -135,10 +138,11 @@ export async function POST(req: NextRequest) {
         campaign_id:          campaign_id ?? '',
         error_detail:         '',
       })
-      results.push({ phone, status: 'sent', id: messageId })
+      results.push({ phone, status: 'sent', id: messageId, sent_at: sentAt })
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e)
       logs.push({
+        created_at: new Date().toISOString(),
         phone_number:         phone,
         message_body:         messageStr,
         status:               'failed',
@@ -165,13 +169,13 @@ export async function POST(req: NextRequest) {
            x.status::message_status,
            NULLIF(x.evolution_message_id, ''),
            NULLIF(x.campaign_id, '')::uuid,
-           CASE WHEN x.status = 'sent'   THEN NOW() ELSE NULL END,
-           CASE WHEN x.status = 'failed' THEN NOW() ELSE NULL END,
+           CASE WHEN x.status = 'sent'   THEN x.created_at ELSE NULL END,
+           CASE WHEN x.status = 'failed' THEN x.created_at ELSE NULL END,
            NULLIF(x.error_detail, ''),
-           NOW(), NOW(), COALESCE(x.metadata,'{}'::jsonb)
+           x.created_at, NOW(), COALESCE(x.metadata,'{}'::jsonb)
          FROM jsonb_to_recordset($1::jsonb)
               AS x(phone_number text, message_body text, status text,
-                   evolution_message_id text, campaign_id text, error_detail text, metadata jsonb)`,
+                   evolution_message_id text, campaign_id text, error_detail text, metadata jsonb, created_at timestamptz)`,
         [JSON.stringify(logs)]
       )
 

@@ -42,6 +42,17 @@ describe('manual replies preserve the incoming business number', () => {
     expect(mocks.select).not.toHaveBeenCalled()
   })
 
+  it('returns the activity time persisted for a successful reply', async () => {
+    const body = await (await POST(request())).json()
+    const result = body.results[0]
+    expect(Number.isFinite(Date.parse(result.sent_at))).toBe(true)
+    const insert = mocks.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO whatsapp_messages'))!
+    const [log] = JSON.parse(insert[1][0])
+    expect(log.created_at).toBe(result.sent_at)
+    expect(log.evolution_message_id).toBe(result.id)
+    expect(insert[0]).toContain('x.created_at, NOW()')
+  })
+
   it('replies from the receiving number even when no lines allow campaigns', async () => {
     mocks.eligible.mockResolvedValue([])
     expect((await (await POST(request())).json()).results[0].status).toBe('sent')

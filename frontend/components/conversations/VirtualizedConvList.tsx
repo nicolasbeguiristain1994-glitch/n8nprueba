@@ -1,5 +1,5 @@
 'use client'
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ConversationItem } from './ConversationItem'
 import type { Conv } from '@/lib/scoring/conversation-scoring'
@@ -22,12 +22,23 @@ export function VirtualizedConvList({ items, selected, onSelect, selectedCampaig
     overscan:        6,
   })
 
+  const first = items[0]
+  const firstActivity = first ? `${first.phone_number}:${first.last_at}` : ''
+  const previousFirstActivity = useRef(firstActivity)
+  useEffect(() => {
+    const changed = previousFirstActivity.current !== firstActivity
+    previousFirstActivity.current = firstActivity
+    if (changed && first?.phone_number === selected && first.last_direction === 'outbound') {
+      virtualizer.scrollToOffset(0)
+    }
+  }, [firstActivity, first?.phone_number, first?.last_direction, selected, virtualizer])
+
   if (items.length === 0) {
     return <p className="text-sm text-muted-foreground text-center py-10">Sin conversaciones</p>
   }
 
   return (
-    <div ref={parentRef} className="overflow-y-auto flex-1">
+    <div ref={parentRef} role="region" aria-label="Lista de conversaciones" className="overflow-y-auto flex-1">
       <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
         {virtualizer.getVirtualItems().map(row => {
           const c = items[row.index]

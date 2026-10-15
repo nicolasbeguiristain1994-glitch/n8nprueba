@@ -2,9 +2,10 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { fetchJson } from '@/lib/fetchJson'
 import {
-  applyFilter, priorityScore,
+  applyFilter,
   type Conv, type Message, type Filter, type LevelFilter, type CampaignOption,
 } from '@/lib/scoring/conversation-scoring'
+import { activityTime, compareConversationActivity, conversationActivity, type ConversationActivity } from '@/lib/conversation-activity'
 import { useRealTime, type RealtimeStatus, type SseEvent } from './useRealTime'
 import { useDesktopNotifications } from './useDesktopNotifications'
 
@@ -49,6 +50,25 @@ export function useConversations() {
   const applyViewed = useCallback((conv: Conv): Conv =>
     conv.last_message_key && viewedMessages.current.has(conv.last_message_key)
       ? { ...conv, is_unread: false } : conv, [])
+  // Keep the newest observed message across sends, message reads and inbox polls.
+  // An inbox request started before a send must not undo that confirmed activity.
+  const activities = useRef(new Map<string, ConversationActivity>())
+  const applyActivity = useCallback((conv: Conv): Conv => {
+    const known = activities.current.get(conv.phone_number)
+    if (known && activityTime(known.last_at) > activityTime(conv.last_at)) {
+      return applyViewed({ ...conv, ...known })
+    }
+    activities.current.set(conv.phone_number, conversationActivity(conv))
+    return applyViewed(conv)
+  }, [applyViewed])
+  const recordActivity = useCallback((phone: string, activity: ConversationActivity) => {
+    const known = activities.current.get(phone)
+    if (!known || activityTime(activity.last_at) >= activityTime(known.last_at)) {
+      activities.current.set(phone, conversationActivity(activity))
+      setConvs(prev => prev.map(applyActivity))
+      setSelectedSnapshot(prev => prev?.phone_number === phone ? applyActivity(prev) : prev)
+    }
+  }, [applyActivity])
   const listRequestRef = useRef(0)
   const loadedCountRef = useRef(0)
   const listInFlight = useRef<{ scope: string; controller: AbortController; queued: boolean } | null>(null)
@@ -89,7 +109,7 @@ export function useConversations() {
         const d = results[0]
         const merged = [...new Map(results.flatMap(page => page.conversations || []).map(c => [c.phone_number, c])).values()]
         setLoadError(null)
-        setConvs(merged.map(applyViewed))
+        setConvs(merged.map(applyActivity))
         loadedCountRef.current = merged.length
         setTotalConvs(d.total || 0)
         setCampaigns(d.campaigns || [])
@@ -103,7 +123,7 @@ export function useConversations() {
         setLoading(false); setLoadingMore(false)
         if (pending.queued && !document.hidden) refresh()
       })
-  }, [listUrl, scopeKey, applyViewed])
+  }, [listUrl, scopeKey, applyActivity])
 
   const loadMoreConvs = useCallback(() => {
     if (loadingMore) return
@@ -124,7 +144,7 @@ export function useConversations() {
           const existing = new Set(prev.map(c => c.phone_number))
           const merged = [...prev, ...incoming.filter(c => !existing.has(c.phone_number))]
           loadedCountRef.current = merged.length
-          return merged.map(applyViewed)
+          return merged.map(applyActivity)
         })
         setTotalConvs(d.total || 0)
       })
@@ -136,7 +156,7 @@ export function useConversations() {
         setLoadingMore(false)
         if (pending.queued && !document.hidden) loadConvs()
       })
-  }, [convs.length, loadingMore, listUrl, scopeKey, loadConvs, applyViewed])
+  }, [convs.length, loadingMore, listUrl, scopeKey, loadConvs, applyActivity])
 
   const loadMessages = useCallback(function refreshMessages(phone: string, scroll = false): void {
     if (scroll) { setMessagesLoading(true); setMessagesError(null) }
@@ -154,6 +174,13 @@ export function useConversations() {
       .then(d => {
         if (!isCurrent()) return
         setMessagesError(null)
+        const latest = d.messages?.at(-1)
+        if (latest && activityTime(latest.created_at)) recordActivity(phone, {
+          last_message: latest.message_body, last_direction: latest.direction,
+          last_status: latest.status, last_at: latest.created_at,
+          last_message_id: latest.id, last_message_key: latest.view_key || latest.id,
+          is_unread: latest.direction === 'inbound',
+        })
         setMessages(prev => {
           const next = d.messages || []
           if (scroll || next.length !== prev.length)
@@ -172,7 +199,7 @@ export function useConversations() {
         setMessagesLoading(false)
         if (pending.queued && !document.hidden) refreshMessages(phone, pending.queuedScroll)
       })
-  }, [])
+  }, [recordActivity])
 
   // Acknowledge only after the loaded message is rendered in the visible chat.
   // The stable provider key also survives a Cloud message being mirrored into
@@ -285,6 +312,11 @@ export function useConversations() {
       const response=await fetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phones:[phone],message:'[Sticker]',media_type:'sticker',sticker_data:url,sticker_token:token})})
       const data=await response.json()
       if(!response.ok || data.results?.[0]?.status!=='sent')throw new Error(data.error || data.results?.[0]?.error || 'No se pudo confirmar el envío del sticker.')
+      recordActivity(phone, {
+        last_message: '[Sticker]', last_direction: 'outbound', last_status: 'sent',
+        last_at: data.results[0].sent_at || new Date().toISOString(),
+        last_message_key: data.results[0].id, is_unread: false,
+      })
       if(selectedRef.current===phone)loadMessages(phone,true)
       loadConvs();return true
     }catch(e){if(selectedRef.current===phone)setSendError(e instanceof Error?e.message:'Error al enviar');return false}
@@ -312,19 +344,20 @@ export function useConversations() {
     // A reply may finish after the operator opens another chat. Keep that chat
     // and its draft intact, including when the previous reply fails.
     const result = data.results?.[0]
-    const accepted = res.ok && result?.status !== 'error'
+    const accepted = res.ok && result?.status === 'sent'
     if (accepted && drafts.current[selected] === msgText) delete drafts.current[selected]
-    if (selectedRef.current !== selected) { loadConvs(); return }
+    if (accepted) {
+      recordActivity(selected, {
+        last_message: msgText, last_direction: 'outbound', last_status: 'sent',
+        last_at: result.sent_at || new Date().toISOString(),
+        last_message_key: result.id, is_unread: false,
+      })
+      loadConvs()
+    }
+    if (selectedRef.current !== selected) return
     if (!res.ok) { setSendError(data.error || `Error ${res.status}`); return }
-    if (result?.status === 'error') { setSendError(result.error || 'El envío falló en WhatsApp'); return }
+    if (!accepted) { setSendError(result?.error || 'No se pudo confirmar el envío en WhatsApp'); return }
     setReplyValue(drafts.current[selected] ?? '')
-    // Actualización optimista: subir la conv al tope inmediatamente sin esperar SSE
-    const now = new Date().toISOString()
-    setConvs(prev => prev.map(c =>
-      c.phone_number === selected
-        ? { ...c, last_message: msgText, last_direction: 'outbound', last_at: now, is_unread: false }
-        : c
-    ))
     openConv(selected)
   }
 
@@ -342,12 +375,7 @@ export function useConversations() {
     if (dateFrom)    list = list.filter(c => c.last_at >= dateFrom)
     if (dateTo)      list = list.filter(c => c.last_at <= dateTo + 'T23:59:59.999Z')
     if (followUpOnly) list = list.filter(c => !!c.has_follow_up)
-    // Ordenar siempre por último mensaje más reciente (comportamiento tipo WhatsApp).
-    // priorityScore como desempate secundario para timestamps idénticos.
-    return [...list].sort((a, b) => {
-      const timeDelta = new Date(b.last_at).getTime() - new Date(a.last_at).getTime()
-      return timeDelta !== 0 ? timeDelta : priorityScore(b) - priorityScore(a)
-    })
+    return [...list].sort(compareConversationActivity)
   }, [convs, filter, search, dateFrom, dateTo, followUpOnly])
 
   const selectedConv = convs.find(c => c.phone_number === selected) ??
