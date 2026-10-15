@@ -13,6 +13,7 @@ export function useConversations() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [messagesError, setMessagesError] = useState<string | null>(null)
+  const [viewFailure, setViewFailure] = useState<{phone: string; message: string} | null>(null)
   const [convs, setConvs]               = useState<Conv[]>([])
   const [totalConvs, setTotalConvs]     = useState(0)
   const [loadingMore, setLoadingMore]   = useState(false)
@@ -43,6 +44,11 @@ export function useConversations() {
   }, [])
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const viewedMessages = useRef(new Set<string>())
+  const viewRequests = useRef(new Map<string, AbortController>())
+  const applyViewed = useCallback((conv: Conv): Conv =>
+    conv.last_message_key && viewedMessages.current.has(conv.last_message_key)
+      ? { ...conv, is_unread: false } : conv, [])
   const listRequestRef = useRef(0)
   const loadedCountRef = useRef(0)
   const listInFlight = useRef<{ scope: string; controller: AbortController; queued: boolean } | null>(null)
@@ -83,7 +89,7 @@ export function useConversations() {
         const d = results[0]
         const merged = [...new Map(results.flatMap(page => page.conversations || []).map(c => [c.phone_number, c])).values()]
         setLoadError(null)
-        setConvs(merged)
+        setConvs(merged.map(applyViewed))
         loadedCountRef.current = merged.length
         setTotalConvs(d.total || 0)
         setCampaigns(d.campaigns || [])
@@ -97,7 +103,7 @@ export function useConversations() {
         setLoading(false); setLoadingMore(false)
         if (pending.queued && !document.hidden) refresh()
       })
-  }, [listUrl, scopeKey])
+  }, [listUrl, scopeKey, applyViewed])
 
   const loadMoreConvs = useCallback(() => {
     if (loadingMore) return
@@ -118,7 +124,7 @@ export function useConversations() {
           const existing = new Set(prev.map(c => c.phone_number))
           const merged = [...prev, ...incoming.filter(c => !existing.has(c.phone_number))]
           loadedCountRef.current = merged.length
-          return merged
+          return merged.map(applyViewed)
         })
         setTotalConvs(d.total || 0)
       })
@@ -130,7 +136,7 @@ export function useConversations() {
         setLoadingMore(false)
         if (pending.queued && !document.hidden) loadConvs()
       })
-  }, [convs.length, loadingMore, listUrl, scopeKey, loadConvs])
+  }, [convs.length, loadingMore, listUrl, scopeKey, loadConvs, applyViewed])
 
   const loadMessages = useCallback(function refreshMessages(phone: string, scroll = false): void {
     if (scroll) { setMessagesLoading(true); setMessagesError(null) }
@@ -168,6 +174,35 @@ export function useConversations() {
       })
   }, [])
 
+  // Acknowledge only after the loaded message is rendered in the visible chat.
+  // The stable provider key also survives a Cloud message being mirrored into
+  // the legacy store. Never clear by phone/time: a newer arrival may be racing us.
+  useEffect(() => {
+    const latest = messages.at(-1)
+    const phone = selected
+    if (!phone || selectedRef.current !== phone || latest?.direction !== 'inbound'
+      || latest.phone_number.replace(/\D/g, '') !== phone.replace(/\D/g, '')) return
+    if (messagesLoading || messagesError || document.hidden || !messagesEndRef.current?.getClientRects().length) return
+    const key = latest.view_key || latest.id
+    if (viewedMessages.current.has(key) || viewRequests.current.has(key)) return
+    const controller = new AbortController()
+    viewRequests.current.set(key, controller)
+    const timeout = setTimeout(() => controller.abort(), 20_000)
+    void fetchJson<{ok: boolean; message_key: string}>('/api/conversations/viewed', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageId: latest.id }), signal: controller.signal,
+    }).then(result => {
+      if (!result.ok || !result.message_key) throw new Error('view_failed')
+      viewedMessages.current.add(result.message_key)
+      setConvs(prev => prev.map(applyViewed))
+      setSelectedSnapshot(prev => prev ? applyViewed(prev) : prev)
+      setViewFailure(prev => prev?.phone === phone ? null : prev)
+    }).catch(() => {
+      if (selectedRef.current === phone) setViewFailure({ phone,
+        message: 'No se pudo marcar la conversación como vista. Se reintentará automáticamente.' })
+    }).finally(() => { clearTimeout(timeout); viewRequests.current.delete(key) })
+  }, [messages, selected, messagesLoading, messagesError, applyViewed])
+
   // Initial load
   useEffect(() => {
     loadedCountRef.current = 0
@@ -183,6 +218,8 @@ export function useConversations() {
   useEffect(() => () => {
     messagesInFlight.current?.controller.abort()
     messagesInFlight.current = null
+    for (const controller of viewRequests.current.values()) controller.abort()
+    viewRequests.current.clear()
   }, [])
 
   // Fallback polling — SSE handles real-time; polling at 15s catches edge cases
@@ -285,7 +322,7 @@ export function useConversations() {
     const now = new Date().toISOString()
     setConvs(prev => prev.map(c =>
       c.phone_number === selected
-        ? { ...c, last_message: msgText, last_direction: 'outbound', last_at: now }
+        ? { ...c, last_message: msgText, last_direction: 'outbound', last_at: now, is_unread: false }
         : c
     ))
     openConv(selected)
@@ -318,7 +355,8 @@ export function useConversations() {
   const hasMore      = convs.length < totalConvs
 
   return {
-    loading, loadError, messagesLoading, messagesError, refreshConversations: loadConvs,
+    loading, loadError, messagesLoading, messagesError,
+    viewError: viewFailure?.phone === selected ? viewFailure.message : null, refreshConversations: loadConvs,
     convs, visible, selected, selectedConv, messages, messagesEndRef,
     reply, setReply, sending, sendError, setSendError,
     filter, setFilter, search, setSearch,

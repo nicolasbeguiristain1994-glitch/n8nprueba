@@ -64,6 +64,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
       CREATE TABLE cloud_numbers(phone_number_id text,whatsapp_line_id uuid);
       CREATE TABLE cloud_conversations(id uuid,contact_phone text);
       CREATE TABLE cloud_messages(id uuid DEFAULT gen_random_uuid(),conversation_id uuid,phone_number_id text,wamid text,direction text,message_type text,content jsonb,status text,sent_at timestamptz,created_at timestamptz DEFAULT now(),campaign_id uuid);
+      CREATE TABLE conversation_message_views(message_key text PRIMARY KEY,viewed_at timestamptz NOT NULL DEFAULT now());
       CREATE TABLE conversation_notes(id uuid DEFAULT gen_random_uuid(),phone text,content text,author_id uuid,author_name text,created_at timestamptz DEFAULT now());
       CREATE TABLE conversation_state(phone_number text,current_flow text,last_activity_at timestamptz,updated_at timestamptz,resolved_at timestamptz,is_escalated bool,escalation_reason text);
       CREATE UNIQUE INDEX ON conversation_state(phone_number) WHERE resolved_at IS NULL;

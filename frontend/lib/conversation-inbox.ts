@@ -19,6 +19,7 @@ export const conversationInboxCte = (messages = CONVERSATION_MESSAGES_CTE, agent
   ), latest_messages AS (
     SELECT DISTINCT ON (REPLACE(phone_number, '+', ''))
       REPLACE(phone_number, '+', '') AS phone_number,
+      id AS last_message_id, COALESCE(NULLIF(evolution_message_id,''),id::text) AS last_message_key,
       message_body AS last_message, direction AS last_direction,
       status AS last_status, created_at AS last_at
     FROM conversation_messages

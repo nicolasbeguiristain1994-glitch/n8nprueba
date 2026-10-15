@@ -3,7 +3,7 @@ import { AgentBadge } from './AgentBadge'
 import { ContactLineBadge } from './ContactLineBadge'
 import { memo } from 'react'
 import {
-  detectIntent, displayName, initials, avatarCls, fmtTime,
+  detectIntent, displayName, initials, avatarCls, fmtTime, isConversationUnread,
   type Conv,
 } from '@/lib/scoring/conversation-scoring'
 import { SegmentBadge, IntentBadge, EscalatedBadge, ProcessBadge, FollowUpBadge } from './PriorityBadge'
@@ -31,7 +31,7 @@ interface Props {
 
 export const ConversationItem = memo(function ConversationItem({ conv: c, isSelected, onClick, selectedCampaign }: Props) {
   const intent     = detectIntent(c.last_message, c.last_direction)
-  const unread     = c.last_direction === 'inbound'
+  const unread     = isConversationUnread(c)
   const inProcess  = c.conv_flow === 'en_proceso'
 
   return (

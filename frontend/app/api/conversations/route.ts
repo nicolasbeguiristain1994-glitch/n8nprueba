@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
         ${MESSAGE_REACTIONS_JOIN} ORDER BY recent.created_at ASC,recent.id ASC
       `, [lineIds,phone, ...scope.params])
       return NextResponse.json({ messages:messages.map(({metadata,media_id,media_type,line_id,phone_number_id,target_wamid,line_type,message_type,...m})=>({
-        ...m,media_type:media_type ?? metadata?.media_type,
+        ...m,view_key:m.evolution_message_id || m.id,media_type:media_type ?? metadata?.media_type,
         media_url:conversationMediaUrl(m.id,media_id),sticker_preview:metadata?.sticker_preview,
         can_react:canAccess(auth.user,'send','send') && !reactionUnavailable({...m,line_id,target_wamid,line_type,message_type}),
         reaction_unavailable:reactionUnavailable({...m,line_id,target_wamid,line_type,message_type}),
@@ -69,6 +69,9 @@ export async function GET(req: NextRequest) {
     }>(`
       ${conversationInboxCte(scope.sql, 6)}, enriched_page AS (
       SELECT page.*,
+          (page.last_direction='inbound' AND NOT EXISTS (
+            SELECT 1 FROM conversation_message_views viewed WHERE viewed.message_key=page.last_message_key
+          )) AS is_unread,
           assignment.ambiguous AS line_assignment_ambiguous,
           CASE WHEN NOT assignment.ambiguous AND directory.id IS NOT NULL
             THEN jsonb_build_object('label',directory.label,'phone',directory.phone)
@@ -127,7 +130,7 @@ export async function GET(req: NextRequest) {
       campaigns, agents,
       total:    totalCount,
       has_more: offset + PAGE_SIZE < totalCount,
-    })
+    }, { headers: { 'Cache-Control': 'private, no-store' } })
   } catch (e) {
     console.error('[/api/conversations GET]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
