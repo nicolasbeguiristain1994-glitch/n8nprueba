@@ -1,4 +1,4 @@
-import { CAMPAIGN_CONTACT_ACCOUNTS_SQL } from './campaign-contact-accounts'
+import { contactAccountLinksSql } from './campaign-contact-accounts'
 import type { InactivityRange } from './inactivity-range'
 
 export interface ContactMovementRow {
@@ -7,9 +7,10 @@ export interface ContactMovementRow {
   days_inactive: number | null
 }
 
-/** Resolve identity globally, then take the latest carga/retiro across every
- * linked account. A platform audience filter must never hide recent activity. */
-export function contactLastMovementQuery(audience: { sql: string; params: unknown[] }, range?: InactivityRange) {
+/** Identity ambiguity remains global. A platform audience filter must never
+ * hide recent activity on another linked account. Bulk mode aggregates the
+ * history once, instead of looking up transactions for every contact token. */
+export function contactLastMovementQuery(audience: { sql: string; params: unknown[] }, range?: InactivityRange, bulk = false) {
   const params = [...audience.params]
   const bind = (value: unknown) => { params.push(value); return `$${params.length}` }
   const today = "(CURRENT_TIMESTAMP AT TIME ZONE 'America/Argentina/Buenos_Aires')::date"
@@ -18,16 +19,26 @@ export function contactLastMovementQuery(audience: { sql: string; params: unknow
   if (range?.max) bounds.push(`last_movement >= ${today} - ${bind(Number(range.max))}::int`)
   const filter = !range ? '' : range.mode === 'missing'
     ? 'WHERE last_movement IS NULL' : `WHERE ${bounds.join(' AND ')}`
-  return { params, sql: `WITH recipients AS MATERIALIZED (
-    SELECT contacts.id AS contact_id FROM contacts WHERE ${audience.sql}
-  ), linked_accounts AS MATERIALIZED (
-    ${CAMPAIGN_CONTACT_ACCOUNTS_SQL}
-  ), movements AS (
-    SELECT a.contact_id,max(t.fecha) AS last_movement
+  const history = bulk ? `movement_accounts AS MATERIALIZED (
+    SELECT platform,lower(username) AS username_lower,
+      max(fecha) FILTER (WHERE tipo IN ('carga','retiro') AND platform IN ('zeus','bet30','ganamos','argenbet')) AS last_movement,
+      (array_agg(agente ORDER BY fecha_hora_utc DESC,id DESC) FILTER (WHERE source_id IS NOT NULL))[1] AS agente,
+      bool_or(source_id IS NOT NULL) AS has_imported
+    FROM casino_transactions GROUP BY platform,lower(username)
+  ),` : ''
+  const latest = bulk ? `SELECT a.contact_id,max(m.last_movement) AS last_movement
+    FROM linked_accounts a JOIN movement_accounts m USING(platform,username_lower) GROUP BY a.contact_id`
+    : `SELECT a.contact_id,max(t.fecha) AS last_movement
     FROM linked_accounts a JOIN casino_transactions t
       ON t.platform=a.platform AND lower(t.username)=a.username_lower
     WHERE t.tipo IN ('carga','retiro') AND t.platform IN ('zeus','bet30','ganamos','argenbet')
-    GROUP BY a.contact_id
+    GROUP BY a.contact_id`
+  return { params, sql: `WITH ${history} recipients AS MATERIALIZED (
+    SELECT contacts.id AS contact_id FROM contacts WHERE ${audience.sql}
+  ), linked_accounts AS MATERIALIZED (
+    ${contactAccountLinksSql(bulk)}
+  ), movements AS (
+    ${latest}
   ) SELECT r.contact_id,m.last_movement::text,${today}-m.last_movement AS days_inactive
     FROM recipients r LEFT JOIN movements m USING(contact_id) ${filter}` }
 }

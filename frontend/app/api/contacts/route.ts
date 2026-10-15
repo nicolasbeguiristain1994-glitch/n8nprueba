@@ -1,3 +1,4 @@
+import { configureBulkMovementRead, withContactMovementRead } from '@/lib/contact-movement-read'
 import { contactLastMovementQuery, type ContactMovementRow } from '@/lib/contact-last-movement'
 import { broadcastPhone, getLastContactBroadcasts } from '@/lib/contact-broadcast-history'
 import { segmentationSQL } from '@/lib/contact-segmentation'
@@ -60,8 +61,13 @@ export async function GET(req: NextRequest) {
     // Unfiltered pages only inspect their visible contacts, not the entire CRM.
     let movements = movementHistory
     if (rows.length && (!movementHistory.size || movementMode === 'period')) {
-      const lookup = contactLastMovementQuery({ sql: 'contacts.id = ANY($1::uuid[])', params: [rows.map(row => row.id)] })
-      movements = new Map((await contactRead<ContactMovementRow>(lookup.sql, lookup.params)).map(row => [row.contact_id, row]))
+      const bulk = rows.length > 500
+      const lookup = contactLastMovementQuery({ sql: 'contacts.id = ANY($1::uuid[])', params: [rows.map(row => row.id)] }, undefined, bulk)
+      const history = bulk ? await withContactMovementRead(async client => {
+        await configureBulkMovementRead(client)
+        return (await client.query<ContactMovementRow>(lookup.sql, lookup.params)).rows
+      }) : await contactRead<ContactMovementRow>(lookup.sql, lookup.params)
+      movements = new Map(history.map(row => [row.contact_id, row]))
     }
     const contacts = rows.map(row => {
       const last = broadcasts.get(broadcastPhone(row.phone_number))

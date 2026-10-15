@@ -12,6 +12,7 @@ vi.mock('@/lib/app-settings', () => ({ getAppSetting: async () => true }))
 import { POST as importContacts } from '@/app/api/contacts/import/route'
 import { GET as stats } from '@/app/api/contacts/[id]/casino-stats/route'
 import { GET as list } from '@/app/api/contacts/route'
+import { contactLastMovementQuery } from '@/lib/contact-last-movement'
 const url = process.env.CONTACTS_TEST_DATABASE_URL
 
 describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
@@ -222,6 +223,12 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
       expect(exported.contacts).toEqual(listed.contacts)
       expect(selected.ids).toEqual(listed.contacts.map((row:{id:string})=>row.id))
     }
+    for (const range of [{min:'15',max:'60'}, {min:'',max:'',mode:'missing' as const}, undefined]) {
+      const audience={sql:"contacts.deleted_at IS NULL AND 'zeus'=ANY(platforms)",params:[]}
+      const scoped=contactLastMovementQuery(audience,range,false),bulk=contactLastMovementQuery(audience,range,true)
+      const order=(rows:{contact_id:string}[])=>rows.sort((a,b)=>a.contact_id.localeCompare(b.contact_id))
+      expect(order((await c.query(bulk.sql,bulk.params)).rows)).toEqual(order((await c.query(scoped.sql,scoped.params)).rows))
+    }
     const all=await (await list(new NextRequest('http://localhost/api/contacts?plataforma=zeus'))).json()
     const find=(name:string)=>all.contacts.find((row:{first_name:string})=>row.first_name===name)
     const date=(await c.query('SELECT (current_date-2)::text AS date')).rows[0].date
@@ -229,6 +236,19 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
     expect(find('inactive20')).toMatchObject({days_since_last_movement:20})
     expect(find('expired61')).toMatchObject({days_since_last_movement:61})
     expect(find('missing')).toMatchObject({days_since_last_movement:null,last_movement_date:null})
+  })
+
+  it('resolves a broad audience by account batches without treating unknown history as inactivity', async () => {
+    await transaction('inactivewide','zeus',100)
+    await c.query("UPDATE casino_transactions SET fecha=current_date-20")
+    await c.query("INSERT INTO contacts(first_name) VALUES('inactivewide')")
+    await c.query("INSERT INTO contacts(first_name) SELECT 'unknown'||n FROM generate_series(1,501) n")
+    const range=await (await list(new NextRequest('http://localhost/api/contacts?inactividad_desde=15&inactividad_hasta=60'))).json()
+    expect(range.total).toBe(1)
+    expect(range.contacts[0]).toMatchObject({first_name:'inactivewide',days_since_last_movement:20})
+    const missing=await (await list(new NextRequest('http://localhost/api/contacts?movimiento_modo=sin_historial'))).json()
+    expect(missing.total).toBe(501)
+    expect(missing.contacts.every((row:{days_since_last_movement:number|null})=>row.days_since_last_movement===null)).toBe(true)
   })
 
 })

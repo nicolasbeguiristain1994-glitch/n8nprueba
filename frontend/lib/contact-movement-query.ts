@@ -3,8 +3,8 @@ import type { InactivityRange } from './inactivity-range'
 
 /** Same account identity rules as migration 126; only relevant movements and
  * scoped contacts participate in the expensive joins. Ambiguity remains global. */
-export function contactMovementQuery(audience: { sql: string; params: unknown[] }, range: InactivityRange, platform: string) {
-  if (range.mode !== 'period') return contactLastMovementQuery(audience, range)
+export function contactMovementQuery(audience: { sql: string; params: unknown[] }, range: InactivityRange, platform: string, bulk = false) {
+  if (range.mode !== 'period') return contactLastMovementQuery(audience, range, bulk)
   const params = [...audience.params]
   const bind = (value: unknown) => { params.push(value); return `$${params.length}` }
   const period = range.mode === 'period'

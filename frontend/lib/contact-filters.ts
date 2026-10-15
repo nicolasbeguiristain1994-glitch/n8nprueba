@@ -2,7 +2,7 @@ import { hasInactivityFilter } from './inactivity-range'
 import type { ContactMovementRow } from './contact-last-movement'
 import { contactBroadcastClause } from './contact-broadcast'
 import { segmentationSQL } from './contact-segmentation'
-import { getLongRunningClient } from '@/lib/db'
+import { configureBulkMovementRead, withContactMovementRead } from './contact-movement-read'
 import { contactMovementQuery } from '@/lib/contact-movement-query'
 import { readInactivityRange } from '@/lib/contact-inactivity'
 import { contactScope, type VisibilityRole } from '@/lib/contact-visibility'
@@ -88,20 +88,20 @@ export async function resolvedContactFilters(sp: URLSearchParams, user: Paramete
   const movementHistory = new Map<string, ContactMovementRow>()
   if (!hasInactivityFilter(range)) return { ...audience, movementHistory, movementMode: range.mode }
   const platform = sp.get('plataforma') || ''
-  const client = await getLongRunningClient()
-  try {
-    await client.query('BEGIN')
-    await client.query("SET LOCAL statement_timeout='30s'; SET LOCAL lock_timeout='5s'; SET LOCAL TIME ZONE 'America/Argentina/Buenos_Aires'; SET LOCAL work_mem='32MB'; SET LOCAL enable_mergejoin=off")
-    const movementQuery = contactMovementQuery(audience, range, platform)
-    const { rows } = await client.query<ContactMovementRow>(movementQuery.sql, movementQuery.params)
-    for (const row of rows) movementHistory.set(row.contact_id, row)
-    await client.query('COMMIT')
-  } catch (error) {
-    await client.query('ROLLBACK')
-    throw error
-  } finally {
-    await client.end()
-  }
+  const rows = await withContactMovementRead(async client => {
+    // A capped probe avoids expanding a huge set of contact tokens into indexed
+    // transaction lookups, while keeping small agent selections fast.
+    const sample = range.mode === 'period' ? [] : (await client.query(
+      `SELECT contacts.id FROM contacts WHERE ${audience.sql} LIMIT 501`, audience.params,
+    )).rows
+    const bulk = sample.length > 500
+    // JSON account arrays have no per-field statistics. On broad audiences the
+    // planner underestimates username-only links and chooses a quadratic loop.
+    if (bulk) await configureBulkMovementRead(client)
+    const movementQuery = contactMovementQuery(audience, range, platform, bulk)
+    return (await client.query<ContactMovementRow>(movementQuery.sql, movementQuery.params)).rows
+  })
+  for (const row of rows) movementHistory.set(row.contact_id, row)
   audience.params.push([...movementHistory.keys()])
   audience.sql += ` AND contacts.id = ANY($${audience.params.length}::uuid[])`
   return { ...audience, movementHistory, movementMode: range.mode }
