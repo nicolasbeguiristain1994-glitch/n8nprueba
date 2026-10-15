@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
-import { query } from '@/lib/db'
+import { query, withTransaction } from '@/lib/db'
 import { canAccess, checkPermissionWithUser } from '@/lib/permissions'
 import { getAccessibleLineIds } from '@/lib/line-visibility'
 import { scopedConversationMessages } from '@/lib/conversation-messages'
@@ -55,8 +55,19 @@ export async function POST(req: NextRequest) {
     claimed = true
     const result = await sendMessageReaction(target, emoji)
     accepted = true
-    await query(`UPDATE whatsapp_messages SET evolution_message_id=$2,status='sent',sent_at=NOW(),updated_at=NOW()
-      WHERE id=$1 AND status='queued'`, [requestId, result.messageId])
+    await withTransaction(async client => {
+      // Evolution can echo the accepted event before the HTTP response arrives.
+      // Retain the request fence, but project only the provider's unique event.
+      await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', ['reaction-event:'+result.messageId])
+      const existing = await client.query<{id:string;metadata:typeof metadata}>(
+        'SELECT id,metadata FROM whatsapp_messages WHERE evolution_message_id=$1', [result.messageId])
+      const echo = existing.rows[0]
+      if (echo && (echo.metadata?.kind!=='reaction' || echo.metadata.target_wamid!==target.target_wamid
+        || echo.metadata.line_id!==target.line_id || echo.metadata.emoji!==emoji)) throw new CloudSendOutcomeUnknownError()
+      await client.query(`UPDATE whatsapp_messages SET evolution_message_id=$2,status='sent',sent_at=NOW(),updated_at=NOW(),
+        metadata=metadata || $3::jsonb WHERE id=$1 AND status='queued'`,
+        [requestId,echo ? null : result.messageId,JSON.stringify(echo ? {duplicate_of:echo.id} : {})])
+    })
     sseEmitter.emit('update', { source: 'reaction', phone: target.phone_number })
     void audit({ req, action: 'send', resource: 'conversations', metadata: { message_id: messageId, reaction: emoji, line_id: target.line_id } })
     return NextResponse.json({ ok: true })

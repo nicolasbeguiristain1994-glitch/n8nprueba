@@ -28,25 +28,26 @@ export const MESSAGE_REACTIONS_JOIN = `LEFT JOIN LATERAL (
   WITH events AS (
     SELECT cm.id,CASE WHEN cm.direction='inbound' THEN 'contact' ELSE 'self' END AS actor,
       COALESCE(cm.content->'reaction'->>'emoji','') AS emoji,cm.status,
-      COALESCE(cm.sent_at,cm.created_at) AS at
+      COALESCE(cm.sent_at,cm.created_at) AS at,cm.created_at AS received_at
     FROM cloud_messages cm JOIN cloud_conversations cc ON cc.id=cm.conversation_id
     WHERE cm.phone_number_id=reaction_target.phone_number_id AND cm.message_type='reaction'
       AND REPLACE(cc.contact_phone,'+','')=REPLACE(recent.phone_number,'+','')
       AND COALESCE(cm.content->'reaction'->>'message_id',cm.content->'reaction'->>'messageId')=reaction_target.target_wamid
     UNION ALL
     SELECT event.id,CASE WHEN event.direction='inbound' THEN 'contact' ELSE 'self' END,
-      event.metadata->>'emoji',event.status::text,COALESCE(event.sent_at,event.created_at)
+      event.metadata->>'emoji',event.status::text,COALESCE(event.sent_at,event.created_at),event.created_at
     FROM whatsapp_messages event
     WHERE event.phone_number IN (REPLACE(recent.phone_number,'+',''),'+'||REPLACE(recent.phone_number,'+',''))
       AND event.metadata->>'kind'='reaction'
+      AND event.metadata->>'duplicate_of' IS NULL
       AND event.metadata->>'line_id'=reaction_target.line_id::text
       AND event.metadata->>'target_wamid'=reaction_target.target_wamid
   ), accepted AS (
     SELECT DISTINCT ON (actor) actor,emoji FROM events
     WHERE status IN ('sent','delivered','read','received')
-    ORDER BY actor,at DESC,id DESC
+    ORDER BY actor,at DESC,received_at DESC,id DESC
   ) SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('actor',actor,'emoji',emoji) ORDER BY actor)
     FROM accepted WHERE emoji<>''),'[]'::jsonb) AS reactions,
     (SELECT CASE WHEN status='failed' THEN 'WhatsApp no pudo aplicar la última reacción.' END
-     FROM events WHERE actor='self' ORDER BY at DESC,id DESC LIMIT 1) AS reaction_error
+     FROM events WHERE actor='self' ORDER BY at DESC,received_at DESC,id DESC LIMIT 1) AS reaction_error
 ) reaction_state ON true`

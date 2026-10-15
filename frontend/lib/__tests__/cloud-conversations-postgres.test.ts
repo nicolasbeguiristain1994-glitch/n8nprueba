@@ -50,7 +50,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
  })
  beforeEach(async()=>{
   mediaMocks.token.mockReset().mockResolvedValue('private-token')
-  mocks.reaction.mockReset().mockResolvedValue({messageId:'wamid.sent-reaction'})
+  mocks.reaction.mockReset().mockImplementation(async()=>({messageId:'wamid.sent-reaction.'+crypto.randomUUID()}))
   mediaMocks.download.mockReset().mockResolvedValue({bytes:Buffer.from('test-image'),mime:'image/webp'})
   await db.query('SAVEPOINT test_case')
   mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'admin',is_super_admin:false}});mocks.lines.mockResolvedValue([id(10)])
@@ -341,6 +341,22 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect((await reactPOST(reactionRequest(messageId,'👍'))).status).toBe(409)
   expect(mocks.reaction).toHaveBeenCalledTimes(1)
   expect((await db.query('SELECT status FROM whatsapp_messages WHERE id=$1',[id(600)])).rows[0].status).toBe('queued')
+ })
+ it('reconciles a provider echo that arrives before the send response without a duplicate reaction',async()=>{
+  const messageId=await targetId()
+  mocks.reaction.mockImplementation(async()=>{
+   await db.query(`INSERT INTO whatsapp_messages(id,phone_number,message_body,direction,status,evolution_message_id,metadata)
+     VALUES($1,$2,'[Reacción]','outbound','sent','wamid.early-echo',$3::jsonb)`,
+     [id(700),phone,JSON.stringify({kind:'reaction',line_id:id(10),target_wamid:'wamid.button',emoji:'👍'})])
+   return {messageId:'wamid.early-echo'}
+  })
+  expect((await reactPOST(reactionRequest(messageId,'👍'))).status).toBe(200)
+  expect((await db.query('SELECT metadata FROM whatsapp_messages WHERE id=$1',[id(600)])).rows[0].metadata.duplicate_of).toBe(id(700))
+  const messages=(await(await GET(request('?phone='+phone))).json()).messages
+  expect(messages.find((m:{id:string})=>m.id===messageId).reactions).toEqual([{actor:'self',emoji:'👍'}])
+  await db.query("UPDATE whatsapp_messages SET status='failed' WHERE id=$1",[id(700)])
+  const after=(await(await GET(request('?phone='+phone))).json()).messages
+  expect(after.find((m:{id:string})=>m.id===messageId).reactions).toEqual([])
  })
  it('blocks viewers, inaccessible contacts and lines, missing origins, expired targets and invalid emoji before sending',async()=>{
   const messageId=await targetId()
