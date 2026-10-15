@@ -57,7 +57,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
       CREATE TABLE contact_lists(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name text,description text,filters jsonb,owned_by uuid,updated_by uuid,source text,created_at timestamptz DEFAULT now());
       CREATE TABLE contact_list_members(list_id uuid,contact_id uuid,PRIMARY KEY(list_id,contact_id));
       CREATE TABLE campaigns(id uuid PRIMARY KEY,name text,owned_by uuid,list_id uuid,prospect_list_id uuid);
-      CREATE TABLE campaign_recipients(campaign_id uuid,contact_id uuid,prospect_id uuid,phone_number text,status text,failed_at timestamptz,error_detail text);
+      CREATE TABLE campaign_recipients(campaign_id uuid,contact_id uuid,prospect_id uuid,phone_number text,status text,failed_at timestamptz,error_detail text,sent_at timestamptz);
       CREATE TABLE prospects(id uuid,phone_number text,first_name text,last_name text);
       CREATE TABLE prospect_list_members(prospect_list_id uuid,prospect_id uuid);
       CREATE TABLE whatsapp_messages(id uuid DEFAULT gen_random_uuid(),phone_number text,message_body text,direction text,status text,created_at timestamptz DEFAULT now(),evolution_message_id text,campaign_id uuid,sent_at timestamptz,delivered_at timestamptz,read_at timestamptz,failed_at timestamptz,error_detail text);
