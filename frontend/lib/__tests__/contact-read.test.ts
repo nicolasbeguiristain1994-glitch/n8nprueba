@@ -8,7 +8,7 @@ import { NextRequest } from 'next/server'
 vi.mock('@/lib/permissions', () => ({ checkPermissionWithUser: async () => ({ ok: true, user: { role: 'admin', user_id: 'test', can_download_contacts: true } }) }))
 vi.mock('@/lib/audit', () => ({ audit: vi.fn() }))
 vi.mock('@/lib/app-settings', () => ({ getAppSetting: async () => true }))
-vi.mock('@/lib/contact-filters', () => ({ resolvedContactFilters: async () => ({sql:'deleted_at IS NULL',params:[]}), ContactFilterError: class extends Error {} }))
+vi.mock('@/lib/contact-filters', () => ({ resolvedContactFilters: async () => ({sql:'deleted_at IS NULL',params:[],movementHistory:new Map()}), ContactFilterError: class extends Error {} }))
 beforeEach(() => vi.resetAllMocks())
 describe('Contact read timeout recovery', () => {
   it('returns a successful read without retrying', async () => {
@@ -17,12 +17,12 @@ describe('Contact read timeout recovery', () => {
     expect(db.query).toHaveBeenCalledTimes(1)
   })
   it('recovers the default page after the observed query read timeout', async () => {
-    db.query.mockRejectedValueOnce(new Error('Query read timeout')).mockResolvedValueOnce([{id:'one'}]).mockResolvedValueOnce([{count:'225328'}])
+    db.query.mockRejectedValueOnce(new Error('Query read timeout')).mockResolvedValueOnce([{id:'one'}]).mockResolvedValueOnce([{count:'225328'}]).mockResolvedValueOnce([{contact_id:'one',days_inactive:20,last_movement:'2026-09-25'}])
     const response = await GET(new NextRequest('http://localhost/api/contacts'))
     expect(response.status).toBe(200)
-    expect(await response.json()).toMatchObject({contacts:[{id:'one'}],total:225328,page:1,limit:50})
+    expect(await response.json()).toMatchObject({contacts:[{id:'one',days_since_last_movement:20,last_movement_date:'2026-09-25'}],total:225328,page:1,limit:50})
     expect(db.query.mock.calls[1]).toEqual(db.query.mock.calls[0])
-    expect(db.query).toHaveBeenCalledTimes(3)
+    expect(db.query).toHaveBeenCalledTimes(4)
   })
   it('recovers a count cancelled by PostgreSQL statement timeout', async () => {
     db.query.mockRejectedValueOnce(Object.assign(new Error('canceling statement due to statement timeout'),{code:'57014'})).mockResolvedValueOnce([{count:'5'}])
