@@ -7,6 +7,7 @@ import { PageHeader } from '@/components/layout/PageHeader'
 import { cn } from '@/lib/utils'
 import { Send, Loader2, Smile, ArrowLeft, PanelRight } from 'lucide-react'
 import { useConversations } from '@/hooks/useConversations'
+import { isConversationUnread } from '@/lib/scoring/conversation-scoring'
 import { useKeyboardShortcuts } from '@/lib/keyboard-shortcuts'
 import { VirtualizedConvList }    from '@/components/conversations/VirtualizedConvList'
 import { ConversationFilters }    from '@/components/conversations/ConversationFilters'
@@ -20,7 +21,7 @@ import { EmojiPicker }            from '@/components/conversations/EmojiPicker'
 
 export default function Conversations() {
   const {
-    loading, loadError, messagesLoading, messagesError, refreshConversations, refreshMessages,
+    loading, loadError, messagesLoading, messagesError, viewError, refreshConversations, refreshMessages,
     convs, visible, selected, selectedConv, messages, messagesEndRef,
     reply, setReply, sending, sendError, setSendError,
     filter, setFilter, search, setSearch,
@@ -79,7 +80,7 @@ export default function Conversations() {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 md:gap-3">
       <div className={cn('shrink-0', mobilePanel !== 'list' && 'hidden lg:block')}>
-      <PageHeader title="Conversaciones" description={`${convs.length}${totalConvs > convs.length ? ` de ${totalConvs}` : ''} hilos · ${convs.filter(c => c.last_direction === 'inbound').length} sin responder`} />
+      <PageHeader title="Conversaciones" description={`${convs.length}${totalConvs > convs.length ? ` de ${totalConvs}` : ''} hilos · ${convs.filter(isConversationUnread).length} sin responder`} />
       </div>
 
       <div className={cn('grid min-h-0 flex-1 grid-rows-[minmax(0,1fr)] gap-3 lg:grid-cols-[300px_minmax(0,1fr)]', selected && detailsOpen && 'xl:grid-cols-[300px_minmax(0,1fr)_280px]')}>
@@ -143,6 +144,7 @@ export default function Conversations() {
 
                 {/* Área de mensajes */}
                 <div role="region" aria-label="Mensajes de la conversación" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 md:p-4 space-y-2 bg-background">
+                  {viewError && <p role="alert" className="p-3 text-sm text-destructive">{viewError}</p>}
                   {messagesError && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{messagesError}<button className="ml-2 underline" onClick={() => openConv(selected)}>Reintentar</button></p>}
                   {messagesLoading ? <p role="status" className="pt-10 text-center text-sm text-muted-foreground">Cargando mensajes…</p> : messagesError && messages.length === 0 ? null : messages.length === 0
                     ? <p className="text-center text-muted-foreground text-sm pt-10">Sin mensajes aún</p>

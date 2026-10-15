@@ -13,6 +13,7 @@ vi.mock('@/lib/audit',()=>({audit:vi.fn()}))
 vi.mock('@/lib/line-visibility',()=>({getAccessibleLineIds:mocks.lines}))
 import { GET as windowGET } from '@/app/api/conversations/window/route'
 import { GET } from '@/app/api/conversations/route'
+import { POST as viewedPOST } from '@/app/api/conversations/viewed/route'
 import { POST as reactPOST } from '@/app/api/conversations/reactions/route'
 import { CloudSendOutcomeUnknownError } from '@/lib/campaign-distributor'
 import { GET as mediaGET } from '@/app/api/conversations/media/route'
@@ -44,7 +45,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
    CREATE TEMP TABLE contact_tags(contact_id uuid,tag text);
    CREATE TEMP TABLE conversation_state(phone_number text,is_escalated bool,escalation_reason text,current_flow text,resolved_at timestamptz);
    CREATE TEMP TABLE blacklist(phone_number_normalized text,removed_at timestamptz);
-   CREATE TEMP TABLE conversation_notes(phone text,content text);`)
+   CREATE TEMP TABLE conversation_message_views(message_key text PRIMARY KEY,viewed_at timestamptz NOT NULL DEFAULT now());
+      CREATE TEMP TABLE conversation_notes(phone text,content text);`)
   mocks.query.mockImplementation(async(sql,params)=>(await db.query(sql,params)).rows)
   mocks.transaction.mockImplementation(fn=>fn(db))
  })
@@ -65,6 +67,48 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
  })
  afterEach(async()=>{await db.query('ROLLBACK TO SAVEPOINT test_case')})
  afterAll(async()=>{if(db){await db.query('ROLLBACK');await db.end()}})
+ const viewed = (messageId: string) => viewedPOST(new NextRequest('https://panel.test/api/conversations/viewed', {
+  method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({messageId}),
+ }))
+ it('clears a viewed message durably without changing its direction, then reopens on a new arrival', async () => {
+  const first = (await (await GET(request())).json()).conversations[0]
+  expect(first.is_unread).toBe(true)
+  expect((await viewed(first.last_message_id)).status).toBe(200)
+  expect((await viewed(first.last_message_id)).status).toBe(200)
+  const read = (await (await GET(request())).json()).conversations[0]
+  expect(read).toMatchObject({is_unread:false,last_direction:'inbound',last_message:'Mas información'})
+  expect((await db.query('SELECT count(*)::int AS n FROM conversation_message_views')).rows[0].n).toBe(1)
+  await db.query(`INSERT INTO cloud_messages(id,conversation_id,phone_number_id,wamid,direction,message_type,content,status,sent_at)
+    VALUES($1,$2,'10001','wamid.new','inbound','text','{"text":{"body":"Otra consulta"}}','delivered',NOW())`,[id(750),id(1)])
+  // A late/retried acknowledgement of the earlier message must not hide the new one.
+  await viewed(first.last_message_id)
+  expect((await (await GET(request())).json()).conversations[0]).toMatchObject({is_unread:true,last_message_id:id(750)})
+ })
+ it('retains the acknowledgement when the same provider message is mirrored to the legacy store', async () => {
+  const first = (await (await GET(request())).json()).conversations[0]
+  await viewed(first.last_message_id)
+  await db.query(`INSERT INTO whatsapp_messages(id,phone_number,message_body,direction,status,created_at,evolution_message_id)
+    VALUES($1,$2,'Mas información','inbound','received',NOW(),'wamid.button')`,[id(751),phone])
+  expect((await (await GET(request())).json()).conversations[0]).toMatchObject({is_unread:false,last_message_id:id(751)})
+ })
+ it('supports legacy inbound messages with no provider ID', async () => {
+  await db.query(`INSERT INTO whatsapp_messages(id,phone_number,message_body,direction,status,created_at)
+    VALUES($1,$2,'Gracias','inbound','received',NOW())`,[id(752),phone])
+  expect((await viewed(id(752))).status).toBe(200)
+  expect((await (await GET(request())).json()).conversations[0].is_unread).toBe(false)
+ })
+ it('rejects hidden lines, inaccessible contacts, outbound and invalid messages', async () => {
+  const hidden = (await db.query("SELECT id FROM cloud_messages WHERE wamid='wamid.hidden'")).rows[0].id
+  expect((await viewed(hidden)).status).toBe(404)
+  expect((await viewed(id(100))).status).toBe(404)
+  expect((await viewed('invalid')).status).toBe(400)
+  const first = (await (await GET(request())).json()).conversations[0]
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(901),role:'operator',sectors:['conversations'],allowed_agents:['other']}})
+  expect((await viewed(first.last_message_id)).status).toBe(404)
+  mocks.auth.mockResolvedValue({ok:false,response:new Response('{}',{status:401})})
+  expect((await viewed(first.last_message_id)).status).toBe(401)
+  expect((await db.query('SELECT count(*)::int AS n FROM conversation_message_views')).rows[0].n).toBe(0)
+ })
  it.each(['image','sticker','audio'])('renders stored inbound %s through an authorized URL, including legacy duplicates',async type=>{
   const mime=type==='audio'?'audio/ogg':'image/webp'
   mediaMocks.download.mockResolvedValue({bytes:Buffer.from('test-media'),mime})

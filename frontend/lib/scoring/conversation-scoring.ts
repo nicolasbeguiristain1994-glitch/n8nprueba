@@ -29,6 +29,9 @@ export interface Conv {
   phone_number:       string
   last_message:       string
   last_direction:     string
+  last_message_id?:   string
+  last_message_key?:  string
+  is_unread?:         boolean
   last_status:        string
   last_at:            string
   is_escalated?:      boolean
@@ -51,6 +54,7 @@ export interface Conv {
 }
 
 export interface Message {
+  view_key?: string
   reactions?: import('@/lib/message-reactions').MessageReaction[]
   can_react?: boolean
   reaction_unavailable?: string | null
@@ -127,6 +131,10 @@ export const FILTER_DEFS: ConvFilterDef[] = [
   { key: 'unread',    label: 'Sin responder' },
 ]
 
+export function isConversationUnread(conv: Conv): boolean {
+  return conv.last_direction === 'inbound' && (conv.is_unread ?? true)
+}
+
 export function applyFilter(convs: Conv[], filter: Filter): Conv[] {
   switch (filter) {
     case 'super_vip': return convs.filter(c => c.segment === 'super_vip')
@@ -134,7 +142,7 @@ export function applyFilter(convs: Conv[], filter: Filter): Conv[] {
     case 'urgent':    return convs.filter(c => detectIntent(c.last_message, c.last_direction) === 'urgent')
     case 'complaint': return convs.filter(c => detectIntent(c.last_message, c.last_direction) === 'complaint' || !!c.is_escalated)
     case 'escalated': return convs.filter(c => !!c.is_escalated)
-    case 'unread':    return convs.filter(c => c.last_direction === 'inbound')
+    case 'unread':    return convs.filter(isConversationUnread)
     default:          return convs
   }
 }
