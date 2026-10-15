@@ -43,10 +43,10 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('Priority broadcasts: r
         created_at timestamptz DEFAULT now());
       CREATE TABLE campaign_audience_members(campaign_id uuid REFERENCES campaigns(id),contact_id uuid,PRIMARY KEY(campaign_id,contact_id));
       CREATE TABLE campaign_recipients(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),campaign_id uuid,contact_id uuid,phone_number text,
-        status text DEFAULT 'pending',error_detail text);
+        status text DEFAULT 'pending',error_detail text,sent_at timestamptz);
       CREATE UNIQUE INDEX ON campaign_recipients(campaign_id,contact_id) WHERE contact_id IS NOT NULL;
       CREATE TABLE whatsapp_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),campaign_id uuid,contact_id uuid,campaign_recipient_id uuid,
-        direction text DEFAULT 'outbound',status text DEFAULT 'queued',sent_at timestamptz,error_detail text);
+        direction text DEFAULT 'outbound',status text DEFAULT 'queued',sent_at timestamptz,error_detail text,phone_number text,created_at timestamptz DEFAULT now());
       CREATE TABLE contact_send_history(contact_id uuid,sent_at timestamptz);`)
     await pool.query('BEGIN;'+readFileSync('../db/migrations/147_priority_broadcasts.sql','utf8').replaceAll('public.',schema+'.').replace('search_path=public,','search_path='+schema+',')+'COMMIT;')
     await pool.query("CREATE FUNCTION casino_monthly_value_tier(numeric) RETURNS text LANGUAGE sql AS $$ SELECT CASE WHEN $1>=3200000 THEN 'super_vip' WHEN $1>=500000 THEN 'vip' WHEN $1>=100000 THEN 'medio' ELSE 'bajo' END $$")
@@ -74,6 +74,13 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('Priority broadcasts: r
   async function message(batch:string,status='queued') {
     return (await pool.query('INSERT INTO whatsapp_messages(campaign_id,contact_id,status) VALUES($1,$2,$3) RETURNING id',[batch,contact,status])).rows[0].id
   }
+  it('shows the last real broadcast independently of priority marks and frequency reservations', async () => {
+    await pool.query("INSERT INTO whatsapp_messages(campaign_id,phone_number,status,sent_at) VALUES($1,'5491100000001','sent',now()-interval '4 days 2 hours'),($1,'5491100000001','queued',NULL)",[randomUUID()])
+    await pool.query('INSERT INTO contact_send_history VALUES($1,now())',[contact])
+    const result = await new UserPrioritizationRepository().getPrioritizedContacts({access:{role:'admin',userId:owner},runId:run})
+    expect(result.data.find(row=>row.id===contact)).toMatchObject({daysSinceLastBroadcast:4,lastBroadcastAt:expect.any(String)})
+    expect(result.data.find(row=>row.id===second)).toMatchObject({daysSinceLastBroadcast:null,lastBroadcastAt:null})
+  })
   it('deduplicates concurrent repeated requests and freezes the exact chosen audience',async()=>{
     const data=selection([contact,contact,second])
     const results=await Promise.all([preparePriorityBroadcast(user,data),preparePriorityBroadcast(user,data)])

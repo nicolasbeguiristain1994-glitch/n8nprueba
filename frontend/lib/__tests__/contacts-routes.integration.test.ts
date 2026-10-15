@@ -37,19 +37,30 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
         segment contact_segment,linea int,linea_sub text,status text,gaming text,opt_in_marketing bool,opt_in_sms bool,
         platform_source text,created_at timestamptz,updated_at timestamptz,total_deposits int,total_withdrawals int,last_deposit_at timestamptz);
       CREATE TABLE contact_tags(id uuid,contact_id uuid,tag text,added_by text,added_at timestamptz,UNIQUE(contact_id,tag));
-      CREATE TABLE contact_list_members(contact_id uuid,list_id uuid);`)
+      CREATE TABLE contact_list_members(contact_id uuid,list_id uuid);
+      CREATE TABLE whatsapp_messages(phone_number text,campaign_id uuid,direction text,status text,sent_at timestamptz,created_at timestamptz);
+      CREATE TABLE campaign_recipients(phone_number text,campaign_id uuid,status text,sent_at timestamptz);`)
     await c.query(readFileSync('../db/migrations/126_casino_excel_import.sql','utf8'))
     await createRequire(import.meta.url)('../../../tests/helpers/segmentation-profile-schema.cjs').install(c,schema)
     await c.query(readFileSync('../db/migrations/133_contact_movement_lookup.sql','utf8').split('-- Run outside')[0])
     db.query.mockImplementation(async (sql, params) => (await c.query(sql, params)).rows)
     db.getLongRunningClient.mockImplementation(async () => ({ query: c.query.bind(c), end: async () => {} }))
   })
-  beforeEach(async () => { await c.query('TRUNCATE contacts,contact_tags,contact_list_members,casino_players,casino_transactions CASCADE') })
+  beforeEach(async () => { await c.query('TRUNCATE contacts,contact_tags,contact_list_members,casino_players,casino_transactions,whatsapp_messages,campaign_recipients CASCADE') })
   afterAll(async () => { if (c) { await c.query('ROLLBACK'); await c.query(`DROP SCHEMA ${schema} CASCADE`); await c.end() } })
   const request = (body: object) => new NextRequest('http://localhost/api/contacts/import',{ method:'POST',body:JSON.stringify(body) })
   const transaction = (username: string, platform: string, amount: number) => c.query(`INSERT INTO casino_transactions(username,platform,agente,tipo,monto,fecha,source_id)
     VALUES($1::text,$2::text,'royal','carga',$3,current_date-2,$1::text || $2::text)`,[username,platform,amount])
 
+  it('returns broadcast age for each visible contact and null for contacts never sent', async () => {
+    await c.query("INSERT INTO contacts(first_name,phone_number) VALUES('sent','+5491111111111'),('never','+5491111111112')")
+    await c.query("INSERT INTO whatsapp_messages VALUES('5491111111111',gen_random_uuid(),'outbound','delivered',now()-interval '3 days 1 hour',now())")
+    const response = await list(new NextRequest('http://localhost/api/contacts'))
+    expect(response.status).toBe(200)
+    const data = await response.json()
+    expect(data.contacts.find((row: {first_name:string}) => row.first_name==='sent')).toMatchObject({days_since_last_broadcast:3,last_broadcast_at:expect.any(String)})
+    expect(data.contacts.find((row: {first_name:string}) => row.first_name==='never')).toMatchObject({days_since_last_broadcast:null,last_broadcast_at:null})
+  })
   it('imports explicit username and computes matching level and tags',async()=>{
     await transaction('realaccount','zeus',500000.25)
     const res=await importContacts(request({panel:'royal',contacts:[{phone:'+5491111111111',name:'Nombre visible',casino_username:'realaccount'}]}))

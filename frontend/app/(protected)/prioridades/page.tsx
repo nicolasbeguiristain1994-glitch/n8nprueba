@@ -1,4 +1,5 @@
 'use client'
+import { BroadcastAge } from '@/components/contacts/BroadcastAge'
 import { PriorityExplanationDialog, priorityMoney } from '@/components/priorities/PriorityExplanationDialog'
 import { isFreshCalculation, type PriorityExplanation } from '@/lib/user-prioritization/priority-details'
 import { PriorityBroadcastComposer, broadcastRequest, type BroadcastContact } from '@/components/priorities/PriorityBroadcastComposer'
@@ -20,6 +21,8 @@ import { useCurrentUser } from '@/lib/useCurrentUser'
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
 interface PrioritizedContact {
+  lastBroadcastAt?: string | null
+  daysSinceLastBroadcast?: number | null
   explanation?: PriorityExplanation
   id:                  string
   phoneNumber:         string
@@ -467,6 +470,7 @@ export default function PrioridadesPage() {
                   {tab==='pending'&&canSend&&<th className="px-3 py-3 w-10"><input type="checkbox" aria-label="Seleccionar contactos de esta página" checked={allSelected} onChange={selectPage} disabled={!eligiblePage.length} className="h-4 w-4 accent-primary" /></th>}
                   <th className="px-4 py-3 text-right w-16">Score</th>
                   <th className="px-4 py-3 text-left">Contacto</th>
+                  <th className="px-4 py-3 text-right min-w-36 w-36">Días desde última difusión</th>
                   <th className="px-4 py-3 text-left w-24">Agente</th>
                   <th className="px-4 py-3 text-left">Segmento</th>
                   <th className="px-4 py-3 text-left w-24">Nivel comercial</th>
@@ -495,6 +499,10 @@ export default function PrioridadesPage() {
                       <div className="text-xs text-muted-foreground">{c.phoneNumber}</div>
                       <button className="mt-1 text-xs font-medium text-primary hover:underline" onClick={()=>setDetail(c)} aria-label={`Ver detalle de ${contactName(c)}`}>Ver detalle</button>
                       {tab==='pending'&&c.broadcastState&&c.broadcastState!=='cancelled'&&c.broadcastState!=='sent'&&<span className="mt-1 inline-flex rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">{{pending:'En difusión',failed:'Falló · revisar difusión',skipped:'Omitido · revisar difusión',review:'Pendiente de confirmación'}[c.broadcastState]||'Revisar difusión'}</span>}
+                    </td>
+
+                    <td className="px-4 py-3 text-right">
+                      <BroadcastAge days={c.daysSinceLastBroadcast} sentAt={c.lastBroadcastAt} />
                     </td>
 
                     <td className="px-4 py-3">

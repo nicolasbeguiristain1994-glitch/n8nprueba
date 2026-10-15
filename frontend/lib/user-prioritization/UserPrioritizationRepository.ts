@@ -1,3 +1,4 @@
+import { broadcastPhone, getLastContactBroadcasts } from '@/lib/contact-broadcast-history'
 import { segmentationSQL } from '@/lib/contact-segmentation'
 import { relativeRanking, recentPriorityOrderSQL, type RelativeRanking } from './priority-details'
 import type { SegmentationProfile } from '@/lib/contact-segmentation'
@@ -34,6 +35,8 @@ interface MetricsDbRow {
 }
 
 interface PrioritizedDbRow {
+  last_broadcast_at?: string | null
+  days_since_last_broadcast?: number | null
   segmentation_profile: SegmentationProfile | null
   segment_is_manual: boolean
   value_score: number
@@ -417,6 +420,12 @@ export class UserPrioritizationRepository {
       LIMIT $${p++} OFFSET $${p++}
     `
     const rows = await this.query<PrioritizedDbRow>(dataSql, [...params, pageSize, offset])
+    const broadcasts = await getLastContactBroadcasts(rows.map(row => row.phone_number), this.query)
+    for (const row of rows) {
+      const last = broadcasts.get(broadcastPhone(row.phone_number))
+      row.last_broadcast_at = last?.lastBroadcastAt ?? null
+      row.days_since_last_broadcast = last?.daysSinceLastBroadcast ?? null
+    }
     const rankings = await this.getRelativeRankingsForContacts(rows.map(r => r.id))
     for (const row of rows) row.relative_ranking = rankings.get(row.id) ?? null
     // Fetch queue state only for this page, never for the entire scored audience.
@@ -734,6 +743,8 @@ function mapPrioritized(row: PrioritizedDbRow): PrioritizedContact {
     daysSinceLastMessage: row.days_since_last_message !== null && row.days_since_last_message !== undefined
       ? parseInt(String(row.days_since_last_message), 10)
       : null,
+    lastBroadcastAt:     row.last_broadcast_at ?? null,
+    daysSinceLastBroadcast: row.days_since_last_broadcast ?? null,
     isBroadcasted:       row.is_broadcasted,
     broadcastedAt:       row.broadcasted_at ? new Date(row.broadcasted_at) : null,
     broadcastedBy:       row.broadcasted_by ?? null,

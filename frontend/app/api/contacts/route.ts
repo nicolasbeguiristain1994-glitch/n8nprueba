@@ -1,3 +1,4 @@
+import { broadcastPhone, getLastContactBroadcasts } from '@/lib/contact-broadcast-history'
 import { segmentationSQL } from '@/lib/contact-segmentation'
 import { canAssignPanels, grantCreatedContacts } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
@@ -38,7 +39,7 @@ export async function GET(req: NextRequest) {
     const limit = download ? 100000 : 50
     const offset = (download ? from : 0) + (page - 1) * limit
     const profile = segmentationSQL()
-    const rows = await contactRead(`
+    const rows = await contactRead<{ phone_number: string } & Record<string, unknown>>(`
       SELECT id, phone_number, first_name, last_name, email,
         status, opt_in_marketing AS opt_in, created_at, ${profile.segment} AS segment, segment_is_manual, segmentation_profile, ${profile.quality} AS data_quality, panel, gaming::text AS gaming, linea, linea_sub,
         last_deposit_at, total_deposits, total_withdrawals, casino_accounts,
@@ -53,7 +54,12 @@ export async function GET(req: NextRequest) {
       ORDER BY created_at DESC, id LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `, [...params, limit, offset])
     const [{ count }] = await contactRead<{ count: string }>(`SELECT COUNT(*) FROM contacts WHERE ${sql}`, params)
-    return NextResponse.json({ contacts: rows, total: Number(count), page, limit })
+    const broadcasts = await getLastContactBroadcasts(rows.map(row => row.phone_number), contactRead)
+    const contacts = rows.map(row => {
+      const last = broadcasts.get(broadcastPhone(row.phone_number))
+      return { ...row, last_broadcast_at: last?.lastBroadcastAt ?? null, days_since_last_broadcast: last?.daysSinceLastBroadcast ?? null }
+    })
+    return NextResponse.json({ contacts, total: Number(count), page, limit })
   } catch (e) {
     if (e instanceof ContactReadUnavailableError) return NextResponse.json({ error: e.message }, { status: 503, headers: { 'Retry-After': '3' } })
     if (e instanceof ContactFilterError) return NextResponse.json({ error: e.message }, { status: 400 })

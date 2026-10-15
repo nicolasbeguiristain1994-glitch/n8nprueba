@@ -65,6 +65,8 @@ export interface ContactPriorityScore {
 // ── DTO público para el listado de operadores ─────────────────────────────────
 
 export interface PrioritizedContact {
+  lastBroadcastAt?: string | null
+  daysSinceLastBroadcast?: number | null
   explanation?: PriorityExplanation
   id:                  string
   phoneNumber:         string

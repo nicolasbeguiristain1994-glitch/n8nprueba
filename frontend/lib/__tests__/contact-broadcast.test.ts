@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Client } from 'pg'
+import { getLastContactBroadcasts } from '../contact-broadcast-history'
 import { contactBroadcastClause } from '../contact-broadcast'
 import { readBroadcastRange, broadcastParams } from '../broadcast-range'
 import { savedAudienceParams } from '../dynamic-audiences'
@@ -42,6 +43,30 @@ describe.skipIf(!url)('Broadcast history on PostgreSQL',()=>{
   })
   afterAll(async()=>{if(c){await c.query('ROLLBACK');await c.query(`DROP SCHEMA ${schema} CASCADE`);await c.end()}})
   async function ids(q:string){const params:unknown[]=[];const sql=contactBroadcastClause(sp(q),v=>{params.push(v);return `$${params.length}`});return (await c.query(`SELECT id FROM contacts WHERE ${sql} ORDER BY id`,params)).rows.map(r=>r.id)}
+  it('finds the last successful broadcast across lines and campaigns without counting failures or chats', async () => {
+    const phones = (await c.query('SELECT phone_number FROM contacts ORDER BY id')).rows.map(row => row.phone_number)
+    const history = await getLastContactBroadcasts(phones, async (sql, params) => (await c.query(sql, params)).rows)
+    expect([...history.keys()].sort()).toEqual([1,4,5,6,8,9].map(n => phones[n-1].replace('+','')))
+    expect(history.get(phones[3].replace('+',''))?.lastBroadcastAt).toBe('2026-10-06T03:00:00.000Z')
+    expect(history.get(phones[8].replace('+',''))?.lastBroadcastAt).toBe('2026-10-06T12:00:00.000Z')
+  })
+  it('keeps sends older than 180 days, returns full elapsed days and excludes future timestamps', async () => {
+    await c.query('BEGIN')
+    try {
+      await c.query(`TRUNCATE whatsapp_messages,campaign_recipients;
+        INSERT INTO whatsapp_messages SELECT phone_number,1,'outbound','sent',CURRENT_TIMESTAMP - interval '181 days 23 hours',CURRENT_TIMESTAMP FROM contacts WHERE id=1;
+        INSERT INTO whatsapp_messages SELECT phone_number,1,'outbound','delivered',CURRENT_TIMESTAMP - interval '23 hours',CURRENT_TIMESTAMP FROM contacts WHERE id=2;
+        INSERT INTO whatsapp_messages SELECT phone_number,1,'outbound','read',CURRENT_TIMESTAMP - interval '1 day',CURRENT_TIMESTAMP FROM contacts WHERE id=3;
+        INSERT INTO whatsapp_messages SELECT phone_number,1,'outbound','sent',CURRENT_TIMESTAMP + interval '1 day',CURRENT_TIMESTAMP FROM contacts WHERE id=4;
+        INSERT INTO whatsapp_messages SELECT phone_number,1,'outbound','queued',NULL,CURRENT_TIMESTAMP FROM contacts WHERE id=5;
+        INSERT INTO campaign_recipients SELECT phone_number,1,'sent',CURRENT_TIMESTAMP FROM contacts WHERE id=5;`)
+      const phones = (await c.query('SELECT phone_number FROM contacts ORDER BY id')).rows.map(row => row.phone_number)
+      const history = await getLastContactBroadcasts(phones, async (sql, params) => (await c.query(sql, params)).rows)
+      expect(history.size).toBe(3)
+      expect(phones.slice(0,3).map(phone => history.get(phone.replace('+',''))?.daysSinceLastBroadcast)).toEqual([181,0,1])
+      expect(await getLastContactBroadcasts([], async () => { throw Error('must not query') })).toEqual(new Map())
+    } finally { await c.query('ROLLBACK') }
+  })
   it('includes both Argentine calendar boundaries; only successful outbound campaigns and legacy evidence',async()=>{
     expect(await ids('difusion=sent&difusion_desde=2026-10-06&difusion_hasta=2026-10-06')).toEqual([1,4,8,9])
   })

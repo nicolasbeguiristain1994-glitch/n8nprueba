@@ -1,4 +1,5 @@
 'use client'
+import { BroadcastAge } from '@/components/contacts/BroadcastAge'
 import { SegmentationDetails } from '@/components/contacts/SegmentationDetails'
 import { QUALITY_LABELS, type SegmentationProfile } from '@/lib/contact-segmentation'
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
@@ -51,6 +52,7 @@ const MissingPhoneTab = dynamic(loadMissingPhoneTab, { loading: tabLoading })
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Contact {
+  last_broadcast_at?: string | null; days_since_last_broadcast?: number | null
   id: string; phone_number: string; first_name: string; last_name: string
   email: string; status: string; opt_in: boolean; created_at: string; segment: string; panel: string; gaming: string; linea: number | null; linea_sub: string | null
   segmentation_profile?: SegmentationProfile | null; data_quality?: string; segment_is_manual?: boolean
@@ -1002,6 +1004,14 @@ export default function Contacts() {
         )
       },
       meta: { mobileLabel: 'Nombre' },
+    },
+    {
+      id: 'days_since_last_broadcast',
+      accessorKey: 'days_since_last_broadcast',
+      header: () => <span className="block w-32 whitespace-normal">Días desde última difusión</span>,
+      enableSorting: false,
+      cell: ({ row }) => <BroadcastAge days={row.original.days_since_last_broadcast} sentAt={row.original.last_broadcast_at} />,
+      meta: { mobileLabel: 'Días desde última difusión' },
     },
     {
       id: 'panel',
