@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
       const respuestas_detalle=(await campaignResponseBreakdowns([id])).get(id)
       return NextResponse.json({kpis:{...rows[0],...effectivenessKpis},efectivos:efectivos_detalle,respuestas_detalle,series,timezone:STATS_TIMEZONE,metricScope:'campaign_recipients'})
     }
-    const campaigns=await campaignStatistics(range.from,range.to,owner,req.nextUrl.searchParams.get('status')||'',req.nextUrl.searchParams.get('q')||'',true)
+    const campaigns=await campaignStatistics(range.from,range.to,owner,req.nextUrl.searchParams.get('status')||'',req.nextUrl.searchParams.get('q')||'',true,'created_at')
     return NextResponse.json({campaigns,timezone:STATS_TIMEZONE,metricScope:'campaign_recipients'})
   } catch (error) {
     // Keep diagnostics useful without logging contact data or SQL parameters.

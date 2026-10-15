@@ -16,7 +16,8 @@ export const STATS_FROM = "($1::date::timestamp AT TIME ZONE 'America/Argentina/
 export const STATS_TO = "(($2::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')"
 export const STATS_DAY = "(wm.created_at AT TIME ZONE 'America/Argentina/Buenos_Aires')::date"
 
-export async function campaignStatistics(from: string, to: string, owner: string | null, status = '', search = '', includeEffectiveness = false): Promise<Record<string, unknown>[]> {
+export async function campaignStatistics(from: string, to: string, owner: string | null, status = '', search = '', includeEffectiveness = false, sortBy: 'sent' | 'created_at' = 'sent'): Promise<Record<string, unknown>[]> {
+  const orderBy = sortBy === 'created_at' ? 'c.created_at DESC,c.id DESC' : 'stats.sent DESC,c.created_at DESC,c.id DESC'
   const rows = await query<Record<string, unknown>>(`
     SELECT c.id,c.name,c.type,c.status,c.created_at,c.completed_at,
       stats.sent AS enviados,stats.delivered AS entregados,stats.read AS leidos,
@@ -28,7 +29,7 @@ export async function campaignStatistics(from: string, to: string, owner: string
     WHERE c.created_at >= ${STATS_FROM} AND c.created_at < ${STATS_TO}
       AND ($3::uuid IS NULL OR c.owned_by=$3)
       AND ($4::text='' OR c.status::text=$4) AND ($5::text='' OR c.name ILIKE $6)
-    ORDER BY stats.sent DESC,c.created_at DESC LIMIT 100`, [from,to,owner,status,search,`%${search}%`])
+    ORDER BY ${orderBy} LIMIT 100`, [from,to,owner,status,search,`%${search}%`])
   if (!includeEffectiveness) return rows
   const ids = rows.map(row => row.id as string)
   const [effectiveness, responses] = await Promise.all([campaignEffectiveness(ids), campaignResponseBreakdowns(ids)])

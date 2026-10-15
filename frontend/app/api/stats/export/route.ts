@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   const owner=auth.user.role==='admin'?null:auth.user.user_id
   try {
     const rows:Record<string,unknown>[]= type==='campaigns'
-      ? (await campaignStatistics(range.from,range.to,owner,req.nextUrl.searchParams.get('status')||'',req.nextUrl.searchParams.get('q')||'',true)).map(c=>({
+      ? (await campaignStatistics(range.from,range.to,owner,req.nextUrl.searchParams.get('status')||'',req.nextUrl.searchParams.get('q')||'',true,'created_at')).map(c=>({
         'Campaña':c.name,'Tipo':c.type,'Estado':c.status,'Enviados':c.enviados,'Entregados':c.entregados,'Leídos':c.leidos,'Respuestas':c.respuestas,'Fallidos':c.fallidos,
         'Omitidos':c.omitidos,'Tasa entrega %':c.tasa_entrega,'Tasa lectura %':c.tasa_lectura,
         'Efectivos (24 h)':c.efectivos,'Efectividad %':c.tasa_efectividad,'Cargas (24 h)':c.cargas_24h,
