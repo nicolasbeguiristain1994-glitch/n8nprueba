@@ -405,7 +405,7 @@ describe('sendViaEvolution — API key fallback', () => {
   it('never calls Evolution when the global send gate finds an opt-out', async () => {
     process.env.EVOLUTION_API_KEY = 'test-key'
     consentQuery.mockResolvedValueOnce({rows:[]}).mockResolvedValueOnce({rows:[{blocked:1}]})
-    await expect(sendViaEvolution(evoLine, '+5491100000', 'hola')).rejects.toThrow('Baja global')
+    await expect(sendViaEvolution(evoLine, '+5491100000', 'hola')).rejects.toThrow('Baja registrada')
     expect(mockFetch).not.toHaveBeenCalled()
   })
 

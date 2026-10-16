@@ -504,7 +504,7 @@ export default function AutomatizacionesPage() {
                   rows={5} maxLength={OPT_OUT_MESSAGE_MAX_LENGTH} disabled={systemSaving} aria-describedby="baja-message-help" />
                 <p id="baja-message-help" className="text-xs text-muted-foreground">Se aplicará a las próximas solicitudes de baja. {systemMessage.length}/{OPT_OUT_MESSAGE_MAX_LENGTH} caracteres.</p>
               </div>
-              <p>El contacto queda excluido de campañas en todas las líneas. La confirmación se envía una vez por solicitud.</p>
+              <p>El contacto queda excluido de las campañas del agente al que respondió, en todas sus líneas. Las cuentas de otros agentes conservan sus preferencias. La confirmación se envía una vez por solicitud.</p>
               <p className="text-muted-foreground">Esta respuesta está siempre activa. Podés consultar el mensaje enviado en Conversaciones y la baja en Blacklist.</p>
               {systemError && <p role="alert" className="text-destructive">{systemError}</p>}
               <div className="flex flex-wrap justify-end gap-2">

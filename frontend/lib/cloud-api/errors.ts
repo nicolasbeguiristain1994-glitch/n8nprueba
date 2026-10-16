@@ -24,7 +24,7 @@ export class RateLimitError extends CloudApiError {
 
 export class OptOutError extends CloudApiError {
   constructor(phone: string) {
-    super(`Baja global: el número ${phone} está bloqueado para todos los envíos.`, undefined, 'Global opt-out', undefined, false)
+    super(`Baja registrada: este envío a ${phone} está bloqueado por las preferencias del contacto.`, undefined, 'Contact opt-out', undefined, false)
     this.name = 'OptOutError'
   }
 }
