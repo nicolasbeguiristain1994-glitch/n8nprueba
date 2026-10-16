@@ -367,6 +367,8 @@ export default function Contacts() {
   const [showDownloadModal, setShowDownloadModal] = useState(false)
   const [downloadList, setDownloadList]           = useState<ContactList | null>(null)
   const [selectingAll, setSelectingAll]           = useState(false)
+  const [selectionError, setSelectionError] = useState<string | null>(null)
+  const selectionRequest = useRef<AbortController | null>(null)
   const [repopulating, setRepopulating]         = useState(false)
   const [repopulateResult, setRepopulateResult] = useState<{ total_lists: number; lists: Array<{ nombre: string; members: number; created: boolean }> } | null>(null)
   const [repopulateError, setRepopulateError]   = useState<string | null>(null)
@@ -375,7 +377,7 @@ export default function Contacts() {
   const canCreateCampaign = currentUser?.role === 'admin' || (permissions.campaigns?.includes('create') ?? false)
   const [campaignSelectionError, setCampaignSelectionError] = useState<string | null>(null)
   const startCampaign = () => {
-    if (!canCreateCampaign || !currentUser?.id || !selectedCount) return
+    if (!canCreateCampaign || !currentUser?.id || !selectedCount || selectingAll || loading) return
     try {
       const token = saveCampaignSelection(currentUser.id, selectedIds)
       setCampaignSelectionError(null)
@@ -417,6 +419,9 @@ export default function Contacts() {
   useEffect(() => {
     setRowSelection({})
     selectedPhones.current = {}
+    setSelectionError(null)
+    setSelectingAll(false)
+    return () => { selectionRequest.current?.abort() }
   }, [audienceKey])
 
   const load = useCallback(() => {
@@ -589,20 +594,29 @@ export default function Contacts() {
   }
 
   const selectAllFiltered = async () => {
+    if (selectingAll || loading || !total) return
     const requestedAudience = audienceKey
+    selectionRequest.current?.abort()
+    const controller = new AbortController()
+    selectionRequest.current = controller
     setSelectingAll(true)
+    setSelectionError(null)
     try {
       const q = buildContactParams()
       q.set('select_all', 'true')
-      const d = await fetchJson<{ ids: string[]; phones: string[] }>(`/api/contacts?${q}`)
-      if (activeAudience.current !== requestedAudience) return
+      const d = await fetchJson<{ ids: string[]; phones: string[] }>(`/api/contacts?${q}`, { signal: controller.signal })
+      if (controller.signal.aborted || activeAudience.current !== requestedAudience) return
       d.ids.forEach((id, i) => { selectedPhones.current[id] = d.phones[i] })
       const next: RowSelectionState = {}
       for (const id of d.ids || []) next[id] = true
       setRowSelection(next)
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : 'No se pudo seleccionar la audiencia')
-    } finally { setSelectingAll(false) }
+      if (!controller.signal.aborted && activeAudience.current === requestedAudience) {
+        setSelectionError(e instanceof Error ? e.message : 'No se pudo seleccionar la audiencia. Reintentá.')
+      }
+    } finally {
+      if (selectionRequest.current === controller) setSelectingAll(false)
+    }
   }
 
   // ── Import ────────────────────────────────────────────────────────────────
@@ -1352,11 +1366,6 @@ export default function Contacts() {
           </Button>
         )}
 
-        <Button size="sm" variant="outline" onClick={selectAllFiltered} disabled={selectingAll}
-          className="border-input text-foreground hover:bg-muted">
-          <CheckSquare size={14} className="mr-1" />
-          {selectingAll ? 'Seleccionando…' : 'Seleccionar todos'}
-        </Button>
         {/* Botón Listas — dropdown con todas las listas */}
         <div className="static sm:relative" ref={listsMenuRef}>
           <Button
@@ -1440,11 +1449,6 @@ export default function Contacts() {
             <Compass size={14} className="mr-1" /> Explorar
           </Button>
         )}
-        {canCreateCampaign && <Button size="sm" onClick={startCampaign} disabled={!selectedCount || selectingAll}
-          title={selectedCount ? 'Crear una campaña con los contactos seleccionados' : 'Seleccioná contactos en la tabla'}>
-          <Send size={14} className="mr-1" /> Crear campaña{selectedCount ? ` (${selectedCount.toLocaleString('es-AR')})` : ''}
-        </Button>}
-        {campaignSelectionError && <p role="alert" className="w-full text-sm text-destructive">{campaignSelectionError}</p>}
         {(selectedCount > 0 || hasActiveFilters) && (
           <>
             <Button size="sm" variant="outline"
@@ -1791,6 +1795,28 @@ export default function Contacts() {
         ) : null
       })()}
 
+      <section aria-label="Selección de contactos" className="flex flex-wrap items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
+        <div className="min-w-0 flex-1">
+          <p role="status" className="text-sm font-medium">
+            {loading ? 'Cargando contactos…' : selectedCount > 0
+              ? `${selectedCount.toLocaleString('es-AR')} de ${total.toLocaleString('es-AR')} contactos seleccionados`
+              : `${total.toLocaleString('es-AR')} contactos${hasActiveFilters ? ' filtrados' : ''}`}
+          </p>
+          <p className="text-xs text-muted-foreground">La selección incluye todas las páginas del resultado.</p>
+        </div>
+        <Button size="sm" variant={selectedCount > 0 ? 'outline' : 'default'} onClick={selectAllFiltered}
+          disabled={loading || selectingAll || !total || selectedCount === total}>
+          {selectingAll ? <RefreshCw size={14} className="mr-1 animate-spin" /> : <CheckSquare size={14} className="mr-1" />}
+          {selectingAll ? 'Seleccionando…' : `Seleccionar los ${total.toLocaleString('es-AR')} ${hasActiveFilters ? 'filtrados' : 'contactos'}`}
+        </Button>
+        {canCreateCampaign && <Button size="sm" variant={selectedCount > 0 ? 'default' : 'outline'} onClick={startCampaign}
+          disabled={loading || !selectedCount || selectingAll}>
+          <Send size={14} className="mr-1" /> Crear campaña{selectedCount ? ` (${selectedCount.toLocaleString('es-AR')})` : ''}
+        </Button>}
+        {selectionError && <p role="alert" className="w-full text-sm text-destructive">{selectionError}</p>}
+        {campaignSelectionError && <p role="alert" className="w-full text-sm text-destructive">{campaignSelectionError}</p>}
+      </section>
+
       {/* ── DataTable ── */}
       <DataTable
         data={contacts}
@@ -1822,7 +1848,7 @@ export default function Contacts() {
             selectedCount={ids.length}
             onClearSelection={() => setRowSelection({})}
           >
-            {canCreateCampaign && <Button size="sm" className="h-7 text-xs" onClick={startCampaign} disabled={selectingAll}>
+            {canCreateCampaign && <Button size="sm" className="h-7 text-xs" onClick={startCampaign} disabled={loading || selectingAll}>
               <Send size={13} className="mr-1" /> Crear campaña ({ids.length.toLocaleString('es-AR')})
             </Button>}
             <Button size="sm" variant="outline"

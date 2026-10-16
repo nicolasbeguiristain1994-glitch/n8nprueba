@@ -59,7 +59,7 @@ it('resets pagination and selected contacts when one of several lines is removed
   const user = userEvent.setup()
   await user.click(screen.getByRole('button', { name: 'Página siguiente' }))
   await waitFor(() => expect(lastParams().get('page')).toBe('2'))
-  await user.click(screen.getByRole('button', { name: 'Seleccionar todos' }))
+  await user.click(screen.getByRole('button', { name: 'Seleccionar los 120 filtrados' }))
   await screen.findByRole('toolbar', { name: 'Acciones para 1 elementos seleccionados' })
   const picker = await openLines(user, '2 líneas')
   await user.click(picker.getByRole('checkbox', { name: 'Línea 2' }))
@@ -89,7 +89,7 @@ it('removes the final line filter and restores the remaining filters with global
 it('uses the same multiple-line audience for select-all and export', async () => {
   await mountView(multiple)
   const user = userEvent.setup()
-  await user.click(screen.getByRole('button', { name: 'Seleccionar todos' }))
+  await user.click(screen.getByRole('button', { name: 'Seleccionar los 120 filtrados' }))
   await waitFor(() => expect(lastParams().get('select_all')).toBe('true'))
   expect(lastParams().get('linea')).toBe('2,7')
   await user.click(screen.getByRole('button', { name: 'Descargar' }))
