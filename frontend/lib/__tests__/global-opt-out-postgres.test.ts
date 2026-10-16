@@ -85,6 +85,17 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
   expect(migrationFacts.map(r=>[r.first_name,r.panel,r.phone_number])).toEqual([['juan24z','bigwin','+'+phone],['juan244z','royal','+'+phone]])
   expect(migrationFacts[0].identity_key).toBe(contactAccountKey('bigwin','juan24z','+'+phone))
  })
+ it('keeps namesakes in Bigwin and Imperio separate in account history',async()=>{
+  await pool.query(`INSERT INTO casino_segmentation_players VALUES
+   ('${id(90)}','shareduser','zeus','bigwin'),('${id(91)}','shareduser','ganamos','adminimperio');
+   UPDATE contacts SET casino_accounts='[{"panel":"bigwin","username":"shareduser"}]' WHERE id='${id(2)}';
+   UPDATE contacts SET casino_accounts='[{"panel":"adminimperio","username":"shareduser"}]' WHERE id='${id(3)}';`)
+  const links=async()=>(await pool.query('SELECT contact_id,player_id FROM casino_contact_account_links ORDER BY contact_id')).rows
+  expect(await links()).toEqual([{contact_id:id(2),player_id:id(90)},{contact_id:id(3),player_id:id(91)}])
+  await pool.query(`UPDATE contacts SET casino_accounts='[{"panel":"bigwin","username":"shareduser","platform":"ganamos"}]' WHERE id='${id(2)}'`)
+  expect(await links()).toEqual([{contact_id:id(3),player_id:id(91)}])
+  await pool.query('DELETE FROM casino_segmentation_players')
+ })
  it('records BAJA once under concurrent webhook retries, cancels only that agent',async()=>{
   await Promise.all([recordGlobalOptOut(request),recordGlobalOptOut(request)])
   const rows=(await pool.query('SELECT agent_code,scope_key FROM blacklist')).rows

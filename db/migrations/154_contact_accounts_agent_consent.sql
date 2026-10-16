@@ -136,12 +136,7 @@ DELETE FROM contact_tags t USING contacts c WHERE t.contact_id=c.id AND t.tag LI
 UPDATE contact_lists l SET contact_count=(SELECT count(*) FROM contact_list_members m WHERE m.list_id=l.id);
 CREATE OR REPLACE VIEW casino_contact_account_links WITH (security_invoker = true) AS
 WITH players AS MATERIALIZED (SELECT *, count(*) OVER (PARTITION BY username_lower) AS name_count,
- CASE lower(trim(agente))
- WHEN 'adminroyal' THEN 'royal' WHEN 'adminfara' THEN 'farabet' WHEN 'adminbtc' THEN 'betcoin'
- WHEN 'adminzeus' THEN 'ofizeus' WHEN 'admbigwin' THEN 'bigwin' WHEN 'adminbigwin' THEN 'bigwin'
- WHEN 'adminimperio' THEN 'bigwin' WHEN 'imperio' THEN 'bigwin'
- WHEN 'btcuno' THEN 'betcoin' WHEN 'btcdos' THEN 'farabet' WHEN 'zeus' THEN 'ofizeus'
- WHEN 'zeusroyal' THEN 'royal' ELSE lower(trim(agente)) END AS panel FROM casino_segmentation_players),
+ public.contact_agent_key(agente) AS panel FROM casino_segmentation_players),
 unique_panels AS (
  SELECT username_lower,panel,min(id::text)::uuid AS player_id FROM (
    SELECT username_lower,panel,id FROM players
@@ -153,12 +148,13 @@ tokens AS (
  CROSS JOIN LATERAL regexp_split_to_table(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,''),'[^a-zA-Z0-9_]+') tok
  WHERE c.deleted_at IS NULL AND c.account_username IS NULL AND length(tok)>=4
 ), explicit AS MATERIALIZED (
- SELECT c.id, lower(trim(a->>'username')) AS username, a->>'platform' AS platform, lower(a->>'panel') AS panel
+ SELECT c.id, lower(trim(a->>'username')) AS username, a->>'platform' AS platform, public.contact_agent_key(a->>'panel') AS panel
  FROM contacts c CROSS JOIN LATERAL jsonb_array_elements(c.casino_accounts) a
  WHERE c.deleted_at IS NULL
 )
 SELECT e.id AS contact_id,p.id AS player_id,p.username_lower,p.platform
 FROM explicit e JOIN players p ON p.username_lower=e.username AND p.platform=e.platform
+  AND (e.panel IS NULL OR e.panel=p.panel)
 UNION
 SELECT e.id,p.id,p.username_lower,p.platform FROM explicit e
 JOIN unique_panels up ON up.username_lower=e.username AND up.panel=e.panel
