@@ -28,7 +28,7 @@ vi.mock('next/headers', () => ({ headers: vi.fn() }))
 
 import * as auth from '@/lib/auth'
 import { headers } from 'next/headers'
-import { middleware } from '@/middleware'
+import { routeMiddleware as middleware } from '@/middleware'
 import RootLayout from '@/app/layout'
 import { ThemeProvider } from '@/components/layout/ThemeProvider'
 

@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
-import { middleware } from '../../middleware'
+import { routeMiddleware as middleware } from '../../middleware'
 import { canAccess, effectivePermissions } from '@/lib/permissions'
 import { getSessionFromRequest } from '@/lib/auth'
 
