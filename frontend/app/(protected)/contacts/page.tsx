@@ -418,7 +418,7 @@ export default function Contacts() {
   }, [campaignAudienceKey])
 
   const startCampaign = async () => {
-    if (!canCreateCampaign || !currentUser?.id || !campaignCount || loading || selectingAll || campaignRequest.current) return
+    if (!canCreateCampaign || !currentUser?.id || !campaignCount || loading || loadError || selectingAll || campaignRequest.current) return
     const limitMessage = 'La selección supera 100.000 contactos. Acotá los filtros o seleccioná menos contactos.'
     if (campaignCount > CAMPAIGN_SELECTION_LIMIT) {
       setCampaignSelectionError(limitMessage)
@@ -512,7 +512,15 @@ export default function Contacts() {
         if (request !== contactLoadRequest.current || controller.signal.aborted) return
         setContacts([])
         setTotal(0)
-        setLoadError(e instanceof Error ? e.message : 'Error al cargar contactos')
+        let message = e instanceof Error ? e.message : 'No se pudieron cargar los contactos.'
+        // Keep the server's explanation, without exposing the HTTP/JSON wrapper.
+        if (message.startsWith('HTTP ')) {
+          try {
+            const body = JSON.parse(message.slice(message.indexOf(':') + 1))
+            message = typeof body.error === 'string' ? body.error : 'No se pudieron cargar los contactos. Volvé a intentar.'
+          } catch { message = 'No se pudieron cargar los contactos. Volvé a intentar.' }
+        }
+        setLoadError(message)
       })
       .finally(() => { if (request === contactLoadRequest.current) setLoading(false) })
   }, [buildContactParams, pagination.pageIndex])
@@ -1374,7 +1382,7 @@ export default function Contacts() {
       <PageHeader
         title="Contactos"
         description="Tu base de clientes, organizada y siempre a mano."
-        count={total}
+        count={loading || loadError ? undefined : total}
         actions={
           <>
             <Button variant="outline" size="sm" onClick={load} aria-label="Actualizar contactos">
@@ -1403,7 +1411,7 @@ export default function Contacts() {
           </Button>
         )}
 
-        <Button size="sm" variant="outline" onClick={selectAllFiltered} disabled={selectingAll || preparingCampaign}
+        <Button size="sm" variant="outline" onClick={selectAllFiltered} disabled={loading || !!loadError || selectingAll || preparingCampaign}
           className="border-input text-foreground hover:bg-muted">
           <CheckSquare size={14} className="mr-1" />
           {selectingAll ? 'Seleccionando…' : 'Seleccionar todos'}
@@ -1492,11 +1500,11 @@ export default function Contacts() {
           </Button>
         )}
         {canCreateCampaign && <Button size="sm" onClick={startCampaign}
-          disabled={!campaignCount || loading || selectingAll || preparingCampaign}
+          disabled={!campaignCount || loading || !!loadError || selectingAll || preparingCampaign}
           aria-describedby="campaign-audience-hint">
           <Send size={14} className="mr-1" /> {preparingCampaign ? 'Preparando campaña…' : `Crear campaña${campaignCount ? ` (${campaignCount.toLocaleString('es-AR')})` : ''}`}
         </Button>}
-        {(selectedCount > 0 || hasActiveFilters) && (
+        {!loadError && (selectedCount > 0 || hasActiveFilters) && (
           <>
             <Button size="sm" variant="outline"
               onClick={blacklistSelected}
@@ -1511,7 +1519,7 @@ export default function Contacts() {
             </Button>
           </>
         )}
-        {hasActiveFilters && (
+        {!loadError && hasActiveFilters && (
           <Button size="sm" variant="outline"
             onClick={() => { setListMode('filters'); setShowList(true) }}
             className="border-input text-foreground hover:bg-muted">
@@ -1533,6 +1541,7 @@ export default function Contacts() {
         {canCreateCampaign && <p id="campaign-audience-hint" className="w-full text-xs text-muted-foreground">
           {preparingCampaign ? 'Preparando los contactos para revisar la campaña…'
             : loading ? 'Cargando contactos…'
+            : loadError ? 'No se pudo consultar la cantidad de contactos. Reintentá la carga para continuar.'
             : selectedCount ? `La campaña usará los ${selectedCount.toLocaleString('es-AR')} contactos seleccionados.`
             : hasActiveFilters && total ? `La campaña usará los ${total.toLocaleString('es-AR')} contactos que coinciden con los filtros, de todas las páginas.`
             : hasActiveFilters ? 'No hay contactos que coincidan con los filtros.'
@@ -1543,9 +1552,9 @@ export default function Contacts() {
 
       {/* Errores inline */}
       {loadError && (
-        <div className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-2 text-sm text-destructive flex items-center justify-between">
-          <span>Error al cargar contactos: {loadError}</span>
-          <button onClick={() => setLoadError(null)} className="ml-4 opacity-60 hover:opacity-100">✕</button>
+        <div role="alert" className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-2 text-sm text-destructive flex flex-wrap items-center justify-between gap-2">
+          <span>{loadError}</span>
+          <Button variant="outline" size="sm" onClick={load}>Reintentar</Button>
         </div>
       )}
       {deleteNotice && <p role="status" className="text-sm text-success">{deleteNotice}</p>}
@@ -1882,7 +1891,7 @@ export default function Contacts() {
             selectedCount={ids.length}
             onClearSelection={() => setRowSelection({})}
           >
-            {canCreateCampaign && <Button size="sm" className="h-7 text-xs" onClick={startCampaign} disabled={loading || selectingAll || preparingCampaign}>
+            {canCreateCampaign && <Button size="sm" className="h-7 text-xs" onClick={startCampaign} disabled={loading || !!loadError || selectingAll || preparingCampaign}>
               <Send size={13} className="mr-1" /> Crear campaña ({ids.length.toLocaleString('es-AR')})
             </Button>}
             <Button size="sm" variant="outline"
