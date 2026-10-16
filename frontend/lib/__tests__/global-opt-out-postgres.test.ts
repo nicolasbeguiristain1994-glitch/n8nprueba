@@ -26,17 +26,17 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
   await pool.query(`CREATE SCHEMA ${schema};
    CREATE TABLE users(id uuid PRIMARY KEY,allowed_agents text[] DEFAULT '{}');
    CREATE TABLE campaigns(id uuid PRIMARY KEY);
-   CREATE TABLE contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),external_id text UNIQUE,phone_number text,
+   CREATE TABLE contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),external_id text UNIQUE,phone_number varchar(20),
     first_name text,last_name text,panel text,panels_assigned text[] DEFAULT '{}',casino_accounts jsonb DEFAULT '[]',
     status text DEFAULT 'active',opt_in_marketing bool DEFAULT true,opt_in_sms bool DEFAULT true,do_not_contact bool DEFAULT false,
     segmentation_profile jsonb,total_deposits int,total_withdrawals int,last_deposit_at timestamptz,segment text,segment_is_manual bool DEFAULT false,platform_source text,linea int,linea_sub text,platforms text[],deleted_at timestamptz,created_at timestamptz DEFAULT now(),updated_at timestamptz);
    CREATE UNIQUE INDEX idx_contacts_phone_unique ON contacts(phone_number);
-   CREATE TABLE whatsapp_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),contact_id uuid,campaign_id uuid,campaign_recipient_id uuid,phone_number text,message_body text,direction text,status text,evolution_message_id text,sent_at timestamptz,created_at timestamptz DEFAULT now(),updated_at timestamptz,metadata jsonb);
+   CREATE TABLE whatsapp_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),contact_id uuid,campaign_id uuid,campaign_recipient_id uuid,phone_number varchar(20),message_body text,direction text,status text,evolution_message_id varchar(255),sent_at timestamptz,created_at timestamptz DEFAULT now(),updated_at timestamptz,metadata jsonb);
    CREATE TABLE campaign_recipients(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),campaign_id uuid,contact_id uuid,phone_number text,status text DEFAULT 'pending',line_id uuid,locked_at timestamptz,error_detail text,updated_at timestamptz);
    CREATE TABLE automation_message_jobs(id uuid,phone text,status text,provider text,source_id text,finished_at timestamptz,details text);
    CREATE TABLE cloud_conversations(id uuid PRIMARY KEY,contact_phone text,phone_number_id text,window_expires_at timestamptz);
    CREATE TABLE cloud_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),conversation_id uuid,phone_number_id text,campaign_id uuid,direction text,message_type text,content jsonb,status text,wamid text,queued_at timestamptz,created_at timestamptz DEFAULT now(),sent_at timestamptz,failed_at timestamptz,error_code int,error_title text,error_details text);
-   CREATE TABLE whatsapp_lines(id uuid PRIMARY KEY,evolution_instance text,evolution_url text,line_type text,status text,is_connected bool,sending_enabled bool);
+   CREATE TABLE whatsapp_lines(id uuid PRIMARY KEY,evolution_instance varchar(100),evolution_url text,line_type text,status text,is_connected bool,sending_enabled bool);
    CREATE TABLE cloud_numbers(phone_number_id text,whatsapp_line_id uuid,status text);
    CREATE TABLE operator_contact_visibility(operator_id uuid,contact_id uuid,assigned_by uuid,UNIQUE(operator_id,contact_id));
    CREATE TABLE contact_lists(id uuid PRIMARY KEY,filters jsonb,contact_count int);
@@ -124,6 +124,13 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
    expect(await withGlobalSendGuard(phone,send,{provider:'cloud',sourceId,campaignId:id(21)})).toBe('accepted')
   }
   expect(send).toHaveBeenCalledTimes(3)
+ })
+ it('resolves consent across production varchar and Cloud text phone columns',async()=>{
+  expect(await resolveConsentIdentity(phone,{contactId:id(2)})).toMatchObject({agent:'bigwin'})
+  expect(await resolveConsentIdentity(phone,{provider:'cloud',sourceId:'line-1',messageId:'baja-1'})).toMatchObject({agent:'bigwin'})
+  expect(await resolveConsentIdentity(phone,{campaignId:id(21)})).toMatchObject({agent:'royal'})
+  expect(await resolveConsentIdentity(phone,{})).toMatchObject({agent:null})
+  expect(await isGloballyOptedOut(phone,{provider:'cloud',sourceId:'line-1',messageId:'baja-1'})).toBe(false)
  })
  it('uses the quoted campaign even when another agent sent more recently',async()=>{
   expect(await resolveConsentIdentity(phone,{provider:'cloud',sourceId:'line-1',contextWamid:'bigwin-send'})).toMatchObject({agent:'bigwin',campaignId:id(20)})
