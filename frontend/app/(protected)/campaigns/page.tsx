@@ -1452,7 +1452,7 @@ export default function Campaigns() {
             </>}
 
             </section>
-            {createStep>=2 && <CampaignRoutingPreview
+            {showNew && createStep>=2 && <CampaignRoutingPreview
               audience={contactSelection ? {contact_ids:contactSelection.contactIds}
                 : form.audience_type==='contacts' ? {list_id:form.list_id} : {prospect_list_id:form.prospect_list_id}}
               messageType={useTemplate?'template':'text'} templateId={selectedTemplate} scheduled={!!form.scheduled_at&&schedulerEnabled}
