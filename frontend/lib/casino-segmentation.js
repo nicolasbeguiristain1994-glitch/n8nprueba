@@ -15,7 +15,12 @@ async function prepareSegmentation(client, { contactIds = null, importedOnly = f
   await client.query('CREATE UNIQUE INDEX ON seg_scope(id)')
   await client.query('ANALYZE seg_scope')
   await client.query(`CREATE TEMP TABLE seg_account_links ON COMMIT DROP AS
-    SELECT l.* FROM casino_contact_account_links l JOIN seg_scope s ON s.id=l.contact_id`)
+    SELECT l.* FROM casino_contact_account_links l JOIN seg_scope s ON s.id=l.contact_id
+    JOIN contacts identity_contact ON identity_contact.id=l.contact_id
+    WHERE NULLIF(to_jsonb(identity_contact)->>'account_username','') IS NULL OR EXISTS(
+      SELECT 1 FROM jsonb_array_elements(identity_contact.casino_accounts) a
+      WHERE lower(trim(a->>'username'))=l.username_lower
+        AND ((a->>'platform')=l.platform OR (a->>'platform') IS NULL))`)
   await client.query('CREATE INDEX ON seg_account_links(contact_id)')
   await client.query('CREATE INDEX ON seg_account_links(player_id)')
   await client.query(`CREATE TEMP TABLE seg_sources ON COMMIT DROP AS

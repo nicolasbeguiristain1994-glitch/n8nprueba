@@ -83,13 +83,14 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
   })
 
   const addToBlacklist = () => {
-    if (!confirm('¿Agregar este contacto a la blacklist? Se bloquearán los envíos en todas las líneas.')) return
+    if (!confirm('¿Agregar este contacto a la blacklist? Se bloquearán los envíos de su agente en todas las líneas.')) return
     run('blacklist', async () => {
       const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/blacklist`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: 'Manual desde CRM' }),
       })
       if (res.ok) { flash('blacklist'); onRefresh?.() }
+      else { const error=await res.json().catch(()=>null); window.alert(error?.error || 'No se pudo registrar la baja.') }
     })
   }
 

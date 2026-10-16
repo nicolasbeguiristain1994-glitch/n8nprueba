@@ -29,9 +29,14 @@ export const conversationInboxCte = (messages = CONVERSATION_MESSAGES_CTE, agent
       c.segment::text AS segment, NULLIF(lower(trim(c.panel)), '') AS agent,
       c.linea, c.linea_sub, COALESCE(ch.campaigns, '[]'::jsonb) AS campaigns
     FROM latest_messages lm
-    LEFT JOIN contacts c ON REPLACE(c.phone_number, '+', '') = lm.phone_number
+    LEFT JOIN LATERAL (SELECT m.contact_id FROM whatsapp_messages m
+      WHERE REPLACE(m.phone_number,'+','')=lm.phone_number AND m.direction='outbound'
+        AND m.status IN ('sent','delivered','read') AND m.contact_id IS NOT NULL
+      ORDER BY m.created_at DESC,m.id DESC LIMIT 1) last_account ON true
+    LEFT JOIN contacts c ON REPLACE(c.phone_number, '+', '') = lm.phone_number AND c.deleted_at IS NULL
+      ${agentParam ? `AND ($${agentParam}::text IN ('all','none') OR c.panel=$${agentParam})` : ''}
     LEFT JOIN campaign_history ch ON ch.phone_number = lm.phone_number
-    ORDER BY lm.phone_number, (c.phone_number = '+' || lm.phone_number) DESC, c.id
+    ORDER BY lm.phone_number, (c.id=last_account.contact_id) DESC NULLS LAST, (c.phone_number = '+' || lm.phone_number) DESC, c.id
   ), filtered_inbox AS (
     SELECT * FROM inbox i
     WHERE ($2::text = 'all'

@@ -15,6 +15,8 @@ import { fetchJson } from '@/lib/fetchJson'
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
 interface BlacklistItem {
+  agent_code?: string | null
+  scope_key?: string
   origin_line?: string | null
   input_type?: string | null
   campaign_name?: string | null
@@ -289,7 +291,7 @@ export default function BlacklistPage() {
   return (
     <div className="p-6 space-y-5">
       {/* Header */}
-      <PageHeader title="Blacklist Global" description="Números excluidos del envío de mensajes" className="mb-0">
+      <PageHeader title="Blacklist" description="Bajas por agente y bloqueos generales" className="mb-0">
         <Button variant="outline" size="sm" onClick={handleExport} className="gap-2">
           <Download size={14} /> Exportar CSV
         </Button>
@@ -361,7 +363,7 @@ export default function BlacklistPage() {
                 {status === 'active' ? 'No hay números en la blacklist actualmente' : 'No se encontraron registros'}
               </p>
               <p className="text-xs text-muted-foreground mt-1">
-                Los números agregados aquí quedan excluidos automáticamente de todas las campañas.
+                La BAJA automática se aplica al agente de la conversación. Los bloqueos globales manuales se muestran por separado.
               </p>
             </div>
           ) : (
@@ -398,7 +400,7 @@ export default function BlacklistPage() {
                       </td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${SOURCE_COLORS[item.source] ?? 'bg-muted text-foreground'}`}>
-                          {SOURCE_LABELS[item.source] ?? item.source}
+                          {SOURCE_LABELS[item.source] ?? item.source} · {item.agent_code || (item.scope_key?.startsWith('source:') ? 'Origen por revisar' : 'Global')}
                         </span>
                       </td>
                       <td className="px-4 py-3 text-muted-foreground text-xs">{item.added_by_name ?? 'Sistema'}</td>
@@ -458,11 +460,12 @@ export default function BlacklistPage() {
           <DialogHeader>
             <DialogTitle className="flex flex-wrap items-center gap-2">
               <ShieldOff size={16} className="text-destructive" />
-              Agregar a Blacklist
+              Agregar bloqueo global manual
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 pt-1">
+            <p className="text-sm text-muted-foreground">Este bloqueo manual alcanza a todos los agentes. Para bloquear solo uno, seleccioná su cuenta en Contactos.</p>
             <div>
               <label className="block text-sm font-medium text-foreground mb-1.5">
                 Número(s) de teléfono
@@ -529,11 +532,12 @@ export default function BlacklistPage() {
           <DialogHeader>
             <DialogTitle className="flex flex-wrap items-center gap-2">
               <Upload size={16} className="text-purple-600" />
-              Importar números a Blacklist
+              Importar bloqueos globales
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 pt-1">
+            <p className="text-sm text-muted-foreground">Este bloqueo manual alcanza a todos los agentes. Para bloquear solo uno, seleccioná su cuenta en Contactos.</p>
             <div>
               <label className="block text-sm font-medium text-foreground mb-2">
                 Archivo (CSV, Excel o TXT)
@@ -660,6 +664,7 @@ export default function BlacklistPage() {
           </DialogHeader>
 
           <div className="space-y-4 pt-1">
+            <p className="text-sm text-muted-foreground">Agente / alcance: {deleteTarget?.agent_code || (deleteTarget?.scope_key?.startsWith('source:') ? 'Origen por revisar' : 'Global')}</p>
             <p className="text-sm text-foreground">
               ¿Estás seguro de que querés quitar{' '}
               <span className="font-mono font-medium text-foreground">
@@ -668,7 +673,7 @@ export default function BlacklistPage() {
               de la blacklist?
             </p>
             <p className="text-xs text-muted-foreground">
-              Se habilitarán nuevos envíos en todas las líneas. Los mensajes cancelados por la baja no se reanudarán.
+              Se quitará solamente este bloqueo. Las bajas de otros agentes y los mensajes cancelados se conservarán.
             </p>
 
             <label className="flex gap-2 text-sm">

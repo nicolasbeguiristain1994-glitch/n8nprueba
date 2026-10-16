@@ -1,3 +1,4 @@
+import { contactAccountKey } from './contact-account-identity'
 import type { Client } from 'pg'
 import type { SessionUser } from './auth'
 import { getLongRunningClient, pool } from './db'
@@ -144,9 +145,9 @@ export async function importMissingContacts(user: Access, input: MissingContactI
     const seen = new Map<string, Set<string>>()
     for (const row of input) {
       if (!row.phone) continue
-      const phones = seen.get(key(row)) ?? new Set<string>()
+      const phones = seen.get(contactAccountKey(row.agent,row.username,'')) ?? new Set<string>()
       phones.add(normalizeMissingContactPhone(row.phone) ?? row.phone)
-      seen.set(key(row), phones)
+      seen.set(contactAccountKey(row.agent,row.username,''), phones)
     }
     const prepared: Array<MissingContactImportRow & { phone: string }> = []
     const processed = new Set<string>()
@@ -156,47 +157,40 @@ export async function importMissingContacts(user: Access, input: MissingContactI
       const phone = normalizeMissingContactPhone(row.phone)
       const account = byAccount.get(key(row))
       if (!phone) { error('Celular inválido. Incluí código de país, por ejemplo +5491123456789.'); continue }
-      if ((seen.get(key(row))?.size ?? 0) > 1) { error('El mismo usuario tiene celulares diferentes en el archivo.'); continue }
+      if ((seen.get(contactAccountKey(row.agent,row.username,''))?.size ?? 0) > 1) { error('El mismo usuario tiene celulares diferentes en el archivo.'); continue }
       if (!account || account.agent !== row.agent) { error('No se encontró la cuenta en ese agente o no tenés acceso. Descargá una planilla actualizada.'); continue }
       if (account.phones.length && !account.phones.every((p: string) => p === phone)) { error('La cuenta ya está vinculada a otro celular. Revisala en Contactos.'); continue }
       if (account.phones.length || processed.has(key(row))) { result.unchanged++; continue }
       processed.add(key(row))
       prepared.push({ ...row, phone })
     }
-    const phones = [...new Set(prepared.map(r => r.phone))].sort()
-    const { rows: existing } = await client.query(`SELECT id,phone_number,panel,panels_assigned,deleted_at
-      FROM contacts WHERE phone_number=ANY($1::text[]) ORDER BY phone_number ${dryRun ? '' : 'FOR UPDATE'}`, [phones])
-    const byPhone = new Map(existing.map(c => [c.phone_number, c]))
-    const approved = prepared.filter(row => {
-      const contact = byPhone.get(row.phone)
-      if (contact?.deleted_at || (contact && user.role !== 'admin' && !agents.includes(contact.panel))) {
-        result.errors.push({ row: row.row, username: row.username, error: 'El celular pertenece a un contacto eliminado o fuera de tu acceso. Requiere revisión de un administrador.' })
+    const keyed = prepared.map(row=>({...row,identity_key:contactAccountKey(row.agent,row.username,row.phone)}))
+    const { rows: existing } = await client.query(`SELECT id,identity_key,panel,phone_number,deleted_at FROM contacts
+      WHERE identity_key=ANY($1::text[]) ${dryRun?'':'FOR UPDATE'}`,[keyed.map(r=>r.identity_key)])
+    const byKey = new Map(existing.map(c=>[c.identity_key,c]))
+    const approved = keyed.filter(row=>{
+      const contact=byKey.get(row.identity_key)
+      if(contact && contact.phone_number!==row.phone) { result.errors.push({row:row.row,username:row.username,error:'La cuenta ya tiene otro celular. Revisala en Contactos.'});return false }
+      if(contact?.deleted_at || (contact && user.role!=='admin' && !agents.includes(contact.panel))) {
+        result.errors.push({row:row.row,username:row.username,error:'La cuenta está eliminada o fuera de tu acceso. Requiere revisión de un administrador.'})
         return false
       }
       return true
     })
     result.ready = approved.length
     if (dryRun || !approved.length) return result
-    // One row per phone: several accounts may legitimately share a contact.
-    // Preserve names, consent, blocked status, line assignment and existing accounts.
-    const { rows: saved } = await client.query(`WITH input AS (
-      SELECT * FROM jsonb_to_recordset($1::jsonb) AS i(username text,platform text,agent text,name text,phone text)
-    ), grouped AS (
-      SELECT phone,(array_agg(COALESCE(NULLIF(name,''),username) ORDER BY platform,username))[1] AS name,
-        min(agent) AS panel,array_agg(DISTINCT agent) AS panels,
-        jsonb_agg(jsonb_build_object('username',username,'platform',platform,'panel',agent)) AS accounts
-      FROM input GROUP BY phone
-    ) INSERT INTO contacts(external_id,phone_number,first_name,panel,panels_assigned,casino_accounts,status,platform_source)
-      SELECT gen_random_uuid()::text,phone,name,panel,panels,accounts,'active','missing-phone-import' FROM grouped ORDER BY phone
-      ON CONFLICT(phone_number) DO UPDATE SET
-        panels_assigned=ARRAY(SELECT DISTINCT unnest(COALESCE(contacts.panels_assigned,'{}') || EXCLUDED.panels_assigned)),
-        casino_accounts=(SELECT jsonb_agg(DISTINCT a) FROM jsonb_array_elements(COALESCE(contacts.casino_accounts,'[]') || EXCLUDED.casino_accounts) a),
-        updated_at=now()
+    const { rows: saved } = await client.query(`WITH grouped AS (
+      SELECT identity_key,username,agent,phone,min(NULLIF(name,'')) AS name,
+        jsonb_agg(DISTINCT jsonb_build_object('username',username,'platform',platform,'panel',agent)) accounts
+      FROM jsonb_to_recordset($1::jsonb) i(username text,platform text,agent text,name text,phone text,identity_key text)
+      GROUP BY identity_key,username,agent,phone
+    ) INSERT INTO contacts(external_id,phone_number,first_name,panel,panels_assigned,casino_accounts,account_username,identity_key,status,platform_source)
+      SELECT gen_random_uuid()::text,phone,COALESCE(name,username),agent,ARRAY[agent],accounts,username,identity_key,'active','missing-phone-import' FROM grouped
+      ON CONFLICT(identity_key) DO UPDATE SET casino_accounts=(SELECT jsonb_agg(DISTINCT a) FROM jsonb_array_elements(contacts.casino_accounts||EXCLUDED.casino_accounts) a),updated_at=now()
       WHERE contacts.deleted_at IS NULL AND ($2::boolean OR contacts.panel=ANY($3::text[]))
-      RETURNING phone_number,(xmax=0) AS inserted`, [JSON.stringify(approved), user.role === 'admin', agents])
-    const savedPhones = new Set(saved.map(r => r.phone_number))
-    // Concurrent deletion/access change must never look like a successful import.
-    if (approved.some(r => !savedPhones.has(r.phone))) throw new Error('Un contacto cambió durante la carga. Volvé a revisar el archivo.')
+      RETURNING identity_key,(xmax=0) AS inserted`,[JSON.stringify(approved),user.role==='admin',agents])
+    const savedKeys = new Set(saved.map(r=>r.identity_key))
+    if(approved.some(r=>!savedKeys.has(r.identity_key))) throw new Error('Una cuenta cambió durante la carga. Volvé a revisar el archivo.')
     result.inserted = saved.filter(r => r.inserted).length
     result.linked = approved.length
     linkedAccounts = approved

@@ -1,3 +1,4 @@
+import { canonicalContactAgent, contactAccountKey } from '@/lib/contact-account-identity'
 import { readContactHistory } from '@/lib/contact-history'
 import { segmentationSQL } from '@/lib/contact-segmentation'
 import { canAssignPanels, grantCreatedContacts } from '@/lib/contact-visibility'
@@ -88,7 +89,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { phone, name, panel, gaming, segment, linea, linea_sub } = body
+  const { phone, name, gaming, segment, linea, linea_sub } = body
+  const panel=canonicalContactAgent(body.panel)
+  const username=name?.trim().toLowerCase() || null
   const phone_clean = (phone || '').toString().trim().replace(/\s/g, '')
   if (!phone_clean) return NextResponse.json({ error: 'Teléfono requerido' }, { status: 400 })
   if (!isE164(phone_clean)) return NextResponse.json({ error: 'Teléfono debe estar en formato E.164 (ej: +5491112345678)' }, { status: 400 })
@@ -108,16 +111,17 @@ export async function POST(req: NextRequest) {
       const {rows: [created]} = await client.query<{ id: string }>(
       `INSERT INTO contacts
          (external_id, phone_number, first_name, last_name, segment, panel, gaming, linea, linea_sub, status,
-          opt_in_marketing, opt_in_sms, platform_source, created_at, updated_at, segment_is_manual)
-       VALUES (gen_random_uuid()::text, $1, $2, $3, $4::contact_segment, $5, $6::gaming_type, $7, $8, 'active', true, true, 'manual', NOW(), NOW(), $4::text IS NOT NULL)
-       ON CONFLICT (phone_number) DO NOTHING
+          opt_in_marketing, opt_in_sms, platform_source, created_at, updated_at, segment_is_manual,account_username,identity_key,panels_assigned,casino_accounts)
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4::contact_segment, $5, $6::gaming_type, $7, $8, 'active', true, true, 'manual', NOW(), NOW(), $4::text IS NOT NULL,$9,$10,CASE WHEN $5::text IS NULL THEN '{}'::text[] ELSE ARRAY[$5]::text[] END,
+         CASE WHEN $9::text IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('panel',$5::text,'username',$9::text)) END)
+       ON CONFLICT (identity_key) DO NOTHING
        RETURNING id`,
-      [phone_clean, first_name, last_name, segment || null, panel || null, gaming || null, lineaVal, lineaSubVal]
+      [phone_clean, first_name, last_name, segment || null, panel || null, gaming || null, lineaVal, lineaSubVal,username,contactAccountKey(panel,username,phone_clean)]
     )
       if (created) await grantCreatedContacts(client, err.user, [created.id])
       return created
     })
-    if (!row) return NextResponse.json({ error: 'Ya existe un contacto con ese teléfono' }, { status: 409 })
+    if (!row) return NextResponse.json({ error: 'Ya existe esa cuenta en el agente seleccionado' }, { status: 409 })
     void audit({ req, action: 'create', resource: 'contacts', resource_id: row.id,
       metadata: { phone: phone_clean } })
     return NextResponse.json({ id: row.id })

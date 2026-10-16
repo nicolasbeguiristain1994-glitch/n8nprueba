@@ -32,7 +32,7 @@ describe.skipIf(process.env.RUN_MISSING_CONTACTS_PG_TESTS !== '1')('missing phon
         total_cargas numeric DEFAULT 0,total_retiros numeric DEFAULT 0,cant_cargas int DEFAULT 0,cant_retiros int DEFAULT 0,
         fecha_primera date,fecha_ultima date,seg_monto text,seg_actividad text, UNIQUE(username_lower));
       CREATE TABLE casino_transactions(id bigserial PRIMARY KEY,platform text,username text,agente text,tipo text,monto numeric DEFAULT 10,fecha date,fecha_hora_utc timestamptz,source_id text DEFAULT 'fixture');
-      CREATE TABLE contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),external_id text UNIQUE,phone_number text UNIQUE,
+      CREATE TABLE contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),external_id text UNIQUE,phone_number text,account_username text,identity_key text UNIQUE DEFAULT gen_random_uuid()::text,
         first_name text,last_name text,panel text,panels_assigned text[] DEFAULT '{}',casino_accounts jsonb DEFAULT '[]',
         status text DEFAULT 'active',opt_in_marketing boolean DEFAULT true,do_not_contact boolean DEFAULT false,
         platform_source text,deleted_at timestamptz,updated_at timestamptz DEFAULT now());
@@ -117,14 +117,15 @@ describe.skipIf(process.env.RUN_MISSING_CONTACTS_PG_TESTS !== '1')('missing phon
     expect((await db.query("SELECT casino_accounts FROM contacts WHERE phone_number='+5491112345678'")).rows[0].casino_accounts).toEqual([{ username: 'shared',platform: 'bet30',panel: 'royal' }])
     expect(await importMissingContacts(admin,rows,false)).toMatchObject({ inserted: 0, linked: 0, unchanged: 1 })
   })
-  it('merges multiple accounts into one phone and preserves preferences and existing identity', async () => {
+  it('creates independent accounts sharing a phone without modifying the original preferences',async()=>{
     await db.query(`UPDATE contacts SET first_name='Nombre conservado',status='blocked',opt_in_marketing=false,do_not_contact=true,
       casino_accounts='[{"username":"known","platform":"zeus","panel":"royal"}]' WHERE phone_number='+5491100000001'`)
-    const result = await importMissingContacts(admin,[input('active','+5491100000001'),input('withdrawal','+5491100000001')],false)
-    expect(result).toMatchObject({ inserted: 0, linked: 2, errors: [] })
-    const c = (await db.query("SELECT * FROM contacts WHERE phone_number='+5491100000001'")).rows[0]
-    expect(c).toMatchObject({ first_name: 'Nombre conservado',status: 'blocked',opt_in_marketing: false,do_not_contact: true })
-    expect(c.casino_accounts).toHaveLength(3)
+    const result=await importMissingContacts(admin,[input('active','+5491100000001'),input('withdrawal','+5491100000001')],false)
+    expect(result).toMatchObject({inserted:2,linked:2,errors:[]})
+    const rows=(await db.query("SELECT * FROM contacts WHERE phone_number='+5491100000001' ORDER BY first_name")).rows
+    expect(rows).toHaveLength(3)
+    expect(rows.find(c=>c.first_name==='Nombre conservado')).toMatchObject({status:'blocked',opt_in_marketing:false,do_not_contact:true})
+    expect(rows.every(c=>c.casino_accounts.length===1)).toBe(true)
     expect((await listMissingContacts(admin,filters())).total).toBe(4)
   })
   it('reports blanks, malformed phones, conflicting duplicates and wrong agents per row', async () => {
@@ -134,16 +135,14 @@ describe.skipIf(process.env.RUN_MISSING_CONTACTS_PG_TESTS !== '1')('missing phon
     expect(result).toMatchObject({ blank: 1, inserted: 1, linked: 1 })
     expect(result.errors).toHaveLength(4)
   })
-  it('rejects reassignment and deleted or inaccessible phone conflicts', async () => {
+  it('rejects changing a known account phone but allows another account at a deleted contact phone',async()=>{
     expect((await importMissingContacts(admin,[input('known','+5491199999999')],false)).errors).toHaveLength(1)
     await db.query("UPDATE contacts SET deleted_at=now() WHERE phone_number='+5491100000001'")
-    expect((await importMissingContacts(admin,[input('active','+5491100000001')],false)).errors).toHaveLength(1)
-    await db.query("UPDATE contacts SET deleted_at=NULL,panel='bigwin' WHERE phone_number='+5491100000001'")
-    expect((await importMissingContacts(operator,[input('active','+5491100000001')],false)).errors).toHaveLength(1)
+    expect((await importMissingContacts(admin,[input('active','+5491100000001')],false)).inserted).toBe(1)
   })
-  it('deduplicates repeated accounts and creates one contact for multiple platform accounts', async () => {
-    const result = await importMissingContacts(admin,[input('active'),input('active'),input('shared',undefined,'bet30')],false)
-    expect(result).toMatchObject({ inserted: 1,linked: 2,unchanged: 1 })
+  it('deduplicates the same account and preserves separate usernames sharing the number',async()=>{
+    const result=await importMissingContacts(admin,[input('active'),input('active'),input('shared',undefined,'bet30')],false)
+    expect(result).toMatchObject({inserted:2,linked:2,unchanged:1})
   })
   it('serializes concurrent account imports so only one phone becomes linked', async () => {
     const results = await Promise.all([

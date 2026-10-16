@@ -39,7 +39,7 @@ export function contactMovementQuery(audience: { sql: string; params: unknown[] 
         UNION SELECT username_lower,lower(trim(agente)),id FROM players
       ) names GROUP BY username_lower,panel HAVING count(DISTINCT id)=1
     ), scoped_contacts AS MATERIALIZED (
-      SELECT contacts.id,first_name,last_name,casino_accounts FROM contacts WHERE ${audience.sql}
+      SELECT contacts.id,first_name,last_name,casino_accounts,to_jsonb(contacts)->>'account_username' AS account_username FROM contacts WHERE ${audience.sql}
         AND contact_movement_names(first_name,last_name,casino_accounts) &&
           (SELECT coalesce(array_agg(DISTINCT username_lower::text),'{}') FROM eligible_players)
     ), explicit AS MATERIALIZED (
@@ -48,7 +48,7 @@ export function contactMovementQuery(audience: { sql: string; params: unknown[] 
     ), tokens AS (
       SELECT c.id,lower(tok) username FROM scoped_contacts c
       CROSS JOIN LATERAL regexp_split_to_table(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,''),'[^a-zA-Z0-9_]+') tok
-      WHERE length(tok)>=4
+      WHERE length(tok)>=4 AND c.account_username IS NULL
     ), linked AS (
       SELECT e.id contact_id,p.last_movement FROM explicit e JOIN eligible_players p
         ON p.username_lower=e.username AND p.platform=e.platform

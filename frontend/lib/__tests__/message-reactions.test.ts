@@ -29,7 +29,7 @@ describe('WhatsApp reactions',()=>{
     try {
       await sendMessageReaction({...target,line_type:'evolution',direction},'')
       expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({key:{remoteJid:'5491100000001@s.whatsapp.net',fromMe:direction==='outbound',id:'wamid.target'},reaction:''})
-      expect(mocks.guard).toHaveBeenCalledWith(target.phone_number,expect.any(Function))
+      expect(mocks.guard).toHaveBeenCalledWith(target.phone_number,expect.any(Function),expect.objectContaining({provider:'evolution',sourceId:'original'}))
     } finally {vi.unstubAllGlobals();vi.unstubAllEnvs()}
   })
 })

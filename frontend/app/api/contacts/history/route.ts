@@ -16,8 +16,8 @@ export async function GET(req: NextRequest) {
   }
   try {
     const scope = contactScope(auth.user, 1)
-    const rows = await contactRead<{ id: string; phone_number: string }>(
-      `SELECT id,phone_number FROM contacts WHERE id=ANY($1::uuid[]) AND ${scope.sql}`,
+    const rows = await contactRead<{ id: string; phone_number: string; panel: string | null }>(
+      `SELECT id,phone_number,panel FROM contacts WHERE id=ANY($1::uuid[]) AND ${scope.sql}`,
       [[...new Set(ids)], ...scope.params],
     )
     const history = await readContactHistory(rows, undefined, fields === 'all')

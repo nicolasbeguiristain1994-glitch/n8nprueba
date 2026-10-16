@@ -36,7 +36,7 @@ export async function sendMessageReaction(target: ReactionTarget, emoji: string)
           remoteJid: `${target.phone_number.replace(/\D/g, '')}@s.whatsapp.net`,
           fromMe: target.direction === 'outbound', id: target.target_wamid,
         }, reaction: emoji }), signal: AbortSignal.timeout(20_000),
-      }))
+      }),{provider:'evolution',sourceId:line.evolution_instance,contextWamid:target.direction==='outbound'?target.target_wamid:undefined})
     if (!response.ok) {
       if (response.status >= 500) throw new CloudSendOutcomeUnknownError()
       throw new CloudApiError('WhatsApp rechazó la reacción. Revisá la conexión de la línea.', response.status)

@@ -1,4 +1,4 @@
-import { broadcastPhone, getLastContactBroadcasts } from '@/lib/contact-broadcast-history'
+import { broadcastAccountKey, getLastContactBroadcasts } from '@/lib/contact-broadcast-history'
 import { segmentationSQL } from '@/lib/contact-segmentation'
 import { relativeRanking, recentPriorityOrderSQL, type RelativeRanking } from './priority-details'
 import type { SegmentationProfile } from '@/lib/contact-segmentation'
@@ -118,7 +118,7 @@ export class UserPrioritizationRepository {
         c.total_deposits,
         COALESCE((c.segmentation_profile->>'amount')::numeric,c.total_deposit_amount) AS total_deposit_amount,
         c.last_deposit_amount,
-        (c.do_not_contact OR EXISTS (SELECT 1 FROM blacklist b WHERE b.phone_number_normalized IN (c.phone_number,regexp_replace(c.phone_number,'[^0-9]','','g')) AND b.removed_at IS NULL)) AS do_not_contact,
+        (c.do_not_contact OR EXISTS (SELECT 1 FROM blacklist b WHERE b.phone_number_normalized IN (c.phone_number,regexp_replace(c.phone_number,'[^0-9]','','g')) AND (b.scope_key='global' OR b.agent_code=contact_agent_key(c.panel)) AND b.removed_at IS NULL)) AS do_not_contact,
         c.opt_in_marketing,
         c.deleted_at
       FROM contacts c
@@ -329,7 +329,7 @@ export class UserPrioritizationRepository {
         'cps.is_eligible = true',
         "c.status IN ('active','inactive')",
         'c.opt_in_marketing = true AND c.do_not_contact = false',
-        "NOT EXISTS (SELECT 1 FROM blacklist b WHERE b.phone_number_normalized IN (c.phone_number,regexp_replace(c.phone_number,'[^0-9]','','g')) AND b.removed_at IS NULL)",
+        "NOT EXISTS (SELECT 1 FROM blacklist b WHERE b.phone_number_normalized IN (c.phone_number,regexp_replace(c.phone_number,'[^0-9]','','g')) AND (b.scope_key='global' OR b.agent_code=contact_agent_key(c.panel)) AND b.removed_at IS NULL)",
       ]),
     ]
     const params: unknown[]    = []
@@ -420,9 +420,9 @@ export class UserPrioritizationRepository {
       LIMIT $${p++} OFFSET $${p++}
     `
     const rows = await this.query<PrioritizedDbRow>(dataSql, [...params, pageSize, offset])
-    const broadcasts = await getLastContactBroadcasts(rows.map(row => row.phone_number), this.query)
+    const broadcasts = await getLastContactBroadcasts(rows, this.query)
     for (const row of rows) {
-      const last = broadcasts.get(broadcastPhone(row.phone_number))
+      const last = broadcasts.get(broadcastAccountKey(row.phone_number,row.panel))
       row.last_broadcast_at = last?.lastBroadcastAt ?? null
       row.days_since_last_broadcast = last?.daysSinceLastBroadcast ?? null
     }

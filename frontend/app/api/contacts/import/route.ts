@@ -1,3 +1,4 @@
+import { canonicalContactAgent, contactAccountKey } from '@/lib/contact-account-identity'
 import { contactScope, canAssignPanels, grantCreatedContacts } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
 import { getLongRunningClient } from '@/lib/db'
@@ -37,14 +38,12 @@ export async function POST(req: NextRequest) {
 
   // panels param takes precedence over legacy panel param
   const panelsRaw = (panels && panels.length > 0)
-    ? panels.map(p => p.trim().toLowerCase()).filter(Boolean)
-    : panel?.trim().toLowerCase() ? [panel.trim().toLowerCase()] : []
+    ? panels.map(p => canonicalContactAgent(p)!).filter(Boolean)
+    : panel?.trim().toLowerCase() ? [canonicalContactAgent(panel)!] : []
 
-  const panelValue = panelsRaw[0] ?? null  // primary panel (first one)
   if (!canAssignPanels(auth.user, panelsRaw.length ? panelsRaw : [null])) {
     return NextResponse.json({error: 'Agente fuera de tu alcance'}, {status: 403})
   }
-  const panelsValue = panelsRaw            // all panels for panels_assigned
   const lineaValue = linea ? Number(linea) : null
   if (lineaValue !== null && (lineaValue < 1 || lineaValue > 100)) {
     return NextResponse.json({ error: 'Línea inválida (1-100)' }, { status: 400 })
@@ -53,32 +52,29 @@ export async function POST(req: NextRequest) {
   const lineaSubRaw = (linea_sub || '').toLowerCase()
   const lineaSubValue = lineaValue !== null && ['a', 'b', 'c'].includes(lineaSubRaw) ? lineaSubRaw : null
 
-  // Normalize and pre-filter in JS — count skipped rows before hitting DB
-  // Deduplicate phones before SQL; only validate E.164 rows (skip invalid silently)
-  const seen = new Set<string>()
+  // Each account is independent even when the phone is shared. Conflicting
+  // phones for the same account must be reviewed, never resolved by row order.
+  const seen = new Map<string, string>()
   let invalidCount = 0
-  const normalized: Array<{ phone: string; name: string | null; segment: string | null; casino_username: string | null }> = []
-
+  const normalized: Array<{phone:string;name:string|null;segment:string|null;casino_username:string|null;panel:string|null;identity_key:string}> = []
   for (const c of contacts) {
     const rawPhone = (c.phone || '').toString().trim().replace(/\s/g, '')
-    if (!rawPhone) continue
     if (!isE164(rawPhone)) { invalidCount++; continue }
-    if (seen.has(rawPhone)) continue
-    seen.add(rawPhone)
-    // casino_username: campo explícito > fallback al campo name
-    const casinoUsername = (c.casino_username || c.name || '').trim() || null
-    const rawSeg = (c.segment || '').trim().toLowerCase()
-    const VALID_SEGMENTS = ['casual', 'regular', 'super_vip', 'vip_alto', 'vip_medio', 'vip', 'whale', 'bajo', 'medio']
-    const rawName = (c.name || '').trim()
-    normalized.push({
-      phone:           rawPhone,
-      name:            rawName ? rawName.slice(0, 100) : null,
-      segment:         VALID_SEGMENTS.includes(rawSeg) ? rawSeg : null,
-      casino_username: casinoUsername ? casinoUsername.slice(0, 100) : null,
-    })
+    const username = (c.casino_username || c.name || '').trim().toLowerCase().slice(0,100) || null
+    const segment = (c.segment || '').trim().toLowerCase()
+    for (const agent of [...new Set(panelsRaw.length ? panelsRaw : [null])]) {
+      const key = contactAccountKey(agent,username,rawPhone)
+      const previous = seen.get(key)
+      if (previous && previous !== rawPhone) return NextResponse.json({error:'Una misma cuenta tiene teléfonos distintos en el archivo. Revisá esas filas.'},{status:409})
+      if (previous) continue
+      seen.set(key,rawPhone)
+      normalized.push({phone:rawPhone,name:c.name?.trim().slice(0,100)||username,
+        segment:['casual','regular','super_vip','vip_alto','vip_medio','vip','whale','bajo','medio'].includes(segment)?segment:null,
+        casino_username:username,panel:agent,identity_key:key})
+    }
   }
 
-  const skipped = contacts.length - normalized.length - invalidCount
+  const skipped = Math.max(0, contacts.length - normalized.length - invalidCount)
 
   if (normalized.length === 0) {
     return NextResponse.json({ inserted: 0, updated: 0, skipped: skipped + invalidCount, invalid: invalidCount, total: contacts.length })
@@ -96,76 +92,36 @@ export async function POST(req: NextRequest) {
     // so a concurrent panel change cannot evade the conflict predicate.
     const preflight = contactScope(auth.user, 1)
     const existing = await client.query<{id: string; visible: boolean}>(`SELECT id, (${preflight.sql}) AS visible
-      FROM contacts WHERE phone_number=ANY($1::text[]) FOR UPDATE`, [normalized.map(c => c.phone), ...preflight.params])
+      FROM contacts WHERE identity_key=ANY($1::text[]) FOR UPDATE`, [normalized.map(c => c.identity_key), ...preflight.params])
     if (existing.rows.some(c => !c.visible)) throw NextResponse.json({error: 'La importación incluye contactos fuera de tu alcance. No se guardaron cambios.'}, {status: 403})
-    const scope = contactScope(auth.user, 5)
-    const { rows: [row] } = await client.query<{ inserted: string; updated: string; ids: string[]; created_ids: string[] }>(
-      `WITH input AS (
-         SELECT phone, name, segment, casino_username,
-                $2::text AS panel_val
-         FROM   jsonb_to_recordset($1::jsonb)
-                AS x(phone text, name text, segment text, casino_username text)
-       ), upserted AS (
-         INSERT INTO contacts
-           (external_id, phone_number, first_name, segment, panel, panels_assigned, casino_accounts, linea, linea_sub, status,
-            opt_in_marketing, opt_in_sms, platform_source, created_at, updated_at)
-         SELECT
-           gen_random_uuid()::text,
-           phone,
-           NULLIF(name, ''),
-           NULLIF(segment, '')::contact_segment,
-           panel_val,
-           ARRAY(SELECT jsonb_array_elements_text($4::jsonb)),
-           CASE
-             WHEN NULLIF(casino_username, '') IS NOT NULL
-               THEN jsonb_build_array(jsonb_build_object('panel', panel_val, 'username', LOWER(TRIM(casino_username))))
-             ELSE '[]'::jsonb
-           END,
-           $3,
-           $5,
-           'active', true, true, 'import', NOW(), NOW()
-         FROM input
-         ON CONFLICT (phone_number) DO ${
-           resolvedMode === 'skip' ? 'NOTHING'
-         : resolvedMode === 'panels_only' ? `UPDATE
-           SET panels_assigned = (
-                 SELECT ARRAY(
-                   SELECT DISTINCT unnest
-                   FROM unnest(contacts.panels_assigned || EXCLUDED.panels_assigned)
-                   WHERE unnest IS NOT NULL
-                   ORDER BY unnest
-                 )
-               ),
-               casino_accounts = (SELECT COALESCE(jsonb_agg(DISTINCT account), '[]'::jsonb) FROM jsonb_array_elements(contacts.casino_accounts || EXCLUDED.casino_accounts) account),
-               linea      = COALESCE(EXCLUDED.linea, contacts.linea),
-               linea_sub  = COALESCE(EXCLUDED.linea_sub, contacts.linea_sub),
-               updated_at = NOW() WHERE ${scope.sql}`
-         : /* update */ `UPDATE
-           SET first_name        = COALESCE(EXCLUDED.first_name, contacts.first_name),
-               segment           = COALESCE(EXCLUDED.segment,    contacts.segment),
-               panel             = COALESCE(EXCLUDED.panel,      contacts.panel),
-               panels_assigned   = (
-                 SELECT ARRAY(
-                   SELECT DISTINCT unnest
-                   FROM unnest(contacts.panels_assigned || EXCLUDED.panels_assigned)
-                   WHERE unnest IS NOT NULL
-                   ORDER BY unnest
-                 )
-               ),
-               casino_accounts = (SELECT COALESCE(jsonb_agg(DISTINCT account), '[]'::jsonb) FROM jsonb_array_elements(contacts.casino_accounts || EXCLUDED.casino_accounts) account),
-               linea             = COALESCE(EXCLUDED.linea,      contacts.linea),
-               linea_sub         = COALESCE(EXCLUDED.linea_sub,  contacts.linea_sub),
-               updated_at        = NOW() WHERE ${scope.sql}`}
-         RETURNING id, xmax::text
-       )
-       SELECT
-         COUNT(*) FILTER (WHERE xmax = '0')  AS inserted,
-         COUNT(*) FILTER (WHERE xmax != '0') AS updated,
-         COALESCE(array_agg(id), '{}'::uuid[]) AS ids,
-         COALESCE(array_agg(id) FILTER (WHERE xmax = '0'), '{}'::uuid[]) AS created_ids
-       FROM upserted`,
-      [JSON.stringify(normalized), panelValue, lineaValue, JSON.stringify(panelsValue), lineaSubValue, ...(resolvedMode === 'skip' ? [] : scope.params)]
-    )
+    // Pre-migration ambiguous identities remain explicit review cases.
+    const ambiguous = await client.query(`SELECT 1 FROM contacts c
+      CROSS JOIN LATERAL jsonb_array_elements(c.casino_accounts) a
+      JOIN jsonb_to_recordset($1::jsonb) i(panel text,casino_username text)
+        ON contact_agent_key(a->>'panel')=i.panel AND lower(trim(a->>'username'))=i.casino_username
+      WHERE c.identity_key LIKE 'legacy:%' LIMIT 1`,[JSON.stringify(normalized)])
+    if (ambiguous.rows.length) throw NextResponse.json({error:'Hay una cuenta histórica vinculada a más de un teléfono. Revisala en Contactos antes de importar; no se guardaron cambios.'},{status:409})
+    const scope = contactScope(auth.user, 3)
+    const { rows: [row] } = await client.query<{inserted:string;updated:string;ids:string[];created_ids:string[]}>(`
+      WITH input AS (
+        SELECT * FROM jsonb_to_recordset($1::jsonb)
+          AS x(phone text,name text,segment text,casino_username text,panel text,identity_key text)
+      ), upserted AS (
+        INSERT INTO contacts(external_id,phone_number,first_name,segment,panel,panels_assigned,
+          casino_accounts,account_username,identity_key,linea,linea_sub,status,opt_in_marketing,opt_in_sms,platform_source)
+        SELECT gen_random_uuid()::text,phone,name,segment::contact_segment,panel,
+          CASE WHEN panel IS NULL THEN '{}'::text[] ELSE ARRAY[panel] END,
+          CASE WHEN casino_username IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('panel',panel,'username',casino_username)) END,
+          casino_username,identity_key,$2,$3,'active',true,true,'import' FROM input
+        ON CONFLICT(identity_key) DO ${resolvedMode==='skip' ? 'NOTHING' : `UPDATE SET
+          ${resolvedMode==='update' ? 'phone_number=EXCLUDED.phone_number,first_name=COALESCE(EXCLUDED.first_name,contacts.first_name),segment=COALESCE(EXCLUDED.segment,contacts.segment),' : ''}
+          linea=COALESCE(EXCLUDED.linea,contacts.linea),linea_sub=COALESCE(EXCLUDED.linea_sub,contacts.linea_sub),updated_at=NOW()
+          WHERE ${scope.sql}`}
+        RETURNING id,xmax::text
+      ) SELECT count(*) FILTER(WHERE xmax='0') AS inserted,count(*) FILTER(WHERE xmax<>'0') AS updated,
+        COALESCE(array_agg(id),'{}'::uuid[]) AS ids,
+        COALESCE(array_agg(id) FILTER(WHERE xmax='0'),'{}'::uuid[]) AS created_ids FROM upserted`,
+      [JSON.stringify(normalized),lineaValue,lineaSubValue,...(resolvedMode==='skip'?[]:scope.params)])
 
     const inserted = Number(row?.inserted || 0)
     const updated  = Number(row?.updated  || 0)

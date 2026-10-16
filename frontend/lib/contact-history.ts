@@ -1,4 +1,4 @@
-import { broadcastPhone, getLastContactBroadcasts } from './contact-broadcast-history'
+import { broadcastAccountKey, getLastContactBroadcasts } from './contact-broadcast-history'
 import { contactLastMovementQuery, type ContactMovementRow } from './contact-last-movement'
 import { configureBulkMovementRead, withContactMovementRead } from './contact-movement-read'
 import { contactRead } from './contact-read'
@@ -13,7 +13,7 @@ export interface ContactHistory {
 
 /** Call only with contacts already authorized by the caller. */
 export async function readContactHistory(
-  rows: { id: string; phone_number: string }[],
+  rows: { id: string; phone_number: string; panel?: unknown }[],
   movementHistory?: Map<string, ContactMovementRow>,
   includeMovement = true,
 ): Promise<ContactHistory[]> {
@@ -30,10 +30,10 @@ export async function readContactHistory(
     return new Map(history.map(row => [row.contact_id, row]))
   }
   const [broadcasts, history] = await Promise.all([
-    getLastContactBroadcasts(rows.map(row => row.phone_number), contactRead), movements(),
+    getLastContactBroadcasts(rows, contactRead), movements(),
   ])
   return rows.map(row => {
-    const broadcast = broadcasts.get(broadcastPhone(row.phone_number))
+    const broadcast = broadcasts.get(broadcastAccountKey(row.phone_number, row.panel))
     const movement = history.get(row.id)
     return {
       id: row.id,
