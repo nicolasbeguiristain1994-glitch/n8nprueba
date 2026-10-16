@@ -1,6 +1,8 @@
 interface BroadcastAgeProps {
   days?: number | null
   sentAt?: string | null
+  loading?: boolean
+  error?: boolean
 }
 
 const dateFormat = new Intl.DateTimeFormat('es-AR', {
@@ -8,7 +10,9 @@ const dateFormat = new Intl.DateTimeFormat('es-AR', {
   dateStyle: 'short', timeStyle: 'short',
 })
 
-export function BroadcastAge({ days, sentAt }: BroadcastAgeProps) {
+export function BroadcastAge({ days, sentAt, loading, error }: BroadcastAgeProps) {
+  if (loading) return <span className="text-xs text-muted-foreground" aria-label="Cargando difusión">Cargando…</span>
+  if (error) return <span className="text-xs text-muted-foreground" title="Usá Actualizar contactos para volver a cargar el historial.">No disponible</span>
   if (days == null) return <span className="whitespace-nowrap text-xs text-muted-foreground">Sin difusión</span>
   const date = sentAt ? new Date(sentAt) : null
   const title = date && Number.isFinite(date.getTime())

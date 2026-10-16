@@ -2,8 +2,9 @@
 // scoped to campaign recipients before expanding contact names/accounts. Keep
 // all platforms for each candidate username so ambiguity cannot disappear when
 // filtering campaigns. No cached balances or guessed platform assignments.
-// Broad contact audiences can supply account facts already aggregated from
-// history, avoiding a second scan and one indexed lookup per contact token.
+// Broad audiences resolve imported identities once from imported records only.
+// Keep the ordered identity lookup separate from the unordered movement MAX:
+// ordering every transaction by account/date/id spills millions of rows to disk.
 export function contactAccountLinksSql(useMovementHistory = false) { return `
   WITH scoped_contacts AS MATERIALIZED (
     SELECT id,first_name,last_name,casino_accounts,to_jsonb(contacts)->>'account_username' AS account_username FROM contacts
@@ -11,10 +12,10 @@ export function contactAccountLinksSql(useMovementHistory = false) { return `
   ), explicit AS MATERIALIZED (
     SELECT c.id,lower(trim(a->>'username')) AS username,
       a->>'platform' AS platform,lower(a->>'panel') AS panel
-    FROM scoped_contacts c CROSS JOIN LATERAL ${useMovementHistory ? 'unnest(ARRAY(SELECT jsonb_array_elements(c.casino_accounts)))' : 'jsonb_array_elements(c.casino_accounts)'} a
+    FROM scoped_contacts c CROSS JOIN LATERAL unnest(ARRAY(SELECT jsonb_array_elements(c.casino_accounts))) a
   ), tokens AS MATERIALIZED (
     SELECT c.id,lower(tok) AS username FROM scoped_contacts c
-    CROSS JOIN LATERAL ${useMovementHistory ? 'unnest(regexp_split_to_array' : 'regexp_split_to_table'}(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,''),'[^a-zA-Z0-9_]+')${useMovementHistory ? ')' : ''} tok
+    CROSS JOIN LATERAL unnest(regexp_split_to_array(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,''),'[^a-zA-Z0-9_]+')) tok
     WHERE length(tok)>=4 AND c.account_username IS NULL
   ), names AS MATERIALIZED (
     SELECT username FROM explicit UNION SELECT username FROM tokens
@@ -23,7 +24,12 @@ export function contactAccountLinksSql(useMovementHistory = false) { return `
     -- casino_segmentation_players. That view materializes lifetime financial
     -- totals for every imported account before a caller's name filter applies.
     ${useMovementHistory ? `SELECT md5('excel:' || platform || ':' || username_lower)::uuid AS id,
-      username_lower::varchar(100),platform,agente FROM movement_accounts WHERE has_imported` : `
+      username_lower::varchar(100),platform,agente FROM (
+        SELECT DISTINCT ON (platform,lower(username))
+          lower(username) AS username_lower,platform,agente
+        FROM casino_transactions WHERE source_id IS NOT NULL
+        ORDER BY platform,lower(username),fecha_hora_utc DESC,id DESC
+      ) imported_agents` : `
     SELECT md5('excel:' || t.platform || ':' || lower(t.username))::uuid AS id,
       lower(t.username)::varchar(100) AS username_lower,t.platform,
       (array_agg(t.agente ORDER BY t.fecha_hora_utc DESC,t.id DESC))[1] AS agente
