@@ -1,6 +1,4 @@
-import { configureBulkMovementRead, withContactMovementRead } from '@/lib/contact-movement-read'
-import { contactLastMovementQuery, type ContactMovementRow } from '@/lib/contact-last-movement'
-import { broadcastPhone, getLastContactBroadcasts } from '@/lib/contact-broadcast-history'
+import { readContactHistory } from '@/lib/contact-history'
 import { segmentationSQL } from '@/lib/contact-segmentation'
 import { canAssignPanels, grantCreatedContacts } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
@@ -41,7 +39,8 @@ export async function GET(req: NextRequest) {
     const limit = download ? 100000 : 50
     const offset = (download ? from : 0) + (page - 1) * limit
     const profile = segmentationSQL()
-    const rows = await contactRead<{ id: string; phone_number: string } & Record<string, unknown>>(`
+    const [rows, [{ count }]] = await Promise.all([
+      contactRead<{ id: string; phone_number: string } & Record<string, unknown>>(`
       SELECT id, phone_number, first_name, last_name, email,
         status, opt_in_marketing AS opt_in, created_at, ${profile.segment} AS segment, segment_is_manual, segmentation_profile, ${profile.quality} AS data_quality, panel, gaming::text AS gaming, linea, linea_sub,
         last_deposit_at, total_deposits, total_withdrawals, casino_accounts,
@@ -54,27 +53,22 @@ export async function GET(req: NextRequest) {
           WHERE contact_id = contacts.id AND tag NOT LIKE 'casino:%'), '{}') AS custom_tags
       FROM contacts WHERE ${sql}
       ORDER BY created_at DESC, id LIMIT $${params.length + 1} OFFSET $${params.length + 2}
-    `, [...params, limit, offset])
-    const [{ count }] = await contactRead<{ count: string }>(`SELECT COUNT(*) FROM contacts WHERE ${sql}`, params)
-    const broadcasts = await getLastContactBroadcasts(rows.map(row => row.phone_number), contactRead)
-    // Reuse the latest-movement result when the audience already resolved it.
-    // Unfiltered pages only inspect their visible contacts, not the entire CRM.
-    let movements = movementHistory
-    if (rows.length && (!movementHistory.size || movementMode === 'period')) {
-      const bulk = rows.length > 500
-      const lookup = contactLastMovementQuery({ sql: 'contacts.id = ANY($1::uuid[])', params: [rows.map(row => row.id)] }, undefined, bulk)
-      const history = bulk ? await withContactMovementRead(async client => {
-        await configureBulkMovementRead(client)
-        return (await client.query<ContactMovementRow>(lookup.sql, lookup.params)).rows
-      }) : await contactRead<ContactMovementRow>(lookup.sql, lookup.params)
-      movements = new Map(history.map(row => [row.contact_id, row]))
+    `, [...params, limit, offset]),
+      contactRead<{ count: string }>(`SELECT COUNT(*) FROM contacts WHERE ${sql}`, params),
+    ])
+    const resolvedMovements = movementHistory.size && movementMode !== 'period' ? movementHistory : undefined
+    // Interactive pages can render their exact audience before supplementary
+    // history finishes. Exports and existing callers still get complete rows.
+    if (!download && sp.get('history') === 'deferred') {
+      const contacts = rows.map(row => {
+        const movement = resolvedMovements?.get(row.id)
+        return movement ? { ...row, last_movement_date: movement.last_movement, days_since_last_movement: movement.days_inactive } : row
+      })
+      return NextResponse.json({ contacts, total: Number(count), page, limit }, { headers: { 'Cache-Control': 'private, no-store' } })
     }
-    const contacts = rows.map(row => {
-      const last = broadcasts.get(broadcastPhone(row.phone_number))
-      const movement = movements.get(row.id)
-      return { ...row, last_movement_date: movement?.last_movement ?? null, days_since_last_movement: movement?.days_inactive ?? null, last_broadcast_at: last?.lastBroadcastAt ?? null, days_since_last_broadcast: last?.daysSinceLastBroadcast ?? null }
-    })
-    return NextResponse.json({ contacts, total: Number(count), page, limit })
+    const history = new Map((await readContactHistory(rows, resolvedMovements)).map(row => [row.id, row]))
+    const contacts = rows.map(row => ({ ...row, ...history.get(row.id) }))
+    return NextResponse.json({ contacts, total: Number(count), page, limit }, { headers: { 'Cache-Control': 'private, no-store' } })
   } catch (e) {
     if (e instanceof ContactReadUnavailableError) return NextResponse.json({ error: e.message }, { status: 503, headers: { 'Retry-After': '3' } })
     if (e instanceof ContactFilterError) return NextResponse.json({ error: e.message }, { status: 400 })

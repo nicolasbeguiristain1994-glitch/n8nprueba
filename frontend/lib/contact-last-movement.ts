@@ -20,11 +20,10 @@ export function contactLastMovementQuery(audience: { sql: string; params: unknow
   const filter = !range ? '' : range.mode === 'missing'
     ? 'WHERE last_movement IS NULL' : `WHERE ${bounds.join(' AND ')}`
   const history = bulk ? `movement_accounts AS MATERIALIZED (
-    SELECT platform,lower(username) AS username_lower,
-      max(fecha) FILTER (WHERE tipo IN ('carga','retiro') AND platform IN ('zeus','bet30','ganamos','argenbet')) AS last_movement,
-      (array_agg(agente ORDER BY fecha_hora_utc DESC,id DESC) FILTER (WHERE source_id IS NOT NULL))[1] AS agente,
-      bool_or(source_id IS NOT NULL) AS has_imported
-    FROM casino_transactions GROUP BY platform,lower(username)
+    SELECT platform,lower(username) AS username_lower,max(fecha) AS last_movement
+    FROM casino_transactions
+    WHERE tipo IN ('carga','retiro') AND platform IN ('zeus','bet30','ganamos','argenbet')
+    GROUP BY platform,lower(username)
   ),` : ''
   const latest = bulk ? `SELECT a.contact_id,max(m.last_movement) AS last_movement
     FROM linked_accounts a JOIN movement_accounts m USING(platform,username_lower) GROUP BY a.contact_id`

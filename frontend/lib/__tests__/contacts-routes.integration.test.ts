@@ -12,6 +12,7 @@ vi.mock('@/lib/app-settings', () => ({ getAppSetting: async () => true }))
 import { POST as importContacts } from '@/app/api/contacts/import/route'
 import { GET as stats } from '@/app/api/contacts/[id]/casino-stats/route'
 import { GET as list } from '@/app/api/contacts/route'
+import { GET as pageHistory } from '@/app/api/contacts/history/route'
 import { contactLastMovementQuery } from '@/lib/contact-last-movement'
 const url = process.env.CONTACTS_TEST_DATABASE_URL
 
@@ -61,6 +62,19 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
     const data = await response.json()
     expect(data.contacts.find((row: {first_name:string}) => row.first_name==='sent')).toMatchObject({days_since_last_broadcast:3,last_broadcast_at:expect.any(String)})
     expect(data.contacts.find((row: {first_name:string}) => row.first_name==='never')).toMatchObject({days_since_last_broadcast:null,last_broadcast_at:null})
+  })
+  it('deferred pages and separately authorized history equal the complete listing', async () => {
+    await transaction('accounttest','zeus',100)
+    await c.query("INSERT INTO contacts(first_name,phone_number) VALUES('accounttest','+5491111111111'),('nohistory','+5491111111112')")
+    await c.query("INSERT INTO whatsapp_messages VALUES('5491111111111',gen_random_uuid(),'outbound','delivered',now()-interval '3 days 1 hour',now())")
+    const complete = await (await list(new NextRequest('http://localhost/api/contacts'))).json()
+    const deferred = await (await list(new NextRequest('http://localhost/api/contacts?history=deferred'))).json()
+    expect(deferred.total).toBe(complete.total)
+    expect(deferred.contacts.every((row:Record<string,unknown>) => !('days_since_last_movement' in row) && !('days_since_last_broadcast' in row))).toBe(true)
+    const history = await (await pageHistory(new NextRequest('http://localhost/api/contacts/history?ids='+deferred.contacts.map((row:{id:string})=>row.id).join(',')))).json()
+    expect(deferred.contacts.map((row:{id:string}) => ({...row,...history.history.find((extra:{id:string})=>extra.id===row.id)}))).toEqual(complete.contacts)
+    const exported = await (await list(new NextRequest('http://localhost/api/contacts?download=true&history=deferred'))).json()
+    expect(exported.contacts).toEqual(complete.contacts)
   })
   it('imports explicit username and computes matching level and tags',async()=>{
     await transaction('realaccount','zeus',500000.25)

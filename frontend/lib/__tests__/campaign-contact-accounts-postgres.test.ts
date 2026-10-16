@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Client } from 'pg'
-import { CAMPAIGN_CONTACT_ACCOUNTS_SQL } from '../campaign-contact-accounts'
+import { CAMPAIGN_CONTACT_ACCOUNTS_SQL, contactAccountLinksSql } from '../campaign-contact-accounts'
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12,'0')}`
 
 describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('scoped campaign account identities', () => {
@@ -29,9 +29,14 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
         ('${id(9)}','unique',NULL,'[]',NULL);`)
   })
   afterAll(async () => { if (db) { await db.query('ROLLBACK'); await db.end() } })
-  const links = async (ids: number[]) => (await db.query(`WITH recipients AS (
-    SELECT unnest($1::uuid[]) AS contact_id
-  ) SELECT * FROM (${CAMPAIGN_CONTACT_ACCOUNTS_SQL}) links ORDER BY contact_id,platform`, [ids.map(id)])).rows
+  const links = async (ids: number[]) => {
+    const read = async (sql: string) => (await db.query(`WITH recipients AS (
+      SELECT unnest($1::uuid[]) AS contact_id
+    ) SELECT * FROM (${sql}) links ORDER BY contact_id,platform`, [ids.map(id)])).rows
+    const scoped = await read(CAMPAIGN_CONTACT_ACCOUNTS_SQL)
+    expect(await read(contactAccountLinksSql(true))).toEqual(scoped)
+    return scoped
+  }
 
   it('resolves explicit platform, unique panel, unambiguous name and username-only accounts', async () => {
     expect(await links([1,3,4,7])).toEqual([
