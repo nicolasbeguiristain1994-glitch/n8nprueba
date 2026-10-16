@@ -48,9 +48,9 @@ export function CampaignRoutingPreview({ audience, messageType, templateId, sche
         {data.excluded>0&&<p className="text-xs text-muted-foreground">{n(data.excluded)} excluidos por bajas, bloqueos, estado o teléfono repetido.</p>}
         <div className="grid gap-2 sm:grid-cols-2">
           {data.lines.map(line=><div key={line.id} className="rounded-lg border bg-card p-3 text-sm">
-            <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-medium break-words">{line.name}</p>{line.phone&&<p className="text-xs text-muted-foreground">{line.phone}</p>}</div><p className="shrink-0 font-semibold">{n(line.assigned)} <span className="font-normal text-xs">contactos</span></p></div>
+            <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="font-medium break-words">{line.name}</p>{line.phone&&<p className="text-xs text-muted-foreground">{line.phone}</p>}</div><p className="shrink-0 font-semibold">{n(line.assigned)} <span className="font-normal text-xs">{line.assigned===1?'contacto':'contactos'}</span></p></div>
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden="true"><div className="h-full rounded-full bg-primary" style={{width:`${data.eligible ? line.assigned/data.eligible*100 : 0}%`}}/></div>
-            <p className="mt-2 text-xs text-muted-foreground">{n(line.habitual)} habituales · {n(line.new)} nuevos</p>
+            <p className="mt-2 text-xs text-muted-foreground">Habituales: {n(line.habitual)} · Nuevos: {n(line.new)}</p>
             <p className="mt-1 text-xs text-muted-foreground">Cupo restante: {n(line.remaining_hour)} esta hora · {n(line.remaining_day)} hoy</p>
             {line.reason&&<p className="mt-1 text-xs text-orange-600">{line.reason}</p>}
             {line.pending>0&&<p className="mt-1 text-xs text-orange-600">{n(line.pending)} pendientes; conservan esta línea.</p>}

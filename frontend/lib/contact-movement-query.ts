@@ -1,7 +1,8 @@
+import { canonicalAccountAgentSql } from './campaign-contact-accounts'
 import { contactLastMovementQuery } from './contact-last-movement'
 import type { InactivityRange } from './inactivity-range'
 
-/** Same account identity rules as migration 126; only relevant movements and
+/** Same account identity rules as migration 154; only relevant movements and
  * scoped contacts participate in the expensive joins. Ambiguity remains global. */
 export function contactMovementQuery(audience: { sql: string; params: unknown[] }, range: InactivityRange, platform: string, bulk = false) {
   if (range.mode !== 'period') return contactLastMovementQuery(audience, range, bulk)
@@ -23,12 +24,7 @@ export function contactMovementQuery(audience: { sql: string; params: unknown[] 
     ), players AS MATERIALIZED (
       SELECT id,username_lower,platform,agente,
         count(*) OVER (PARTITION BY username_lower) name_count,
-        CASE lower(trim(agente))
-          WHEN 'adminroyal' THEN 'royal' WHEN 'adminfara' THEN 'farabet' WHEN 'adminbtc' THEN 'betcoin'
-          WHEN 'adminzeus' THEN 'ofizeus' WHEN 'admbigwin' THEN 'bigwin' WHEN 'adminbigwin' THEN 'bigwin'
-          WHEN 'adminimperio' THEN 'bigwin' WHEN 'imperio' THEN 'bigwin'
-          WHEN 'btcuno' THEN 'betcoin' WHEN 'btcdos' THEN 'farabet' WHEN 'zeus' THEN 'ofizeus'
-          WHEN 'zeusroyal' THEN 'royal' ELSE lower(trim(agente)) END panel
+        ${canonicalAccountAgentSql("agente")} panel
       FROM casino_segmentation_players
     ), eligible_players AS MATERIALIZED (
       SELECT p.*,m.last_movement FROM players p JOIN movement_accounts m
@@ -43,7 +39,7 @@ export function contactMovementQuery(audience: { sql: string; params: unknown[] 
         AND contact_movement_names(first_name,last_name,casino_accounts) &&
           (SELECT coalesce(array_agg(DISTINCT username_lower::text),'{}') FROM eligible_players)
     ), explicit AS MATERIALIZED (
-      SELECT c.id,lower(trim(a->>'username')) username,a->>'platform' platform,lower(a->>'panel') panel
+      SELECT c.id,lower(trim(a->>'username')) username,a->>'platform' platform,${canonicalAccountAgentSql("a->>'panel'")} panel
       FROM scoped_contacts c CROSS JOIN LATERAL jsonb_array_elements(c.casino_accounts) a
     ), tokens AS (
       SELECT c.id,lower(tok) username FROM scoped_contacts c
@@ -52,6 +48,7 @@ export function contactMovementQuery(audience: { sql: string; params: unknown[] 
     ), linked AS (
       SELECT e.id contact_id,p.last_movement FROM explicit e JOIN eligible_players p
         ON p.username_lower=e.username AND p.platform=e.platform
+          AND (e.panel IS NULL OR e.panel=p.panel)
       UNION ALL
       SELECT e.id,p.last_movement FROM explicit e
         JOIN unique_panels up ON up.username_lower=e.username AND up.panel=e.panel

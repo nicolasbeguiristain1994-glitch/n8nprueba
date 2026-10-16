@@ -130,6 +130,41 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
     expect(data.platforms).toHaveLength(1)
     expect(data.platforms[0]).toMatchObject({platform:'ganamos',monto_cargas_mes:323.45})
   })
+  it('stats keeps agent accounts on one phone separate even when display names include both usernames',async()=>{
+    await transaction('biguser','ganamos',123.45);await transaction('royaluser','argenbet',900000)
+    await c.query("UPDATE casino_transactions SET agente='admbigwin' WHERE username='biguser'")
+    const {rows}=await c.query(`INSERT INTO contacts(phone_number,first_name,panel,account_username,casino_accounts) VALUES
+      ('+5491111111111','biguser royaluser','bigwin','biguser','[{"username":"biguser","panel":"bigwin","platform":"ganamos"}]'),
+      ('+5491111111111','biguser royaluser','royal','royaluser','[{"username":"royaluser","panel":"royal","platform":"argenbet"}]') RETURNING id,panel`)
+    for(const row of rows){
+      const res=await stats(new NextRequest(`http://localhost/api/contacts/${row.id}/casino-stats`),{params:Promise.resolve({id:row.id})})
+      expect(res.status).toBe(200)
+      const data=await res.json();expect(data.platforms).toHaveLength(1)
+      expect(data.platforms[0].monto_cargas_mes).toBe(row.panel==='bigwin'?123.45:900000)
+    }
+  })
+  it('stats canonicalizes explicit aliases and rejects contradictory agents on a known platform',async()=>{
+    await transaction('shared','ganamos',800);await transaction('shared','zeus',200)
+    await c.query("UPDATE casino_transactions SET agente=CASE platform WHEN 'ganamos' THEN 'adminimperio' ELSE 'bigwin' END")
+    const {rows:[{id}]}=await c.query(`INSERT INTO contacts(first_name,account_username,casino_accounts) VALUES
+      ('shared','shared','[{"username":"shared","panel":"adminimperio","platform":"ganamos"}]') RETURNING id`)
+    const read=async()=>await (await stats(new NextRequest(`http://localhost/api/contacts/${id}/casino-stats`),{params:Promise.resolve({id})})).json()
+    expect((await read()).platforms).toEqual([expect.objectContaining({platform:'ganamos',monto_cargas_mes:800})])
+    await c.query(`UPDATE contacts SET casino_accounts='[{"username":"shared","panel":"bigwin","platform":"ganamos"}]' WHERE id=$1`,[id])
+    expect((await read()).platforms).toEqual([])
+  })
+  it.each(['', '&movimiento_modo=periodo'])('movement filters enforce the account agent even on explicit platforms %s',async mode=>{
+    await transaction('shared','ganamos',800);await transaction('shared','zeus',200)
+    await c.query("UPDATE casino_transactions SET agente=CASE platform WHEN 'ganamos' THEN 'adminimperio' ELSE 'bigwin' END")
+    const {rows:[{id}]}=await c.query(`INSERT INTO contacts(first_name,account_username,casino_accounts) VALUES
+      ('shared','shared','[{"username":"shared","panel":"adminimperio","platform":"ganamos"}]') RETURNING id`)
+    await c.query(`INSERT INTO contacts(first_name,account_username,casino_accounts) VALUES
+      ('shared','shared','[{"username":"shared","panel":"bigwin","platform":"ganamos"}]'),
+      ('shared',NULL,'[]')`)
+    const res=await list(new NextRequest('http://localhost/api/contacts?inactividad_desde=0&inactividad_hasta=30'+mode))
+    expect(res.status).toBe(200)
+    const data=await res.json();expect(data.total).toBe(1);expect(data.contacts[0].id).toBe(id)
+  })
   it('list and selection return identical audiences for combined list and tag filters',async()=>{
     const {rows}=await c.query(`INSERT INTO contacts(first_name,phone_number) VALUES('match','+5491111111111'),('wrongtag','+5491111111112'),('wronglist','+5491111111113') RETURNING id,first_name`)
     const id=(name:string)=>rows.find(r=>r.first_name===name).id

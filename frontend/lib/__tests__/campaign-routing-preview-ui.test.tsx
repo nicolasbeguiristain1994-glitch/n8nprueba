@@ -13,7 +13,7 @@ it('clears stale allocation when the template changes and ignores the old respon
   await screen.findByText('Lexora')
   await act(async()=>resolveOld(Response.json(result('Nexus'))))
   expect(screen.queryByText('Nexus')).not.toBeInTheDocument()
-  expect(screen.getByText('8 habituales · 2 nuevos')).toBeInTheDocument()
+  expect(screen.getByText('Habituales: 8 · Nuevos: 2')).toBeInTheDocument()
   expect(screen.getByText('3 pendientes; conservan esta línea.')).toBeInTheDocument()
   expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({list_id:'list',message_type:'template',template_id:'lexora'})
 })
