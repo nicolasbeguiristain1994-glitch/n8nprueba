@@ -1,5 +1,6 @@
 -- migrate: transactional
 -- Generated with Supabase CLI: 20261016000259_contact_accounts_agent_consent.sql.
+SELECT pg_advisory_xact_lock(hashtext('casino-segmentation'));
 -- Contacts retain their original IDs/history. Only explicit, unambiguous account
 -- identities are split; conflicting historical phones stay available for review.
 CREATE OR REPLACE FUNCTION public.contact_agent_key(value text) RETURNS text

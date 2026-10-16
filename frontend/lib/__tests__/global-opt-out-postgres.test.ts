@@ -92,6 +92,17 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
   expect((await pool.query('SELECT status FROM automation_message_jobs ORDER BY id')).rows).toEqual([{status:'skipped'},{status:'queued'}])
   expect((await pool.query("SELECT status FROM cloud_messages WHERE direction='outbound' ORDER BY id")).rows).toEqual([{status:'failed'},{status:'queued'}])
  })
+ it('does not attribute a newer unclassified reply to an older campaign',async()=>{
+  await pool.query(`INSERT INTO whatsapp_messages(phone_number,direction,status,evolution_message_id,created_at,metadata)
+    VALUES($1,'outbound','sent','manual-unknown',now()-interval '1 second',$2)`,['+'+phone,JSON.stringify({line_id:id(8)})])
+  expect(await resolveConsentIdentity(phone,{provider:'cloud',sourceId:'line-1'})).toMatchObject({agent:null})
+ })
+ it('does not bypass an agent opt-out when the sender has no attributable account',async()=>{
+  await recordGlobalOptOut(request)
+  const send=vi.fn()
+  await expect(withGlobalSendGuard(phone,send)).rejects.toBeInstanceOf(OptOutError)
+  expect(send).not.toHaveBeenCalled()
+ })
  it('blocks Bigwin on all sending lines while Royal remains allowed',async()=>{
   await recordGlobalOptOut(request)
   const send=vi.fn().mockResolvedValue('accepted')

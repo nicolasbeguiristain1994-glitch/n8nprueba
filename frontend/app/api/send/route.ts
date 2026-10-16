@@ -125,7 +125,7 @@ export async function POST(req: NextRequest) {
         ? sendViaCloud(line, phone, payload, undefined, { purpose: 'conversation_reply', reserveCapacity: true })
         : line.line_type === 'cloud'
           ? sendViaCloud(line, phone, payload, campaign_id ?? undefined)
-          : sendViaEvolution(line, phone, messageStr, sticker ? sticker_data!.replace(/^data:image\/webp;base64,/,'') : media_url || null, sticker ? 'sticker' : undefined))
+          : sendViaEvolution(line, phone, messageStr, sticker ? sticker_data!.replace(/^data:image\/webp;base64,/,'') : media_url || null, sticker ? 'sticker' : undefined, campaign_id ?? undefined))
 
       const sentAt = new Date().toISOString()
       logs.push({
