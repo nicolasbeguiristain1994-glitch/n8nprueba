@@ -1,5 +1,11 @@
 -- migrate: transactional
 -- Generated with Supabase CLI: 20261016000259_contact_accounts_agent_consent.sql.
+DO $$ BEGIN
+  IF NOT EXISTS(SELECT 1 FROM app_settings
+    WHERE key='contact_schema_required_version' AND value='2'::jsonb) THEN
+    RAISE EXCEPTION 'Activate the verified schema transition gate before migrating contact identities';
+  END IF;
+END $$;
 SELECT pg_advisory_xact_lock(hashtext('casino-segmentation'));
 -- Contacts retain their original IDs/history. Only explicit, unambiguous account
 -- identities are split; conflicting historical phones stay available for review.
@@ -66,6 +72,7 @@ CREATE TEMP TABLE account_split_candidates ON COMMIT DROP AS
   GROUP BY c.id,public.contact_agent_key(a->>'panel'),lower(trim(a->>'username'));
 CREATE INDEX ON account_split_candidates(original_id);
 CREATE INDEX ON account_split_candidates(agent,username);
+ANALYZE account_split_candidates;
 -- Any ambiguous account holds its whole legacy record for explicit review.
 CREATE TEMP TABLE account_split_safe ON COMMIT DROP AS
   SELECT a.*,row_number() OVER(PARTITION BY a.original_id ORDER BY

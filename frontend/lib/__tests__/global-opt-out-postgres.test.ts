@@ -47,6 +47,8 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
   await pool.query(readFileSync('../db/migrations/041_blacklist.sql','utf8'))
   await pool.query(readFileSync('../db/migrations/069_cloud_api_opt_outs.sql','utf8'))
   await pool.query(readFileSync('../db/migrations/038_app_settings.sql','utf8'))
+  await expect(pool.query(readFileSync('../db/migrations/154_contact_accounts_agent_consent.sql','utf8').replaceAll('public.',`${schema}.`))).rejects.toThrow('Activate the verified schema transition gate')
+  await pool.query("INSERT INTO app_settings(key,value,type) VALUES('contact_schema_required_version','2','number')")
   await pool.query('BEGIN')
   await pool.query(readFileSync('../db/migrations/154_contact_accounts_agent_consent.sql','utf8').replaceAll('public.',`${schema}.`))
   await pool.query('COMMIT')
