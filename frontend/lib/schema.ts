@@ -1,3 +1,4 @@
+import { CAMPAIGN_SELECTION_LIMIT } from './campaign-selection'
 /**
  * Centralised input validation.
  *
@@ -157,7 +158,13 @@ export type CreateBlacklistInput = z.infer<typeof CreateBlacklistSchema>
 const CAMPAIGN_TYPES = ['promotion', 'retention', 'onboarding', 'support', 'survey', 'payment', 'risk_alert'] as const
 const DELAY_TYPES    = ['gaussian', 'human_noisy', 'uniform'] as const
 
+export const CampaignContactSelectionSchema = z.object({
+  contact_ids: z.array(z.string().uuid('Contacto inválido')).min(1, 'Seleccioná al menos un contacto')
+    .max(CAMPAIGN_SELECTION_LIMIT, 'Seleccioná hasta 100.000 contactos por campaña'),
+})
+
 export const CreateCampaignSchema = z.object({
+  contact_ids: CampaignContactSelectionSchema.shape.contact_ids.optional(),
   name:                 z.string().min(1, 'El nombre de la campaña es requerido').max(255),
   message:              z.string().max(4096).optional(),
   messages:             z.array(z.string().max(4096)).min(1).max(10).optional(),

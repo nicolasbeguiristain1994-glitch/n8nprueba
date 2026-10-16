@@ -40,6 +40,7 @@ vi.mock('@/components/ui/input', async () => {
 
 import { fetchJson } from '@/lib/fetchJson'
 import Page from '@/app/(protected)/campaigns/page'
+import { saveCampaignSelection, readCampaignSelection } from '@/lib/campaign-selection-draft'
 
 const TPL_ID = '6f1c2d3e-4a5b-4c6d-8e9f-0a1b2c3d4e5f'
 const TEMPLATES = [
@@ -108,7 +109,7 @@ const chooseAudience = () => {
 }
 const reviewContent = () => { nextStep(); nextStep() }
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); sessionStorage.clear(); window.history.replaceState(null, '', '/') })
 beforeEach(() => { vi.clearAllMocks(); currentUser.value = { user: { role: 'admin', id: 'owner' }, permissions: {} } })
 
 describe('Campañas — plantillas', () => {
@@ -682,5 +683,52 @@ describe('Campañas — reiniciar una cancelada sin envíos', () => {
     await screen.findByText('Promo Mayo')
     expect(screen.queryByRole('button', { name: 'Reiniciar' })).not.toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+
+describe('Campañas desde contactos seleccionados', () => {
+  const ids = ['11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222']
+  function setupSelection(summary: unknown = {selected:2,eligible:1,excluded:1,blacklisted:1,inactive:0,opted_out:0,duplicates:0}) {
+    const token = saveCampaignSelection('owner', ids)
+    window.history.replaceState(null, '', `/campaigns?action=new&selection=${token}`)
+    routeFetchJson(() => Promise.resolve({campaigns:[],scheduler_enabled:false}))
+    const existing = vi.mocked(fetchJson).getMockImplementation()!
+    vi.mocked(fetchJson).mockImplementation((input, init) => String(input)==='/api/campaigns/audience-preview'
+      ? Promise.resolve(summary) as Promise<never> : existing(input, init))
+    return token
+  }
+  it('opens the wizard with the fixed selection, previews exclusions and posts it without creating a list first', async () => {
+    const token = setupSelection()
+    const send = vi.fn().mockResolvedValue(jsonResponse({id:'new',status:'draft'}));vi.stubGlobal('fetch',send)
+    render(<Page />)
+    await screen.findByText('Contactos seleccionados')
+    await screen.findByText('1 en Blacklist')
+    expect(screen.queryByText('Creá primero una lista en Contactos')).not.toBeInTheDocument()
+    expect(send).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('Nombre de campaña'),{target:{value:'Selección directa'}})
+    nextStep();fireEvent.change(screen.getByPlaceholderText('Hola {{nombre}}, tenemos una oferta especial…'),{target:{value:'Hola'}})
+    reviewContent();fireEvent.click(screen.getByRole('button',{name:'Guardar campaña'}))
+    await waitFor(()=>expect(send).toHaveBeenCalledOnce())
+    expect(postedBody(send)).toMatchObject({contact_ids:ids,list_id:null,prospect_list_id:null,scheduled_at:null})
+    await waitFor(()=>expect(readCampaignSelection(token,'owner')).toBeNull())
+  })
+  it('does not create a campaign or list on cancel and clears the handoff', async () => {
+    const token = setupSelection();const send=vi.fn();vi.stubGlobal('fetch',send)
+    render(<Page />);await screen.findByText('Contactos seleccionados')
+    fireEvent.click(screen.getByRole('button',{name:'Cancelar'}))
+    expect(send).not.toHaveBeenCalled();expect(readCampaignSelection(token,'owner')).toBeNull()
+    expect(window.location.search).toBe('')
+  })
+  it('prevents continuing with zero eligible recipients', async () => {
+    setupSelection({selected:2,eligible:0,excluded:2,blacklisted:2,inactive:0,opted_out:0,duplicates:0})
+    render(<Page />);await screen.findByText(/No hay contactos habilitados/)
+    fireEvent.change(screen.getByLabelText('Nombre de campaña'),{target:{value:'Sin aptos'}});nextStep()
+    expect(screen.getByText('Esperá la revisión y verificá que haya contactos habilitados.')).toBeInTheDocument()
+  })
+  it('does not silently fall back to a list when the selection cannot be recovered', async () => {
+    setupSelection();sessionStorage.clear();render(<Page />)
+    await screen.findByText(/No se pudo recuperar la selección/)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })

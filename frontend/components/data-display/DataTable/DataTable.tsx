@@ -58,13 +58,16 @@ function buildSelectionColumn<TData>() {
       />
     ),
     cell: ({ row }: { row: import('@tanstack/react-table').Row<TData> }) => (
-      <Checkbox
-        checked={row.getIsSelected()}
-        disabled={!row.getCanSelect()}
-        onCheckedChange={(v) => row.toggleSelected(v)}
-        aria-label="Seleccionar fila"
-        onClick={(e) => e.stopPropagation()}
-      />
+      // Base UI also emits a click from its sibling hidden input. Contain both
+      // events so selecting a contact never opens the row's detail drawer.
+      <span className="inline-flex" onClick={(e) => e.stopPropagation()}>
+        <Checkbox
+          checked={row.getIsSelected()}
+          disabled={!row.getCanSelect()}
+          onCheckedChange={(v) => row.toggleSelected(v)}
+          aria-label="Seleccionar fila"
+        />
+      </span>
     ),
     enableSorting: false,
     enableHiding:  false,

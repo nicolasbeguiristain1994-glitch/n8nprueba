@@ -4,6 +4,9 @@ import { analyzeTemplate, buildTemplateParams, fillTemplatePreview, HEADER_LABEL
 const DELAY_MIN_SECONDS = 3
 const DELAY_MAX_SECONDS = 300
 
+import { readCampaignSelection, clearCampaignSelection, type CampaignSelectionDraft } from '@/lib/campaign-selection-draft'
+import type { CampaignSelectionSummary } from '@/lib/campaign-selection'
+import { SelectedContactsAudience } from '@/components/campaigns/SelectedContactsAudience'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
@@ -104,16 +107,51 @@ export default function Campaigns() {
   const [scheduleNotice, setScheduleNotice] = useState<string | null>(null)
   const canEditSchedule = isAdmin || ((permissions?.campaigns?.includes('update') ?? false) && (permissions?.send?.includes('send') ?? false))
   const canOpenNew = isAdmin || (permissions?.campaigns?.includes('create') ?? false)
+  const [contactSelection, setContactSelection] = useState<CampaignSelectionDraft | null>(null)
+  const [selectionToken, setSelectionToken] = useState<string | null>(null)
+  const [selectionSummary, setSelectionSummary] = useState<CampaignSelectionSummary | null>(null)
+  const [selectionError, setSelectionError] = useState<string | null>(null)
+  const [selectionNotice, setSelectionNotice] = useState<string | null>(null)
+  const [selectionRetry, setSelectionRetry] = useState(0)
+  const openedSelection = useRef<string | null>(null)
   useEffect(() => {
     if (!canOpenNew) return
     const open = () => setShowNew(true)
     const url = new URL(window.location.href)
-    if (url.searchParams.get('action') === 'new') {
+    const token = url.searchParams.get('selection')
+    if (token) {
+      if (!user?.id || openedSelection.current === token) return
+      openedSelection.current = token
+      const draft = readCampaignSelection(token, user.id)
+      if (draft) { setContactSelection(draft); setSelectionToken(token); setShowNew(true) }
+      else setSelectionNotice('No se pudo recuperar la selección. Volvé a Contactos y elegí Crear campaña nuevamente.')
+    } else if (url.searchParams.get('action') === 'new') {
       open(); url.searchParams.delete('action'); window.history.replaceState(null, '', url)
     }
     window.addEventListener('cmd:new-campaign', open)
     return () => window.removeEventListener('cmd:new-campaign', open)
-  }, [canOpenNew])
+  }, [canOpenNew, user?.id])
+  useEffect(() => {
+    setSelectionSummary(null); setSelectionError(null)
+    if (!contactSelection || !showNew) return
+    const controller = new AbortController()
+    const deadline = setTimeout(() => {
+      controller.abort(); setSelectionError('La revisión está demorando. Reintentá antes de continuar.')
+    }, 20_000)
+    void fetchJson<CampaignSelectionSummary>('/api/campaigns/audience-preview', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contact_ids: contactSelection.contactIds }), signal: controller.signal,
+    }).then(data => { if (!controller.signal.aborted) setSelectionSummary(data) })
+      .catch(() => { if (!controller.signal.aborted) setSelectionError('No se pudo revisar la selección. Reintentá o volvé a seleccionar los contactos.') })
+      .finally(() => clearTimeout(deadline))
+    return () => { clearTimeout(deadline); controller.abort() }
+  }, [contactSelection, showNew, selectionRetry])
+  const discardSelection = () => {
+    try { clearCampaignSelection(selectionToken) } catch { /* storage may be disabled after navigation */ }
+    const url = new URL(window.location.href)
+    url.searchParams.delete('selection'); url.searchParams.delete('action'); window.history.replaceState(null, '', url)
+    setContactSelection(null); setSelectionToken(null); setSelectionSummary(null); setSelectionError(null)
+  }
 
   const [selected, setSelected]       = useState<Campaign | null>(null)
   const [campContacts, setCampContacts] = useState<CampaignContact[]>([])
@@ -287,6 +325,9 @@ export default function Campaigns() {
 
   const createCampaign = async () => {
     setCreateError(null)
+    if (contactSelection && (!selectionSummary?.eligible || selectionError)) {
+      setCreateError('Revisá los destinatarios habilitados antes de guardar.'); return
+    }
     const validMsgs = messages.filter(m => m.trim())
     const delayMin = form.antiblock_delay_min
     const delayMax = form.antiblock_delay_max
@@ -318,9 +359,10 @@ export default function Campaigns() {
         scheduled_at: scheduledAt,
         antiblock_delay_min: delayMin,
         antiblock_delay_max: delayMax,
-        // Audiencia: solo uno de los dos debe ir en el payload
-        list_id:          form.audience_type === 'contacts'  ? (form.list_id          || null) : null,
-        prospect_list_id: form.audience_type === 'prospects' ? (form.prospect_list_id || null) : null,
+        // Exactly one audience source is sent.
+        contact_ids: contactSelection?.contactIds,
+        list_id:          !contactSelection && form.audience_type === 'contacts'  ? (form.list_id          || null) : null,
+        prospect_list_id: !contactSelection && form.audience_type === 'prospects' ? (form.prospect_list_id || null) : null,
       }
       let payload: Record<string, unknown>
       if (useTemplate && tplBuild) {
@@ -354,12 +396,14 @@ export default function Campaigns() {
       setCreateError(d.error || `Error ${res.status}`)
       return  // keep modal open, preserve form state
     }
+    discardSelection()
     setShowNew(false)
     setForm(FORM_DEFAULT)
     setMessages([''])
     setPreviewIdx(0)
     resetTemplateState()
     loadCampaigns()
+    loadLookups()
   }
 
   // La plantilla no reemplaza los mensajes de texto: se envía como template con sus parámetros
@@ -628,6 +672,12 @@ export default function Campaigns() {
   const previewName = form.personalize_name ? 'Juan' : ''
   const previewMsg = (messages[previewIdx] || '').replace(/\{\{nombre\}\}/gi, previewName).replace(/\{\{name\}\}/gi, previewName)
 
+  const closeNew = () => {
+    if (creating) return
+    discardSelection(); setShowNew(false); setForm(FORM_DEFAULT); setMessages(['']); setPreviewIdx(0)
+    setCreateError(null); setSendError(null); resetTemplateState(); setUploadError(null)
+  }
+
   const openNew = () => {
     if (lookupFailures.length) loadLookups()
     setShowNew(true)
@@ -635,12 +685,13 @@ export default function Campaigns() {
 
   const canCreate = !creating && !!form.name.trim() &&
     (useTemplate ? templateReady : messages.some(m => m.trim()))
-  const audience = form.audience_type === 'contacts' ? lists.find(l=>l.id===form.list_id) : prospectLists.find(l=>l.id===form.prospect_list_id)
+  const audience = contactSelection ? { id: 'selection', name: 'Selección desde Contactos', contact_count: selectionSummary?.eligible ?? 0 } : form.audience_type === 'contacts' ? lists.find(l=>l.id===form.list_id) : prospectLists.find(l=>l.id===form.prospect_list_id)
   const audienceCount = audience ? ('contact_count' in audience ? audience.contact_count : audience.member_count) : null
   useEffect(()=>{ if(showNew){setCreateStep(0);setStepError(null)} },[showNew])
   const nextCreateStep = () => {
     let error: string | null = null
-    if(createStep===0 && (!form.name.trim() || !audience)) error='Completá el nombre y seleccioná una lista de audiencia.'
+    if(createStep===0 && (!form.name.trim() || !audience)) error='Completá el nombre y seleccioná la audiencia.'
+    if(createStep===0 && contactSelection && (!selectionSummary?.eligible || selectionError)) error='Esperá la revisión y verificá que haya contactos habilitados.'
     if(createStep===1 && !(useTemplate ? templateReady : messages.some(m=>m.trim()))) error='Completá un mensaje o todos los parámetros de la plantilla aprobada.'
     if(createStep===1 && uploadingMedia) error='Esperá a que termine la carga de la imagen.'
     if(createStep===2 && (![form.antiblock_delay_min,form.antiblock_delay_max].every(n=>Number.isInteger(n)&&n>=DELAY_MIN_SECONDS&&n<=DELAY_MAX_SECONDS)||form.antiblock_delay_min>form.antiblock_delay_max)) error=form.antiblock_delay_min>form.antiblock_delay_max?'La pausa mínima no puede ser mayor que la pausa máxima.':`Las pausas deben ser enteros entre ${DELAY_MIN_SECONDS} y ${DELAY_MAX_SECONDS} segundos.`
@@ -662,6 +713,7 @@ export default function Campaigns() {
         </Button>
       </PageHeader>
 
+      {selectionNotice && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm">{selectionNotice} <a href="/contacts" className="underline">Volver a Contactos</a></p>}
       <CloudReadiness />
 
       {scheduleNotice && <p role="status" className="rounded-lg border border-success/20 bg-success/10 px-4 py-2 text-sm text-success">{scheduleNotice}</p>}
@@ -953,20 +1005,7 @@ export default function Campaigns() {
       }
 
       {/* Modal nueva campaña */}
-      <Dialog open={showNew} onOpenChange={v => {
-        if (creating) return  // block close while save is in progress
-        setShowNew(v)
-        if (!v) {
-          setForm(FORM_DEFAULT)
-          setMessages([''])
-          setPreviewIdx(0)
-          setCreating(false)
-          setCreateError(null)
-          setSendError(null)
-          resetTemplateState()
-          setUploadError(null)
-        }
-      }}>
+      <Dialog open={showNew} onOpenChange={v => { if (!v) closeNew(); else setShowNew(true) }}>
         <DialogContent ref={createDialogRef} className="w-[calc(100vw-2rem)] sm:max-w-2xl max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nueva campaña</DialogTitle>
@@ -1002,6 +1041,10 @@ export default function Campaigns() {
               </Select>
             </div>
 
+            {contactSelection ? <>
+              <SelectedContactsAudience count={contactSelection.contactIds.length} summary={selectionSummary} error={selectionError} onRetry={() => setSelectionRetry(n => n + 1)} />
+              <button type="button" className="text-xs text-primary underline" onClick={discardSelection}>Elegir una lista existente</button>
+            </> : <>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Tipo de audiencia</label>
               <div className="flex gap-2 mb-2">
@@ -1057,6 +1100,7 @@ export default function Campaigns() {
               )}
             </div>
 
+            </>}
             </section>
             <section tabIndex={-1} hidden={createStep!==1} aria-label="Contenido de la campaña" className="campaign-step space-y-4">
             {/* Toggle plantilla */}
@@ -1476,12 +1520,13 @@ export default function Campaigns() {
             {createStep===3&&<section tabIndex={-1} aria-label="Revisión de la campaña" className="space-y-4">
               <div className="rounded-xl border bg-muted/20 p-4"><h3 className="text-base font-semibold break-words">{form.name}</h3><dl className="mt-3 grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                 <div><dt className="text-muted-foreground">Audiencia</dt><dd className="font-medium break-words">{audience?.name || 'Sin lista seleccionada'}</dd></div>
-                <div><dt className="text-muted-foreground">Personas en la lista</dt><dd className="font-medium">{audienceCount===null?'—':audienceCount.toLocaleString('es-AR')}</dd></div>
+                <div><dt className="text-muted-foreground">{contactSelection ? 'Destinatarios habilitados' : 'Personas en la lista'}</dt><dd className="font-medium">{audienceCount===null?'—':audienceCount.toLocaleString('es-AR')}</dd></div>
                 <div><dt className="text-muted-foreground">Contenido</dt><dd className="font-medium">{useTemplate?`Plantilla: ${selectedTpl?.name ?? 'Sin seleccionar'}`:`Texto · ${messages.filter(m=>m.trim()).length} variantes`}</dd></div>
                 <div><dt className="text-muted-foreground">Programación</dt><dd className="font-medium">{form.scheduled_at&&schedulerEnabled?formatAR(toArgentinaIso(form.scheduled_at)!):'Borrador · envío manual posterior'}</dd></div>
                 <div><dt className="text-muted-foreground">Líneas</dt><dd>Reparto automático · conserva la línea habitual</dd></div>
                 <div><dt className="text-muted-foreground">Pausas</dt><dd>{form.antiblock_delay_min}–{form.antiblock_delay_max} segundos</dd></div>
               </dl></div>
+              {contactSelection && <SelectedContactsAudience count={contactSelection.contactIds.length} summary={selectionSummary} error={selectionError} onRetry={() => setSelectionRetry(n => n + 1)} />}
               <div className="rounded-xl border p-4"><p className="mb-2 text-xs font-semibold text-muted-foreground">Vista previa del contenido · nombres de ejemplo</p><p className="whitespace-pre-wrap break-words text-sm">{useTemplate&&tplAnalysis?fillTemplatePreview(tplAnalysis.bodyText,tplBody):previewMsg}</p>{!useTemplate&&messages.filter(m=>m.trim()).length>1&&<details className="mt-3 text-xs"><summary className="cursor-pointer text-primary">Ver todas las variantes</summary>{messages.filter(m=>m.trim()).map((m,i)=><p className="mt-2 whitespace-pre-wrap break-words border-t pt-2" key={i}>{m}</p>)}</details>}</div>
               <p className="rounded-lg border border-warning/20 bg-warning/5 p-3 text-xs text-muted-foreground">La cantidad de la lista no equivale a envíos elegibles. El sistema mantiene los controles de baja, frecuencia, plantillas, cupos y horarios al procesar la campaña; las exclusiones y fallos se muestran en su detalle.</p>
               {form.scheduled_at&&schedulerEnabled&&<p className="text-sm font-medium">Al confirmar, la campaña queda programada para la fecha indicada.</p>}
@@ -1494,10 +1539,10 @@ export default function Campaigns() {
               </div>
             )}
             <div className="sticky bottom-0 flex flex-wrap items-center gap-2 border-t bg-popover pt-4">
-              <Button variant="ghost" onClick={()=>setShowNew(false)} disabled={creating}>Cancelar</Button>
+              <Button variant="ghost" onClick={closeNew} disabled={creating}>Cancelar</Button>
               <span className="mr-auto text-xs text-muted-foreground">Paso {createStep+1} de 4</span>
               {createStep>0&&<Button variant="outline" disabled={creating} onClick={()=>{setCreateStep(n=>n-1);setStepError(null)}}>Anterior</Button>}
-              {createStep<3?<Button onClick={nextCreateStep}>Continuar</Button>:<Button onClick={createCampaign} disabled={!canCreate||!audience}>{creating&&<Loader2 size={14} className="animate-spin"/>}{form.scheduled_at&&schedulerEnabled?'Programar campaña':'Guardar campaña'}</Button>}
+              {createStep<3?<Button onClick={nextCreateStep}>Continuar</Button>:<Button onClick={createCampaign} disabled={!canCreate||!audience||!!contactSelection&&(!selectionSummary?.eligible||!!selectionError)}>{creating&&<Loader2 size={14} className="animate-spin"/>}{form.scheduled_at&&schedulerEnabled?'Programar campaña':'Guardar campaña'}</Button>}
             </div>
           </div>
         </DialogContent>

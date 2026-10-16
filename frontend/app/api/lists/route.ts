@@ -18,12 +18,12 @@ export async function GET(req: NextRequest) {
     // Admin sees everything (including historical rows where owned_by IS NULL).
     // Operator/viewer see only their own lists; NULL-owned historical lists are
     // admin-only and never appear in non-admin results.
-    // Casino predefined lists (source = 'casino') are always excluded from
+    // Campaign snapshots and casino predefined lists are excluded from
     // the user-facing view. They exist in DB for segmentation purposes but
     // should not clutter the contacts badges or campaign dropdown.
     const ownerClause = isAdmin
-      ? `WHERE COALESCE(cl.source, 'user') != 'casino'`
-      : `WHERE cl.owned_by = $1 AND COALESCE(cl.source, 'user') != 'casino'`
+      ? `WHERE COALESCE(cl.source, 'user') NOT IN ('casino', 'campaign_selection')`
+      : `WHERE cl.owned_by = $1 AND COALESCE(cl.source, 'user') NOT IN ('casino', 'campaign_selection')`
     const params = isAdmin ? [] : [session.user_id]
 
     const scope = contactScope(session, params.length, 'c')

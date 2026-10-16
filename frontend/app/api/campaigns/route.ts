@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { query } from '@/lib/db'
+import { query, withTransaction } from '@/lib/db'
+import { randomUUID } from 'node:crypto'
+import { resolveCampaignSelection } from '@/lib/campaign-selection-resolver'
 import { checkPermissionWithUser, isOwnerOrAdmin } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { parseBody, handleValidationError, CreateCampaignSchema } from '@/lib/schema'
@@ -30,7 +32,7 @@ export async function GET(req: NextRequest) {
              (SELECT wt.name FROM whatsapp_templates wt WHERE wt.id=c.template_id) AS template_name,
              ${includePauseReason ? 'c.pause_reason,' : 'NULL::text AS pause_reason,'}
              c.processor_locked_at,
-             c.created_at, c.owned_by, cl.name AS list_name, cl.id AS list_id,
+             c.created_at, c.owned_by, CASE WHEN cl.source='campaign_selection' THEN 'Selección desde Contactos' ELSE cl.name END AS list_name, cl.id AS list_id,
              ${includeProspectList ? 'c.prospect_list_id, pl.name AS prospect_list_name,' : 'NULL::uuid AS prospect_list_id, NULL::text AS prospect_list_name,'}
              stats.sent AS total_sent, stats.delivered AS total_delivered,
              stats.read AS total_read, stats.failed AS total_failed, stats.skipped AS total_skipped,
@@ -93,7 +95,7 @@ export async function POST(req: NextRequest) {
   const parsed  = parseBody(CreateCampaignSchema, rawBody)
   if (!parsed.ok) return handleValidationError(req, parsed.error, 'campaigns')
 
-  const { name, message, messages, media_url, media_type, list_id, prospect_list_id, scheduled_at,
+  const { name, message, messages, media_url, media_type, list_id, prospect_list_id, contact_ids, scheduled_at,
           antiblock_delay_min, antiblock_delay_max, type: campaignType,
           personalize_name,
           delay_type, custom_delay_seconds, daily_limit_override,
@@ -107,17 +109,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Fecha de programación inválida' }, { status: 400 })
   }
   if (schedule) {
-    if (!!list_id === !!prospect_list_id) return NextResponse.json({ error: 'Seleccioná una única lista antes de programar' }, { status: 400 })
+    if ([list_id, prospect_list_id, contact_ids].filter(Boolean).length !== 1) return NextResponse.json({ error: 'Seleccioná una única audiencia antes de programar' }, { status: 400 })
     if (process.env.CAMPAIGN_SCHEDULER_ENABLED !== 'true' || !process.env.CRON_SECRET) return NextResponse.json({ error: 'La programación automática no está habilitada; guardá un borrador' }, { status: 409 })
     if (Date.parse(schedule) <= Date.now()) return NextResponse.json({ error: 'La fecha programada debe estar en el futuro' }, { status: 400 })
     const sendAuth = await checkPermissionWithUser(req, 'send', 'send')
     if (!sendAuth.ok) return sendAuth.response
   }
 
-  // list_id y prospect_list_id son mutuamente excluyentes
-  if (list_id && prospect_list_id) {
+  // An explicit selection must never be mixed with another audience.
+  if ([list_id, prospect_list_id, contact_ids].filter(Boolean).length > 1) {
     return NextResponse.json(
-      { error: 'No se puede usar list_id y prospect_list_id al mismo tiempo' },
+      { error: 'Usá una única audiencia: contactos seleccionados, lista de contactos o lista de difusión' },
       { status: 400 }
     )
   }
@@ -183,51 +185,75 @@ export async function POST(req: NextRequest) {
       if (!isOwnerOrAdmin(session, pl.owned_by)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
-    let total_targets = 0
-    if (list_id) {
-      const [r] = await query<{ count: string }>(
-        `SELECT COUNT(*)::int AS count FROM contact_list_members clm JOIN contacts c ON c.id=clm.contact_id
-         WHERE clm.list_id=$1 AND c.status='active' AND c.opt_in_marketing=true AND c.do_not_contact=false
-         AND NOT EXISTS (SELECT 1 FROM blacklist bl WHERE bl.removed_at IS NULL AND bl.phone_number_normalized=regexp_replace(c.phone_number,'[^0-9]','','g'))`, [list_id]
-      )
-      total_targets = Number(r?.count || 0)
-    } else if (prospect_list_id) {
-      const [r] = await query<{ count: string }>(
-        `SELECT COUNT(*)::int AS count
-         FROM prospect_list_members plm
-         JOIN prospects p ON p.id = plm.prospect_id
-         WHERE plm.prospect_list_id = $1
-           AND p.status = 'active' AND p.opt_in = true AND p.stage IS DISTINCT FROM 'descartado'
-           AND NOT EXISTS (SELECT 1 FROM blacklist bl WHERE bl.removed_at IS NULL AND bl.phone_number_normalized=regexp_replace(p.phone_number,'[^0-9]','','g'))`,
-        [prospect_list_id]
-      )
-      total_targets = Number(r?.count || 0)
+    if (contact_ids) {
+      const contacts = await checkPermissionWithUser(req, 'contacts', 'read')
+      if (!contacts.ok) return contacts.response
     }
+    const persist = async (run: typeof query) => {
+      let resolvedListId = list_id
+      let total_targets = 0
+      if (contact_ids) {
+        const selection = await resolveCampaignSelection(contact_ids, session, run)
+        if (!selection.summary.eligible) throw NextResponse.json({ error: 'No hay contactos habilitados en esta selección. Revisá las exclusiones antes de crear la campaña.' }, { status: 422 })
+        const [audience] = await run<{id: string}>(`
+          INSERT INTO contact_lists (name, description, source, filters, owned_by, updated_by, is_dynamic, refreshed_at)
+          VALUES ($1, $2, 'campaign_selection', $3::jsonb, $4, $4, false, NOW()) RETURNING id`,
+          [`${nameStr.slice(0,180)} · ${randomUUID()}`, 'Selección fija desde Contactos', JSON.stringify({ selection_summary: selection.summary }), session.user_id])
+        await run(`INSERT INTO contact_list_members (list_id, contact_id) SELECT $1, unnest($2::uuid[])`, [audience.id, selection.eligibleIds])
+        resolvedListId = audience.id
+        total_targets = selection.summary.eligible
+      } else if (list_id) {
+        const [r] = await run<{ count: string }>(
+          `SELECT COUNT(*)::int AS count FROM contact_list_members clm JOIN contacts c ON c.id=clm.contact_id
+           WHERE clm.list_id=$1 AND c.status='active' AND c.opt_in_marketing=true AND c.do_not_contact=false
+           AND NOT EXISTS (SELECT 1 FROM blacklist bl WHERE bl.removed_at IS NULL AND bl.phone_number_normalized=regexp_replace(c.phone_number,'[^0-9]','','g'))`, [list_id]
+        )
+        total_targets = Number(r?.count || 0)
+      } else if (prospect_list_id) {
+        const [r] = await run<{ count: string }>(
+          `SELECT COUNT(*)::int AS count
+           FROM prospect_list_members plm
+           JOIN prospects p ON p.id = plm.prospect_id
+           WHERE plm.prospect_list_id = $1
+             AND p.status = 'active' AND p.opt_in = true AND p.stage IS DISTINCT FROM 'descartado'
+             AND NOT EXISTS (SELECT 1 FROM blacklist bl WHERE bl.removed_at IS NULL AND bl.phone_number_normalized=regexp_replace(p.phone_number,'[^0-9]','','g'))`,
+          [prospect_list_id]
+        )
+        total_targets = Number(r?.count || 0)
+      }
 
-    const [campaign] = await query<{ id: string }>(
-      `INSERT INTO campaigns
-         (name, message, messages, media_url, media_type, list_id, prospect_list_id,
-          type, status, scheduled_at,
-          total_targets, antiblock_delay_min, antiblock_delay_max, personalize_name,
-          use_multi_line,
-          owned_by, updated_by, message_type, template_id, template_params)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17,$18,$19::jsonb)
-       RETURNING id`,
-      [nameStr, msgArray[0], JSON.stringify(msgArray), media_url || null, media_type || null,
-       list_id || null, prospect_list_id || null,
-       resolvedType,
-       schedule ? 'scheduled' : 'draft',
-       schedule, total_targets,
-       delayMin, delayMax,
-       personalize_name !== false,
-       true,
-       session.user_id, messageType, template_id ?? null, template_params ? JSON.stringify(template_params) : null]
-    )
+      const [campaign] = await run<{ id: string }>(
+        `INSERT INTO campaigns
+           (name, message, messages, media_url, media_type, list_id, prospect_list_id,
+            type, status, scheduled_at,
+            total_targets, antiblock_delay_min, antiblock_delay_max, personalize_name,
+            use_multi_line,
+            owned_by, updated_by, message_type, template_id, template_params)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17,$18,$19::jsonb)
+         RETURNING id`,
+        [nameStr, msgArray[0], JSON.stringify(msgArray), media_url || null, media_type || null,
+         resolvedListId || null, prospect_list_id || null,
+         resolvedType,
+         schedule ? 'scheduled' : 'draft',
+         schedule, total_targets,
+         delayMin, delayMax,
+         personalize_name !== false,
+         true,
+         session.user_id, messageType, template_id ?? null, template_params ? JSON.stringify(template_params) : null]
+      )
+
+      return campaign
+    }
+    // The private audience and campaign either both exist or neither does.
+    const campaign = contact_ids
+      ? await withTransaction(client => persist(async <T,>(sql: string, params?: unknown[]) => (await client.query(sql, params)).rows as T[]))
+      : await persist(query)
 
     void audit({ req, action: 'create', resource: 'campaigns', resource_id: campaign.id,
       metadata: { name: nameStr } })
     return NextResponse.json({ id: campaign.id, name: nameStr, status: schedule ? 'scheduled' : 'draft' })
   } catch (e) {
+    if (e instanceof Response) return e
     console.error('[/api/campaigns POST]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
