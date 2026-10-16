@@ -32,7 +32,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   if(!['localhost','127.0.0.1'].includes(url.hostname))throw Error('LOCAL_ONLY')
   db=new Client({connectionString:url.toString(),ssl:false});await db.connect();await db.query('BEGIN')
   await db.query(`SET LOCAL search_path=pg_temp,public;
-   CREATE TEMP TABLE whatsapp_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number text,message_body text,direction text,status text,created_at timestamptz DEFAULT NOW(),evolution_message_id text,campaign_id uuid,sent_at timestamptz,metadata jsonb,updated_at timestamptz,failed_at timestamptz,error_detail text);
+   CREATE TEMP TABLE whatsapp_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number text,message_body text,direction text,status text,created_at timestamptz DEFAULT NOW(),evolution_message_id text,campaign_id uuid,contact_id uuid,sent_at timestamptz,metadata jsonb,updated_at timestamptz,failed_at timestamptz,error_detail text);
    CREATE TEMP TABLE campaign_recipients(id uuid,line_id uuid);
    CREATE TEMP TABLE campaigns(id uuid PRIMARY KEY,name text);
    CREATE TEMP TABLE cloud_numbers(phone_number_id text,whatsapp_line_id uuid);
@@ -44,7 +44,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
    CREATE TEMP TABLE agent_contact_lines(id uuid DEFAULT gen_random_uuid(),agent_code text,linea int,variant text,label text,phone text,is_active boolean DEFAULT true);
    CREATE TEMP TABLE contact_tags(contact_id uuid,tag text);
    CREATE TEMP TABLE conversation_state(phone_number text,is_escalated bool,escalation_reason text,current_flow text,resolved_at timestamptz);
-   CREATE TEMP TABLE blacklist(phone_number_normalized text,removed_at timestamptz);
+   CREATE TEMP TABLE blacklist(phone_number_normalized text,removed_at timestamptz,scope_key text DEFAULT 'global',agent_code text);
    CREATE TEMP TABLE conversation_message_views(message_key text PRIMARY KEY,viewed_at timestamptz NOT NULL DEFAULT now());
       CREATE TEMP TABLE conversation_notes(phone text,content text);`)
   mocks.query.mockImplementation(async(sql,params)=>(await db.query(sql,params)).rows)
@@ -192,6 +192,16 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect((await(await GET(request())).json()).conversations[0].assigned_line).toBeNull()
   await db.query("UPDATE contacts SET linea_sub='b'")
   expect((await(await GET(request())).json()).conversations[0].assigned_line).toBeNull()
+ })
+ it('keeps agent filters, blacklist and assigned lines separate on a shared phone',async()=>{
+  await db.query("UPDATE contacts SET linea=8,linea_sub='a'")
+  await db.query(`INSERT INTO contacts(id,phone_number,panel,linea) VALUES($1,$2,'bigwin',4)`,[id(21),'+'+phone])
+  await db.query(`INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone) VALUES ('royal',8,'a','Royal 8A','+5491122222222')`)
+  await db.query("INSERT INTO blacklist(phone_number_normalized,scope_key,agent_code) VALUES($1,'agent:bigwin','bigwin')",[phone])
+  const royal=await(await GET(request('?agent=royal'))).json()
+  expect(royal.conversations[0]).toMatchObject({agent:'royal',is_blacklisted:false,line_assignment_ambiguous:false,assigned_line:{label:'Royal 8A'}})
+  expect(royal.agents.map((x:{name:string})=>x.name).sort()).toEqual(['bigwin','royal'])
+  expect((await(await GET(request('?agent=bigwin'))).json()).conversations[0]).toMatchObject({agent:'bigwin',is_blacklisted:true})
  })
  it('does not guess the assigned line when phone aliases disagree',async()=>{
   await db.query("UPDATE contacts SET linea=8,linea_sub='a'")

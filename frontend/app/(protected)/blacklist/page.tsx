@@ -460,11 +460,12 @@ export default function BlacklistPage() {
           <DialogHeader>
             <DialogTitle className="flex flex-wrap items-center gap-2">
               <ShieldOff size={16} className="text-destructive" />
-              Agregar a Blacklist
+              Agregar bloqueo global manual
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 pt-1">
+            <p className="text-sm text-muted-foreground">Este bloqueo manual alcanza a todos los agentes. Para bloquear solo uno, seleccioná su cuenta en Contactos.</p>
             <div>
               <label className="block text-sm font-medium text-foreground mb-1.5">
                 Número(s) de teléfono
@@ -531,11 +532,12 @@ export default function BlacklistPage() {
           <DialogHeader>
             <DialogTitle className="flex flex-wrap items-center gap-2">
               <Upload size={16} className="text-purple-600" />
-              Importar números a Blacklist
+              Importar bloqueos globales
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4 pt-1">
+            <p className="text-sm text-muted-foreground">Este bloqueo manual alcanza a todos los agentes. Para bloquear solo uno, seleccioná su cuenta en Contactos.</p>
             <div>
               <label className="block text-sm font-medium text-foreground mb-2">
                 Archivo (CSV, Excel o TXT)
@@ -662,6 +664,7 @@ export default function BlacklistPage() {
           </DialogHeader>
 
           <div className="space-y-4 pt-1">
+            <p className="text-sm text-muted-foreground">Agente / alcance: {deleteTarget?.agent_code || (deleteTarget?.scope_key?.startsWith('source:') ? 'Origen por revisar' : 'Global')}</p>
             <p className="text-sm text-foreground">
               ¿Estás seguro de que querés quitar{' '}
               <span className="font-mono font-medium text-foreground">

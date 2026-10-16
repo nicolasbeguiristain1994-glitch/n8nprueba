@@ -90,6 +90,7 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
         body: JSON.stringify({ reason: 'Manual desde CRM' }),
       })
       if (res.ok) { flash('blacklist'); onRefresh?.() }
+      else { const error=await res.json().catch(()=>null); window.alert(error?.error || 'No se pudo registrar la baja.') }
     })
   }
 
