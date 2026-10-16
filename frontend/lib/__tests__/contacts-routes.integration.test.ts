@@ -77,6 +77,12 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
     const exported = await (await list(new NextRequest('http://localhost/api/contacts?download=true&history=deferred'))).json()
     expect(exported.contacts).toEqual(complete.contacts)
   })
+  it('keeps broadcast history separated by agent for accounts sharing a phone', async () => {
+    const { rows } = await c.query("INSERT INTO contacts(first_name,panel,phone_number) VALUES('royal-account','royal','+5491111111111'),('bigwin-account','bigwin','+5491111111111') RETURNING id,panel")
+    for (const row of rows) await c.query("INSERT INTO campaign_recipients(contact_id,agent_code,phone_number,campaign_id,status,sent_at) VALUES($1,$2,'5491111111111',gen_random_uuid(),'sent',now()-make_interval(days=>$3::int)-interval '1 hour')",[row.id,row.panel,row.panel==='royal'?3:8])
+    const data = await (await pageHistory(new NextRequest('http://localhost/api/contacts/history?ids='+rows.map(row=>row.id).join(',')))).json()
+    for (const row of rows) expect(data.history.find((extra:{id:string})=>extra.id===row.id).days_since_last_broadcast).toBe(row.panel==='royal'?3:8)
+  })
   it('imports explicit username and computes matching level and tags',async()=>{
     await transaction('realaccount','zeus',500000.25)
     const res=await importContacts(request({panel:'royal',contacts:[{phone:'+5491111111111',name:'Nombre visible',casino_username:'realaccount'}]}))
