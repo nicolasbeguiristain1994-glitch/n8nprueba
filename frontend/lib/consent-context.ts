@@ -3,7 +3,7 @@ import { canonicalContactAgent } from './contact-account-identity'
 
 type Reader = {query: (sql:string,params:unknown[])=>Promise<{rows:Record<string,unknown>[]}>}
 export type ConsentContext = {agentCode?:string|null;contactId?:string|null;campaignId?:string|null;
-  provider?:'cloud'|'evolution';sourceId?:string;contextWamid?:string;messageId?:string}
+  provider?:'cloud'|'evolution';sourceId?:string|null;contextWamid?:string;messageId?:string}
 export type ConsentIdentity = {agent:string|null;campaignId:string|null;sourceKey:string|null}
 export async function resolveConsentIdentity(phone:string,context:ConsentContext={},db?:Reader):Promise<ConsentIdentity> {
   const read = async(sql:string,params:unknown[])=>db?(await db.query(sql,params)).rows:query<Record<string,unknown>>(sql,params)
