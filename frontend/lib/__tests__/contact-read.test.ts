@@ -17,11 +17,17 @@ describe('Contact read timeout recovery', () => {
     expect(db.query).toHaveBeenCalledTimes(1)
   })
   it('recovers the default page after the observed query read timeout', async () => {
-    db.query.mockRejectedValueOnce(new Error('Query read timeout')).mockResolvedValueOnce([{id:'one'}]).mockResolvedValueOnce([{count:'225328'}]).mockResolvedValueOnce([{contact_id:'one',days_inactive:20,last_movement:'2026-09-25'}])
+    let attempts = 0
+    db.query.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('SELECT COUNT(*)')) return [{count:'225328'}]
+      if (sql.includes('linked_accounts AS MATERIALIZED')) return [{contact_id:'one',days_inactive:20,last_movement:'2026-09-25'}]
+      if (++attempts === 1) throw new Error('Query read timeout')
+      return [{id:'one'}]
+    })
     const response = await GET(new NextRequest('http://localhost/api/contacts'))
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({contacts:[{id:'one',days_since_last_movement:20,last_movement_date:'2026-09-25'}],total:225328,page:1,limit:50})
-    expect(db.query.mock.calls[1]).toEqual(db.query.mock.calls[0])
+    expect(db.query.mock.calls[2]).toEqual(db.query.mock.calls[0])
     expect(db.query).toHaveBeenCalledTimes(4)
   })
   it('recovers a count cancelled by PostgreSQL statement timeout', async () => {
@@ -34,7 +40,8 @@ describe('Contact read timeout recovery', () => {
     expect(response.status).toBe(503)
     expect(response.headers.get('Retry-After')).toBe('3')
     expect((await response.json()).error).toContain('Volvé a intentar')
-    expect(db.query).toHaveBeenCalledTimes(2)
+    expect(db.query).toHaveBeenCalledTimes(4)
+    expect(db.query.mock.calls.filter(([sql]) => sql.startsWith('SELECT COUNT(*)'))).toHaveLength(2)
   })
   it('does not retry SQL errors or explicit query cancellations', async () => {
     const error=Object.assign(new Error('canceling statement due to user request'),{code:'57014'})

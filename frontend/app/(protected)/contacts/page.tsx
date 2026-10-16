@@ -19,6 +19,7 @@ import {
   Tag, Ban, ChevronLeft, ChevronRight, Compass, Send,
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
+import type { ContactHistory } from '@/lib/contact-history'
 import { deleteContacts } from '@/lib/delete-contacts'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 import { BroadcastFilter } from '@/components/contacts/BroadcastFilter'
@@ -56,6 +57,7 @@ const MissingPhoneTab = dynamic(loadMissingPhoneTab, { loading: tabLoading })
 interface Contact {
   last_movement_date?: string | null; days_since_last_movement?: number | null
   last_broadcast_at?: string | null; days_since_last_broadcast?: number | null
+  history_error?: boolean
   id: string; phone_number: string; first_name: string; last_name: string
   email: string; status: string; opt_in: boolean; created_at: string; segment: string; panel: string; gaming: string; linea: number | null; linea_sub: string | null
   segmentation_profile?: SegmentationProfile | null; data_quality?: string; segment_is_manual?: boolean
@@ -426,12 +428,34 @@ export default function Contacts() {
     setLoading(true)
     const q = buildContactParams()
     q.set('page', String(pagination.pageIndex + 1))
+    q.set('history', 'deferred')
     setLoadError(null)
     fetchJson<{ contacts: Contact[]; total: number }>(`/api/contacts?${q}`, { signal: controller.signal })
       .then(d => {
         if (request !== contactLoadRequest.current) return
-        for (const c of d.contacts || []) selectedPhones.current[c.id] = c.phone_number
-        setContacts(d.contacts || []); setTotal(d.total || 0)
+        const visible = d.contacts || []
+        for (const c of visible) selectedPhones.current[c.id] = c.phone_number
+        setContacts(visible); setTotal(d.total || 0)
+        if (!visible.length) return
+        // History must not block searching, selection or pagination. A request
+        // fence also protects the next audience when an old response arrives.
+        const historyParams = new URLSearchParams({
+          ids: visible.map(c => c.id).join(','),
+          fields: visible.every(c => c.days_since_last_movement !== undefined) ? 'broadcast' : 'all',
+        })
+        void fetchJson<{ history: ContactHistory[] }>(`/api/contacts/history?${historyParams}`, { signal: controller.signal })
+          .then(({ history }) => {
+            if (request !== contactLoadRequest.current || controller.signal.aborted) return
+            const byId = new Map(history.map(row => [row.id, row]))
+            setContacts(current => current.map(row => {
+              const extra = byId.get(row.id)
+              return extra ? { ...row, ...extra, history_error: false } : { ...row, history_error: true }
+            }))
+          })
+          .catch(() => {
+            if (request !== contactLoadRequest.current || controller.signal.aborted) return
+            setContacts(current => current.map(row => ({ ...row, history_error: true })))
+          })
       })
       .catch((e: unknown) => {
         if (request !== contactLoadRequest.current || controller.signal.aborted) return
@@ -1025,7 +1049,7 @@ export default function Contacts() {
       accessorKey: 'days_since_last_broadcast',
       header: () => <span className="block w-32 whitespace-normal">Días desde última difusión</span>,
       enableSorting: false,
-      cell: ({ row }) => <BroadcastAge days={row.original.days_since_last_broadcast} sentAt={row.original.last_broadcast_at} />,
+      cell: ({ row }) => <BroadcastAge days={row.original.days_since_last_broadcast} sentAt={row.original.last_broadcast_at} loading={row.original.days_since_last_broadcast === undefined && !row.original.history_error} error={row.original.days_since_last_broadcast === undefined && row.original.history_error} />,
       meta: { mobileLabel: 'Días desde última difusión' },
     },
     {
@@ -1033,7 +1057,7 @@ export default function Contacts() {
       accessorKey: 'days_since_last_movement',
       header: () => <span className="block w-28 whitespace-normal">Días sin movimientos</span>,
       enableSorting: false,
-      cell: ({ row }) => <MovementAge days={row.original.days_since_last_movement} date={row.original.last_movement_date} />,
+      cell: ({ row }) => <MovementAge days={row.original.days_since_last_movement} date={row.original.last_movement_date} loading={row.original.days_since_last_movement === undefined && !row.original.history_error} error={row.original.days_since_last_movement === undefined && row.original.history_error} />,
       meta: { mobileLabel: 'Días sin movimientos' },
     },
     {
