@@ -1,4 +1,5 @@
 'use client'
+import { saveCampaignSelection } from '@/lib/campaign-selection-draft'
 import { MovementAge } from '@/components/contacts/MovementAge'
 import { BroadcastAge } from '@/components/contacts/BroadcastAge'
 import { SegmentationDetails } from '@/components/contacts/SegmentationDetails'
@@ -15,7 +16,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import {
   Search, Upload, RefreshCw, List, CheckSquare, X, Users, UserPlus,
   Trash2, Download, DatabaseZap, Pencil, ChevronDown, Filter, Info, Scissors,
-  Tag, Ban, ChevronLeft, ChevronRight, Compass,
+  Tag, Ban, ChevronLeft, ChevronRight, Compass, Send,
 } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
 import { deleteContacts } from '@/lib/delete-contacts'
@@ -369,6 +370,18 @@ export default function Contacts() {
   const [repopulateError, setRepopulateError]   = useState<string | null>(null)
 
   const { user: currentUser, permissions } = useCurrentUser()
+  const canCreateCampaign = currentUser?.role === 'admin' || (permissions.campaigns?.includes('create') ?? false)
+  const [campaignSelectionError, setCampaignSelectionError] = useState<string | null>(null)
+  const startCampaign = () => {
+    if (!canCreateCampaign || !currentUser?.id || !selectedCount) return
+    try {
+      const token = saveCampaignSelection(currentUser.id, selectedIds)
+      setCampaignSelectionError(null)
+      window.location.assign(`/campaigns?action=new&selection=${token}`)
+    } catch {
+      setCampaignSelectionError('No se pudo preparar la selección en este navegador. Liberá espacio o seleccioná menos contactos y reintentá.')
+    }
+  }
   const canCreateContacts = permissions.contacts?.includes('create') ?? false
   useEffect(() => {
     if (!canCreateContacts) return
@@ -1403,6 +1416,11 @@ export default function Contacts() {
             <Compass size={14} className="mr-1" /> Explorar
           </Button>
         )}
+        {canCreateCampaign && <Button size="sm" onClick={startCampaign} disabled={!selectedCount || selectingAll}
+          title={selectedCount ? 'Crear una campaña con los contactos seleccionados' : 'Seleccioná contactos en la tabla'}>
+          <Send size={14} className="mr-1" /> Crear campaña{selectedCount ? ` (${selectedCount.toLocaleString('es-AR')})` : ''}
+        </Button>}
+        {campaignSelectionError && <p role="alert" className="w-full text-sm text-destructive">{campaignSelectionError}</p>}
         {(selectedCount > 0 || hasActiveFilters) && (
           <>
             <Button size="sm" variant="outline"
@@ -1780,6 +1798,9 @@ export default function Contacts() {
             selectedCount={ids.length}
             onClearSelection={() => setRowSelection({})}
           >
+            {canCreateCampaign && <Button size="sm" className="h-7 text-xs" onClick={startCampaign} disabled={selectingAll}>
+              <Send size={13} className="mr-1" /> Crear campaña ({ids.length.toLocaleString('es-AR')})
+            </Button>}
             <Button size="sm" variant="outline"
               onClick={() => { setListMode('selection'); setShowList(true) }}
               className="h-7 text-xs border-success/20 text-success hover:bg-success/10">
