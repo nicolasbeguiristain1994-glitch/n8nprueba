@@ -15,10 +15,10 @@ async function lockPhone(db:PoolClient,phone:string) {
   await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`global-opt-out:${phone}`])
 }
 // Keep the lock shared across agents: it also serializes manual global blocks.
-const blockedSql=`SELECT 1 FROM blacklist WHERE phone_number_normalized=$1 AND removed_at IS NULL
-  AND (scope_key='global' OR agent_code=$2 OR ($2::text IS NULL AND agent_code IS NOT NULL) OR (agent_code IS NULL AND source_key=$3))
-  UNION ALL SELECT 1 FROM cloud_opt_outs WHERE contact_phone IN($1,'+'||$1) AND opted_out=true
-    AND (scope_key='global' OR agent_code=$2 OR ($2::text IS NULL AND agent_code IS NOT NULL) OR scope_key='source:'||$3) LIMIT 1`
+const blockedSql=`SELECT 1 FROM blacklist WHERE phone_number_normalized=$1::text AND removed_at IS NULL
+  AND (scope_key='global' OR agent_code=$2::text OR ($2::text IS NULL AND agent_code IS NOT NULL) OR (agent_code IS NULL AND source_key=$3::text))
+  UNION ALL SELECT 1 FROM cloud_opt_outs WHERE contact_phone IN($1::text,'+'||$1::text) AND opted_out=true
+    AND (scope_key='global' OR agent_code=$2::text OR ($2::text IS NULL AND agent_code IS NOT NULL) OR scope_key='source:'||$3::text) LIMIT 1`
 export async function isGloballyOptedOut(phone:string,context:ConsentContext={}):Promise<boolean> {
   const key=phoneKey(phone),identity=await resolveConsentIdentity(key,context)
   return (await query(blockedSql,[key,identity.agent,identity.sourceKey])).length>0
