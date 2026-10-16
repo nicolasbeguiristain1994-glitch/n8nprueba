@@ -2,6 +2,10 @@ import { cleanup, render, screen, fireEvent, waitFor, act } from '@testing-libra
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 
 vi.mock('@/lib/fetchJson', () => ({ fetchJson: vi.fn() }))
+// Routing fetch/race/error cases have their own component and PostgreSQL suites.
+vi.mock('@/components/campaigns/CampaignRoutingPreview', () => ({
+  CampaignRoutingPreview: () => <div>Reparto estimado por línea</div>,
+}))
 const currentUser = vi.hoisted(() => ({ value: { user: { role: 'admin', id: 'owner' }, permissions: {} as Record<string, string[]> } }))
 vi.mock('@/lib/useCurrentUser', () => ({ useCurrentUser: () => currentUser.value }))
 
@@ -558,7 +562,7 @@ describe('Campañas — pausas y límites', () => {
     expect(screen.getByText('Pausas y límites')).toBeInTheDocument()
     expect(screen.queryByText(/Perfil Anti-Ban/)).not.toBeInTheDocument()
     expect(screen.queryByText(/Mini-sesión/)).not.toBeInTheDocument()
-    expect(screen.getByText(/Reparto automático entre líneas activas/)).toBeInTheDocument()
+    expect(screen.getByText(/Reparto estimado por línea/)).toBeInTheDocument()
 
     const min = screen.getByLabelText('Pausa mínima (segundos)')
     const max = screen.getByLabelText('Pausa máxima (segundos)')
