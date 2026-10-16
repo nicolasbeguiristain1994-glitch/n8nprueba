@@ -12,6 +12,7 @@ export const runtime = 'nodejs'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { deploymentSchemaReady } from '@/lib/deployment-schema'
 import { getSessionFromRequest } from '@/lib/auth'
 
 // ── Route classification ──────────────────────────────────────────────────────
@@ -101,7 +102,7 @@ function applySecurityHeaders(res: NextResponse, nonce: string): NextResponse {
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
-export function middleware(req: NextRequest): NextResponse {
+export function routeMiddleware(req: NextRequest): NextResponse {
   const { pathname } = req.nextUrl
 
   // 128-bit cryptographically random nonce, generated fresh per request.
@@ -154,6 +155,18 @@ export function middleware(req: NextRequest): NextResponse {
   }
 
   return passThrough()
+}
+
+// API requests include internal workers and provider webhooks. A 503 causes
+// providers to retry; never acknowledge an event during a schema transition.
+// Keep /login and /release.json available for health checks and release identity.
+export async function middleware(req: NextRequest): Promise<NextResponse> {
+  if(req.nextUrl.pathname.startsWith('/api/') && !await deploymentSchemaReady()) {
+    return applySecurityHeaders(NextResponse.json({
+      error:'El sistema se está actualizando. Volvé a intentar en unos minutos.',code:'SCHEMA_UPGRADE_IN_PROGRESS'
+    },{status:503,headers:{'Retry-After':'30','Cache-Control':'no-store'}}),randomBytes(16).toString('base64'))
+  }
+  return routeMiddleware(req)
 }
 
 export const config = {
