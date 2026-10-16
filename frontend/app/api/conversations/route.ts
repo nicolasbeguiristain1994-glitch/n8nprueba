@@ -82,7 +82,7 @@ export async function GET(req: NextRequest) {
           EXISTS (
             SELECT 1 FROM blacklist bl
             WHERE bl.phone_number_normalized = page.phone_number
-            AND   bl.removed_at IS NULL
+            AND   bl.removed_at IS NULL AND (bl.scope_key='global' OR bl.agent_code=page.agent)
           )                                        AS is_blacklisted,
           EXISTS (
             SELECT 1 FROM conversation_notes cn

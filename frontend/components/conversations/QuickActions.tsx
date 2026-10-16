@@ -83,7 +83,7 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
   })
 
   const addToBlacklist = () => {
-    if (!confirm('¿Agregar este contacto a la blacklist? Se bloquearán los envíos en todas las líneas.')) return
+    if (!confirm('¿Agregar este contacto a la blacklist? Se bloquearán los envíos de su agente en todas las líneas.')) return
     run('blacklist', async () => {
       const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/blacklist`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },

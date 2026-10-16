@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
     `SELECT phone_number_normalized
      FROM blacklist
      WHERE phone_number_normalized = ANY($1::text[])
-       AND removed_at IS NULL`,
+       AND removed_at IS NULL AND scope_key='global'`,
     [normalizedList],
   )
   const existingSet = new Set(existingRows.map(r => r.phone_number_normalized))
@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
       await query(
         `INSERT INTO blacklist (phone_number_raw, phone_number_normalized, reason, source, added_by)
          VALUES ${valuePlaceholders}
-         ON CONFLICT (phone_number_normalized) WHERE removed_at IS NULL DO NOTHING`,
+         ON CONFLICT (phone_number_normalized,scope_key) WHERE removed_at IS NULL DO NOTHING`,
         params,
       )
     }

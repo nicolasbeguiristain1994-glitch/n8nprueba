@@ -186,9 +186,9 @@ export async function POST(req: NextRequest) {
     let total_targets = 0
     if (list_id) {
       const [r] = await query<{ count: string }>(
-        `SELECT COUNT(*)::int AS count FROM contact_list_members clm JOIN contacts c ON c.id=clm.contact_id
+        `SELECT COUNT(DISTINCT regexp_replace(c.phone_number,'[^0-9]','','g'))::int AS count FROM contact_list_members clm JOIN contacts c ON c.id=clm.contact_id
          WHERE clm.list_id=$1 AND c.status='active' AND c.opt_in_marketing=true AND c.do_not_contact=false
-         AND NOT EXISTS (SELECT 1 FROM blacklist bl WHERE bl.removed_at IS NULL AND bl.phone_number_normalized=regexp_replace(c.phone_number,'[^0-9]','','g'))`, [list_id]
+         AND NOT EXISTS (SELECT 1 FROM blacklist bl WHERE bl.removed_at IS NULL AND bl.phone_number_normalized=regexp_replace(c.phone_number,'[^0-9]','','g') AND (bl.scope_key='global' OR bl.agent_code=contact_agent_key(c.panel)))`, [list_id]
       )
       total_targets = Number(r?.count || 0)
     } else if (prospect_list_id) {
@@ -198,7 +198,7 @@ export async function POST(req: NextRequest) {
          JOIN prospects p ON p.id = plm.prospect_id
          WHERE plm.prospect_list_id = $1
            AND p.status = 'active' AND p.opt_in = true AND p.stage IS DISTINCT FROM 'descartado'
-           AND NOT EXISTS (SELECT 1 FROM blacklist bl WHERE bl.removed_at IS NULL AND bl.phone_number_normalized=regexp_replace(p.phone_number,'[^0-9]','','g'))`,
+           AND NOT EXISTS (SELECT 1 FROM blacklist bl WHERE bl.removed_at IS NULL AND bl.phone_number_normalized=regexp_replace(p.phone_number,'[^0-9]','','g') AND bl.scope_key='global')`,
         [prospect_list_id]
       )
       total_targets = Number(r?.count || 0)

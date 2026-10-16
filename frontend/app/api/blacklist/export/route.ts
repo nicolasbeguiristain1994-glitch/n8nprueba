@@ -3,6 +3,8 @@ import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
 
 type ExportRow = {
+  agent_code: string | null
+  scope_key: string
   phone_number_raw: string
   phone_number_normalized: string
   reason: string | null
@@ -56,7 +58,7 @@ export async function GET(req: NextRequest) {
     const rows = await query<ExportRow>(
       `SELECT
          b.phone_number_raw, b.phone_number_normalized,
-         b.reason, b.source, b.added_at, b.removed_at,
+         b.reason, b.source, b.added_at, b.removed_at,b.agent_code,b.scope_key,
          ua.name AS added_by_name
        FROM blacklist b
        LEFT JOIN users ua ON ua.id = b.added_by
@@ -71,6 +73,7 @@ export async function GET(req: NextRequest) {
       'Número (normalizado)',
       'Motivo',
       'Origen',
+      'Agente / alcance',
       'Agregado por',
       'Fecha de agregado',
       'Fecha de remoción',
@@ -83,6 +86,7 @@ export async function GET(req: NextRequest) {
         escapeCsv(r.phone_number_normalized),
         escapeCsv(r.reason),
         escapeCsv(SOURCE_LABELS[r.source] ?? r.source),
+        escapeCsv(r.agent_code ?? (r.scope_key==='global'?'Global':'Origen por revisar')),
         escapeCsv(r.added_by_name),
         escapeCsv(r.added_at ? new Date(r.added_at).toLocaleString('es-AR') : ''),
         escapeCsv(r.removed_at ? new Date(r.removed_at).toLocaleString('es-AR') : ''),

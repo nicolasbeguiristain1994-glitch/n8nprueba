@@ -6,6 +6,10 @@ import {OFIZEUS_LINES} from '@/lib/contact-line-directory'
 const m=vi.hoisted(()=>({query:vi.fn(),tx:vi.fn(),send:vi.fn(),emit:vi.fn()}))
 vi.mock('@/lib/db',()=>({query:m.query,withTransaction:m.tx}))
 vi.mock('@/lib/cloud-api/use-cases/send-message.use-case',()=>({sendMessageUseCase:{execute:m.send}}))
+vi.mock('@/lib/consent-context',()=>({resolveConsentIdentity:async(phone:string)=>{
+ const rows=await m.query('SELECT DISTINCT lower(panel) AS agent FROM contacts WHERE phone_number IN($1,$2) AND deleted_at IS NULL',[phone,'+'+phone]);
+ return {agent:rows.length===1?rows[0].agent:null,campaignId:null,sourceKey:null}
+}}))
 vi.mock('@/lib/sse-events',()=>({sseEmitter:{emit:m.emit}}))
 import {evaluateAutomations,processAutomationJobs,automationMatches,automationSteps} from '@/lib/automation-engine'
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`
@@ -22,14 +26,17 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
    CREATE TABLE automation_logs(automation_id uuid,automation_name text,conversation_phone text,message_id uuid,result text,details text);
    CREATE TABLE conversation_state(phone_number text,is_escalated boolean,escalated_at timestamptz,escalation_reason text,resolved_at timestamptz,updated_at timestamptz);
    CREATE UNIQUE INDEX active_conversation ON conversation_state(phone_number) WHERE resolved_at IS NULL;
-   CREATE TABLE blacklist(phone_number_normalized text,removed_at timestamptz);
-   CREATE TABLE contacts(phone_number text,first_name text,panel text,linea int,linea_sub text,deleted_at timestamptz);
+   CREATE TABLE blacklist(phone_number_normalized text,removed_at timestamptz,scope_key text DEFAULT 'global',agent_code text,source_key text);
+   CREATE TABLE cloud_opt_outs(contact_phone text,opted_out bool,scope_key text,agent_code text);
+   CREATE FUNCTION contact_agent_key(value text) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT lower(trim(value)) $$;
+   CREATE TABLE contacts(id uuid DEFAULT gen_random_uuid(),phone_number text,first_name text,panel text,linea int,linea_sub text,deleted_at timestamptz);
    CREATE TABLE agent_contact_lines(agent_code text,linea int,variant text,label text,phone text,is_active boolean DEFAULT true);
    CREATE TABLE cloud_numbers(phone_number_id text,whatsapp_line_id uuid,status text);
    CREATE TABLE whatsapp_lines(id uuid,status text,is_connected boolean,sending_enabled boolean);
    INSERT INTO users VALUES('${id(1)}',true,'admin');INSERT INTO contacts(phone_number,first_name,panel) VALUES('${phone}','Ana','Panel');
    INSERT INTO whatsapp_lines VALUES('${id(2)}','active',true,true);INSERT INTO cloud_numbers VALUES('phone-a','${id(2)}','active'),('phone-b','${id(2)}','active');`)
   await pool.query(readFileSync('../db/migrations/134_automation_delivery_jobs.sql','utf8'))
+  await pool.query('ALTER TABLE automation_message_jobs ADD COLUMN agent_code text')
   for (const [linea,variant,label,number] of OFIZEUS_LINES)
     await pool.query("INSERT INTO agent_contact_lines VALUES('ofizeus',$1,$2,$3,$4,true)",[linea,variant,label,'+'+number])
   m.query.mockImplementation(async(sql,params)=>(await pool.query(sql,params)).rows)
@@ -46,7 +53,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
  it('deduplicates simultaneous webhook deliveries and keeps the inbound source line',async()=>{
   await Promise.all([evaluateAutomations(phone,'Más información','event-1',source),evaluateAutomations(phone,'Más información','event-1',source)])
   await processAutomationJobs();expect(m.send).toHaveBeenCalledTimes(1)
-  expect(m.send).toHaveBeenCalledWith({request:{phoneNumberId:'phone-a',to:'+'+phone,type:'text',text:{body:'Hola Ana'}}})
+  expect(m.send).toHaveBeenCalledWith({request:{phoneNumberId:'phone-a',to:'+'+phone,agentCode:'panel',type:'text',text:{body:'Hola Ana'}}})
   expect((await pool.query('SELECT result FROM automation_logs')).rows).toEqual([{result:'executed'}])
  })
  it('persists every flow step, waits and resumes it once across scheduler ticks',async()=>{
@@ -60,7 +67,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
  it('rechecks opt-out and rule pauses before delayed sends',async()=>{
   await pool.query(`UPDATE automations SET type='flow',action_config='{"steps":[{"message":"later","delay_sec":60}]}'`)
   await evaluateAutomations(phone,'informacion','event-3',source)
-  await pool.query(`INSERT INTO blacklist VALUES('${phone}',NULL);UPDATE automation_message_jobs SET run_at=NOW()`)
+  await pool.query(`INSERT INTO blacklist(phone_number_normalized,removed_at) VALUES('${phone}',NULL);UPDATE automation_message_jobs SET run_at=NOW()`)
   await processAutomationJobs();expect(m.send).not.toHaveBeenCalled()
   expect((await pool.query('SELECT status FROM automation_message_jobs')).rows[0].status).toBe('skipped')
  })
@@ -136,7 +143,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   await Promise.all([evaluateAutomations(phone,'EXTRA','royal-first',source),evaluateAutomations(phone,'EXTRA','royal-first',source)])
   await evaluateAutomations(phone,'Más info','royal-second',source)
   expect(m.send).toHaveBeenCalledTimes(1)
-  expect(m.send).toHaveBeenCalledWith({request:{phoneNumberId:'phone-a',to:'+'+phone,type:'text',text:{body:'Tu línea: 549 | 1100 | 000001'}}})
+  expect(m.send).toHaveBeenCalledWith({request:{phoneNumberId:'phone-a',to:'+'+phone,agentCode:'royal',type:'text',text:{body:'Tu línea: 549 | 1100 | 000001'}}})
   expect((await pool.query('SELECT automation_id FROM automation_message_jobs')).rows).toEqual([{automation_id:id(9)}])
  })
  it('reads the edited Royal directory and exact variant',async()=>{

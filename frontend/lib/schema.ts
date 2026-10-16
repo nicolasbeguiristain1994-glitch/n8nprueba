@@ -143,6 +143,8 @@ export type SendInput = z.infer<typeof SendSchema>
 // ── Blacklist schemas ─────────────────────────────────────────────────────────
 
 export const CreateBlacklistSchema = z.object({
+  contact_ids: z.array(z.string().uuid()).max(100000).optional(),
+  agent_code: z.string().trim().min(1).max(100).optional(),
   // Acepta un string con números separados por salto de línea/coma, o un array directo.
   phones: z.union([
     z.string().min(1),

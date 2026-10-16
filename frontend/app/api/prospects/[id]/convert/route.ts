@@ -60,10 +60,10 @@ export async function POST(req: NextRequest, { params }: Params) {
       const { rows: cRows } = await client.query<{ id: string }>(
         `INSERT INTO contacts
            (external_id, phone_number, first_name, last_name, email, notes,
-            status, opt_in_marketing, opt_in_sms, platform_source, created_at, updated_at)
+            status, opt_in_marketing, opt_in_sms, platform_source, created_at, updated_at,identity_key)
          VALUES (gen_random_uuid()::text, $1, $2, $3, $4, $5,
-                 'active', true, true, 'prospect_conversion', NOW(), NOW())
-         ON CONFLICT (phone_number) DO NOTHING
+                 'active', true, true, 'prospect_conversion', NOW(), NOW(),jsonb_build_array('','phone:'||$1::text)::text)
+         ON CONFLICT (identity_key) DO NOTHING
          RETURNING id`,
         [prospect.phone_number, prospect.first_name, prospect.last_name, prospect.email, notes]
       )
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest, { params }: Params) {
         // El teléfono ya existe — tomamos el id del contacto existente
         phoneConflict = true
         const { rows: existing } = await client.query<{ id: string }>(
-          `SELECT id FROM contacts WHERE phone_number = $1`,
+          `SELECT id FROM contacts WHERE identity_key=jsonb_build_array('','phone:'||$1::text)::text`,
           [prospect.phone_number]
         )
         contactId = existing[0].id

@@ -358,7 +358,7 @@ export async function sendOne(
               templateId: campaign.template_id!,
             }
           : { kind: 'text', body: personalizedMsg, mediaUrl: campaign.media_url || null }, campaignId)
-      : await sendViaEvolution(line, recipient.phone_number, personalizedMsg, campaign.media_url || null)
+      : await sendViaEvolution(line, recipient.phone_number, personalizedMsg, campaign.media_url || null,undefined,campaign.id)
     messageId = result.messageId
   } catch (e) {
     if (e instanceof CampaignLineUnavailableError) {

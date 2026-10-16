@@ -6,7 +6,7 @@
 // history, avoiding a second scan and one indexed lookup per contact token.
 export function contactAccountLinksSql(useMovementHistory = false) { return `
   WITH scoped_contacts AS MATERIALIZED (
-    SELECT id,first_name,last_name,casino_accounts FROM contacts
+    SELECT id,first_name,last_name,casino_accounts,to_jsonb(contacts)->>'account_username' AS account_username FROM contacts
     WHERE deleted_at IS NULL AND id IN (SELECT contact_id FROM recipients)
   ), explicit AS MATERIALIZED (
     SELECT c.id,lower(trim(a->>'username')) AS username,
@@ -15,7 +15,7 @@ export function contactAccountLinksSql(useMovementHistory = false) { return `
   ), tokens AS MATERIALIZED (
     SELECT c.id,lower(tok) AS username FROM scoped_contacts c
     CROSS JOIN LATERAL ${useMovementHistory ? 'unnest(regexp_split_to_array' : 'regexp_split_to_table'}(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,''),'[^a-zA-Z0-9_]+')${useMovementHistory ? ')' : ''} tok
-    WHERE length(tok)>=4
+    WHERE length(tok)>=4 AND c.account_username IS NULL
   ), names AS MATERIALIZED (
     SELECT username FROM explicit UNION SELECT username FROM tokens
   ), imported AS MATERIALIZED (

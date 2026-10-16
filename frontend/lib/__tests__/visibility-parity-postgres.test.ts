@@ -45,7 +45,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
     db = new Client({connectionString: url.toString(), ssl: false}); await db.connect()
     await db.query(`CREATE SCHEMA ${schema}; SET search_path=${schema},public;
       CREATE TYPE contact_segment AS ENUM ('bajo','medio','vip','super_vip'); CREATE TYPE gaming_type AS ENUM ('slots');
-      CREATE TABLE contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),external_id text,phone_number text UNIQUE,
+      CREATE TABLE contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),external_id text,phone_number text,account_username text,identity_key text UNIQUE DEFAULT gen_random_uuid()::text,
         first_name text,last_name text,email text,panel text,panels_assigned text[] DEFAULT '{}',casino_accounts jsonb DEFAULT '[]',
         platforms text[] DEFAULT '{}',deleted_at timestamptz,segment contact_segment,gaming gaming_type,linea smallint,linea_sub text,status text,
         opt_in_marketing bool,opt_in_sms bool,platform_source text,created_at timestamptz DEFAULT now(),updated_at timestamptz,total_deposits int,total_withdrawals int,last_deposit_at timestamptz);
@@ -68,7 +68,8 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
       CREATE TABLE conversation_notes(id uuid DEFAULT gen_random_uuid(),phone text,content text,author_id uuid,author_name text,created_at timestamptz DEFAULT now());
       CREATE TABLE conversation_state(phone_number text,current_flow text,last_activity_at timestamptz,updated_at timestamptz,resolved_at timestamptz,is_escalated bool,escalation_reason text);
       CREATE UNIQUE INDEX ON conversation_state(phone_number) WHERE resolved_at IS NULL;
-      CREATE TABLE blacklist(phone_number_normalized text,removed_at timestamptz);
+      CREATE TABLE blacklist(phone_number_normalized text,removed_at timestamptz,scope_key text DEFAULT 'global',agent_code text);
+      CREATE FUNCTION contact_agent_key(value text) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT lower(trim(value)) $$;
       CREATE TABLE notifications(id uuid DEFAULT gen_random_uuid(),user_id uuid,type text,title text,body text,link text,related_type text,related_id text,metadata jsonb,is_read bool DEFAULT false,read_at timestamptz,created_at timestamptz DEFAULT now());
       CREATE TABLE notification_preferences(user_id uuid,notify_mensaje_nuevo bool);
       CREATE TABLE tasks(id uuid,deleted_at timestamptz); CREATE TABLE task_assignees(task_id uuid,user_id uuid);
@@ -77,7 +78,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
     `)
     await db.query("CREATE TABLE casino_transactions(id bigint,platform text,username text,agente text,fecha date,fecha_hora_utc timestamptz,tipo text,monto numeric,raw_detalles text,source_id text)")
     await db.query('CREATE TABLE casino_players(id uuid,username_lower text,platform text,agente text)')
-    await db.query(`ALTER TABLE whatsapp_messages ADD COLUMN metadata jsonb;
+    await db.query(`ALTER TABLE whatsapp_messages ADD COLUMN metadata jsonb,ADD COLUMN contact_id uuid;
       ALTER TABLE cloud_conversations ADD COLUMN phone_number_id text;
       ALTER TABLE campaign_recipients ADD COLUMN id uuid, ADD COLUMN line_id uuid;
       CREATE TABLE whatsapp_lines(id uuid,line_type text);`)
@@ -94,6 +95,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
     `, [id(900)])
     await db.query(`INSERT INTO contacts(id,phone_number,first_name,panel) VALUES($1,$4,'visible','royal'),($2,$5,'hidden','farabet'),($3,$6,'second','royal')`, [id(1),id(2),id(3),'+'+phone(1),'+'+phone(2),'+'+phone(3)])
     await db.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status) VALUES($1,'visible','inbound','received'),($2,'hidden','inbound','received'),($3,'second','inbound','received')`, [phone(1),phone(2),phone(3)])
+    await db.query("UPDATE contacts SET account_username=lower(first_name),identity_key=jsonb_build_array(panel,lower(first_name))::text")
     mocks.lines.mockResolvedValue([id(80)])
     // Fresh/TRUNCATEd tables have no useful planner statistics. PostgreSQL's
     // defaults overestimate the correlated visibility query enough to trigger
@@ -104,7 +106,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
   })
   afterAll(async () => { if(db) {await db.query('ROLLBACK');await db.query(`DROP SCHEMA ${schema} CASCADE`);await db.end()} })
   const listed = async () => (await (await list(req('contacts?select_all=true'))).json()).ids
-  const imported = (n: number, extra: object = {}) => importContacts(req('contacts/import',{panel:'royal',contacts:[{phone:'+'+phone(n),name:'updated'}],...extra}))
+  const imported = (n: number, extra: object = {}) => importContacts(req('contacts/import',{panel:'royal',contacts:[{phone:'+'+phone(n),name:n===1?'visible':`new${n}`}],...extra}))
   it('uses the agent fallback consistently for list, individual read, edit and import check', async () => {
     expect((await listed()).sort()).toEqual([id(1),id(3)])
     expect(await canSeeContact(mocks.session!,id(1))).toBe(true)
@@ -140,11 +142,17 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
     await db.query('INSERT INTO operator_contact_visibility VALUES($1,$2,$1),($1,$3,$1)', [id(900),id(2),id(3)])
     await check([id(3)])
   })
-  it.each(['update','panels_only','skip'])('rejects a mixed import atomically in %s mode', async conflict_mode => {
-    const result=await imported(2,{conflict_mode,contacts:[{phone:'+'+phone(4),name:'new'},{phone:'+'+phone(2),name:'hidden change'}]})
+  it.each(['update','panels_only','skip'])('rejects updates to an explicitly hidden account atomically in %s mode',async conflict_mode=>{
+    await db.query('INSERT INTO operator_contact_visibility VALUES($1,$2,$1)',[id(900),id(1)])
+    const result=await imported(2,{conflict_mode,contacts:[{phone:'+'+phone(4),name:'new'},{phone:'+'+phone(3),name:'second'}]})
     expect(result.status).toBe(403)
-    expect((await db.query('SELECT first_name FROM contacts WHERE id=$1',[id(2)])).rows[0].first_name).toBe('hidden')
     expect((await db.query('SELECT count(*) FROM contacts')).rows[0].count).toBe('3')
+  })
+  it('allows an independent Royal account on the phone of a hidden Farabet contact without altering it',async()=>{
+    const result=await imported(2,{contacts:[{phone:'+'+phone(2),name:'royal-user'}]})
+    expect(result.status).toBe(200)
+    expect((await db.query('SELECT first_name,panel FROM contacts WHERE id=$1',[id(2)])).rows[0]).toEqual({first_name:'hidden',panel:'farabet'})
+    expect(await listed()).toHaveLength(3)
   })
   it('imports visible contacts and keeps new contacts visible in explicit-assignment mode', async () => {
     expect((await imported(1)).status).toBe(200)

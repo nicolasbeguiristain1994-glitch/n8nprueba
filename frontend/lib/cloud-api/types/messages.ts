@@ -22,6 +22,7 @@ export interface SendMessageRequest {
   location?:        LocationContent
   interactive?:     InteractiveContent
   contextMessageId?: string
+  agentCode?:       string
   campaignId?:      string
   sentByUserId?:    string
 }

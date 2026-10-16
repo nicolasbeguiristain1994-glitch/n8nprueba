@@ -30,7 +30,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('Priority broadcasts: r
         broadcasted_at timestamptz,broadcasted_by text,run_id uuid,priority_score numeric DEFAULT 90,reactivation_segment text,value_tier text DEFAULT 'vip',
         days_inactive int,ltv_score int,ltv_tier text,value_score int DEFAULT 45,urgency_score int DEFAULT 40,computed_at timestamptz DEFAULT now());
       CREATE TABLE system_jobs(job_name text,last_complete_run_id uuid,last_success_at timestamptz,is_running boolean DEFAULT false);
-      CREATE TABLE blacklist(phone_number_normalized text,removed_at timestamptz);
+      CREATE FUNCTION contact_agent_key(text) RETURNS text LANGUAGE sql IMMUTABLE AS 'SELECT lower($1)';
+      CREATE TABLE blacklist(phone_number_normalized text,removed_at timestamptz,scope_key text DEFAULT 'global',agent_code text);
       CREATE TABLE operator_contact_visibility(operator_id uuid,contact_id uuid);
       CREATE TABLE whatsapp_templates(id uuid PRIMARY KEY,name text,status text,waba_id text,components jsonb);
       CREATE TABLE cloud_numbers(id uuid DEFAULT gen_random_uuid(),waba_id text,status text,whatsapp_line_id uuid);
@@ -43,10 +44,10 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('Priority broadcasts: r
         created_at timestamptz DEFAULT now());
       CREATE TABLE campaign_audience_members(campaign_id uuid REFERENCES campaigns(id),contact_id uuid,PRIMARY KEY(campaign_id,contact_id));
       CREATE TABLE campaign_recipients(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),campaign_id uuid,contact_id uuid,phone_number text,
-        status text DEFAULT 'pending',error_detail text,sent_at timestamptz);
+        status text DEFAULT 'pending',error_detail text,sent_at timestamptz,agent_code text);
       CREATE UNIQUE INDEX ON campaign_recipients(campaign_id,contact_id) WHERE contact_id IS NOT NULL;
       CREATE TABLE whatsapp_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),campaign_id uuid,contact_id uuid,campaign_recipient_id uuid,
-        direction text DEFAULT 'outbound',status text DEFAULT 'queued',sent_at timestamptz,error_detail text,phone_number text,created_at timestamptz DEFAULT now());
+        direction text DEFAULT 'outbound',status text DEFAULT 'queued',sent_at timestamptz,error_detail text,phone_number text,created_at timestamptz DEFAULT now(),metadata jsonb);
       CREATE TABLE contact_send_history(contact_id uuid,sent_at timestamptz);`)
     await pool.query('BEGIN;'+readFileSync('../db/migrations/147_priority_broadcasts.sql','utf8').replaceAll('public.',schema+'.').replace('search_path=public,','search_path='+schema+',')+'COMMIT;')
     await pool.query("CREATE FUNCTION casino_monthly_value_tier(numeric) RETURNS text LANGUAGE sql AS $$ SELECT CASE WHEN $1>=3200000 THEN 'super_vip' WHEN $1>=500000 THEN 'vip' WHEN $1>=100000 THEN 'medio' ELSE 'bajo' END $$")
@@ -76,6 +77,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('Priority broadcasts: r
   }
   it('shows the last real broadcast independently of priority marks and frequency reservations', async () => {
     await pool.query("INSERT INTO whatsapp_messages(campaign_id,phone_number,status,sent_at) VALUES($1,'5491100000001','sent',now()-interval '4 days 2 hours'),($1,'5491100000001','queued',NULL)",[randomUUID()])
+    await pool.query("UPDATE whatsapp_messages SET metadata='{\"agent_code\":\"royal\"}'")
     await pool.query('INSERT INTO contact_send_history VALUES($1,now())',[contact])
     const result = await new UserPrioritizationRepository().getPrioritizedContacts({access:{role:'admin',userId:owner},runId:run})
     expect(result.data.find(row=>row.id===contact)).toMatchObject({daysSinceLastBroadcast:4,lastBroadcastAt:expect.any(String)})
@@ -117,7 +119,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('Priority broadcasts: r
     expect(await createDispatchUnits(campaign_id,campaign.list_id)).toEqual({total:1,queued:1})
     expect((await pool.query('SELECT contact_id FROM campaign_recipients')).rows).toEqual([{contact_id:contact}])
     expect(await priorityRecipientAllowed(campaign_id,contact,'+5491100000001')).toBe(true)
-    await pool.query("INSERT INTO blacklist VALUES('+5491100000001',NULL)")
+    await pool.query("INSERT INTO blacklist(phone_number_normalized,removed_at) VALUES('+5491100000001',NULL)")
     expect(await priorityRecipientAllowed(campaign_id,contact,'+5491100000001')).toBe(false)
     await pool.query('TRUNCATE blacklist;UPDATE users SET is_active=false')
     expect(await priorityRecipientAllowed(campaign_id,contact,'+5491100000001')).toBe(false)

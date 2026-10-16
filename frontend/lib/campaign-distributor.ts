@@ -386,8 +386,8 @@ export async function createDispatchUnits(
 ): Promise<{ total: number; queued: number }> {
   await ensureCampaignAudienceSnapshot(campaignId,listId)
   await query(
-    `INSERT INTO campaign_recipients (campaign_id, contact_id, phone_number)
-     SELECT $1, c.id, c.phone_number
+    `INSERT INTO campaign_recipients (campaign_id, contact_id, phone_number,agent_code)
+     SELECT DISTINCT ON (regexp_replace(c.phone_number,'[^0-9]','','g')) $1, c.id, c.phone_number,contact_agent_key(c.panel)
      FROM contacts c
      JOIN (${campaignMembershipSQL}) clm ON clm.contact_id = c.id
      WHERE c.deleted_at IS NULL
@@ -396,10 +396,11 @@ export async function createDispatchUnits(
        AND (c.status = 'active' OR (c.status='inactive' AND EXISTS(SELECT 1 FROM campaigns pc WHERE pc.id=$1 AND pc.is_priority_broadcast=true)))
        AND NOT EXISTS (
          SELECT 1 FROM blacklist bl
-         WHERE bl.phone_number_normalized = regexp_replace(c.phone_number, '[^0-9]', '', 'g')
+         WHERE bl.phone_number_normalized = regexp_replace(c.phone_number, '[^0-9]', '', 'g') AND (bl.scope_key='global' OR bl.agent_code=contact_agent_key(c.panel))
            AND bl.removed_at IS NULL
        )
-     ON CONFLICT (campaign_id, contact_id) WHERE contact_id IS NOT NULL DO NOTHING`,
+     ORDER BY regexp_replace(c.phone_number,'[^0-9]','','g'),c.id
+     ON CONFLICT DO NOTHING`,
     [campaignId, listId]
   )
 
@@ -462,7 +463,7 @@ export async function createDispatchUnitsFromProspectList(
        AND p.opt_in  = true
        AND NOT EXISTS (
          SELECT 1 FROM blacklist bl
-         WHERE bl.phone_number_normalized = regexp_replace(p.phone_number, '[^0-9]', '', 'g')
+         WHERE bl.phone_number_normalized = regexp_replace(p.phone_number, '[^0-9]', '', 'g') AND bl.scope_key='global'
            AND bl.removed_at IS NULL
        )
      ON CONFLICT (campaign_id, prospect_id) WHERE prospect_id IS NOT NULL DO NOTHING`,
@@ -571,6 +572,7 @@ export async function sendViaEvolution(
   message: string,
   mediaUrl?: string | null,
   mediaType?: 'sticker',
+  campaignId?: string,
 ): Promise<{ messageId: string | null }> {
   // Prefer EVOLUTION_GLOBAL_API_KEY (shared admin key) over per-instance key.
   // QR routes use this same fallback pattern — keep them in sync.
@@ -607,7 +609,7 @@ export async function sendViaEvolution(
     headers: { 'Content-Type': 'application/json', apikey: apiKey },
     body:    JSON.stringify(body),
     signal: AbortSignal.timeout(20000),
-  }))
+  }),{provider:"evolution",sourceId:line.evolution_instance,campaignId})
 
   if (!res.ok) {
     let errText: string
@@ -678,7 +680,7 @@ export async function sendViaCloud(
     req = { phoneNumberId, to, type: 'text', text: { body: payload.body }, campaignId }
   }
 
-  if (await complianceRepository.isOptedOut(to, phoneNumberId)) throw new OptOutError(to)
+  if (await complianceRepository.isOptedOut(to, phoneNumberId, campaignId)) throw new OptOutError(to)
   if (req.type !== 'template') {
     const window = await conversationRepository.findWindow(phoneNumberId, to)
     if (!window?.windowExpiresAt || window.windowExpiresAt <= new Date()) throw new ConversationWindowError()
@@ -1314,7 +1316,7 @@ export async function sendOneUnit(
             : { kind: 'text', body: messageBody, mediaUrl: campaign.media_url },
           campaignId,
         )
-      : await sendViaEvolution(line, unit.phone_number, messageBody, campaign.media_url)
+      : await sendViaEvolution(line, unit.phone_number, messageBody, campaign.media_url,undefined,campaignId)
 
     providerAccepted = true
     await handleSuccess(campaignId, unit, line, messageId, messageBody,
@@ -1935,7 +1937,7 @@ export async function getContactEligibilityBreakdown(
           AND c.status           = 'active'
           AND NOT EXISTS (
             SELECT 1 FROM blacklist bl
-            WHERE bl.phone_number_normalized = regexp_replace(c.phone_number,'[^0-9]','','g')
+            WHERE bl.phone_number_normalized = regexp_replace(c.phone_number,'[^0-9]','','g') AND (bl.scope_key='global' OR bl.agent_code=contact_agent_key(c.panel))
               AND bl.removed_at IS NULL
           )
       )::text AS eligible,
@@ -1952,7 +1954,7 @@ export async function getContactEligibilityBreakdown(
           AND c.status           = 'active'
           AND EXISTS (
             SELECT 1 FROM blacklist bl
-            WHERE bl.phone_number_normalized = regexp_replace(c.phone_number,'[^0-9]','','g')
+            WHERE bl.phone_number_normalized = regexp_replace(c.phone_number,'[^0-9]','','g') AND (bl.scope_key='global' OR bl.agent_code=contact_agent_key(c.panel))
               AND bl.removed_at IS NULL
           )
       )::text AS blacklisted
