@@ -31,8 +31,9 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
       ALTER TABLE casino_players ADD platform text;
       ALTER TABLE casino_players DROP CONSTRAINT casino_players_seg_monto_check;
       ALTER TABLE casino_players DROP CONSTRAINT casino_players_seg_actividad_check;
+      CREATE FUNCTION contact_agent_key(text) RETURNS text LANGUAGE sql IMMUTABLE AS 'SELECT lower($1)';
       CREATE TYPE contact_segment AS ENUM ('bajo','medio','vip','vip_medio','vip_alto','super_vip');
-      CREATE TABLE contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), external_id text,phone_number text UNIQUE,
+      CREATE TABLE contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(), external_id text,phone_number text,account_username text,identity_key text UNIQUE DEFAULT gen_random_uuid()::text,
         first_name text,last_name text,email text,panel text,panels_assigned text[] DEFAULT '{}',
         casino_accounts jsonb NOT NULL DEFAULT '[]',platforms text[] DEFAULT '{}',deleted_at timestamptz,
         segment contact_segment,linea int,linea_sub text,status text,gaming text,opt_in_marketing bool,opt_in_sms bool,
@@ -40,7 +41,7 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
       CREATE TABLE contact_tags(id uuid,contact_id uuid,tag text,added_by text,added_at timestamptz,UNIQUE(contact_id,tag));
       CREATE TABLE contact_list_members(contact_id uuid,list_id uuid);
       CREATE TABLE whatsapp_messages(phone_number text,campaign_id uuid,direction text,status text,sent_at timestamptz,created_at timestamptz);
-      CREATE TABLE campaign_recipients(phone_number text,campaign_id uuid,status text,sent_at timestamptz);`)
+      CREATE TABLE campaign_recipients(contact_id uuid,agent_code text,phone_number text,campaign_id uuid,status text,sent_at timestamptz);`)
     await c.query(readFileSync('../db/migrations/126_casino_excel_import.sql','utf8'))
     await createRequire(import.meta.url)('../../../tests/helpers/segmentation-profile-schema.cjs').install(c,schema)
     await c.query(readFileSync('../db/migrations/133_contact_movement_lookup.sql','utf8').split('-- Run outside')[0])
@@ -72,10 +73,22 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
     expect((await c.query('SELECT tag FROM contact_tags ORDER BY tag')).rows.map(r=>r.tag)).toContain('casino:monto:vip')
   })
   it('skip mode does not retag or edit existing contacts',async()=>{
-    await c.query("INSERT INTO contacts(first_name,phone_number,segment) VALUES('original','+5491111111111','medio')")
-    const res=await importContacts(request({conflict_mode:'skip',contacts:[{phone:'+5491111111111',name:'replacement'}]}))
+    await c.query("INSERT INTO contacts(first_name,phone_number,segment,account_username,identity_key) VALUES('original','+5491111111111','medio','original','[\"\", \"original\"]')")
+    const res=await importContacts(request({conflict_mode:'skip',contacts:[{phone:'+5491111111111',name:'replacement',casino_username:'original'}]}))
     expect(res.status).toBe(200)
     expect((await c.query('SELECT first_name,segment FROM contacts')).rows[0]).toEqual({first_name:'original',segment:'medio'})
+  })
+  it('keeps separate agent accounts on one phone and updates only the repeated account',async()=>{
+    for(const [panel,username] of [['bigwin','juan24z'],['royal','juan244z']]) {
+      expect((await importContacts(request({panel,contacts:[{phone:'+5491111111111',name:username,casino_username:username}]}))).status).toBe(200)
+    }
+    expect((await c.query('SELECT panel,account_username,phone_number FROM contacts ORDER BY panel')).rows).toEqual([
+      {panel:'bigwin',account_username:'juan24z',phone_number:'+5491111111111'},
+      {panel:'royal',account_username:'juan244z',phone_number:'+5491111111111'}])
+    const update=await importContacts(request({panel:'royal',contacts:[{phone:'+5491111111112',name:'Juan Royal',casino_username:'juan244z'}]}))
+    expect(update.status).toBe(200)
+    expect((await c.query('SELECT panel,phone_number FROM contacts ORDER BY panel')).rows).toEqual([
+      {panel:'bigwin',phone_number:'+5491111111111'},{panel:'royal',phone_number:'+5491111111112'}])
   })
   it('rolls back imported contacts when segmentation fails',async()=>{
     await transaction('realaccount','zeus',500000)

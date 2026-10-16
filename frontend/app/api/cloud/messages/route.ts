@@ -25,6 +25,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'JSON inválido' }, { status: 400 })
   }
 
+  if(body.agentCode !== undefined || body.campaignId !== undefined) {
+    return NextResponse.json({error:'El agente y la campaña se resuelven internamente. Usá el envío de Campañas para una difusión.'},{status:400})
+  }
   const { phoneNumberId, to, type, enqueue } = body
 
   if (typeof phoneNumberId !== 'string' || !/^\d{5,30}$/.test(phoneNumberId) || typeof to !== 'string' || typeof type !== 'string') {

@@ -14,7 +14,8 @@ export async function resolveCampaignSelection(ids: string[], user: ContactAcces
       SELECT c.id, regexp_replace(c.phone_number,'[^0-9]','','g') AS phone,
         CASE
           WHEN EXISTS (SELECT 1 FROM blacklist bl WHERE bl.removed_at IS NULL
-            AND bl.phone_number_normalized=regexp_replace(c.phone_number,'[^0-9]','','g')) THEN 'blacklisted'
+            AND bl.phone_number_normalized=regexp_replace(c.phone_number,'[^0-9]','','g')
+            AND (bl.scope_key='global' OR bl.agent_code=contact_agent_key(c.panel))) THEN 'blacklisted'
           WHEN c.status IS DISTINCT FROM 'active' THEN 'inactive'
           WHEN c.opt_in_marketing IS DISTINCT FROM true OR c.do_not_contact IS DISTINCT FROM false THEN 'opted_out'
           ELSE 'eligible'

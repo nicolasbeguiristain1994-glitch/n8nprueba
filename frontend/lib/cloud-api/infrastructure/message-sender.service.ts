@@ -24,7 +24,7 @@ export class MessageSenderService {
     const data    = await withGlobalSendGuard(req.to, () => this.gw.post<{ messages: Array<{ id: string }> }>(
       `/${req.phoneNumberId}/messages`,
       payload,
-    ))
+    ), {provider:"cloud",sourceId:req.phoneNumberId,campaignId:req.campaignId,agentCode:req.agentCode})
     return { wamid: data.messages[0].id }
   }
 

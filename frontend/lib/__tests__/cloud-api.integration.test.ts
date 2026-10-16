@@ -1,3 +1,4 @@
+vi.mock('@/lib/consent-context',()=>({resolveConsentIdentity:vi.fn(async()=>({agent:'royal',campaignId:null,sourceKey:'cloud:test'}))}))
 // @vitest-environment node
 //
 // Tests de integración del módulo Cloud API.

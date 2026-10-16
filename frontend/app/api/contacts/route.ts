@@ -1,6 +1,7 @@
+import { canonicalContactAgent, contactAccountKey } from '@/lib/contact-account-identity'
 import { configureBulkMovementRead, withContactMovementRead } from '@/lib/contact-movement-read'
 import { contactLastMovementQuery, type ContactMovementRow } from '@/lib/contact-last-movement'
-import { broadcastPhone, getLastContactBroadcasts } from '@/lib/contact-broadcast-history'
+import { broadcastAccountKey, getLastContactBroadcasts } from '@/lib/contact-broadcast-history'
 import { segmentationSQL } from '@/lib/contact-segmentation'
 import { canAssignPanels, grantCreatedContacts } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
@@ -56,7 +57,7 @@ export async function GET(req: NextRequest) {
       ORDER BY created_at DESC, id LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `, [...params, limit, offset])
     const [{ count }] = await contactRead<{ count: string }>(`SELECT COUNT(*) FROM contacts WHERE ${sql}`, params)
-    const broadcasts = await getLastContactBroadcasts(rows.map(row => row.phone_number), contactRead)
+    const broadcasts = await getLastContactBroadcasts(rows, contactRead)
     // Reuse the latest-movement result when the audience already resolved it.
     // Unfiltered pages only inspect their visible contacts, not the entire CRM.
     let movements = movementHistory
@@ -70,7 +71,7 @@ export async function GET(req: NextRequest) {
       movements = new Map(history.map(row => [row.contact_id, row]))
     }
     const contacts = rows.map(row => {
-      const last = broadcasts.get(broadcastPhone(row.phone_number))
+      const last = broadcasts.get(broadcastAccountKey(row.phone_number,row.panel))
       const movement = movements.get(row.id)
       return { ...row, last_movement_date: movement?.last_movement ?? null, days_since_last_movement: movement?.days_inactive ?? null, last_broadcast_at: last?.lastBroadcastAt ?? null, days_since_last_broadcast: last?.daysSinceLastBroadcast ?? null }
     })
@@ -94,7 +95,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { phone, name, panel, gaming, segment, linea, linea_sub } = body
+  const { phone, name, gaming, segment, linea, linea_sub } = body
+  const panel=canonicalContactAgent(body.panel)
+  const username=name?.trim().toLowerCase() || null
   const phone_clean = (phone || '').toString().trim().replace(/\s/g, '')
   if (!phone_clean) return NextResponse.json({ error: 'Teléfono requerido' }, { status: 400 })
   if (!isE164(phone_clean)) return NextResponse.json({ error: 'Teléfono debe estar en formato E.164 (ej: +5491112345678)' }, { status: 400 })
@@ -114,16 +117,17 @@ export async function POST(req: NextRequest) {
       const {rows: [created]} = await client.query<{ id: string }>(
       `INSERT INTO contacts
          (external_id, phone_number, first_name, last_name, segment, panel, gaming, linea, linea_sub, status,
-          opt_in_marketing, opt_in_sms, platform_source, created_at, updated_at, segment_is_manual)
-       VALUES (gen_random_uuid()::text, $1, $2, $3, $4::contact_segment, $5, $6::gaming_type, $7, $8, 'active', true, true, 'manual', NOW(), NOW(), $4::text IS NOT NULL)
-       ON CONFLICT (phone_number) DO NOTHING
+          opt_in_marketing, opt_in_sms, platform_source, created_at, updated_at, segment_is_manual,account_username,identity_key,panels_assigned,casino_accounts)
+       VALUES (gen_random_uuid()::text, $1, $2, $3, $4::contact_segment, $5, $6::gaming_type, $7, $8, 'active', true, true, 'manual', NOW(), NOW(), $4::text IS NOT NULL,$9,$10,CASE WHEN $5::text IS NULL THEN '{}'::text[] ELSE ARRAY[$5]::text[] END,
+         CASE WHEN $9::text IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('panel',$5::text,'username',$9::text)) END)
+       ON CONFLICT (identity_key) DO NOTHING
        RETURNING id`,
-      [phone_clean, first_name, last_name, segment || null, panel || null, gaming || null, lineaVal, lineaSubVal]
+      [phone_clean, first_name, last_name, segment || null, panel || null, gaming || null, lineaVal, lineaSubVal,username,contactAccountKey(panel,username,phone_clean)]
     )
       if (created) await grantCreatedContacts(client, err.user, [created.id])
       return created
     })
-    if (!row) return NextResponse.json({ error: 'Ya existe un contacto con ese teléfono' }, { status: 409 })
+    if (!row) return NextResponse.json({ error: 'Ya existe esa cuenta en el agente seleccionado' }, { status: 409 })
     void audit({ req, action: 'create', resource: 'contacts', resource_id: row.id,
       metadata: { phone: phone_clean } })
     return NextResponse.json({ id: row.id })

@@ -1,5 +1,6 @@
+import { resolveConsentIdentity } from '@/lib/consent-context'
 import { belongsToDirectory, directoryAgentCode, agentLineReply, type RoutingContact } from '@/lib/contact-line-directory'
-import { withGlobalSendGuard } from '@/lib/global-opt-out'
+import { withGlobalSendGuard, isGloballyOptedOut } from '@/lib/global-opt-out'
 import { query, withTransaction } from '@/lib/db'
 import { sendMessageUseCase } from '@/lib/cloud-api/use-cases/send-message.use-case'
 import { sseEmitter } from '@/lib/sse-events'
@@ -8,7 +9,7 @@ export type AutomationSource = { provider: 'cloud'; phoneNumberId: string } | { 
 type Rule = { id: string; name: string; type: 'reply'|'flow'|'handoff'; trigger_type: string;
   trigger_config: { keywords?: string[]; once_per_chat?: boolean }; action_config: { contact_line_directory?: string; message?: string; steps?: { message: string; delay_sec?: number }[] } }
 type Job = { id: string; event_key: string; automation_id: string; automation_name: string; phone: string;
-  provider: 'cloud'|'evolution'; source_id: string; body: string; step: number; handoff: boolean; legacy_message_id: string|null }
+  provider: 'cloud'|'evolution'; source_id: string; body: string; step: number; handoff: boolean; legacy_message_id: string|null;agent_code:string|null }
 const digits = (phone: string) => phone.replace(/\D/g,'')
 const normalize = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,'').replace(/\s+/g,' ').trim()
 export function automationMatches(rule: Pick<Rule,'trigger_type'|'trigger_config'>, text: string): boolean {
@@ -35,13 +36,15 @@ export async function evaluateAutomations(phone: string, messageText: string, me
   const provider=source.provider, sourceId=provider==='cloud'?(source as {phoneNumberId:string}).phoneNumberId:(source as {instance:string}).instance
   if (!sourceId) return
   const eventKey=`${provider}:${sourceId}:${messageId}`, number=digits(phone)
+  const identity=await resolveConsentIdentity(number,{provider,sourceId,messageId})
+  if(await isGloballyOptedOut(number,{provider,sourceId,agentCode:identity.agent})) return
   await withTransaction(async db=>{
     await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`automation:${provider}:${sourceId}:${number}`])
     const claimed=await db.query(`INSERT INTO automation_inbound_receipts(event_key,phone,provider,source_id)
       VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING event_key`,[eventKey,number,provider,sourceId])
     if (!claimed.rows.length) return
     const blocked=await db.query(`SELECT 1 FROM conversation_state WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND resolved_at IS NULL AND is_escalated=true
-      UNION ALL SELECT 1 FROM blacklist WHERE phone_number_normalized=$1 AND removed_at IS NULL LIMIT 1`,[number])
+      LIMIT 1`,[number])
     if (blocked.rows.length) return
     const rules=await db.query<Rule>(`SELECT a.id,a.name,a.type,a.trigger_type,a.trigger_config,a.action_config
       FROM automations a JOIN users u ON u.id=a.created_by
@@ -52,7 +55,7 @@ export async function evaluateAutomations(phone: string, messageText: string, me
     let routingContacts: RoutingContact[] = []
     if (matches.some(r=>directoryAgentCode(r.action_config.contact_line_directory))) {
       routingContacts=(await db.query<RoutingContact>(`SELECT first_name,panel,linea,linea_sub FROM contacts
-        WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND deleted_at IS NULL LIMIT 2`,[number])).rows
+        WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND deleted_at IS NULL AND ($2::text IS NULL OR contact_agent_key(panel)=$2) LIMIT 2`,[number,identity.agent])).rows
     }
     const rule=matches.find(r=>{
       if (!r.action_config.contact_line_directory) return true
@@ -61,11 +64,11 @@ export async function evaluateAutomations(phone: string, messageText: string, me
     })
     if (!rule) return
     if (rule.type==='reply' && rule.trigger_config.once_per_chat===true) {
-      // Chats in the inbox are keyed by phone, even across lines/providers.
+      // Apply the once-only rule within this agent, across sending lines/providers.
       // Serialize different inbound events before checking the durable history.
-      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`automation-once:${rule.id}:${number}`])
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`automation-once:${rule.id}:${number}:${identity.agent??sourceId}`])
       const prior=await db.query(`SELECT 1 FROM automation_message_jobs
-        WHERE automation_id=$1 AND phone=$2 AND status IN ('queued','processing','sent','uncertain') LIMIT 1`,[rule.id,number])
+        WHERE automation_id=$1 AND phone=$2 AND agent_code IS NOT DISTINCT FROM $3 AND status IN ('queued','processing','sent','uncertain') LIMIT 1`,[rule.id,number,identity.agent])
       if (prior.rows.length) {
         await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details)
           VALUES($1,$2,$3,'skipped','Respuesta única por chat: ya enviada o pendiente de confirmación')`,[rule.id,rule.name,number])
@@ -74,9 +77,9 @@ export async function evaluateAutomations(phone: string, messageText: string, me
     }
     const recent=await db.query(`SELECT 1 FROM automation_message_jobs WHERE phone=$1 AND provider=$2 AND source_id=$3
       AND created_at>NOW()-interval '10 seconds' AND status IN ('queued','processing','sent')
-      AND ($4::uuid IS NULL OR automation_id=$4) LIMIT 1`,[number,provider,sourceId,rule.action_config.contact_line_directory ? rule.id : null])
+      AND ($4::uuid IS NULL OR automation_id=$4) AND agent_code IS NOT DISTINCT FROM $5 LIMIT 1`,[number,provider,sourceId,rule.action_config.contact_line_directory ? rule.id : null,identity.agent])
     if (recent.rows.length) return
-    const contact=await db.query<{first_name:string|null;panel:string|null}>(`SELECT first_name,panel FROM contacts WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 LIMIT 1`,[number])
+    const contact=await db.query<{first_name:string|null;panel:string|null}>(`SELECT first_name,panel FROM contacts WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND ($2::text IS NULL OR contact_agent_key(panel)=$2) ORDER BY id LIMIT 1`,[number,identity.agent])
     const resolve=(message:string)=>message.replace(/\{\{nombre\}\}/gi,contact.rows[0]?.first_name?.trim()||'Cliente')
       .replace(/\{\{empresa\}\}/gi,contact.rows[0]?.panel?.trim()||'')
       .replace(/\{\{fecha\}\}/gi,new Date().toLocaleDateString('es-AR',{timeZone:'America/Argentina/Buenos_Aires'}))
@@ -107,9 +110,9 @@ export async function evaluateAutomations(phone: string, messageText: string, me
     let delay=0
     for (let i=0;i<steps.length;i++) {
       delay+=steps[i].delay_sec
-      await db.query(`INSERT INTO automation_message_jobs(event_key,automation_id,automation_name,phone,provider,source_id,body,step,handoff,legacy_message_id,run_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW()+($11*interval '1 second'))`,
-        [eventKey,rule.id,rule.name,number,provider,sourceId,resolve(steps[i].message),i,handoff,provider==='evolution'?messageId:null,delay])
+      await db.query(`INSERT INTO automation_message_jobs(event_key,automation_id,automation_name,phone,provider,source_id,body,step,handoff,legacy_message_id,run_at,agent_code)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW()+($11*interval '1 second'),$12)`,
+        [eventKey,rule.id,rule.name,number,provider,sourceId,resolve(steps[i].message),i,handoff,provider==='evolution'?messageId:null,delay,identity.agent])
     }
   })
   await processAutomationJobs(eventKey)
@@ -125,23 +128,30 @@ async function complete(job:Job,status:'sent'|'failed'|'skipped'|'uncertain',det
 }
 
 async function sendJob(job:Job):Promise<void> {
+  if(!job.agent_code) {
+    const identity=await resolveConsentIdentity(job.phone,{provider:job.provider,sourceId:job.source_id})
+    if(identity.agent) {
+      job.agent_code=identity.agent
+      await query('UPDATE automation_message_jobs SET agent_code=$2 WHERE id=$1 AND agent_code IS NULL',[job.id,identity.agent])
+    }
+  }
   // Recheck operator handoff, opt-out and active rule/creator at send time,
   // including delayed flow steps. Each reply stays on its inbound line.
   const active=await query<Pick<Rule,'type'|'trigger_config'>>(`SELECT a.type,a.trigger_config FROM automations a JOIN users u ON u.id=a.created_by WHERE a.id=$1 AND a.is_active=true AND u.is_active=true AND u.role='admin'`,[job.automation_id])
-  const blocked=await query(`SELECT 1 FROM blacklist WHERE phone_number_normalized=$1 AND removed_at IS NULL
-    UNION ALL SELECT 1 FROM conversation_state WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND resolved_at IS NULL AND is_escalated=true AND NOT $2 LIMIT 1`,[job.phone,job.handoff])
+  const blocked=await query(`SELECT 1 FROM blacklist WHERE phone_number_normalized=$1 AND removed_at IS NULL AND (scope_key='global' OR agent_code=$3)
+    UNION ALL SELECT 1 FROM conversation_state WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND resolved_at IS NULL AND is_escalated=true AND NOT $2 LIMIT 1`,[job.phone,job.handoff,job.agent_code])
   if (!active.length||blocked.length) { await complete(job,'skipped','Regla pausada, baja solicitada o conversación atendida por un operador');return }
   if (active[0].type==='reply' && active[0].trigger_config.once_per_chat===true) {
     // The option can be enabled after multiple replies were queued. Keep only
     // the oldest eligible event; a sent/uncertain result always blocks a repeat.
     const duplicate=await withTransaction(async db=>{
-      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`automation-once:${job.automation_id}:${job.phone}`])
+      await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`automation-once:${job.automation_id}:${job.phone}:${job.agent_code??job.source_id}`])
       return (await db.query(`SELECT 1 FROM automation_message_jobs prior
-        WHERE prior.automation_id=$1 AND prior.phone=$2 AND prior.event_key<>$3
+        WHERE prior.automation_id=$1 AND prior.phone=$2 AND prior.event_key<>$3 AND prior.agent_code IS NOT DISTINCT FROM $5
           AND (prior.status IN ('sent','uncertain') OR (
             prior.status IN ('queued','processing') AND (prior.created_at,prior.event_key)<
               (SELECT current.created_at,current.event_key FROM automation_message_jobs current WHERE current.id=$4)))
-        LIMIT 1`,[job.automation_id,job.phone,job.event_key,job.id])).rows.length>0
+        LIMIT 1`,[job.automation_id,job.phone,job.event_key,job.id,job.agent_code])).rows.length>0
     })
     if (duplicate) { await complete(job,'skipped','Respuesta única por chat: ya enviada o reservada por otro mensaje');return }
   }
@@ -152,7 +162,7 @@ async function sendJob(job:Job):Promise<void> {
     // This use case enforces opt-out, 24-hour window and rate limits, and stores
     // the outbound before making the request. Never choose another phone number.
     try {
-      await sendMessageUseCase.execute({request:{phoneNumberId:job.source_id,to:'+'+job.phone,type:'text',text:{body:job.body}}})
+      await sendMessageUseCase.execute({request:{phoneNumberId:job.source_id,to:'+'+job.phone,agentCode:job.agent_code??undefined,type:'text',text:{body:job.body}}})
     } catch (err) {
       const name=err instanceof Error?err.name:''
       await complete(job,['OptOutError','ConversationWindowError','TokenExpiredError'].includes(name)?'skipped':'uncertain',
@@ -164,10 +174,10 @@ async function sendJob(job:Job):Promise<void> {
       WHERE evolution_instance=$1 AND line_type='evolution' AND status='active' AND is_connected=true AND sending_enabled=true LIMIT 1`,[job.source_id])
     if (!line) {await complete(job,'skipped','La línea Evolution de origen no está habilitada');return}
     const [stored]=await query<{id:string}>(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,metadata)
-      VALUES($1,$2,'outbound','queued',$3::jsonb) RETURNING id`,['+'+job.phone,job.body,JSON.stringify({line_id:line.id,source:'automation',automation_id:job.automation_id,automation_job_id:job.id})])
+      VALUES($1,$2,'outbound','queued',$3::jsonb) RETURNING id`,['+'+job.phone,job.body,JSON.stringify({line_id:line.id,source:'automation',automation_id:job.automation_id,automation_job_id:job.id,agent_code:job.agent_code})])
     let response:Response
     try {
-      response=await withGlobalSendGuard(job.phone, () => fetch(`${line.evolution_url}/message/sendText/${line.evolution_instance}`,{method:'POST',headers:{'Content-Type':'application/json',apikey:process.env.EVOLUTION_API_KEY??''},body:JSON.stringify({number:job.phone,text:job.body}),signal:AbortSignal.timeout(20000)}))
+      response=await withGlobalSendGuard(job.phone, () => fetch(`${line.evolution_url}/message/sendText/${line.evolution_instance}`,{method:'POST',headers:{'Content-Type':'application/json',apikey:process.env.EVOLUTION_API_KEY??''},body:JSON.stringify({number:job.phone,text:job.body}),signal:AbortSignal.timeout(20000)}),{provider:'evolution',sourceId:job.source_id,agentCode:job.agent_code})
     } catch (err) {await complete(job,err instanceof Error && err.name==='OptOutError'?'skipped':'uncertain',err instanceof Error && err.name==='OptOutError'?'Baja solicitada por el contacto':'Sin confirmación del proveedor; no se reenvía automáticamente');return}
     if (!response.ok) {
       await query(`UPDATE whatsapp_messages SET status='failed' WHERE id=$1`,[stored.id])

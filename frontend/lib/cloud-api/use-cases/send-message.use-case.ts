@@ -31,7 +31,7 @@ export class SendMessageUseCase {
     buildMessagePayload(req) // Reject malformed content before any persistence.
 
     // 1. Compliance: opt-out
-    const optedOut = await complianceRepository.isOptedOut(to, phoneNumberId)
+    const optedOut = await complianceRepository.isOptedOut(to, phoneNumberId, req.campaignId, req.agentCode)
     if (optedOut) throw new OptOutError(to)
 
     // 2. Ventana de servicio (solo para mensajes no-plantilla)

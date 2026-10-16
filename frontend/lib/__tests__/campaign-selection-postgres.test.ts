@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Client } from 'pg'
+import { readFileSync } from 'node:fs'
 import { NextRequest } from 'next/server'
 const mocks = vi.hoisted(() => ({ query: vi.fn(), transaction: vi.fn(), auth: vi.fn() }))
 vi.mock('@/lib/db', () => ({ query: mocks.query, withTransaction: mocks.transaction }))
@@ -20,8 +21,12 @@ describe.skipIf(!process.env.CONTACTS_TEST_DATABASE_URL)('Campaigns created dire
     const url = new URL(process.env.CONTACTS_TEST_DATABASE_URL!)
     if (!['localhost','127.0.0.1'].includes(url.hostname)) throw Error('LOCAL_ONLY')
     db = new Client({ connectionString: url.toString(), ssl: false }); await db.connect(); await db.query('BEGIN')
+    const schema = `campaign_selection_${process.pid}`
+    await db.query(`CREATE SCHEMA ${schema}; SET LOCAL search_path TO ${schema},public`)
+    const agentFunction = readFileSync('../db/migrations/154_contact_accounts_agent_consent.sql', 'utf8').match(/CREATE OR REPLACE FUNCTION public\.contact_agent_key[\s\S]*?\$\$;/)![0]
+    await db.query(agentFunction.replace('public.contact_agent_key', `${schema}.contact_agent_key`))
     await db.query(`CREATE TEMP TABLE contacts (id uuid PRIMARY KEY, phone_number text, status text DEFAULT 'active', opt_in_marketing boolean DEFAULT true, do_not_contact boolean DEFAULT false, deleted_at timestamptz, panel text DEFAULT 'royal');
-      CREATE TEMP TABLE blacklist (phone_number_normalized text, removed_at timestamptz);
+      CREATE TEMP TABLE blacklist (phone_number_normalized text, removed_at timestamptz, scope_key text DEFAULT 'global', agent_code text);
       CREATE TEMP TABLE operator_contact_visibility (contact_id uuid, operator_id uuid);
       CREATE TEMP TABLE contact_lists (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name varchar(255),description text,source text DEFAULT 'user',filters jsonb,owned_by uuid,updated_by uuid,is_dynamic boolean,refreshed_at timestamptz,created_at timestamptz DEFAULT now());
       CREATE TEMP TABLE contact_list_members (list_id uuid REFERENCES contact_lists(id), contact_id uuid REFERENCES contacts(id),PRIMARY KEY(list_id,contact_id));
@@ -41,7 +46,7 @@ describe.skipIf(!process.env.CONTACTS_TEST_DATABASE_URL)('Campaigns created dire
       ($3,'+5491100000003','active',true,false,'royal',null),($4,'+5491100000004','active',true,true,'royal',null),
       ($5,'+5491100000005','inactive',true,false,'royal',null),($6,'+5491100000006','active',true,false,'other',null),
       ($7,'+5491100000007','active',true,false,'royal',now()),($8,'+5491100000008','active',false,false,'royal',null)`, Array.from({length:8},(_,i)=>id(i+1)))
-    await db.query("INSERT INTO blacklist VALUES ('5491100000003',null)")
+    await db.query("INSERT INTO blacklist(phone_number_normalized,removed_at) VALUES ('5491100000003',null)")
   })
   afterAll(async () => { if (db) { await db.query('ROLLBACK'); await db.end() } })
   it('previews exclusions once per contact, deduplicates phones and writes nothing', async () => {
@@ -58,6 +63,20 @@ describe.skipIf(!process.env.CONTACTS_TEST_DATABASE_URL)('Campaigns created dire
     expect((await db.query('SELECT contact_id FROM contact_list_members WHERE list_id=$1',[campaign.list_id])).rows).toEqual([{contact_id:id(1)}])
     expect((await db.query('SELECT source,is_dynamic,owned_by FROM contact_lists')).rows).toEqual([{source:'campaign_selection',is_dynamic:false,owned_by:owner}])
     expect((await (await lists(new NextRequest('https://example.test/api/lists'))).json()).lists).toEqual([])
+  })
+  it('applies an agent opt-out only to that account before deduplicating phones', async () => {
+    await db.query("UPDATE contacts SET panel='bigwin' WHERE id=$1",[id(2)])
+    await db.query("INSERT INTO blacklist(phone_number_normalized,scope_key,agent_code) VALUES('5491100000001','agent:bigwin','bigwin')")
+    const res=await preview(request({contact_ids:[id(1),id(2)]}))
+    expect(await res.json()).toEqual({selected:2,eligible:1,excluded:1,blacklisted:1,inactive:0,opted_out:0,duplicates:0})
+    expect((await create(request({name:'Royal eligible',message:'Hola',contact_ids:[id(1),id(2)]}))).status).toBe(200)
+    expect((await db.query('SELECT contact_id FROM contact_list_members')).rows).toEqual([{contact_id:id(1)}])
+  })
+  it('respects canonical agent aliases when checking a scoped opt-out', async () => {
+    await db.query("UPDATE contacts SET panel='adminroyal' WHERE id=$1",[id(1)])
+    await db.query("INSERT INTO blacklist(phone_number_normalized,scope_key,agent_code) VALUES('5491100000001','agent:royal','royal')")
+    expect(await (await preview(request({contact_ids:[id(1)]}))).json()).toMatchObject({eligible:0,blacklisted:1})
+    expect((await create(request({name:'Blocked',message:'Hola',contact_ids:[id(1)]}))).status).toBe(422)
   })
   it('rolls the private audience back if campaign creation fails', async () => {
     expect((await create(request({ name:'force-failure',message:'Hola',contact_ids:[id(1)] }))).status).toBe(500)

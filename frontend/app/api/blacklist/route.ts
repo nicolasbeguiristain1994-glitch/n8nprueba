@@ -1,3 +1,5 @@
+import { contactScope } from '@/lib/contact-visibility'
+import { canonicalContactAgent } from '@/lib/contact-account-identity'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
@@ -75,7 +77,7 @@ export async function GET(req: NextRequest) {
       query<BlacklistRow>(
         `SELECT
            b.id, b.phone_number_raw, b.phone_number_normalized,
-           b.reason, b.source, b.added_at, b.removed_at,
+           b.reason, b.source, b.added_at, b.removed_at,b.agent_code,b.scope_key,
            b.campaign_id, b.original_message,
            ua.name AS added_by_name,
            ur.name AS removed_by_name,
@@ -140,6 +142,23 @@ export async function POST(req: NextRequest) {
   }
 
   const reason = parsed.data.reason?.trim() ?? 'Sin motivo especificado'
+  if(parsed.data.contact_ids?.length) {
+    const scope=contactScope(session,1,'c')
+    const rows=await query<{phone_number:string;panel:string|null}>(`SELECT phone_number,panel FROM contacts c
+      WHERE c.id=ANY($1::uuid[]) AND ${scope.sql}`,[parsed.data.contact_ids,...scope.params])
+    if(rows.length!==new Set(parsed.data.contact_ids).size || rows.some(r=>!r.panel)) return NextResponse.json({error:'Revisá el agente y acceso de las cuentas seleccionadas.'},{status:409})
+    const entries=[...new Map(rows.map(r=>[`${r.phone_number}:${r.panel}`,r])).values()]
+    let inserted=0
+    for(const row of entries) {
+      const agent=canonicalContactAgent(row.panel)!
+      const created=await query(`INSERT INTO blacklist(phone_number_raw,phone_number_normalized,reason,source,added_by,agent_code,scope_key)
+        VALUES($1,$2,$3,'manual',$4,$5,'agent:'||$5) ON CONFLICT(phone_number_normalized,scope_key) WHERE removed_at IS NULL DO NOTHING RETURNING id`,
+        [row.phone_number,normalizePhone(row.phone_number),reason,session.user_id,agent])
+      inserted+=created.length
+    }
+    void audit({req,action:'create',resource:'blacklist',metadata:{scope:'agent',inserted}})
+    return NextResponse.json({inserted,skipped:entries.length-inserted,invalid:[],invalid_count:0})
+  }
 
   // Normalizar y validar
   const toInsert: Array<{ raw: string; normalized: string }> = []
@@ -170,7 +189,7 @@ export async function POST(req: NextRequest) {
     for (const { raw, normalized } of toInsert) {
       // Comprobar si ya existe un registro activo
       const existing = await query<{ id: string }>(
-        `SELECT id FROM blacklist WHERE phone_number_normalized = $1 AND removed_at IS NULL`,
+        `SELECT id FROM blacklist WHERE phone_number_normalized = $1 AND removed_at IS NULL AND scope_key='global'`,
         [normalized],
       )
 
@@ -184,7 +203,7 @@ export async function POST(req: NextRequest) {
         `INSERT INTO blacklist
            (phone_number_raw, phone_number_normalized, reason, source, added_by)
          VALUES ($1, $2, $3, 'manual', $4)
-         ON CONFLICT(phone_number_normalized) WHERE removed_at IS NULL DO NOTHING`,
+         ON CONFLICT(phone_number_normalized,scope_key) WHERE removed_at IS NULL DO NOTHING`,
         [raw, normalized, reason, session.user_id],
       )
       inserted.push(raw)

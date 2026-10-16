@@ -82,7 +82,7 @@ export async function GET(req: NextRequest) {
           EXISTS (
             SELECT 1 FROM blacklist bl
             WHERE bl.phone_number_normalized = page.phone_number
-            AND   bl.removed_at IS NULL
+            AND   bl.removed_at IS NULL AND (bl.scope_key='global' OR bl.agent_code=page.agent)
           )                                        AS is_blacklisted,
           EXISTS (
             SELECT 1 FROM conversation_notes cn
@@ -101,7 +101,7 @@ export async function GET(req: NextRequest) {
         LEFT JOIN LATERAL (
           SELECT EXISTS (SELECT 1 FROM contacts other
             WHERE other.phone_number IN (page.phone_number,'+' || page.phone_number)
-              AND other.deleted_at IS NULL AND other.id <> page.contact_id
+              AND other.deleted_at IS NULL AND other.id <> page.contact_id AND lower(trim(other.panel))=page.agent
               AND (NULLIF(lower(trim(other.panel)),''),other.linea,COALESCE(trim(other.linea_sub),''))
                 IS DISTINCT FROM (page.agent,page.linea,COALESCE(trim(page.linea_sub),''))) AS ambiguous
         ) assignment ON true
@@ -117,7 +117,7 @@ export async function GET(req: NextRequest) {
         COALESCE((SELECT jsonb_agg(options ORDER BY options.name, options.id) FROM (
           SELECT id, name, COUNT(*)::int AS count FROM campaign_threads GROUP BY id, name
         ) options), '[]'::jsonb) AS campaigns,
-        COALESCE((SELECT jsonb_agg(options ORDER BY options.name) FROM (SELECT agent AS name, COUNT(*)::int AS count FROM inbox WHERE agent IS NOT NULL GROUP BY agent) options), '[]'::jsonb) AS agents,
+        COALESCE((SELECT jsonb_agg(options ORDER BY options.name) FROM (SELECT lower(trim(c.panel)) AS name,COUNT(DISTINCT lm.phone_number)::int AS count FROM latest_messages lm JOIN contacts c ON REPLACE(c.phone_number,'+','')=lm.phone_number WHERE c.deleted_at IS NULL AND NULLIF(trim(c.panel),'') IS NOT NULL GROUP BY lower(trim(c.panel))) options), '[]'::jsonb) AS agents,
         COALESCE((SELECT jsonb_agg(p ORDER BY p.last_at DESC, p.phone_number)
           FROM enriched_page p), '[]'::jsonb) AS conversations
     `, [...params, PAGE_SIZE, offset, agent, ...scope.params])

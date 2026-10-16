@@ -160,7 +160,8 @@ export async function POST(req: NextRequest) {
           const confirmation = command.trim().toUpperCase() === 'BAJA'
           await recordGlobalOptOut({phone,sourceId,
             provider:'evolution',messageId:msgId || undefined,text:command,confirmation,
-            metadata:{input_type:msg?.conversation || msg?.extendedTextMessage ? 'text' : 'button'}})
+            metadata:{input_type:msg?.conversation || msg?.extendedTextMessage ? 'text' : 'button',
+              context_wamid:((msg?.extendedTextMessage ?? msg?.buttonsResponseMessage ?? msg?.templateButtonReplyMessage) as {contextInfo?:{stanzaId?:string}})?.contextInfo?.stanzaId}})
           if (confirmation && msgId) await sendOptOutConfirmation({phone,sourceId,messageId:msgId,provider:'evolution'})
           sseEmitter.emit('update', {source:'message',phone})
           return NextResponse.json({ok:true})

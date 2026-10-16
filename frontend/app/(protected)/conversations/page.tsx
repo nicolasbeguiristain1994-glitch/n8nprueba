@@ -163,7 +163,7 @@ export default function Conversations() {
                 )}
 
                 {selectedConv?.is_blacklisted && <p role="status" className="px-3 py-2 text-sm text-destructive">
-                  Baja global · Este número está en Blacklist. Los envíos están bloqueados en todas las líneas.
+                  Blacklist · Los envíos de este agente están bloqueados para este número.
                 </p>}
                 {/* Input area */}
                 <div className="border-t border-border p-2 md:p-3 bg-card shrink-0">

@@ -5,8 +5,8 @@ import { isGloballyOptedOut, recordGlobalOptOut } from '@/lib/global-opt-out'
 
 export const complianceRepository = {
 
-  async isOptedOut(phone: string, phoneNumberId: string): Promise<boolean> {
-    return isGloballyOptedOut(phone)
+  async isOptedOut(phone: string, phoneNumberId: string, campaignId?: string, agentCode?: string): Promise<boolean> {
+    return isGloballyOptedOut(phone,{provider:"cloud",sourceId:phoneNumberId,campaignId,agentCode})
   },
 
   async recordOptOut(opts: {

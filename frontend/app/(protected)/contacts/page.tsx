@@ -603,8 +603,8 @@ export default function Contacts() {
         const n = normalizePhone(tel[1].trim())
         if (n) { phone = n; break }
       }
-      if (!phone || seen.has(phone)) continue
-      seen.add(phone)
+      if (!phone || seen.has(`${phone}:${name?.trim().toLowerCase()}`)) continue
+      seen.add(`${phone}:${name?.trim().toLowerCase()}`)
       rows.push({ phone, name })
     }
     return rows
@@ -890,12 +890,12 @@ export default function Contacts() {
 
   // ── Blacklist ──────────────────────────────────────────────────────────────
 
-  const sendToBlacklist = async (phones: string[], onDone?: () => void) => {
+  const sendToBlacklist = async (phones: string[], onDone?: () => void, contactIds?:string[]) => {
     setBlacklistSaving(true)
     try {
       const res = await fetch('/api/blacklist', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phones }),
+        body: JSON.stringify({ phones,contact_ids:contactIds }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) { alert(data.error || 'Error al agregar a blacklist'); return }
@@ -908,8 +908,8 @@ export default function Contacts() {
     if (!confirm(`¿Agregar ${c.first_name || c.phone_number} a la blacklist?`)) return
     await sendToBlacklist([c.phone_number], () => {
       setViewContact(null)
-      alert('Contacto agregado a la blacklist.')
-    })
+      alert('Cuenta bloqueada para su agente.')
+    },[c.id])
   }
 
   const blacklistSelected = async () => {
@@ -933,7 +933,7 @@ export default function Contacts() {
         } else {
           const phones = selectedIds.map(id => selectedPhones.current[id]).filter(Boolean)
           if (phones.length !== selectedIds.length) throw new Error('No se pudieron recuperar todos los teléfonos seleccionados. Volvé a seleccionar los contactos.')
-          await sendToBlacklist(phones, () => setRowSelection({}))
+          await sendToBlacklist(phones, () => setRowSelection({}),selectedIds)
         }
       } else {
         // filters mode: fetch all matching IDs + phones first
@@ -943,7 +943,7 @@ export default function Contacts() {
         if (confirmBulk.action === 'delete') {
           await deleteBulk(d.ids || [])
         } else {
-          await sendToBlacklist(d.phones || [], () => setRowSelection({}))
+          await sendToBlacklist(d.phones || [], () => setRowSelection({}),d.ids)
         }
       }
       setConfirmBulk(null)
@@ -1873,7 +1873,7 @@ export default function Contacts() {
               {!checkLoading && importCheck && importCheck.total > 0 && (
                 <div className="border border-warning/20 bg-warning/10 rounded-lg p-3 space-y-2">
                   <p className="text-sm font-medium text-warning">
-                    ⚠️ {importCheck.total.toLocaleString()} contactos ya existen en la base de datos
+                    ⚠️ {importCheck.total.toLocaleString()} teléfonos ya existen en la base; se comparará agente + usuario al importar
                   </p>
                   <div className="text-xs text-warning space-y-0.5">
                     {Object.entries(importCheck.by_panel).map(([panel, count]) => (
@@ -1886,21 +1886,21 @@ export default function Contacts() {
                   <div className="flex flex-col gap-1.5 pt-1">
                     <label className="flex items-center gap-2 cursor-pointer text-sm">
                       <input type="radio" checked={conflictMode === 'update'} onChange={() => setConflictMode('update')} className="accent-amber-600" />
-                      <span>Actualizar existentes (nombre, nivel, agente, línea)</span>
+                      <span>Actualizar la misma cuenta (agente + usuario)</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer text-sm">
                       <input type="radio" checked={conflictMode === 'panels_only'} onChange={() => setConflictMode('panels_only')} className="accent-amber-600" />
-                      <span className="font-medium text-blue-700">Solo agregar agente y línea — no toca nombre ni nivel</span>
+                      <span className="font-medium text-blue-700">Conservar nombre y nivel; actualizar línea de la misma cuenta</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer text-sm">
                       <input type="radio" checked={conflictMode === 'skip'} onChange={() => setConflictMode('skip')} className="accent-amber-600" />
-                      <span>Omitir existentes (solo importa nuevos)</span>
+                      <span>Omitir la misma cuenta; crear las de otros agentes o usuarios</span>
                     </label>
                   </div>
                 </div>
               )}
               {!checkLoading && importCheck && importCheck.total === 0 && (
-                <p className="text-xs text-emerald-600">✓ Todos los contactos son nuevos</p>
+                <p className="text-xs text-emerald-600">✓ No hay teléfonos coincidentes; las cuentas se validarán al importar</p>
               )}
 
               <div className="grid grid-cols-2 gap-3">

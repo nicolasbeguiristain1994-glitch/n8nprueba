@@ -41,8 +41,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     } else if (segment !== undefined) { sets.push('segment_is_manual=true'); changedFields.push('segment_mode') }
     if (panel !== undefined) {
       const p = bind(panel)
-      sets.push(`panel=${p}`, `panels_assigned=CASE WHEN ${p}::text IS NULL THEN panels_assigned
-        ELSE ARRAY(SELECT DISTINCT unnest(panels_assigned || ARRAY[${p}]::text[])) END`)
+      sets.push(`panel=${p}`, `panels_assigned=CASE WHEN ${p}::text IS NULL THEN '{}'::text[] ELSE ARRAY[${p}]::text[] END`,
+        `identity_key=CASE WHEN account_username IS NULL THEN identity_key ELSE jsonb_build_array(COALESCE(${p},''),account_username)::text END`,
+        `casino_accounts=COALESCE((SELECT jsonb_agg(a||jsonb_build_object('panel',${p}::text)) FROM jsonb_array_elements(casino_accounts) a),'[]'::jsonb)`)
       changedFields.push('panel')
     }
     const nextLine = linea !== undefined ? bind(linea) + '::smallint' : 'linea'
@@ -60,6 +61,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       metadata: { changedFields } })
     return NextResponse.json({ ok: true })
   } catch (e) {
+    if((e as {code?:string}).code==='23505') return NextResponse.json({error:'Esa cuenta ya existe en el agente seleccionado.'},{status:409})
     console.error('[/api/contacts PATCH]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

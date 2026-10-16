@@ -66,7 +66,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         `SELECT COUNT(DISTINCT c.id)::int AS count
          FROM contacts c
          JOIN contact_list_members clm ON clm.contact_id = c.id
-         JOIN blacklist bl ON bl.phone_number_normalized = regexp_replace(c.phone_number, '[^0-9]', '', 'g')
+         JOIN blacklist bl ON bl.phone_number_normalized = regexp_replace(c.phone_number, '[^0-9]', '', 'g') AND (bl.scope_key='global' OR bl.agent_code=contact_agent_key(c.panel))
          WHERE clm.list_id = $1
            AND bl.removed_at IS NULL`,
         [campaign.list_id]
@@ -89,7 +89,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
            AND p.opt_in = true
            AND NOT EXISTS (
              SELECT 1 FROM blacklist bl
-             WHERE bl.phone_number_normalized = regexp_replace(p.phone_number, '[^0-9]', '', 'g')
+             WHERE bl.phone_number_normalized = regexp_replace(p.phone_number, '[^0-9]', '', 'g') AND bl.scope_key='global'
                AND bl.removed_at IS NULL
            )
          ON CONFLICT (campaign_id, prospect_id) WHERE prospect_id IS NOT NULL DO NOTHING`,
@@ -97,8 +97,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       )
     } else {
       await query(
-        `INSERT INTO campaign_recipients (campaign_id, contact_id, phone_number)
-         SELECT $1, c.id, c.phone_number
+        `INSERT INTO campaign_recipients (campaign_id, contact_id, phone_number,agent_code)
+         SELECT DISTINCT ON(regexp_replace(c.phone_number,'[^0-9]','','g')) $1, c.id, c.phone_number,contact_agent_key(c.panel)
          FROM contacts c
          JOIN contact_list_members clm ON clm.contact_id = c.id
          WHERE clm.list_id = $2
@@ -107,10 +107,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
            AND c.status           = 'active'
            AND NOT EXISTS (
              SELECT 1 FROM blacklist bl
-             WHERE bl.phone_number_normalized = regexp_replace(c.phone_number, '[^0-9]', '', 'g')
+             WHERE bl.phone_number_normalized = regexp_replace(c.phone_number, '[^0-9]', '', 'g') AND (bl.scope_key='global' OR bl.agent_code=contact_agent_key(c.panel))
                AND bl.removed_at IS NULL
            )
-         ON CONFLICT (campaign_id, contact_id) WHERE contact_id IS NOT NULL DO NOTHING`,
+         ORDER BY regexp_replace(c.phone_number,'[^0-9]','','g'),c.id
+         ON CONFLICT DO NOTHING`,
         [id, campaign.list_id]
       )
     }
@@ -187,7 +188,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
               WHERE p.status = 'active' AND p.opt_in = true AND (p.stage IS DISTINCT FROM 'descartado')
                 AND EXISTS (
                   SELECT 1 FROM blacklist bl
-                  WHERE bl.phone_number_normalized = regexp_replace(p.phone_number,'[^0-9]','','g')
+                  WHERE bl.phone_number_normalized = regexp_replace(p.phone_number,'[^0-9]','','g') AND bl.scope_key='global'
                     AND bl.removed_at IS NULL
                 )
             )::text AS blacklisted
@@ -227,7 +228,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
               WHERE c.opt_in_marketing = true AND c.do_not_contact = false AND c.status = 'active'
                 AND EXISTS (
                   SELECT 1 FROM blacklist bl
-                  WHERE bl.phone_number_normalized = regexp_replace(c.phone_number,'[^0-9]','','g')
+                  WHERE bl.phone_number_normalized = regexp_replace(c.phone_number,'[^0-9]','','g') AND (bl.scope_key='global' OR bl.agent_code=contact_agent_key(c.panel))
                     AND bl.removed_at IS NULL
                 )
             )::text AS blacklisted

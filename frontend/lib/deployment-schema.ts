@@ -1,5 +1,5 @@
 // Raise this only in a release that supports the corresponding database model.
-export const CONTACT_SCHEMA_VERSION = 1
+export const CONTACT_SCHEMA_VERSION = 2
 const CACHE_MS = 2000
 let checkedAt = 0
 let requiredVersion = 1

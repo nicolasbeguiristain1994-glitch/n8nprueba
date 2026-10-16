@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Client } from 'pg'
-import { getLastContactBroadcasts } from '../contact-broadcast-history'
+import { getLastContactBroadcasts, broadcastAccountKey } from '../contact-broadcast-history'
 import { contactBroadcastClause } from '../contact-broadcast'
 import { readBroadcastRange, broadcastParams } from '../broadcast-range'
 import { savedAudienceParams } from '../dynamic-audiences'
@@ -27,7 +27,7 @@ describe.skipIf(!url)('Broadcast history on PostgreSQL',()=>{
     c=new Client({host:u.hostname,port:Number(u.port||5432),user:u.username,password:u.password,database:u.pathname.slice(1)})
     await c.connect()
     await c.query(`CREATE SCHEMA ${schema}; SET search_path=${schema};
-      CREATE TABLE contacts(id integer,phone_number text,linea smallint,linea_sub text,deleted_at timestamptz);
+      CREATE TABLE contacts(id integer,phone_number text,linea smallint,linea_sub text,deleted_at timestamptz,panel text);
       CREATE TABLE whatsapp_messages(phone_number text,campaign_id integer,direction text,status text,sent_at timestamptz,created_at timestamptz);
       CREATE TABLE campaign_recipients(phone_number text,campaign_id integer,status text,sent_at timestamptz);
       INSERT INTO contacts(id,phone_number) SELECT n,'+54911000000'||lpad(n::text,2,'0') FROM generate_series(1,12) n;
@@ -35,11 +35,12 @@ describe.skipIf(!url)('Broadcast history on PostgreSQL',()=>{
         CASE id WHEN 5 THEN '2026-10-06 02:59:59Z'::timestamptz WHEN 6 THEN '2026-10-07 03:00:00Z'::timestamptz ELSE '2026-10-06 03:00:00Z'::timestamptz END,'2026-10-06 03:00:00Z'
         FROM contacts WHERE id<=6;
       INSERT INTO whatsapp_messages SELECT phone_number,NULL,'outbound','sent','2026-10-06 12:00Z','2026-10-06 12:00Z' FROM contacts WHERE id=7;
-      INSERT INTO campaign_recipients SELECT phone_number,1,'sent','2026-10-06 12:00Z' FROM contacts WHERE id IN (2,3,8);
+      INSERT INTO campaign_recipients(phone_number,campaign_id,status,sent_at) SELECT phone_number,1,'sent','2026-10-06 12:00Z' FROM contacts WHERE id IN (2,3,8);
       INSERT INTO whatsapp_messages SELECT replace(phone_number,'+',''),2,'outbound','delivered','2026-10-06 12:00Z','2026-10-06 12:00Z' FROM contacts WHERE id=9;
       INSERT INTO whatsapp_messages SELECT phone_number,2,'inbound','read','2026-10-06 12:00Z','2026-10-06 12:00Z' FROM contacts WHERE id=10;
       INSERT INTO whatsapp_messages SELECT phone_number,3,'outbound','failed','2026-10-06 14:00Z','2026-10-06 14:00Z' FROM contacts WHERE id=4;
-      INSERT INTO whatsapp_messages VALUES(NULL,1,'outbound','sent','2026-10-06 12:00Z','2026-10-06 12:00Z');`)
+      INSERT INTO whatsapp_messages VALUES(NULL,1,'outbound','sent','2026-10-06 12:00Z','2026-10-06 12:00Z');
+      ALTER TABLE campaign_recipients ADD contact_id integer,ADD agent_code text;`)
   })
   afterAll(async()=>{if(c){await c.query('ROLLBACK');await c.query(`DROP SCHEMA ${schema} CASCADE`);await c.end()}})
   async function ids(q:string){const params:unknown[]=[];const sql=contactBroadcastClause(sp(q),v=>{params.push(v);return `$${params.length}`});return (await c.query(`SELECT id FROM contacts WHERE ${sql} ORDER BY id`,params)).rows.map(r=>r.id)}
@@ -59,7 +60,7 @@ describe.skipIf(!url)('Broadcast history on PostgreSQL',()=>{
         INSERT INTO whatsapp_messages SELECT phone_number,1,'outbound','read',CURRENT_TIMESTAMP - interval '1 day',CURRENT_TIMESTAMP FROM contacts WHERE id=3;
         INSERT INTO whatsapp_messages SELECT phone_number,1,'outbound','sent',CURRENT_TIMESTAMP + interval '1 day',CURRENT_TIMESTAMP FROM contacts WHERE id=4;
         INSERT INTO whatsapp_messages SELECT phone_number,1,'outbound','queued',NULL,CURRENT_TIMESTAMP FROM contacts WHERE id=5;
-        INSERT INTO campaign_recipients SELECT phone_number,1,'sent',CURRENT_TIMESTAMP FROM contacts WHERE id=5;`)
+        INSERT INTO campaign_recipients(phone_number,campaign_id,status,sent_at) SELECT phone_number,1,'sent',CURRENT_TIMESTAMP FROM contacts WHERE id=5;`)
       const phones = (await c.query('SELECT phone_number FROM contacts ORDER BY id')).rows.map(row => row.phone_number)
       const history = await getLastContactBroadcasts(phones, async (sql, params) => (await c.query(sql, params)).rows)
       expect(history.size).toBe(3)
@@ -84,6 +85,21 @@ describe.skipIf(!url)('Broadcast history on PostgreSQL',()=>{
       expect(await audience('sent')).toEqual([1,4])
       expect(await audience('not_sent')).toEqual([2])
     } finally { await c.query('ROLLBACK') }
+  })
+  it('separates the broadcast history of two agents sharing one phone',async()=>{
+    await c.query('BEGIN')
+    try {
+      await c.query(`TRUNCATE whatsapp_messages,campaign_recipients,contacts;
+        INSERT INTO contacts(id,phone_number,panel) VALUES(1,'+5491100000001','bigwin'),(2,'+5491100000001','royal');
+        INSERT INTO campaign_recipients(phone_number,campaign_id,status,sent_at,contact_id,agent_code)
+          VALUES('+5491100000001',1,'sent',CURRENT_TIMESTAMP,1,'bigwin');`)
+      expect(await ids('difusion=sent&difusion_dias=7')).toEqual([1])
+      expect(await ids('difusion=not_sent&difusion_dias=7')).toEqual([2])
+      const accounts=(await c.query('SELECT phone_number,panel FROM contacts')).rows
+      const history=await getLastContactBroadcasts(accounts,async(sql,params)=>(await c.query(sql,params)).rows)
+      expect(history.has(broadcastAccountKey(accounts[0].phone_number,'bigwin'))).toBe(true)
+      expect(history.has(broadcastAccountKey(accounts[0].phone_number,'royal'))).toBe(false)
+    } finally {await c.query('ROLLBACK')}
   })
   it('rolling seven days includes the lower boundary and excludes older/future sends',async()=>{
     await c.query('BEGIN')
