@@ -164,6 +164,16 @@ export const CampaignContactSelectionSchema = z.object({
     .max(CAMPAIGN_SELECTION_LIMIT, 'Seleccioná hasta 100.000 contactos por campaña'),
 })
 
+export const CampaignRoutingPreviewSchema = z.object({
+  contact_ids: CampaignContactSelectionSchema.shape.contact_ids.optional(),
+  list_id: z.string().uuid().optional(),
+  prospect_list_id: z.string().uuid().optional(),
+  message_type: z.enum(['text', 'template']),
+  template_id: z.string().uuid().optional(),
+}).refine(data => [data.contact_ids, data.list_id, data.prospect_list_id].filter(Boolean).length === 1,
+  'Seleccioná una única audiencia').refine(data => data.message_type === 'template' ? !!data.template_id : !data.template_id,
+  'Revisá la plantilla seleccionada')
+
 export const CreateCampaignSchema = z.object({
   contact_ids: CampaignContactSelectionSchema.shape.contact_ids.optional(),
   name:                 z.string().min(1, 'El nombre de la campaña es requerido').max(255),

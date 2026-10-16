@@ -3,6 +3,35 @@ import { query, withTransaction } from '@/lib/db'
 /** Same scope as campaign ownership; permissions are still checked at dispatch. */
 export const ROUTING_SYSTEM_OWNER = '00000000-0000-0000-0000-000000000000'
 
+/** Read-only history shared by allocation and the creation preview. Requires missing(phone). */
+export function campaignRoutingHistorySQL(ownerParameter: string, actorParameter: string): string {
+  return `visible AS MATERIALIZED (
+        SELECT wl.id FROM whatsapp_lines wl
+        WHERE ${actorParameter}::uuid IS NULL OR wl.id IN (SELECT get_accessible_line_ids(${actorParameter}::uuid))
+      ), history AS (
+        SELECT m.phone, cr.line_id, COALESCE(cr.sent_at, cr.updated_at) AS at
+        FROM missing m JOIN campaign_recipients cr
+          ON regexp_replace(cr.phone_number, '[^0-9]', '', 'g')=m.phone
+        JOIN campaigns c ON c.id=cr.campaign_id
+        JOIN visible v ON v.id=cr.line_id
+        WHERE cr.status='sent' AND cr.line_id IS NOT NULL
+          AND COALESCE(c.owned_by, '${ROUTING_SYSTEM_OWNER}'::uuid)=${ownerParameter}
+        UNION ALL
+        SELECT m.phone, cn.whatsapp_line_id, COALESCE(cm.sent_at, cm.created_at)
+        FROM missing m JOIN cloud_conversations cv
+          ON regexp_replace(cv.contact_phone, '[^0-9]', '', 'g')=m.phone
+        JOIN cloud_messages cm ON cm.conversation_id=cv.id
+        JOIN cloud_numbers cn ON cn.phone_number_id=cm.phone_number_id
+        JOIN visible v ON v.id=cn.whatsapp_line_id
+        WHERE cm.direction IN ('outbound','echo') AND cm.status IN ('sent','delivered','read')
+        UNION ALL
+        SELECT m.phone, p.line_id, p.updated_at
+        FROM missing m JOIN phone_line_assignments p
+          ON regexp_replace(p.phone, '[^0-9]', '', 'g')=m.phone
+        JOIN visible v ON v.id=p.line_id
+      )`
+}
+
 /**
  * Reserve senders before any provider request. Serialize only allocation (never
  * network I/O), so overlapping campaigns/workers cannot choose different senders
@@ -31,31 +60,7 @@ export async function prepareCampaignRouting(campaignId: string, eligibleLineIds
           AND NOT EXISTS (SELECT 1 FROM campaign_line_assignments a
             WHERE a.owner_key=$2 AND a.phone=regexp_replace(cr.phone_number, '[^0-9]', '', 'g')
               AND a.line_id IS NOT NULL)
-      ), visible AS MATERIALIZED (
-        SELECT wl.id FROM whatsapp_lines wl
-        WHERE $3::uuid IS NULL OR wl.id IN (SELECT get_accessible_line_ids($3::uuid))
-      ), history AS (
-        SELECT m.phone, cr.line_id, COALESCE(cr.sent_at, cr.updated_at) AS at
-        FROM missing m JOIN campaign_recipients cr
-          ON regexp_replace(cr.phone_number, '[^0-9]', '', 'g')=m.phone
-        JOIN campaigns c ON c.id=cr.campaign_id
-        JOIN visible v ON v.id=cr.line_id
-        WHERE cr.status='sent' AND cr.line_id IS NOT NULL
-          AND COALESCE(c.owned_by, '${ROUTING_SYSTEM_OWNER}'::uuid)=$2
-        UNION ALL
-        SELECT m.phone, cn.whatsapp_line_id, COALESCE(cm.sent_at, cm.created_at)
-        FROM missing m JOIN cloud_conversations cv
-          ON regexp_replace(cv.contact_phone, '[^0-9]', '', 'g')=m.phone
-        JOIN cloud_messages cm ON cm.conversation_id=cv.id
-        JOIN cloud_numbers cn ON cn.phone_number_id=cm.phone_number_id
-        JOIN visible v ON v.id=cn.whatsapp_line_id
-        WHERE cm.direction IN ('outbound','echo') AND cm.status IN ('sent','delivered','read')
-        UNION ALL
-        SELECT m.phone, p.line_id, p.updated_at
-        FROM missing m JOIN phone_line_assignments p
-          ON regexp_replace(p.phone, '[^0-9]', '', 'g')=m.phone
-        JOIN visible v ON v.id=p.line_id
-      )
+      ), ${campaignRoutingHistorySQL('$2', '$3')}
       INSERT INTO campaign_line_assignments AS assignment(owner_key,phone,line_id,source)
       SELECT DISTINCT ON (phone) $2,phone,line_id,'history' FROM history
       ORDER BY phone, at DESC NULLS LAST, line_id

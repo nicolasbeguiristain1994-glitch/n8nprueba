@@ -6,6 +6,7 @@ const DELAY_MAX_SECONDS = 300
 
 import { readCampaignSelection, clearCampaignSelection, type CampaignSelectionDraft } from '@/lib/campaign-selection-draft'
 import type { CampaignSelectionSummary } from '@/lib/campaign-selection'
+import { CampaignRoutingPreview } from '@/components/campaigns/CampaignRoutingPreview'
 import { SelectedContactsAudience } from '@/components/campaigns/SelectedContactsAudience'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
@@ -1451,12 +1452,12 @@ export default function Campaigns() {
             </>}
 
             </section>
+            {createStep>=2 && <CampaignRoutingPreview
+              audience={contactSelection ? {contact_ids:contactSelection.contactIds}
+                : form.audience_type==='contacts' ? {list_id:form.list_id} : {prospect_list_id:form.prospect_list_id}}
+              messageType={useTemplate?'template':'text'} templateId={selectedTemplate} scheduled={!!form.scheduled_at&&schedulerEnabled}
+            />}
             <section tabIndex={-1} hidden={createStep!==2} aria-label="Líneas y horario" className="campaign-step space-y-4">
-            <div className="col-span-2 rounded-lg border border-primary/20 bg-accent px-4 py-3 text-sm text-accent-foreground">
-              <div className="flex items-center gap-2 font-medium"><GitBranch size={15} />Reparto automático entre líneas activas</div>
-              <p className="mt-1 text-xs">Los clientes nuevos se reparten por turnos. Cada cliente conserva su línea en próximas campañas. Si no está disponible o no tiene cupo, queda pendiente.</p>
-            </div>
-
             <div>
               <label htmlFor="campaign-scheduled-at" className="text-xs font-medium text-muted-foreground mb-1 block">
                 <Clock size={12} className="inline mr-1"/>Programar envío (opcional, hora Argentina UTC−03:00)
