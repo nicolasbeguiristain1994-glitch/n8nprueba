@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
-import { middleware } from '../../middleware'
+import { routeMiddleware as middleware } from '../../middleware'
 
 vi.mock('@/lib/auth', () => ({ getSessionFromRequest: vi.fn(() => null) }))
 
