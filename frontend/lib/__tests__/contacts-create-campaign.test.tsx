@@ -15,7 +15,7 @@ beforeEach(() => {
     : url.includes('/api/contacts/history') ? { history:[] }
     : { contacts:[contact(ids[0],1),contact(ids[1],2)],total:mocks.total,lists:[] })
 })
-afterEach(() => {cleanup();vi.restoreAllMocks();vi.clearAllMocks()})
+afterEach(() => {cleanup();localStorage.clear();vi.restoreAllMocks();vi.clearAllMocks()})
 it('requires a filter or selection and carries exactly the checked IDs', async () => {
   const navigate=vi.spyOn(window.location,'assign').mockImplementation(()=>{})
   render(<Contacts/>);await act(async()=>{})
@@ -26,6 +26,9 @@ it('requires a filter or selection and carries exactly the checked IDs', async (
   expect(navigate).toHaveBeenCalledWith('/campaigns?action=new&selection=draft-token')
 })
 it('selects all 91 filtered contacts across both pages and carries them into campaign creation', async () => {
+  // Keep real rows, selection and pagination, without rendering 100 unrelated
+  // line-editor options for every desktop and mobile row on shared CI runners.
+  localStorage.setItem('contacts:cols',JSON.stringify({linea:false}))
   const navigate=vi.spyOn(window.location,'assign').mockImplementation(()=>{})
   const allIds=Array.from({length:91},(_,i)=>`00000000-0000-4000-8000-${String(i+1).padStart(12,'0')}`)
   mocks.fetch.mockImplementation(async (input: string) => {
