@@ -368,6 +368,8 @@ export default function Contacts() {
   const [showDownloadModal, setShowDownloadModal] = useState(false)
   const [downloadList, setDownloadList]           = useState<ContactList | null>(null)
   const [selectingAll, setSelectingAll]           = useState(false)
+  const [selectionError, setSelectionError] = useState<string | null>(null)
+  const selectionRequest = useRef<AbortController | null>(null)
   const [repopulating, setRepopulating]         = useState(false)
   const [repopulateResult, setRepopulateResult] = useState<{ total_lists: number; lists: Array<{ nombre: string; members: number; created: boolean }> } | null>(null)
   const [repopulateError, setRepopulateError]   = useState<string | null>(null)
@@ -468,6 +470,9 @@ export default function Contacts() {
   useEffect(() => {
     setRowSelection({})
     selectedPhones.current = {}
+    setSelectionError(null)
+    setSelectingAll(false)
+    return () => { selectionRequest.current?.abort() }
   }, [audienceKey])
 
   const load = useCallback(() => {
@@ -648,20 +653,29 @@ export default function Contacts() {
   }
 
   const selectAllFiltered = async () => {
+    if (selectingAll || loading || loadError || preparingCampaign || !total) return
     const requestedAudience = audienceKey
+    selectionRequest.current?.abort()
+    const controller = new AbortController()
+    selectionRequest.current = controller
     setSelectingAll(true)
+    setSelectionError(null)
     try {
       const q = buildContactParams()
       q.set('select_all', 'true')
-      const d = await fetchJson<{ ids: string[]; phones: string[] }>(`/api/contacts?${q}`)
-      if (activeAudience.current !== requestedAudience) return
+      const d = await fetchJson<{ ids: string[]; phones: string[] }>(`/api/contacts?${q}`, { signal: controller.signal })
+      if (controller.signal.aborted || activeAudience.current !== requestedAudience) return
       d.ids.forEach((id, i) => { selectedPhones.current[id] = d.phones[i] })
       const next: RowSelectionState = {}
       for (const id of d.ids || []) next[id] = true
       setRowSelection(next)
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : 'No se pudo seleccionar la audiencia')
-    } finally { setSelectingAll(false) }
+      if (!controller.signal.aborted && activeAudience.current === requestedAudience) {
+        setSelectionError(e instanceof Error ? e.message : 'No se pudo seleccionar la audiencia. Reintentá.')
+      }
+    } finally {
+      if (selectionRequest.current === controller) setSelectingAll(false)
+    }
   }
 
   // ── Import ────────────────────────────────────────────────────────────────
@@ -1411,11 +1425,6 @@ export default function Contacts() {
           </Button>
         )}
 
-        <Button size="sm" variant="outline" onClick={selectAllFiltered} disabled={loading || !!loadError || selectingAll || preparingCampaign}
-          className="border-input text-foreground hover:bg-muted">
-          <CheckSquare size={14} className="mr-1" />
-          {selectingAll ? 'Seleccionando…' : 'Seleccionar todos'}
-        </Button>
         {/* Botón Listas — dropdown con todas las listas */}
         <div className="static sm:relative" ref={listsMenuRef}>
           <Button
@@ -1499,11 +1508,6 @@ export default function Contacts() {
             <Compass size={14} className="mr-1" /> Explorar
           </Button>
         )}
-        {canCreateCampaign && <Button size="sm" onClick={startCampaign}
-          disabled={!campaignCount || loading || !!loadError || selectingAll || preparingCampaign}
-          aria-describedby="campaign-audience-hint">
-          <Send size={14} className="mr-1" /> {preparingCampaign ? 'Preparando campaña…' : `Crear campaña${campaignCount ? ` (${campaignCount.toLocaleString('es-AR')})` : ''}`}
-        </Button>}
         {!loadError && (selectedCount > 0 || hasActiveFilters) && (
           <>
             <Button size="sm" variant="outline"
@@ -1538,16 +1542,6 @@ export default function Contacts() {
               onChange={e => { const f = e.target.files?.[0]; if (f) { handleFile(f); setShowImport(true); e.target.value = '' } }} />
           </label>
         )}
-        {canCreateCampaign && <p id="campaign-audience-hint" className="w-full text-xs text-muted-foreground">
-          {preparingCampaign ? 'Preparando los contactos para revisar la campaña…'
-            : loading ? 'Cargando contactos…'
-            : loadError ? 'No se pudo consultar la cantidad de contactos. Reintentá la carga para continuar.'
-            : selectedCount ? `La campaña usará los ${selectedCount.toLocaleString('es-AR')} contactos seleccionados.`
-            : hasActiveFilters && total ? `La campaña usará los ${total.toLocaleString('es-AR')} contactos que coinciden con los filtros, de todas las páginas.`
-            : hasActiveFilters ? 'No hay contactos que coincidan con los filtros.'
-            : 'Seleccioná contactos o aplicá filtros para crear una campaña.'}
-        </p>}
-        {campaignSelectionError && <p role="alert" className="w-full text-sm text-destructive">{campaignSelectionError}</p>}
       </div>
 
       {/* Errores inline */}
@@ -1859,6 +1853,37 @@ export default function Contacts() {
           </div>
         ) : null
       })()}
+
+      <section aria-label="Selección de contactos" className="flex flex-wrap items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
+        <div className="min-w-0 flex-1">
+          <p role="status" className="text-sm font-medium">
+            {loading ? 'Cargando contactos…' : loadError ? 'Cantidad de contactos no disponible' : selectedCount > 0
+              ? `${selectedCount.toLocaleString('es-AR')} de ${total.toLocaleString('es-AR')} contactos seleccionados`
+              : `${total.toLocaleString('es-AR')} contactos${hasActiveFilters ? ' filtrados' : ''}`}
+          </p>
+          <p className="text-xs text-muted-foreground">La selección incluye todas las páginas del resultado.</p>
+        </div>
+        <Button size="sm" variant={selectedCount > 0 ? 'outline' : 'default'} onClick={selectAllFiltered}
+          disabled={loading || !!loadError || selectingAll || preparingCampaign || !total || selectedCount === total}>
+          {selectingAll ? <RefreshCw size={14} className="mr-1 animate-spin" /> : <CheckSquare size={14} className="mr-1" />}
+          {selectingAll ? 'Seleccionando…' : loadError ? 'Seleccionar contactos' : `Seleccionar los ${total.toLocaleString('es-AR')} ${hasActiveFilters ? 'filtrados' : 'contactos'}`}
+        </Button>
+        {canCreateCampaign && <Button size="sm" variant={selectedCount > 0 ? 'default' : 'outline'} onClick={startCampaign}
+          disabled={loading || !!loadError || !campaignCount || selectingAll || preparingCampaign} aria-describedby="campaign-audience-hint">
+          <Send size={14} className="mr-1" /> {preparingCampaign ? 'Preparando campaña…' : `Crear campaña${campaignCount ? ` (${campaignCount.toLocaleString('es-AR')})` : ''}`}
+        </Button>}
+        {canCreateCampaign && <p id="campaign-audience-hint" className="w-full text-xs text-muted-foreground">
+          {preparingCampaign ? 'Preparando los contactos para revisar la campaña…'
+            : loading ? 'Cargando contactos…'
+            : loadError ? 'No se pudo consultar la cantidad de contactos. Reintentá la carga para continuar.'
+            : selectedCount ? `La campaña usará los ${selectedCount.toLocaleString('es-AR')} contactos seleccionados.`
+            : hasActiveFilters && total ? `La campaña usará los ${total.toLocaleString('es-AR')} contactos que coinciden con los filtros, de todas las páginas.`
+            : hasActiveFilters ? 'No hay contactos que coincidan con los filtros.'
+            : 'Seleccioná contactos o aplicá filtros para crear una campaña.'}
+        </p>}
+        {selectionError && <p role="alert" className="w-full text-sm text-destructive">{selectionError}</p>}
+        {campaignSelectionError && <p role="alert" className="w-full text-sm text-destructive">{campaignSelectionError}</p>}
+      </section>
 
       {/* ── DataTable ── */}
       <DataTable
