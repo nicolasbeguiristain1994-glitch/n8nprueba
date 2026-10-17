@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { Client } from 'pg'
 import { getLastContactBroadcasts, broadcastAccountKey } from '../contact-broadcast-history'
 import { contactBroadcastClause } from '../contact-broadcast'
+import { broadcastMessageAgentSql } from '../broadcast-agent'
 import { readBroadcastRange, broadcastParams } from '../broadcast-range'
 import { savedAudienceParams } from '../dynamic-audiences'
 import { contactFilters } from '../contact-filters'
@@ -100,6 +101,35 @@ describe.skipIf(!url)('Broadcast history on PostgreSQL',()=>{
       expect(history.has(broadcastAccountKey(accounts[0].phone_number,'bigwin'))).toBe(true)
       expect(history.has(broadcastAccountKey(accounts[0].phone_number,'royal'))).toBe(false)
     } finally {await c.query('ROLLBACK')}
+  })
+  it('does not scan contacts for legacy messages without a contact reference, while preserving fallback precedence', async () => {
+    await c.query('BEGIN')
+    try {
+      await c.query(`TRUNCATE whatsapp_messages,campaign_recipients;
+        ALTER TABLE whatsapp_messages ADD contact_id integer,ADD metadata jsonb;
+        UPDATE contacts SET panel='royal' WHERE id=1;
+        INSERT INTO whatsapp_messages(phone_number,campaign_id,direction,status,sent_at,created_at)
+          SELECT 'unknown'||n,1,'outbound','sent',now(),now() FROM generate_series(1,9) n;`)
+      const sql=`SELECT ${broadcastMessageAgentSql()} AS agent FROM whatsapp_messages wm`
+      expect((await c.query(sql)).rows.map(r=>r.agent)).toEqual(Array(9).fill(''))
+      const plan=(await c.query('EXPLAIN (ANALYZE,FORMAT JSON) '+sql)).rows[0]['QUERY PLAN'][0].Plan
+      const scans: {['Actual Loops']:number}[]=[]
+      const walk=(node:Record<string,any>)=>{
+        if(node['Relation Name']==='contacts')scans.push(node as {['Actual Loops']:number})
+        for(const child of node.Plans||[])walk(child)
+      }
+      walk(plan)
+      expect(scans.length).toBeGreaterThan(0)
+      expect(scans.every(scan=>scan['Actual Loops']===0)).toBe(true)
+      await c.query(`TRUNCATE whatsapp_messages;
+        INSERT INTO whatsapp_messages(phone_number,campaign_id,direction,status,sent_at,created_at,contact_id,metadata)
+          VALUES('111',1,'outbound','sent',now(),now(),1,NULL),
+                ('222',1,'outbound','sent',now(),now(),1,'{"agent_code":"bigwin"}'),
+                ('333',1,'outbound','sent',now(),now(),1,NULL);
+        INSERT INTO campaign_recipients(phone_number,campaign_id,status,sent_at,agent_code)
+          VALUES('333',1,'sent',now(),'ofizeus');`)
+      expect((await c.query(sql+' ORDER BY wm.phone_number')).rows.map(r=>r.agent)).toEqual(['royal','bigwin','ofizeus'])
+    } finally { await c.query('ROLLBACK') }
   })
   it('rolling seven days includes the lower boundary and excludes older/future sends',async()=>{
     await c.query('BEGIN')

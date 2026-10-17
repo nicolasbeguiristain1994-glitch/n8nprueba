@@ -1,5 +1,6 @@
 'use client'
 import { saveCampaignSelection } from '@/lib/campaign-selection-draft'
+import { CAMPAIGN_SELECTION_LIMIT } from '@/lib/campaign-selection'
 import { MovementAge } from '@/components/contacts/MovementAge'
 import { BroadcastAge } from '@/components/contacts/BroadcastAge'
 import { SegmentationDetails } from '@/components/contacts/SegmentationDetails'
@@ -376,16 +377,9 @@ export default function Contacts() {
   const { user: currentUser, permissions } = useCurrentUser()
   const canCreateCampaign = currentUser?.role === 'admin' || (permissions.campaigns?.includes('create') ?? false)
   const [campaignSelectionError, setCampaignSelectionError] = useState<string | null>(null)
-  const startCampaign = () => {
-    if (!canCreateCampaign || !currentUser?.id || !selectedCount || selectingAll || loading) return
-    try {
-      const token = saveCampaignSelection(currentUser.id, selectedIds)
-      setCampaignSelectionError(null)
-      window.location.assign(`/campaigns?action=new&selection=${token}`)
-    } catch {
-      setCampaignSelectionError('No se pudo preparar la selección en este navegador. Liberá espacio o seleccioná menos contactos y reintentá.')
-    }
-  }
+  const [preparingCampaign, setPreparingCampaign] = useState(false)
+  const campaignRequest = useRef<AbortController | null>(null)
+  const campaignCount = selectedCount || (hasActiveFilters ? total : 0)
   const canCreateContacts = permissions.contacts?.includes('create') ?? false
   useEffect(() => {
     if (!canCreateContacts) return
@@ -412,6 +406,63 @@ export default function Contacts() {
   const audienceKey = buildContactParams().toString()
   const activeAudience = useRef(audienceKey)
   activeAudience.current = audienceKey
+  // A changed filter or checkbox selection invalidates an in-flight audience.
+  const campaignAudienceKey = JSON.stringify([audienceKey, selectedIds, currentUser?.id, canCreateCampaign])
+  const activeCampaignAudience = useRef(campaignAudienceKey)
+  activeCampaignAudience.current = campaignAudienceKey
+  useEffect(() => {
+    setPreparingCampaign(false)
+    setCampaignSelectionError(null)
+    return () => {
+      campaignRequest.current?.abort()
+      campaignRequest.current = null
+    }
+  }, [campaignAudienceKey])
+
+  const startCampaign = async () => {
+    if (!canCreateCampaign || !currentUser?.id || !campaignCount || loading || loadError || selectingAll || campaignRequest.current) return
+    const limitMessage = 'La selección supera 100.000 contactos. Acotá los filtros o seleccioná menos contactos.'
+    if (campaignCount > CAMPAIGN_SELECTION_LIMIT) {
+      setCampaignSelectionError(limitMessage)
+      return
+    }
+    const requestedAudience = campaignAudienceKey
+    const controller = new AbortController()
+    campaignRequest.current = controller
+    setPreparingCampaign(true)
+    setCampaignSelectionError(null)
+    try {
+      let ids = selectedIds
+      if (!ids.length) {
+        const q = buildContactParams()
+        q.set('select_all', 'true')
+        try {
+          const data = await fetchJson<{ ids: string[] }>(`/api/contacts?${q}`, { signal: controller.signal })
+          ids = data.ids
+        } catch (error) {
+          throw new Error(error instanceof Error && error.message.startsWith('HTTP 422:')
+            ? limitMessage : 'No se pudieron recuperar los contactos del filtro. Volvé a intentar.')
+        }
+      }
+      if (controller.signal.aborted || activeCampaignAudience.current !== requestedAudience) return
+      if (!ids.length) throw new Error('Ya no hay contactos que coincidan con esos filtros. Actualizá la lista.')
+      if (ids.length > CAMPAIGN_SELECTION_LIMIT) throw new Error(limitMessage)
+      let token: string
+      try { token = saveCampaignSelection(currentUser.id, ids) }
+      catch { throw new Error('No se pudo preparar la selección en este navegador. Liberá espacio o seleccioná menos contactos y reintentá.') }
+      window.location.assign(`/campaigns?action=new&selection=${token}`)
+    } catch (error) {
+      if (!controller.signal.aborted && activeCampaignAudience.current === requestedAudience) {
+        setCampaignSelectionError(error instanceof Error ? error.message : 'No se pudo preparar la campaña. Volvé a intentar.')
+      }
+    } finally {
+      if (campaignRequest.current === controller) {
+        campaignRequest.current = null
+        setPreparingCampaign(false)
+      }
+    }
+  }
+
   const contactLoadRequest = useRef(0)
   const loadRequest = useRef<AbortController | null>(null)
   const loadTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -466,7 +517,15 @@ export default function Contacts() {
         if (request !== contactLoadRequest.current || controller.signal.aborted) return
         setContacts([])
         setTotal(0)
-        setLoadError(e instanceof Error ? e.message : 'Error al cargar contactos')
+        let message = e instanceof Error ? e.message : 'No se pudieron cargar los contactos.'
+        // Keep the server's explanation, without exposing the HTTP/JSON wrapper.
+        if (message.startsWith('HTTP ')) {
+          try {
+            const body = JSON.parse(message.slice(message.indexOf(':') + 1))
+            message = typeof body.error === 'string' ? body.error : 'No se pudieron cargar los contactos. Volvé a intentar.'
+          } catch { message = 'No se pudieron cargar los contactos. Volvé a intentar.' }
+        }
+        setLoadError(message)
       })
       .finally(() => { if (request === contactLoadRequest.current) setLoading(false) })
   }, [buildContactParams, pagination.pageIndex])
@@ -594,7 +653,7 @@ export default function Contacts() {
   }
 
   const selectAllFiltered = async () => {
-    if (selectingAll || loading || !total) return
+    if (selectingAll || loading || loadError || preparingCampaign || !total) return
     const requestedAudience = audienceKey
     selectionRequest.current?.abort()
     const controller = new AbortController()
@@ -1337,7 +1396,7 @@ export default function Contacts() {
       <PageHeader
         title="Contactos"
         description="Tu base de clientes, organizada y siempre a mano."
-        count={total}
+        count={loading || loadError ? undefined : total}
         actions={
           <>
             <Button variant="outline" size="sm" onClick={load} aria-label="Actualizar contactos">
@@ -1449,7 +1508,7 @@ export default function Contacts() {
             <Compass size={14} className="mr-1" /> Explorar
           </Button>
         )}
-        {(selectedCount > 0 || hasActiveFilters) && (
+        {!loadError && (selectedCount > 0 || hasActiveFilters) && (
           <>
             <Button size="sm" variant="outline"
               onClick={blacklistSelected}
@@ -1464,7 +1523,7 @@ export default function Contacts() {
             </Button>
           </>
         )}
-        {hasActiveFilters && (
+        {!loadError && hasActiveFilters && (
           <Button size="sm" variant="outline"
             onClick={() => { setListMode('filters'); setShowList(true) }}
             className="border-input text-foreground hover:bg-muted">
@@ -1487,9 +1546,9 @@ export default function Contacts() {
 
       {/* Errores inline */}
       {loadError && (
-        <div className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-2 text-sm text-destructive flex items-center justify-between">
-          <span>Error al cargar contactos: {loadError}</span>
-          <button onClick={() => setLoadError(null)} className="ml-4 opacity-60 hover:opacity-100">✕</button>
+        <div role="alert" className="bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-2 text-sm text-destructive flex flex-wrap items-center justify-between gap-2">
+          <span>{loadError}</span>
+          <Button variant="outline" size="sm" onClick={load}>Reintentar</Button>
         </div>
       )}
       {deleteNotice && <p role="status" className="text-sm text-success">{deleteNotice}</p>}
@@ -1798,21 +1857,30 @@ export default function Contacts() {
       <section aria-label="Selección de contactos" className="flex flex-wrap items-center gap-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
         <div className="min-w-0 flex-1">
           <p role="status" className="text-sm font-medium">
-            {loading ? 'Cargando contactos…' : selectedCount > 0
+            {loading ? 'Cargando contactos…' : loadError ? 'Cantidad de contactos no disponible' : selectedCount > 0
               ? `${selectedCount.toLocaleString('es-AR')} de ${total.toLocaleString('es-AR')} contactos seleccionados`
               : `${total.toLocaleString('es-AR')} contactos${hasActiveFilters ? ' filtrados' : ''}`}
           </p>
           <p className="text-xs text-muted-foreground">La selección incluye todas las páginas del resultado.</p>
         </div>
         <Button size="sm" variant={selectedCount > 0 ? 'outline' : 'default'} onClick={selectAllFiltered}
-          disabled={loading || selectingAll || !total || selectedCount === total}>
+          disabled={loading || !!loadError || selectingAll || preparingCampaign || !total || selectedCount === total}>
           {selectingAll ? <RefreshCw size={14} className="mr-1 animate-spin" /> : <CheckSquare size={14} className="mr-1" />}
-          {selectingAll ? 'Seleccionando…' : `Seleccionar los ${total.toLocaleString('es-AR')} ${hasActiveFilters ? 'filtrados' : 'contactos'}`}
+          {selectingAll ? 'Seleccionando…' : loadError ? 'Seleccionar contactos' : `Seleccionar los ${total.toLocaleString('es-AR')} ${hasActiveFilters ? 'filtrados' : 'contactos'}`}
         </Button>
         {canCreateCampaign && <Button size="sm" variant={selectedCount > 0 ? 'default' : 'outline'} onClick={startCampaign}
-          disabled={loading || !selectedCount || selectingAll}>
-          <Send size={14} className="mr-1" /> Crear campaña{selectedCount ? ` (${selectedCount.toLocaleString('es-AR')})` : ''}
+          disabled={loading || !!loadError || !campaignCount || selectingAll || preparingCampaign} aria-describedby="campaign-audience-hint">
+          <Send size={14} className="mr-1" /> {preparingCampaign ? 'Preparando campaña…' : `Crear campaña${campaignCount ? ` (${campaignCount.toLocaleString('es-AR')})` : ''}`}
         </Button>}
+        {canCreateCampaign && <p id="campaign-audience-hint" className="w-full text-xs text-muted-foreground">
+          {preparingCampaign ? 'Preparando los contactos para revisar la campaña…'
+            : loading ? 'Cargando contactos…'
+            : loadError ? 'No se pudo consultar la cantidad de contactos. Reintentá la carga para continuar.'
+            : selectedCount ? `La campaña usará los ${selectedCount.toLocaleString('es-AR')} contactos seleccionados.`
+            : hasActiveFilters && total ? `La campaña usará los ${total.toLocaleString('es-AR')} contactos que coinciden con los filtros, de todas las páginas.`
+            : hasActiveFilters ? 'No hay contactos que coincidan con los filtros.'
+            : 'Seleccioná contactos o aplicá filtros para crear una campaña.'}
+        </p>}
         {selectionError && <p role="alert" className="w-full text-sm text-destructive">{selectionError}</p>}
         {campaignSelectionError && <p role="alert" className="w-full text-sm text-destructive">{campaignSelectionError}</p>}
       </section>
@@ -1848,7 +1916,7 @@ export default function Contacts() {
             selectedCount={ids.length}
             onClearSelection={() => setRowSelection({})}
           >
-            {canCreateCampaign && <Button size="sm" className="h-7 text-xs" onClick={startCampaign} disabled={loading || selectingAll}>
+            {canCreateCampaign && <Button size="sm" className="h-7 text-xs" onClick={startCampaign} disabled={loading || !!loadError || selectingAll || preparingCampaign}>
               <Send size={13} className="mr-1" /> Crear campaña ({ids.length.toLocaleString('es-AR')})
             </Button>}
             <Button size="sm" variant="outline"

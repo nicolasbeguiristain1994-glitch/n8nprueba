@@ -1,5 +1,6 @@
 'use client'
 
+import { LineProfilePhoto } from '@/components/lines/LineProfilePhoto'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
@@ -699,6 +700,8 @@ export default function Lines() {
                       }`}>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
+                            {l.line_type === 'cloud' && l.cloud_phone_number_id && <LineProfilePhoto
+                              lineId={l.id} name={l.display_name || l.line_key} phone={l.phone_number} />}
                             {l.is_connected
                               ? <Wifi size={14} className="text-green-500 flex-shrink-0" />
                               : <WifiOff size={14} className="text-muted-foreground/60 flex-shrink-0" />
