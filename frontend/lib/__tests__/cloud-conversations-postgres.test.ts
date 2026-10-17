@@ -41,7 +41,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
    CREATE TEMP TABLE cloud_messages(id uuid DEFAULT gen_random_uuid(),conversation_id uuid,phone_number_id text,wamid text UNIQUE,direction text,message_type text,content jsonb,status text,sent_at timestamptz,created_at timestamptz DEFAULT NOW(),campaign_id uuid);
    CREATE TEMP TABLE contacts(id uuid,phone_number text,first_name text,last_name text,segment text,deleted_at timestamptz,panel text,linea int,linea_sub text);
    CREATE TEMP TABLE operator_contact_visibility(operator_id uuid,contact_id uuid);
-   CREATE TEMP TABLE agent_contact_lines(id uuid DEFAULT gen_random_uuid(),agent_code text,linea int,variant text,label text,phone text,is_active boolean DEFAULT true);
+   CREATE TEMP TABLE agent_contact_lines(id uuid DEFAULT gen_random_uuid(),agent_code text,linea int,variant text,label text,phone text,is_active boolean DEFAULT true,link_url text);
+   CREATE TEMP TABLE crm_agents(code text PRIMARY KEY,delivery_mode text DEFAULT 'phone'); INSERT INTO crm_agents(code) VALUES('royal'),('ofizeus');
    CREATE TEMP TABLE contact_tags(contact_id uuid,tag text);
    CREATE TEMP TABLE conversation_state(phone_number text,is_escalated bool,escalation_reason text,current_flow text,resolved_at timestamptz);
    CREATE TEMP TABLE blacklist(phone_number_normalized text,removed_at timestamptz,scope_key text DEFAULT 'global',agent_code text);
@@ -188,6 +189,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect(first).toMatchObject({linea:8,linea_sub:'a',agent:'royal',assigned_line:{label:'Royal 8A',phone:'+5491122222222'},line_assignment_ambiguous:false})
   await db.query("UPDATE agent_contact_lines SET phone='+5491144444444' WHERE agent_code='royal' AND variant='a'")
   expect((await(await GET(request())).json()).conversations[0].assigned_line.phone).toBe('+5491144444444')
+  await db.query("UPDATE crm_agents SET delivery_mode='link' WHERE code='royal';UPDATE agent_contact_lines SET link_url='https://example.com/royal8' WHERE agent_code='royal' AND variant='a'")
+  expect((await(await GET(request())).json()).conversations[0].assigned_line).toMatchObject({delivery_mode:'link',link_url:'https://example.com/royal8'})
   await db.query("UPDATE agent_contact_lines SET is_active=false WHERE agent_code='royal' AND variant='a'")
   expect((await(await GET(request())).json()).conversations[0].assigned_line).toBeNull()
   await db.query("UPDATE contacts SET linea_sub='b'")

@@ -1,5 +1,5 @@
 import { hasAssignedLineVariable, replaceAssignedLineVariable } from './assigned-line-variable'
-import { formatAgentLinePhone } from './agent-line-types'
+import { assignedLineDestination, type AgentDeliveryMode } from './agent-line-types'
 
 /** Snapshot provided by the operator on 2026-10-06, retained for migration/tests.
  * Live automation calls pass the editable database directory explicitly.
@@ -33,14 +33,16 @@ export function ofizeusReply(contacts: RoutingContact[], prefix:string,
   return agentLineReply(contacts,'ofizeus',prefix,directory)
 }
 export function agentLineReply(contacts: RoutingContact[], agent: string, prefix:string,
-  directory: ReadonlyArray<readonly [number,string,string,string]>,
+  directory: ReadonlyArray<readonly [number,string,string,string | null,(string | null)?]>,
+  mode: AgentDeliveryMode = 'phone',
 ): {message:string;handoff:boolean} {
   const code=directoryAgentCode(agent)
   if (!code || contacts.length!==1 || !belongsToDirectory(contacts[0],code)) return {message:ADVISOR_FALLBACK,handoff:true}
   const c=contacts[0],variant=(c.linea_sub??'').trim().toLowerCase()
   const line=directory.find(([n,v])=>c.linea!==null && Number(c.linea)===n && variant===v)
   if (!line) return {message:ADVISOR_FALLBACK,handoff:true}
-  const formatted = formatAgentLinePhone('+' + line[3].replace(/^\+/, ''))
+  const formatted = assignedLineDestination({label:line[2],phone:line[3],link_url:line[4],delivery_mode:mode})
+  if (!formatted) return {message:ADVISOR_FALLBACK,handoff:true}
   // Preserve the earlier append behavior for already configured messages. A
   // variable inserts only the number in place, without adding another footer.
   const message = hasAssignedLineVariable(prefix)

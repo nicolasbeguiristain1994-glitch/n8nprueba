@@ -7,10 +7,10 @@ export async function GET(req: Request) {
   const denied = await checkPermission(req, 'agents', 'manage')
   if (denied) return denied
   try {
-    const agents = await query(`SELECT a.code,a.name,COALESCE(
+    const agents = await query(`SELECT a.code,a.name,a.delivery_mode,COALESCE(
       jsonb_agg(l ORDER BY l.linea,l.variant) FILTER (WHERE l.id IS NOT NULL),'[]'::jsonb) AS lines
       FROM crm_agents a LEFT JOIN agent_contact_lines l ON l.agent_code=a.code
-      GROUP BY a.code,a.name ORDER BY lower(a.name),a.code`)
+      GROUP BY a.code,a.name,a.delivery_mode ORDER BY lower(a.name),a.code`)
     return Response.json({ agents })
   } catch (error) { return directoryError(error) }
 }

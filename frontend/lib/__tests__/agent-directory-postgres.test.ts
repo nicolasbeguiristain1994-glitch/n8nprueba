@@ -7,6 +7,7 @@ vi.mock('@/lib/db',()=>({query:vi.fn()}))
 vi.mock('@/lib/audit',()=>({audit:vi.fn()}))
 import {query} from '@/lib/db'
 import {GET,POST} from '@/app/api/agents/route'
+import {PATCH as changeDelivery} from '@/app/api/agents/[code]/delivery/route'
 import {PATCH as rename} from '@/app/api/agents/[code]/route'
 import {POST as addLine} from '@/app/api/agents/[code]/lines/route'
 import {PATCH as editLine} from '@/app/api/agents/[code]/lines/[id]/route'
@@ -28,10 +29,11 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('agent directory on PostgreS
       INSERT INTO users VALUES('${id(1)}','admin','{}',true,1,true,'{}',false),('${id(2)}','operator','{agents,conversations}',true,1,true,'{royal}',false),('${id(3)}','viewer','{agents}',true,1,true,'{}',false)`)
     for(const role of ['anon','authenticated'])await pool.query(`DO $$ BEGIN CREATE ROLE ${role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$`)
     await pool.query(readFileSync('../db/migrations/151_agent_contact_lines.sql','utf8').replaceAll('public.',schema+'.'))
+    await pool.query(readFileSync('../db/migrations/155_agent_line_links.sql','utf8').replaceAll('public.',schema+'.'))
     vi.mocked(query).mockImplementation(async(sql,values)=>(await pool.query(sql,values)).rows)
     vi.stubEnv('AUTH_SECRET',TEST_AUTH_SECRET)
   })
-  beforeEach(async()=>{await pool.query("DELETE FROM agent_contact_lines WHERE agent_code='test-agent'; DELETE FROM crm_agents WHERE code='test-agent'; DELETE FROM agent_contact_lines WHERE agent_code='royal'")})
+  beforeEach(async()=>{await pool.query("UPDATE crm_agents SET delivery_mode='phone'; DELETE FROM agent_contact_lines WHERE agent_code='test-agent'; DELETE FROM crm_agents WHERE code='test-agent'; DELETE FROM agent_contact_lines WHERE agent_code='royal'")})
   afterAll(async()=>{vi.unstubAllEnvs();if(pool){await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.end()}})
   it('migrates all existing Ofizeus numbers and prevents direct Data API access',async()=>{
     const result=await(await GET(req())).json()
@@ -60,12 +62,37 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('agent directory on PostgreS
     expect((await pool.query('SELECT linea,variant,label,phone,is_active FROM agent_contact_lines WHERE id=$1',[data.id])).rows[0])
       .toEqual({...updated,linea:8,variant:'a'})
   })
+  it('stores a link without a phone and scopes the delivery preference to the selected agent',async()=>{
+    const created=await addLine(req('POST',{...line,phone:'',link_url:'https://example.com/royal?ref=8'}),params('royal'))
+    expect(created.status).toBe(201)
+    expect((await changeDelivery(req('PATCH',{delivery_mode:'link'}),params('royal'))).status).toBe(200)
+    const agents=(await(await GET(req())).json()).agents
+    expect(agents.find((a:any)=>a.code==='royal')).toMatchObject({delivery_mode:'link',lines:[{phone:null,link_url:'https://example.com/royal?ref=8'}]})
+    expect(agents.find((a:any)=>a.code==='bigwin').delivery_mode).toBe('phone')
+    expect((await changeDelivery(req('PATCH',{delivery_mode:'invalid'}),params('royal'))).status).toBe(400)
+    expect((await changeDelivery(req('PATCH',{delivery_mode:'link'}),params('missing'))).status).toBe(404)
+  })
+  it('preserves a link when an older client edits only the number, and allows explicit removal',async()=>{
+    const {id}=await(await addLine(req('POST',{...line,link_url:'https://example.com/royal'}),params('royal'))).json()
+    const edit={label:line.label,phone:line.phone,is_active:true}
+    expect((await editLine(req('PATCH',edit),params('royal',id))).status).toBe(200)
+    expect((await pool.query('SELECT link_url FROM agent_contact_lines WHERE id=$1',[id])).rows[0].link_url).toBe('https://example.com/royal')
+    expect((await editLine(req('PATCH',{...edit,link_url:''}),params('royal',id))).status).toBe(200)
+    expect((await pool.query('SELECT link_url FROM agent_contact_lines WHERE id=$1',[id])).rows[0].link_url).toBeNull()
+  })
+  it('rejects unusable destinations and unsafe link protocols',async()=>{
+    for(const link_url of ['javascript:alert(1)','http:example.com','data:text/plain,x','https://user:secret@example.com','https://example.com/with space','https://'])
+      expect((await addLine(req('POST',{...line,link_url}),params('royal'))).status).toBe(400)
+    expect((await addLine(req('POST',{...line,phone:'',link_url:''}),params('royal'))).status).toBe(400)
+    await expect(pool.query("INSERT INTO agent_contact_lines(agent_code,linea,label,phone) VALUES('royal',1,'Empty',NULL)")).rejects.toMatchObject({code:'23514'})
+  })
   it('rejects unauthenticated users, operators and viewers even if their cookie claims admin',async()=>{
     expect((await GET(new Request('http://localhost/api/agents'))).status).toBe(401)
     for(const user of [2,3]){
       expect((await GET(req('GET',undefined,user))).status).toBe(403)
       expect((await POST(req('POST',{code:'test-agent',name:'Test'},user))).status).toBe(403)
       expect((await rename(req('PATCH',{name:'Hacked'},user),params('royal'))).status).toBe(403)
+      expect((await changeDelivery(req('PATCH',{delivery_mode:'link'},user),params('royal'))).status).toBe(403)
       expect((await addLine(req('POST',line,user),params('royal'))).status).toBe(403)
       expect((await editLine(req('PATCH',line,user),params('royal'))).status).toBe(403)
     }

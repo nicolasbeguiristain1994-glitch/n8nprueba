@@ -1,3 +1,4 @@
+import type { AssignedContactLine } from '../agent-line-types'
 // Pure logic — no React. Fully testable in isolation.
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -43,7 +44,7 @@ export interface Conv {
   linea?:             number | null
   linea_sub?:         string | null
   line_assignment_ambiguous?: boolean
-  assigned_line?:     {label: string; phone: string} | null
+  assigned_line?:     AssignedContactLine | null
   segment?:           Segment
   actividad?:         string | null
   valor_riesgo?:      string | null

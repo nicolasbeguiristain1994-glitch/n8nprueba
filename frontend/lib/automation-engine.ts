@@ -1,3 +1,4 @@
+import type { AgentDeliveryMode } from './agent-line-types'
 import { resolveConsentIdentity } from '@/lib/consent-context'
 import { belongsToDirectory, directoryAgentCode, agentLineReply, type RoutingContact } from '@/lib/contact-line-directory'
 import { withGlobalSendGuard, isGloballyOptedOut } from '@/lib/global-opt-out'
@@ -91,10 +92,10 @@ export async function evaluateAutomations(phone: string, messageText: string, me
     if (rule.action_config.contact_line_directory) {
       const agent=directoryAgentCode(rule.action_config.contact_line_directory)
       if (rule.type!=='reply' || !agent) return
-      const directory = await db.query<{linea:number;variant:string;label:string;phone:string}>(`SELECT linea,variant,label,phone
-        FROM agent_contact_lines WHERE agent_code=$1 AND is_active=true`,[agent])
+      const directory = await db.query<{linea:number;variant:string;label:string;phone:string|null;link_url:string|null;delivery_mode:AgentDeliveryMode}>(`SELECT l.linea,l.variant,l.label,l.phone,l.link_url,a.delivery_mode
+        FROM agent_contact_lines l JOIN crm_agents a ON a.code=l.agent_code WHERE l.agent_code=$1 AND l.is_active=true`,[agent])
       const routed=agentLineReply(routingContacts,agent,rule.action_config.message??'Esta es tu línea asignada:',
-        directory.rows.map(line=>[line.linea,line.variant,line.label,line.phone] as const))
+        directory.rows.map(line=>[line.linea,line.variant,line.label,line.phone,line.link_url] as const),directory.rows[0]?.delivery_mode || 'phone')
       if (routed.message.length>4096) {
         await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details) VALUES($1,$2,$3,'error','La respuesta con la línea supera 4096 caracteres')`,[rule.id,rule.name,number]);return
       }

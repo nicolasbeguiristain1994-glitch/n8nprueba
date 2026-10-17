@@ -22,6 +22,21 @@ describe('assigned line in conversations',()=>{
     expect(insert).toHaveBeenCalledWith('Tu línea designada es Royal 8A: 549 | 1112 | 345678')
     expect(screen.queryByRole('button',{name:/Enviar/})).not.toBeInTheDocument()
   })
+  it('copies and inserts the configured link without substituting the number',async()=>{
+    const copy=vi.fn().mockResolvedValue(undefined),insert=vi.fn()
+    Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:copy}})
+    render(<AssignedLineActions conv={{...conv,assigned_line:{label:'Royal 8A',phone:'+5491112345678',link_url:'https://example.com/royal8',delivery_mode:'link'}}} onInsert={insert}/>)
+    fireEvent.click(screen.getByRole('button',{name:'Copiar link de la línea'}))
+    await waitFor(()=>expect(copy).toHaveBeenCalledWith('https://example.com/royal8'))
+    fireEvent.click(screen.getByRole('button',{name:'Pegar en respuesta'}))
+    expect(insert).toHaveBeenCalledWith('Tu línea designada es Royal 8A: https://example.com/royal8')
+    expect(screen.queryByText('549 | 1112 | 345678')).not.toBeInTheDocument()
+  })
+  it('does not insert a number if link delivery is selected but the link is missing',()=>{
+    render(<AssignedLineActions conv={{...conv,assigned_line:{...conv.assigned_line!,delivery_mode:'link'}}} onInsert={vi.fn()}/>)
+    expect(screen.getByText(/Falta cargar el link/)).toBeVisible()
+    expect(screen.queryByRole('button',{name:'Pegar en respuesta'})).not.toBeInTheDocument()
+  })
   it.each([{...conv,assigned_line:null},{...conv,line_assignment_ambiguous:true},{...conv,linea:null,assigned_line:null}])('does not offer a number for unavailable or ambiguous assignments',c=>{
     render(<AssignedLineActions conv={c} onInsert={vi.fn()}/>)
     expect(screen.queryByRole('button',{name:'Pegar en respuesta'})).not.toBeInTheDocument()

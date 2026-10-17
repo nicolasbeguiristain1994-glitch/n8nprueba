@@ -129,7 +129,7 @@ export default function AutomatizacionesPage() {
   const [form, setForm]               = useState({ ...BLANK_FORM })
   const [saving, setSaving]           = useState(false)
   const [saveError, setSaveError]     = useState<string | null>(null)
-  const [directoryAgents, setDirectoryAgents] = useState<{code:string;name:string}[]>([])
+  const [directoryAgents, setDirectoryAgents] = useState<{code:string;name:string;delivery_mode?:'phone'|'link'}[]>([])
   const [directoryError, setDirectoryError] = useState(false)
   useEffect(() => {
     if (!showEditor) return
@@ -699,7 +699,7 @@ export default function AutomatizacionesPage() {
                     {directoryAgents.map(a=><option key={a.code} value={a.code}>{a.name}</option>)}
                   </select>
                   {directoryError && <p className="mb-2 text-xs text-destructive">No se pudo cargar el directorio. Cerrá y volvé a abrir el editor para reintentar.</p>}
-                  <p className="mb-3 rounded-md border p-3 text-sm">Usá <code>{'{{2}}'}</code> donde quieras mostrar el número de la línea asignada, separado por barras. La respuesta se aplica solo al agente elegido y respeta la línea y variante del contacto. Si falta una asignación activa, avisa que lo atenderá un asesor y deriva la conversación.</p>
+                  <p className="mb-3 rounded-md border p-3 text-sm">Usá <code>{'{{2}}'}</code> donde quieras mostrar el destino de la línea asignada: el número separado por barras o el link, según el modo elegido en Agentes. La respuesta se aplica solo al agente elegido y respeta la línea y variante del contacto. Si falta una asignación activa, avisa que lo atenderá un asesor y deriva la conversación.</p>
                   <label className="block text-xs text-muted-foreground mb-1">Mensaje de respuesta *</label>
                   <textarea
                     className="w-full border border-input rounded-md text-sm px-3 py-2 h-28 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"
@@ -718,7 +718,7 @@ export default function AutomatizacionesPage() {
 
               {form.type === 'reply' && hasAssignedLineVariable(form.message) && <div className="rounded-md bg-muted/40 p-3" aria-label="Vista previa de línea asignada">
                 <p className="mb-2 text-xs font-medium text-muted-foreground">Ejemplo ilustrativo · {form.contact_line_directory || 'Elegí un agente'}</p>
-                <p className="whitespace-pre-wrap break-words text-sm">{replaceAssignedLineVariable(form.message, '549 | 1100 | 000000')}</p>
+                <p className="whitespace-pre-wrap break-words text-sm">{replaceAssignedLineVariable(form.message, directoryAgents.find(agent=>agent.code===form.contact_line_directory)?.delivery_mode==='link'?'https://ejemplo.com/tu-linea':'549 | 1100 | 000000')}</p>
               </div>}
 
               {form.type === 'flow' && (

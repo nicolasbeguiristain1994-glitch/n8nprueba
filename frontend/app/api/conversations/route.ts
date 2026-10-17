@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
           )) AS is_unread,
           assignment.ambiguous AS line_assignment_ambiguous,
           CASE WHEN NOT assignment.ambiguous AND directory.id IS NOT NULL
-            THEN jsonb_build_object('label',directory.label,'phone',directory.phone)
+            THEN jsonb_build_object('label',directory.label,'phone',directory.phone,'link_url',directory.link_url,'delivery_mode',agent_directory.delivery_mode)
             ELSE NULL END AS assigned_line,
           COALESCE(cs.is_escalated, false)         AS is_escalated,
           cs.escalation_reason,
@@ -105,6 +105,7 @@ export async function GET(req: NextRequest) {
               AND (NULLIF(lower(trim(other.panel)),''),other.linea,COALESCE(trim(other.linea_sub),''))
                 IS DISTINCT FROM (page.agent,page.linea,COALESCE(trim(page.linea_sub),''))) AS ambiguous
         ) assignment ON true
+        LEFT JOIN crm_agents agent_directory ON agent_directory.code=page.agent
         LEFT JOIN agent_contact_lines directory ON directory.agent_code=page.agent
           AND directory.linea=page.linea AND directory.variant=COALESCE(trim(page.linea_sub),'')
           AND directory.is_active=true

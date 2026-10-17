@@ -18,13 +18,13 @@ export const GUIDE_REVIEWED_AT = '2 de octubre de 2026'
 
 export const GUIDE_SECTIONS: GuideSection[] = [
   {
-    id: 'agentes', label: 'Agentes y líneas designadas', subtitle: 'Cargar teléfonos y compartir la línea correspondiente', href: '/agentes', resource: 'agents', adminOnly: true,
-    description: 'Los administradores gestionan los teléfonos asociados a cada agente, número de línea y variante. Conversaciones muestra la asignación del contacto junto al agente y su nivel.',
+    id: 'agentes', label: 'Agentes y líneas designadas', subtitle: 'Cargar teléfonos y links y elegir qué compartir', href: '/agentes', resource: 'agents', adminOnly: true,
+    description: 'Los administradores gestionan los teléfonos y links asociados a cada agente, número de línea y variante. Cada agente permite elegir Enviar número o Enviar link. Conversaciones muestra la asignación del contacto junto al agente y su nivel.',
     steps: [
-      { title: 'Cargá o editá una línea', detail: 'Abrí Agentes, elegí el agente y usá Agregar línea. Ingresá el número, la variante si corresponde, un nombre y el teléfono con + y código de país. Editar permite cambiar el nombre, el teléfono y el estado activo.' },
+      { title: 'Cargá o editá una línea', detail: 'Abrí Agentes, elegí el agente y usá Agregar línea. Ingresá el número, la variante si corresponde, un nombre y el teléfono con + y código de país, un link completo http/https o ambos. Editar permite cambiar esos datos y el estado activo.' },
       { title: 'Respetá la asignación del contacto', detail: 'La combinación debe coincidir con el agente, línea y variante registrados en Contactos. Una línea 1A y una línea 1 sin variante son destinos diferentes. Si falta el número o hay asignaciones contradictorias, el chat lo indica sin elegir otro destino.' },
-      { title: 'Compartí desde el chat', detail: 'Copiar guarda el teléfono en el portapapeles. Pegar en respuesta agrega la línea designada al borrador y conserva lo que ya escribiste. Revisá el texto y enviá cuando esté listo.' },
-      { title: 'Actualizá los destinos de Ofizeus', detail: 'Las respuestas automáticas que consultan la línea designada de Ofizeus usan este mismo directorio. Los cambios aplican a nuevas respuestas; una línea inactiva deriva la consulta a un asesor.' },
+      { title: 'Compartí desde el chat', detail: 'Copiar guarda el número o el link, según el modo elegido para ese agente. Pegar en respuesta agrega la línea designada al borrador y conserva lo que ya escribiste. Revisá el texto y enviá cuando esté listo.' },
+      { title: 'Elegí qué enviar', detail: 'En la tarjeta de cada agente, elegí Enviar número o Enviar link. Se aplica a las nuevas respuestas automáticas que consultan el directorio y al pegar la línea en Conversaciones. Si falta el destino elegido o la línea está inactiva, la respuesta automática deriva a un asesor. Cambiar el modo no envía mensajes por sí solo.' },
     ],
   },
   {

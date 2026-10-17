@@ -91,7 +91,7 @@ describe('once-per-chat automation setting', () => {
   it('preserves directory routing when the introduction is edited', async () => {
     mocks.fetch.mockImplementation(async (_url, init) => init?.method ? {ok:true} : {automations:[{...rule,action_config:{message:'Tu línea:',contact_line_directory:'ofizeus'}}]})
     render(<Page />); await screen.findByText('Bono EXTRA'); fireEvent.click(screen.getByTitle('Editar'))
-    expect(screen.getByText(/donde quieras mostrar el número/)).toBeInTheDocument()
+    expect(screen.getByText(/donde quieras mostrar el destino/)).toBeInTheDocument()
     fireEvent.change(screen.getByPlaceholderText(/Hola \{\{nombre\}\}/), {target:{value:'Hola, esta es tu línea:'}})
     fireEvent.click(screen.getByRole('button',{name:'Guardar cambios'}))
     await waitFor(()=>expect(mocks.fetch.mock.calls.some(([,init])=>init?.method==='PATCH')).toBe(true))

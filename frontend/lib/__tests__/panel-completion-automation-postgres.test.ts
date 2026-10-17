@@ -30,7 +30,8 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
    CREATE TABLE cloud_opt_outs(contact_phone text,opted_out bool,scope_key text,agent_code text);
    CREATE FUNCTION contact_agent_key(value text) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT lower(trim(value)) $$;
    CREATE TABLE contacts(id uuid DEFAULT gen_random_uuid(),phone_number text,first_name text,panel text,linea int,linea_sub text,deleted_at timestamptz);
-   CREATE TABLE agent_contact_lines(agent_code text,linea int,variant text,label text,phone text,is_active boolean DEFAULT true);
+   CREATE TABLE agent_contact_lines(agent_code text,linea int,variant text,label text,phone text,is_active boolean DEFAULT true,link_url text);
+   CREATE TABLE crm_agents(code text PRIMARY KEY,delivery_mode text DEFAULT 'phone'); INSERT INTO crm_agents(code) VALUES('royal'),('ofizeus');
    CREATE TABLE cloud_numbers(phone_number_id text,whatsapp_line_id uuid,status text);
    CREATE TABLE whatsapp_lines(id uuid,status text,is_connected boolean,sending_enabled boolean);
    INSERT INTO users VALUES('${id(1)}',true,'admin');INSERT INTO contacts(phone_number,first_name,panel) VALUES('${phone}','Ana','Panel');
@@ -43,13 +44,23 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   m.tx.mockImplementation(async fn=>{const db=await pool.connect();try{await db.query('BEGIN');const r=await fn(db);await db.query('COMMIT');return r}catch(e){await db.query('ROLLBACK');throw e}finally{db.release()}})
  })
  beforeEach(async()=>{
-  await pool.query(`TRUNCATE automation_message_jobs,automation_inbound_receipts,automations,automation_logs,conversation_state,blacklist;DELETE FROM agent_contact_lines WHERE agent_code='royal';UPDATE contacts SET panel='Panel',linea=NULL,linea_sub=NULL,deleted_at=NULL;UPDATE users SET is_active=true;UPDATE whatsapp_lines SET sending_enabled=true;
+  await pool.query(`UPDATE crm_agents SET delivery_mode='phone';UPDATE agent_contact_lines SET link_url=NULL;TRUNCATE automation_message_jobs,automation_inbound_receipts,automations,automation_logs,conversation_state,blacklist;DELETE FROM agent_contact_lines WHERE agent_code='royal';UPDATE contacts SET panel='Panel',linea=NULL,linea_sub=NULL,deleted_at=NULL;UPDATE users SET is_active=true;UPDATE whatsapp_lines SET sending_enabled=true;
    INSERT INTO automations VALUES('${id(3)}','Reply','reply','contains','{"keywords":["información"]}','{"message":"Hola {{nombre}}"}','${id(1)}',true,1,NOW())`)
   m.send.mockReset().mockResolvedValue({status:'sent',wamid:'fake'});m.emit.mockClear()
   for (const [linea,variant,label,number] of OFIZEUS_LINES)
     await pool.query("UPDATE agent_contact_lines SET label=$3,phone=$4,is_active=true WHERE agent_code='ofizeus' AND linea=$1 AND variant=$2",[linea,variant,label,'+'+number])
  })
  afterAll(async()=>{await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.end()})
+ it('routes the configured link through the real automation and fails closed if the link is missing',async()=>{
+  await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3,linea_sub='a';UPDATE automations SET action_config='{"message":"Tu línea: {{2}}","contact_line_directory":"ofizeus"}';
+    UPDATE crm_agents SET delivery_mode='link' WHERE code='ofizeus';UPDATE agent_contact_lines SET link_url='https://example.com/zeus3' WHERE agent_code='ofizeus' AND linea=3 AND variant='a'`)
+  await evaluateAutomations(phone,'informacion','link-1',source)
+  expect(m.send.mock.calls[0][0].request.text.body).toBe('Tu línea: https://example.com/zeus3')
+  expect(m.send.mock.calls[0][0].request.text.body).not.toContain('549')
+  await pool.query("DELETE FROM automation_message_jobs;UPDATE agent_contact_lines SET link_url=NULL")
+  await evaluateAutomations(phone,'informacion','link-2',source)
+  expect(m.send.mock.calls.at(-1)?.[0].request.text.body).toBe('Gracias por escribirnos. Un asesor te atenderá para indicarte tu línea correspondiente.')
+ })
  it('deduplicates simultaneous webhook deliveries and keeps the inbound source line',async()=>{
   await Promise.all([evaluateAutomations(phone,'Más información','event-1',source),evaluateAutomations(phone,'Más información','event-1',source)])
   await processAutomationJobs();expect(m.send).toHaveBeenCalledTimes(1)
