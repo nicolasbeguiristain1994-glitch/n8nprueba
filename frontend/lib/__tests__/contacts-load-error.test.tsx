@@ -26,7 +26,7 @@ it('distinguishes a failed filtered load from zero contacts and retries the same
  expect(screen.getByRole('heading',{name:'Contactos'}).parentElement).toHaveTextContent(/^Contactos$/)
  expect(screen.queryByText('No hay contactos que coincidan con los filtros.')).not.toBeInTheDocument()
  expect(screen.getByRole('button',{name:'Crear campaña'})).toBeDisabled()
- expect(screen.getByRole('button',{name:'Seleccionar todos'})).toBeDisabled()
+ expect(screen.getByRole('button',{name:'Seleccionar contactos'})).toBeDisabled()
  expect(screen.queryByRole('button',{name:'Eliminar (0)'})).not.toBeInTheDocument()
  expect(screen.queryByRole('button',{name:'Crear lista (0)'})).not.toBeInTheDocument()
  mocks.fail=false

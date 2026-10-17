@@ -1,5 +1,5 @@
 import userEvent from '@testing-library/user-event'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import * as XLSX from 'xlsx'
 vi.mock('@/lib/fetchJson', () => ({ fetchJson: vi.fn().mockResolvedValue({ contacts: [], total: 0, lists: [] }) }))
@@ -31,7 +31,7 @@ it('explains line reassignment and submits the selected line even when preservin
   await user.click(screen.getByText('Omitir la misma cuenta; crear las de otros agentes o usuarios'))
   await user.click(screen.getByRole('combobox',{name:'Línea de importación'}))
   await user.click(screen.getByRole('option',{name:/^Línea 1$/}))
-  expect(screen.getByRole('status')).toHaveTextContent('Todos los contactos de esta importación pasarán a la Línea 1, incluidos los existentes.')
+  expect(within(screen.getByRole('dialog', { name: 'Importar contactos' })).getByRole('status')).toHaveTextContent('Todos los contactos de esta importación pasarán a la Línea 1, incluidos los existentes.')
   expect(screen.getByText('Conservar datos existentes; actualizar solo la línea')).toBeInTheDocument()
   await user.click(screen.getByRole('button',{name:'Importar 1 contactos'}))
   await waitFor(()=>expect(fetcher).toHaveBeenCalledWith('/api/contacts/import',expect.objectContaining({
