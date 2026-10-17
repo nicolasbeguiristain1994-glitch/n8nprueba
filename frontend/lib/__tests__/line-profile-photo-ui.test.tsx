@@ -24,7 +24,8 @@ it('previews the selected image and saves only after the explicit button', async
   fireEvent.click(screen.getByRole('button', { name: 'Guardar foto' }))
   await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Foto guardada'))
   expect(fetchMock.mock.calls.filter(([,opts]) => opts?.method === 'POST')).toHaveLength(1)
-  expect(screen.getByRole('img', { name: 'Foto actual de Lexora' })).toHaveAttribute('src', 'https://pps.whatsapp.net/new.jpg')
+  // The notice renders before the effect clears the temporary preview.
+  await waitFor(() => expect(screen.getByRole('img', { name: 'Foto actual de Lexora' })).toHaveAttribute('src', 'https://pps.whatsapp.net/new.jpg'))
 })
 it('cancels a preview without sending the image', async () => {
   renderPhoto(); await act(async () => {})
