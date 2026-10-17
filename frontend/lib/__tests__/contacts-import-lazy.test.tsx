@@ -35,6 +35,6 @@ it('explains line reassignment and submits the selected line even when preservin
   expect(screen.getByText('Conservar datos existentes; actualizar solo la línea')).toBeInTheDocument()
   await user.click(screen.getByRole('button',{name:'Importar 1 contactos'}))
   await waitFor(()=>expect(fetcher).toHaveBeenCalledWith('/api/contacts/import',expect.objectContaining({
-    body:JSON.stringify({contacts:[{phone:'+5491111111111',name:'account1',segment:undefined}],panels:[],linea:1,conflict_mode:'skip'})
+    body:JSON.stringify({contacts:[{phone:'+5491111111111',name:'account1',segment:undefined}],panels:[],linea:1,conflict_mode:'skip',row_offset:0})
   })))
 })

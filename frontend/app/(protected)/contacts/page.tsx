@@ -780,7 +780,7 @@ export default function Contacts() {
       for (let i = 0; i < chunks.length; i++) {
         const res = await fetch('/api/contacts/import', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contacts: chunks[i], panels, linea, linea_sub, conflict_mode: conflictMode }),
+          body: JSON.stringify({ contacts: chunks[i], panels, linea, linea_sub, conflict_mode: conflictMode, row_offset: i * CHUNK_SIZE }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) { setImportError(data.error || 'Error al importar'); return }

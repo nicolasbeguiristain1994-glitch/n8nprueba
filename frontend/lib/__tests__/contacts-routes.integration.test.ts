@@ -183,6 +183,66 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
       .toEqual({phone_number:'+5491111111112',linea:4,linea_sub:'c',first_name:'Historical name'})
     expect((await c.query('SELECT count(*) FROM contacts')).rows[0].count).toBe('2')
   })
+  it.each(['update','panels_only','skip'])('moves both historical phones of one username in a single file in %s mode',async conflict_mode=>{
+    const accounts=[{panel:'royal',username:'shareduser'},{panel:'royal',username:'shareduser',platform:'zeus'}]
+    await legacyAccount('+5491111111111',accounts)
+    await legacyAccount('+5491111111112',accounts)
+    const before=(await c.query('SELECT id,identity_key,phone_number,casino_accounts FROM contacts ORDER BY phone_number')).rows
+    for(let attempt=0;attempt<2;attempt++) {
+      const response=await importContacts(request({panel:'royal',linea:9,conflict_mode,contacts:[
+        {phone:'+5491111111111',name:'SharedUser'},
+        {phone:'+5491111111112',name:'shareduser'},
+        {phone:'+5491111111111',name:'shareduser'}]}))
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({inserted:0,updated:2,skipped:1})
+    }
+    expect((await c.query('SELECT id,identity_key,phone_number,casino_accounts FROM contacts ORDER BY phone_number')).rows).toEqual(before)
+    expect((await c.query('SELECT linea,linea_sub FROM contacts')).rows).toEqual([{linea:9,linea_sub:null},{linea:9,linea_sub:null}])
+  })
+  it('resolves distinct phones of one historical username without an agent selection',async()=>{
+    const accounts=[{panel:'royal',username:'shareduser'}]
+    await legacyAccount('+5491111111111',accounts)
+    await legacyAccount('+5491111111112',accounts)
+    const response=await importContacts(request({linea:9,conflict_mode:'skip',contacts:[
+      {phone:'+5491111111111',name:'shareduser'},{phone:'+5491111111112',name:'shareduser'}]}))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({inserted:0,updated:2})
+    expect((await c.query('SELECT linea FROM contacts')).rows).toEqual([{linea:9},{linea:9}])
+  })
+  it.each(['panels_only','skip'])('preserves the existing phone for conflicting file phones in %s mode regardless of order',async conflict_mode=>{
+    await importContacts(request({panel:'royal',linea:4,contacts:[{phone:'+5491111111111',name:'shareduser'}]}))
+    const before=(await c.query('SELECT id,phone_number,first_name,segment,casino_accounts FROM contacts')).rows
+    const contacts=[{phone:'+5491111111111',name:'New name',casino_username:'shareduser'},
+      {phone:'+5491111111112',name:'Other name',casino_username:'shareduser'}]
+    for(const rows of [contacts,[...contacts].reverse()]) {
+      const response=await importContacts(request({panel:'royal',linea:9,conflict_mode,contacts:rows}))
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({inserted:0,updated:1,skipped:1})
+    }
+    expect((await c.query('SELECT id,phone_number,first_name,segment,casino_accounts FROM contacts')).rows).toEqual(before)
+    expect((await c.query('SELECT linea FROM contacts')).rows).toEqual([{linea:9}])
+  })
+  it('identifies the conflicting rows and rolls back when phone updates are requested',async()=>{
+    await importContacts(request({panel:'royal',linea:4,contacts:[{phone:'+5491111111111',name:'shareduser'}]}))
+    const response=await importContacts(request({panel:'royal',linea:9,row_offset:5000,contacts:[
+      {phone:'+5491111111113',name:'newuser'},
+      {phone:'+5491111111111',name:'shareduser'},
+      {phone:'+5491111111112',name:'SharedUser'}]}))
+    expect(response.status).toBe(409)
+    const {error}=await response.json()
+    expect(error).toContain('shareduser')
+    expect(error).toContain('5002 (+5491111111111)')
+    expect(error).toContain('5003 (+5491111111112)')
+    expect(error).toContain('actualizar solo la línea')
+    expect((await c.query('SELECT phone_number,linea FROM contacts')).rows).toEqual([{phone_number:'+5491111111111',linea:4}])
+  })
+  it.each(['update','panels_only','skip'])('does not choose a phone for a new conflicting account in %s mode',async conflict_mode=>{
+    const response=await importContacts(request({panel:'royal',linea:9,conflict_mode,contacts:[
+      {phone:'+5491111111111',name:'shareduser'},{phone:'+5491111111112',name:'shareduser'}]}))
+    expect(response.status).toBe(409)
+    expect((await response.json()).error).toContain('dejá un solo teléfono')
+    expect((await c.query('SELECT count(*) FROM contacts')).rows[0].count).toBe('0')
+  })
   it('uses a historical account alias when assigning only a line',async()=>{
     const original=await legacyAccount('+5491111111111',[{panel:'royal',username:'realuser'}],'Old combined display name')
     const response=await importContacts(request({linea:2,conflict_mode:'skip',contacts:[{phone:'+5491111111111',name:'realuser'}]}))

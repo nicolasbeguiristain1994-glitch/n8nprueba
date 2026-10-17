@@ -149,6 +149,16 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
     expect(result.status).toBe(403)
     expect((await db.query('SELECT count(*) FROM contacts')).rows[0].count).toBe('3')
   })
+  it.each(['panels_only','skip'])('still rejects a hidden account when preserving conflicting file phones in %s mode',async conflict_mode=>{
+    await db.query('INSERT INTO operator_contact_visibility VALUES($1,$2,$1)',[id(900),id(1)])
+    const response=await importContacts(req('contacts/import',{panel:'royal',linea:9,conflict_mode,contacts:[
+      {phone:'+'+phone(1),name:'visible'},
+      {phone:'+'+phone(3),name:'second'},
+      {phone:'+'+phone(4),name:'second'}]}))
+    expect(response.status).toBe(403)
+    expect((await db.query('SELECT count(*) FROM contacts')).rows[0].count).toBe('3')
+    expect((await db.query('SELECT count(*) FROM contacts WHERE linea IS NOT NULL')).rows[0].count).toBe('0')
+  })
   it('resolves an existing line assignment without an agent while preserving operator visibility',async()=>{
     const response=await importContacts(req('contacts/import',{linea:1,conflict_mode:'skip',contacts:[{phone:'+'+phone(1),name:'visible'}]}))
     expect(response.status).toBe(200)

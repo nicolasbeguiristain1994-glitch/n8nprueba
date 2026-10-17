@@ -13,6 +13,7 @@ export async function POST(req: NextRequest) {
 
   let body: {
     contacts?:      Array<{ phone: string; name?: string; segment?: string; casino_username?: string }>
+    row_offset?:    number
     panel?:         string
     panels?:        string[]
     linea?:         number
@@ -26,7 +27,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { contacts, panel, panels, linea, linea_sub, skip_existing = false, conflict_mode } = body
+  const { contacts, panel, panels, linea, linea_sub, skip_existing = false, conflict_mode, row_offset = 0 } = body
+  if (!Number.isSafeInteger(row_offset) || row_offset < 0) return NextResponse.json({error:'Posición de archivo inválida'},{status:400})
   // conflict_mode takes precedence over legacy skip_existing
   const resolvedMode: 'update' | 'panels_only' | 'skip' =
     conflict_mode ?? (skip_existing ? 'skip' : 'update')
@@ -52,25 +54,24 @@ export async function POST(req: NextRequest) {
   const lineaSubRaw = (linea_sub || '').toLowerCase()
   const lineaSubValue = lineaValue !== null && ['a', 'b', 'c'].includes(lineaSubRaw) ? lineaSubRaw : null
 
-  // Each account is independent even when the phone is shared. Conflicting
-  // phones for the same account must be reviewed, never resolved by row order.
-  const seen = new Map<string, string>()
+  // Keep different phones until existing records have been resolved. Historical
+  // accounts may legitimately have one record for each phone.
+  const seen = new Set<string>()
   let invalidCount = 0
-  let normalized: Array<{phone:string;name:string|null;segment:string|null;casino_username:string|null;panel:string|null;identity_key:string}> = []
-  for (const c of contacts) {
+  let normalized: Array<{phone:string;name:string|null;segment:string|null;casino_username:string|null;panel:string|null;identity_key:string;input_key:string;position:number}> = []
+  for (const [index, c] of contacts.entries()) {
     const rawPhone = (c.phone || '').toString().trim().replace(/\s/g, '')
     if (!isE164(rawPhone)) { invalidCount++; continue }
     const username = (c.casino_username || c.name || '').trim().toLowerCase().slice(0,100) || null
     const segment = (c.segment || '').trim().toLowerCase()
     for (const agent of [...new Set(panelsRaw.length ? panelsRaw : [null])]) {
       const key = contactAccountKey(agent,username,rawPhone)
-      const previous = seen.get(key)
-      if (previous && previous !== rawPhone) return NextResponse.json({error:'Una misma cuenta tiene teléfonos distintos en el archivo. Revisá esas filas.'},{status:409})
-      if (previous) continue
-      seen.set(key,rawPhone)
+      const inputKey = JSON.stringify([key, rawPhone])
+      if (seen.has(inputKey)) continue
+      seen.add(inputKey)
       normalized.push({phone:rawPhone,name:c.name?.trim().slice(0,100)||username,
         segment:['casual','regular','super_vip','vip_alto','vip_medio','vip','whale','bajo','medio'].includes(segment)?segment:null,
-        casino_username:username,panel:agent,identity_key:key})
+        casino_username:username,panel:agent,identity_key:key,input_key:inputKey,position:row_offset+index+1})
     }
   }
 
@@ -95,10 +96,10 @@ export async function POST(req: NextRequest) {
       const { rows: matches } = await client.query<{
         input_key: string; identity_key: string; panel: string | null;
         account_username: string | null; visible: boolean
-      }>(`SELECT i.identity_key AS input_key,c.identity_key,c.panel,c.account_username,
+      }>(`SELECT i.input_key,c.identity_key,c.panel,c.account_username,
           (${access.sql}) AS visible
         FROM contacts c JOIN jsonb_to_recordset($1::jsonb)
-          AS i(phone text,casino_username text,identity_key text)
+          AS i(phone text,casino_username text,input_key text)
           ON c.phone_number=i.phone AND (i.casino_username IS NULL
             OR c.account_username=i.casino_username
             OR (c.account_username IS NULL AND lower(trim(c.first_name))=i.casino_username)
@@ -111,15 +112,11 @@ export async function POST(req: NextRequest) {
         if (byInput.has(match.input_key)) throw NextResponse.json({error:'Un teléfono y usuario coincide con varias cuentas. Elegí el agente para asignar la línea; no se guardaron cambios.'},{status:409})
         byInput.set(match.input_key, match)
       }
-      const accounts = new Map<string, typeof normalized[number]>()
-      for (const input of normalized) {
-        const match = byInput.get(input.identity_key)
-        const account = match ? { ...input, identity_key: match.identity_key,
+      normalized = normalized.map(input => {
+        const match = byInput.get(input.input_key)
+        return match ? { ...input, identity_key: match.identity_key,
           panel: match.panel, casino_username: match.account_username ?? input.casino_username } : input
-        accounts.set(account.identity_key, account)
-      }
-      normalized = [...accounts.values()]
-      skipped = Math.max(0, contacts.length - normalized.length - invalidCount)
+      })
     }
     // Historical records can retain several account aliases. The file's exact
     // phone disambiguates which record receives the line without merging phones.
@@ -161,7 +158,14 @@ export async function POST(req: NextRequest) {
       }
       const previous = resolvedAccounts.get(account.identity_key)
       if (previous && previous.phone !== account.phone) {
-        throw NextResponse.json({error:'Una misma cuenta tiene teléfonos distintos en el archivo. Revisá esas filas.'},{status:409})
+        const existing = group.some(c => c.identity_key === account.identity_key)
+        // These modes never change an existing phone. Assign the line once, without
+        // selecting one of the file's conflicting phone values or creating a copy.
+        if (existing && resolvedMode !== 'update') continue
+        const advice = existing && lineaValue !== null
+          ? ' Para moverla sin cambiar el número, elegí «Conservar datos existentes; actualizar solo la línea».'
+          : ' Corregí el usuario o dejá un solo teléfono para esa cuenta.'
+        throw NextResponse.json({error:`La cuenta «${input.casino_username ?? input.phone}» tiene teléfonos distintos en los contactos ${previous.position} (${previous.phone}) y ${input.position} (${input.phone}) del archivo.${advice} No se guardaron cambios.`},{status:409})
       }
       resolvedAccounts.set(account.identity_key, account)
     }
