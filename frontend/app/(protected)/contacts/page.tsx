@@ -2004,7 +2004,7 @@ export default function Contacts() {
                   <div className="flex flex-col gap-1.5 pt-1">
                     <label className="flex items-center gap-2 cursor-pointer text-sm">
                       <input type="radio" checked={conflictMode === 'update'} onChange={() => setConflictMode('update')} className="accent-amber-600" />
-                      <span>Actualizar la misma cuenta (agente + usuario)</span>
+                      <span>Actualizar datos y línea de la misma cuenta (agente + usuario)</span>
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer text-sm">
                       <input type="radio" checked={conflictMode === 'panels_only'} onChange={() => setConflictMode('panels_only')} className="accent-amber-600" />
@@ -2012,7 +2012,7 @@ export default function Contacts() {
                     </label>
                     <label className="flex items-center gap-2 cursor-pointer text-sm">
                       <input type="radio" checked={conflictMode === 'skip'} onChange={() => setConflictMode('skip')} className="accent-amber-600" />
-                      <span>Omitir la misma cuenta; crear las de otros agentes o usuarios</span>
+                      <span>{importLinea ? 'Conservar datos existentes; actualizar solo la línea' : 'Omitir la misma cuenta; crear las de otros agentes o usuarios'}</span>
                     </label>
                   </div>
                 </div>
@@ -2046,10 +2046,10 @@ export default function Contacts() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">Línea (opcional)</label>
-                  <Select value={importLinea || 'none'} onValueChange={v => setImportLinea(v === 'none' ? '' : (v ?? ''))}>
-                    <SelectTrigger><SelectValue placeholder="Sin asignar" /></SelectTrigger>
+                  <Select value={importLinea || 'none'} onValueChange={v => { setImportLinea(v === 'none' ? '' : (v ?? '')); setImportLineaSub('') }}>
+                    <SelectTrigger aria-label="Línea de importación"><SelectValue placeholder="Conservar líneas actuales" /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">Sin asignar</SelectItem>
+                      <SelectItem value="none">Conservar líneas actuales</SelectItem>
                       {Array.from({ length: 100 }, (_, i) => i + 1).map(n => (
                         <SelectItem key={n} value={String(n)}>Línea {n}</SelectItem>
                       ))}
@@ -2067,6 +2067,13 @@ export default function Contacts() {
                   </Select>
                 </div>
               </div>
+              {importLinea && (
+                <p className="text-sm rounded-lg border border-primary/20 bg-primary/5 p-3" role="status">
+                  Todos los contactos de esta importación pasarán a la Línea {importLinea}{importLineaSub.toUpperCase()}, incluidos los existentes.
+                  {' '}Se reemplazarán su línea y variante anteriores.
+                  {!importPanel && !importPanel2 && ' Se conservará el agente de las cuentas existentes que coincidan por teléfono y usuario.'}
+                </p>
+              )}
               {importError && <p className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded px-3 py-2">{importError}</p>}
               {importing && (
                 <div className="space-y-1">

@@ -41,11 +41,11 @@ export async function POST(req: NextRequest) {
     ? panels.map(p => canonicalContactAgent(p)!).filter(Boolean)
     : panel?.trim().toLowerCase() ? [canonicalContactAgent(panel)!] : []
 
-  if (!canAssignPanels(auth.user, panelsRaw.length ? panelsRaw : [null])) {
+  if (panelsRaw.length && !canAssignPanels(auth.user, panelsRaw)) {
     return NextResponse.json({error: 'Agente fuera de tu alcance'}, {status: 403})
   }
   const lineaValue = linea ? Number(linea) : null
-  if (lineaValue !== null && (lineaValue < 1 || lineaValue > 100)) {
+  if (lineaValue !== null && (!Number.isInteger(lineaValue) || lineaValue < 1 || lineaValue > 100)) {
     return NextResponse.json({ error: 'Línea inválida (1-100)' }, { status: 400 })
   }
   // Sub-variante (a/b/c) solo válida cuando hay línea asignada
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
   // phones for the same account must be reviewed, never resolved by row order.
   const seen = new Map<string, string>()
   let invalidCount = 0
-  const normalized: Array<{phone:string;name:string|null;segment:string|null;casino_username:string|null;panel:string|null;identity_key:string}> = []
+  let normalized: Array<{phone:string;name:string|null;segment:string|null;casino_username:string|null;panel:string|null;identity_key:string}> = []
   for (const c of contacts) {
     const rawPhone = (c.phone || '').toString().trim().replace(/\s/g, '')
     if (!isE164(rawPhone)) { invalidCount++; continue }
@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const skipped = Math.max(0, contacts.length - normalized.length - invalidCount)
+  let skipped = Math.max(0, contacts.length - normalized.length - invalidCount)
 
   if (normalized.length === 0) {
     return NextResponse.json({ inserted: 0, updated: 0, skipped: skipped + invalidCount, invalid: invalidCount, total: contacts.length })
@@ -88,6 +88,40 @@ export async function POST(req: NextRequest) {
     await client.query("SET LOCAL TIME ZONE 'America/Argentina/Buenos_Aires'")
     await client.query("SET LOCAL statement_timeout='60s'")
     await client.query("SELECT pg_advisory_xact_lock(hashtext('casino-segmentation'))")
+    // A line-only assignment can reuse the account already present in the file.
+    // Never pick an arbitrary agent when the same phone/username has several accounts.
+    if (!panelsRaw.length && lineaValue !== null) {
+      const access = contactScope(auth.user, 1, 'c')
+      const { rows: matches } = await client.query<{
+        input_key: string; identity_key: string; panel: string | null;
+        account_username: string | null; visible: boolean
+      }>(`SELECT i.identity_key AS input_key,c.identity_key,c.panel,c.account_username,
+          (${access.sql}) AS visible
+        FROM contacts c JOIN jsonb_to_recordset($1::jsonb)
+          AS i(phone text,casino_username text,identity_key text)
+          ON c.phone_number=i.phone AND (i.casino_username IS NULL
+            OR c.account_username=i.casino_username
+            OR (c.account_username IS NULL AND lower(trim(c.first_name))=i.casino_username))
+        WHERE c.deleted_at IS NULL FOR UPDATE OF c`, [JSON.stringify(normalized), ...access.params])
+      if (matches.some(c => !c.visible)) throw NextResponse.json({error:'La importación incluye contactos fuera de tu alcance. No se guardaron cambios.'},{status:403})
+      const byInput = new Map<string, typeof matches[number]>()
+      for (const match of matches) {
+        if (byInput.has(match.input_key)) throw NextResponse.json({error:'Un teléfono y usuario coincide con varias cuentas. Elegí el agente para asignar la línea; no se guardaron cambios.'},{status:409})
+        byInput.set(match.input_key, match)
+      }
+      const accounts = new Map<string, typeof normalized[number]>()
+      for (const input of normalized) {
+        const match = byInput.get(input.identity_key)
+        const account = match ? { ...input, identity_key: match.identity_key,
+          panel: match.panel, casino_username: match.account_username ?? input.casino_username } : input
+        accounts.set(account.identity_key, account)
+      }
+      normalized = [...accounts.values()]
+      skipped = Math.max(0, contacts.length - normalized.length - invalidCount)
+    }
+    if (!canAssignPanels(auth.user, normalized.map(c => c.panel))) {
+      throw NextResponse.json({error:'Elegí un agente dentro de tu alcance para los contactos nuevos. No se guardaron cambios.'},{status:403})
+    }
     // Reject the whole chunk before modifying any row. Lock existing contacts
     // so a concurrent panel change cannot evade the conflict predicate.
     const preflight = contactScope(auth.user, 1)
@@ -101,6 +135,7 @@ export async function POST(req: NextRequest) {
         ON contact_agent_key(a->>'panel')=i.panel AND lower(trim(a->>'username'))=i.casino_username
       WHERE c.identity_key LIKE 'legacy:%' LIMIT 1`,[JSON.stringify(normalized)])
     if (ambiguous.rows.length) throw NextResponse.json({error:'Hay una cuenta histórica vinculada a más de un teléfono. Revisala en Contactos antes de importar; no se guardaron cambios.'},{status:409})
+    const updateExisting = resolvedMode !== 'skip' || lineaValue !== null
     const scope = contactScope(auth.user, 3)
     const { rows: [row] } = await client.query<{inserted:string;updated:string;ids:string[];created_ids:string[]}>(`
       WITH input AS (
@@ -113,33 +148,36 @@ export async function POST(req: NextRequest) {
           CASE WHEN panel IS NULL THEN '{}'::text[] ELSE ARRAY[panel] END,
           CASE WHEN casino_username IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(jsonb_build_object('panel',panel,'username',casino_username)) END,
           casino_username,identity_key,$2,$3,'active',true,true,'import' FROM input
-        ON CONFLICT(identity_key) DO ${resolvedMode==='skip' ? 'NOTHING' : `UPDATE SET
+        ON CONFLICT(identity_key) DO ${!updateExisting ? 'NOTHING' : `UPDATE SET
           ${resolvedMode==='update' ? 'phone_number=EXCLUDED.phone_number,first_name=COALESCE(EXCLUDED.first_name,contacts.first_name),segment=COALESCE(EXCLUDED.segment,contacts.segment),' : ''}
-          linea=COALESCE(EXCLUDED.linea,contacts.linea),linea_sub=COALESCE(EXCLUDED.linea_sub,contacts.linea_sub),updated_at=NOW()
+          linea=COALESCE(EXCLUDED.linea,contacts.linea),
+          linea_sub=CASE WHEN EXCLUDED.linea IS NOT NULL THEN EXCLUDED.linea_sub ELSE contacts.linea_sub END,
+          updated_at=NOW()
           WHERE ${scope.sql}`}
         RETURNING id,xmax::text
       ) SELECT count(*) FILTER(WHERE xmax='0') AS inserted,count(*) FILTER(WHERE xmax<>'0') AS updated,
         COALESCE(array_agg(id),'{}'::uuid[]) AS ids,
         COALESCE(array_agg(id) FILTER(WHERE xmax='0'),'{}'::uuid[]) AS created_ids FROM upserted`,
-      [JSON.stringify(normalized),lineaValue,lineaSubValue,...(resolvedMode==='skip'?[]:scope.params)])
+      [JSON.stringify(normalized),lineaValue,lineaSubValue,...(updateExisting?scope.params:[])])
 
     const inserted = Number(row?.inserted || 0)
     const updated  = Number(row?.updated  || 0)
 
-    if (resolvedMode !== 'skip' && inserted + updated !== normalized.length) {
+    if (updateExisting && inserted + updated !== normalized.length) {
       throw NextResponse.json({error: 'Cambió el acceso durante la importación. No se guardaron cambios.'}, {status: 403})
     }
     await grantCreatedContacts(client, auth.user, row.created_ids)
-    // Only the rows actually inserted/updated are reclassified; skip mode leaves
-    // existing contacts untouched. Use exactly the same account links and rules as the CLI.
-    if (row.ids.length) {
-      await prepareSegmentation(client, { contactIds: row.ids })
+    // Preserving existing data also preserves its segmentation. A selected line
+    // still moves the account; new accounts always receive their initial classification.
+    const segmentationIds = resolvedMode === 'update' ? row.ids : row.created_ids
+    if (segmentationIds.length) {
+      await prepareSegmentation(client, { contactIds: segmentationIds })
       await applySegmentation(client, { updatePlayers: false, preserveActivityPlatforms: activityPreservationPlatforms() })
     }
     await client.query('COMMIT')
 
     void audit({ req, action: 'import', resource: 'contacts',
-      metadata: { inserted, updated, skipped: skipped + invalidCount, invalid: invalidCount, total: contacts.length } })
+      metadata: { inserted, updated, skipped: skipped + invalidCount, invalid: invalidCount, total: contacts.length, linea: lineaValue, linea_sub: lineaSubValue } })
     return NextResponse.json({ inserted, updated, skipped: skipped + invalidCount, invalid: invalidCount, total: contacts.length })
   } catch (e) {
     await client.query('ROLLBACK')
