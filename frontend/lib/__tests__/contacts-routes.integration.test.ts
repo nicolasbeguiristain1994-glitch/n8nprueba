@@ -163,6 +163,62 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
     expect((await response.json()).error).toMatch(/Elegí el agente/)
     expect((await c.query('SELECT linea FROM contacts')).rows).toEqual([{linea:4},{linea:4}])
   })
+  const legacyAccount = async (phone: string, accounts: object[], name = 'Historical name') => {
+    const {rows:[row]}=await c.query(`INSERT INTO contacts(phone_number,first_name,panel,casino_accounts,identity_key,linea,linea_sub,segment)
+      VALUES($1,$2,'royal',$3::jsonb,'legacy:'||gen_random_uuid()::text,4,'c','medio') RETURNING id,identity_key`,[phone,name,JSON.stringify(accounts)])
+    return row
+  }
+  it.each(['update','panels_only','skip'])('assigns a historical account by exact phone in %s mode without duplicating it for two agents',async conflict_mode=>{
+    const accounts=[{panel:'royal',username:'shareduser'},{panel:'royal',username:'shareduser',platform:'zeus'},{panel:'lasvegas',username:'shareduser'}]
+    const chosen=await legacyAccount('+5491111111111',accounts)
+    const other=await legacyAccount('+5491111111112',accounts)
+    for(let attempt=0;attempt<2;attempt++) {
+      const response=await importContacts(request({panels:['royal','lasvegas'],linea:2,conflict_mode,contacts:[{phone:'+5491111111111',name:'shareduser'}]}))
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({inserted:0,updated:1})
+    }
+    expect((await c.query('SELECT id,identity_key,phone_number,linea,linea_sub,casino_accounts FROM contacts WHERE id=$1',[chosen.id])).rows[0])
+      .toEqual({...chosen,phone_number:'+5491111111111',linea:2,linea_sub:null,casino_accounts:accounts})
+    expect((await c.query('SELECT phone_number,linea,linea_sub,first_name FROM contacts WHERE id=$1',[other.id])).rows[0])
+      .toEqual({phone_number:'+5491111111112',linea:4,linea_sub:'c',first_name:'Historical name'})
+    expect((await c.query('SELECT count(*) FROM contacts')).rows[0].count).toBe('2')
+  })
+  it('uses a historical account alias when assigning only a line',async()=>{
+    const original=await legacyAccount('+5491111111111',[{panel:'royal',username:'realuser'}],'Old combined display name')
+    const response=await importContacts(request({linea:2,conflict_mode:'skip',contacts:[{phone:'+5491111111111',name:'realuser'}]}))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({inserted:0,updated:1})
+    expect((await c.query('SELECT id,linea,first_name FROM contacts')).rows).toEqual([{id:original.id,linea:2,first_name:'Old combined display name'}])
+  })
+  it('keeps an exact modern account usable when another phone has a historical alias',async()=>{
+    await importContacts(request({panel:'royal',linea:4,contacts:[{phone:'+5491111111111',name:'shareduser'}]}))
+    const legacy=await legacyAccount('+5491111111112',[{panel:'royal',username:'shareduser'}])
+    const response=await importContacts(request({panel:'royal',linea:2,contacts:[{phone:'+5491111111111',name:'shareduser'}]}))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({inserted:0,updated:1})
+    expect((await c.query('SELECT linea FROM contacts WHERE id=$1',[legacy.id])).rows[0].linea).toBe(4)
+    expect((await c.query('SELECT linea FROM contacts WHERE account_username=$1',['shareduser'])).rows[0].linea).toBe(2)
+  })
+  it.each(['missing-phone','duplicate-phone','no-line'])('rolls back a genuinely ambiguous historical import: %s',async scenario=>{
+    const accounts=[{panel:'royal',username:'shareduser'}]
+    await legacyAccount('+5491111111111',accounts)
+    if(scenario==='duplicate-phone') await legacyAccount('+5491111111111',accounts)
+    const response=await importContacts(request({panel:'royal',...(scenario==='no-line'?{}:{linea:2}),contacts:[
+      {phone:'+5491111111113',name:'newuser'},
+      {phone:scenario==='missing-phone'?'+5491111111112':'+5491111111111',name:'shareduser'}]}))
+    expect(response.status).toBe(409)
+    expect((await response.json()).error).toContain('shareduser')
+    expect((await c.query("SELECT count(*) FROM contacts WHERE linea<>4 OR first_name<>'Historical name'")).rows[0].count).toBe('0')
+  })
+  it('imports a mix of new, modern and historical accounts in one file',async()=>{
+    await legacyAccount('+5491111111111',[{panel:'royal',username:'legacyuser'}])
+    await importContacts(request({panel:'royal',linea:4,contacts:[{phone:'+5491111111112',name:'modernuser'}]}))
+    const response=await importContacts(request({panel:'royal',linea:2,contacts:[
+      {phone:'+5491111111111',name:'legacyuser'},{phone:'+5491111111112',name:'modernuser'},{phone:'+5491111111113',name:'newuser'}]}))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({inserted:1,updated:2})
+    expect((await c.query('SELECT linea FROM contacts')).rows).toEqual([{linea:2},{linea:2},{linea:2}])
+  })
   it.each([1.5,101,-1,'invalid'])('rejects invalid line %s before importing',async linea=>{
     const response=await importContacts(request({panel:'royal',linea,contacts:[{phone:'+5491111111111',name:'account1'}]}))
     expect(response.status).toBe(400)

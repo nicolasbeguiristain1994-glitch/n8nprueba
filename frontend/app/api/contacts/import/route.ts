@@ -101,7 +101,9 @@ export async function POST(req: NextRequest) {
           AS i(phone text,casino_username text,identity_key text)
           ON c.phone_number=i.phone AND (i.casino_username IS NULL
             OR c.account_username=i.casino_username
-            OR (c.account_username IS NULL AND lower(trim(c.first_name))=i.casino_username))
+            OR (c.account_username IS NULL AND lower(trim(c.first_name))=i.casino_username)
+            OR (c.identity_key LIKE 'legacy:%' AND EXISTS (SELECT 1 FROM jsonb_array_elements(c.casino_accounts) a
+              WHERE lower(trim(a->>'username'))=i.casino_username)))
         WHERE c.deleted_at IS NULL FOR UPDATE OF c`, [JSON.stringify(normalized), ...access.params])
       if (matches.some(c => !c.visible)) throw NextResponse.json({error:'La importación incluye contactos fuera de tu alcance. No se guardaron cambios.'},{status:403})
       const byInput = new Map<string, typeof matches[number]>()
@@ -119,6 +121,52 @@ export async function POST(req: NextRequest) {
       normalized = [...accounts.values()]
       skipped = Math.max(0, contacts.length - normalized.length - invalidCount)
     }
+    // Historical records can retain several account aliases. The file's exact
+    // phone disambiguates which record receives the line without merging phones.
+    const legacyScope = contactScope(auth.user, 1, 'c')
+    const { rows: candidates } = await client.query<{
+      input_key: string; identity_key: string; phone_number: string;
+      panel: string | null; account_username: string | null; visible: boolean
+    }>(`WITH input AS MATERIALIZED (
+        SELECT * FROM jsonb_to_recordset($1::jsonb) AS i(panel text,casino_username text,identity_key text)
+      ), matches AS (
+        SELECT i.identity_key AS input_key,c.id FROM contacts c JOIN input i ON c.identity_key=i.identity_key
+        UNION
+        SELECT i.identity_key,c.id FROM contacts c
+        CROSS JOIN LATERAL jsonb_array_elements(c.casino_accounts) a
+        JOIN input i ON contact_agent_key(a->>'panel')=i.panel AND lower(trim(a->>'username'))=i.casino_username
+        WHERE c.identity_key LIKE 'legacy:%'
+      ) SELECT m.input_key,c.identity_key,c.phone_number,c.panel,c.account_username,
+        (${legacyScope.sql}) AS visible
+      FROM matches m JOIN contacts c ON c.id=m.id
+      FOR UPDATE OF c`, [JSON.stringify(normalized), ...legacyScope.params])
+    const candidatesByInput = new Map<string, typeof candidates>()
+    for (const candidate of candidates) {
+      const group = candidatesByInput.get(candidate.input_key) ?? []
+      group.push(candidate); candidatesByInput.set(candidate.input_key, group)
+    }
+    const resolvedAccounts = new Map<string, typeof normalized[number]>()
+    for (const input of normalized) {
+      const group = candidatesByInput.get(input.identity_key) ?? []
+      let account = input
+      if (group.some(c => c.identity_key.startsWith('legacy:'))) {
+        const exact = group.filter(c => c.phone_number === input.phone)
+        if (lineaValue === null || exact.length !== 1) {
+          throw NextResponse.json({error:`No se pudo identificar una sola cuenta histórica para ${input.casino_username ?? input.phone}. Revisá el agente y el teléfono de esa fila; no se guardaron cambios.`},{status:409})
+        }
+        const match = exact[0]
+        if (!match.visible) throw NextResponse.json({error:'La importación incluye contactos fuera de tu alcance. No se guardaron cambios.'},{status:403})
+        account = { ...input, identity_key: match.identity_key, panel: match.panel,
+          casino_username: match.account_username ?? input.casino_username }
+      }
+      const previous = resolvedAccounts.get(account.identity_key)
+      if (previous && previous.phone !== account.phone) {
+        throw NextResponse.json({error:'Una misma cuenta tiene teléfonos distintos en el archivo. Revisá esas filas.'},{status:409})
+      }
+      resolvedAccounts.set(account.identity_key, account)
+    }
+    normalized = [...resolvedAccounts.values()]
+    skipped = Math.max(0, contacts.length - normalized.length - invalidCount)
     if (!canAssignPanels(auth.user, normalized.map(c => c.panel))) {
       throw NextResponse.json({error:'Elegí un agente dentro de tu alcance para los contactos nuevos. No se guardaron cambios.'},{status:403})
     }
@@ -128,13 +176,6 @@ export async function POST(req: NextRequest) {
     const existing = await client.query<{id: string; visible: boolean}>(`SELECT id, (${preflight.sql}) AS visible
       FROM contacts WHERE identity_key=ANY($1::text[]) FOR UPDATE`, [normalized.map(c => c.identity_key), ...preflight.params])
     if (existing.rows.some(c => !c.visible)) throw NextResponse.json({error: 'La importación incluye contactos fuera de tu alcance. No se guardaron cambios.'}, {status: 403})
-    // Pre-migration ambiguous identities remain explicit review cases.
-    const ambiguous = await client.query(`SELECT 1 FROM contacts c
-      CROSS JOIN LATERAL jsonb_array_elements(c.casino_accounts) a
-      JOIN jsonb_to_recordset($1::jsonb) i(panel text,casino_username text)
-        ON contact_agent_key(a->>'panel')=i.panel AND lower(trim(a->>'username'))=i.casino_username
-      WHERE c.identity_key LIKE 'legacy:%' LIMIT 1`,[JSON.stringify(normalized)])
-    if (ambiguous.rows.length) throw NextResponse.json({error:'Hay una cuenta histórica vinculada a más de un teléfono. Revisala en Contactos antes de importar; no se guardaron cambios.'},{status:409})
     const updateExisting = resolvedMode !== 'skip' || lineaValue !== null
     const scope = contactScope(auth.user, 3)
     const { rows: [row] } = await client.query<{inserted:string;updated:string;ids:string[];created_ids:string[]}>(`
