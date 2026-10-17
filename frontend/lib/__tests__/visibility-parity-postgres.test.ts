@@ -148,6 +148,20 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
     expect(result.status).toBe(403)
     expect((await db.query('SELECT count(*) FROM contacts')).rows[0].count).toBe('3')
   })
+  it('resolves an existing line assignment without an agent while preserving operator visibility',async()=>{
+    const response=await importContacts(req('contacts/import',{linea:1,conflict_mode:'skip',contacts:[{phone:'+'+phone(1),name:'visible'}]}))
+    expect(response.status).toBe(200)
+    expect((await db.query('SELECT linea,panel FROM contacts WHERE id=$1',[id(1)])).rows[0]).toEqual({linea:1,panel:'royal'})
+    expect((await db.query('SELECT count(*) FROM contacts')).rows[0].count).toBe('3')
+  })
+  it.each(['agent','explicit'])('rejects a hidden %s account in a line-only file atomically',async restriction=>{
+    if(restriction==='explicit') await db.query('INSERT INTO operator_contact_visibility VALUES($1,$2,$1)',[id(900),id(1)])
+    const n=restriction==='agent'?2:3
+    const response=await importContacts(req('contacts/import',{linea:1,conflict_mode:'skip',contacts:[
+      {phone:'+'+phone(1),name:'visible'},{phone:'+'+phone(n),name:restriction==='agent'?'hidden':'second'}]}))
+    expect(response.status).toBe(403)
+    expect((await db.query('SELECT count(*) FROM contacts WHERE linea IS NOT NULL')).rows[0].count).toBe('0')
+  })
   it('allows an independent Royal account on the phone of a hidden Farabet contact without altering it',async()=>{
     const result=await imported(2,{contacts:[{phone:'+'+phone(2),name:'royal-user'}]})
     expect(result.status).toBe(200)

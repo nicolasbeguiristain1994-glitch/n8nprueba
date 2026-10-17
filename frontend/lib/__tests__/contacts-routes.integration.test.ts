@@ -110,6 +110,64 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
     expect((await c.query('SELECT panel,phone_number FROM contacts ORDER BY panel')).rows).toEqual([
       {panel:'bigwin',phone_number:'+5491111111111'},{panel:'royal',phone_number:'+5491111111112'}])
   })
+  it.each(['update','panels_only','skip'])('moves existing accounts from lines 2, 3 and 4 into line 1 in %s mode', async conflict_mode => {
+    await c.query(`INSERT INTO contacts(phone_number,first_name,panel,account_username,identity_key,linea,linea_sub,segment)
+      SELECT '+549111111110'||n,'Original '||n,'royal','account'||n,
+        jsonb_build_array('royal'::text,'account'||n)::text,n,'b','medio'::contact_segment
+      FROM generate_series(2,4) n`)
+    await c.query(`INSERT INTO contacts(phone_number,first_name,panel,account_username,identity_key,linea,linea_sub)
+      VALUES('+5491111111102','Other agent','bigwin','account2','["bigwin", "account2"]',4,'c')`)
+    const before=(await c.query('SELECT id,identity_key FROM contacts ORDER BY identity_key')).rows
+    const response=await importContacts(request({panel:'royal',linea:1,conflict_mode,
+      contacts:[2,3,4].map(n=>({phone:'+549111111110'+n,name:'Updated '+n,casino_username:'account'+n}))}))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({inserted:0,updated:3})
+    expect((await c.query('SELECT id,identity_key FROM contacts ORDER BY identity_key')).rows).toEqual(before)
+    const royal=(await c.query("SELECT first_name,linea,linea_sub,segment FROM contacts WHERE panel='royal' ORDER BY account_username")).rows
+    for(const [i,row] of royal.entries()) {
+      expect(row).toMatchObject({linea:1,linea_sub:null,first_name:(conflict_mode==='update'?'Updated ':'Original ')+(i+2)})
+      if(conflict_mode!=='update') expect(row.segment).toBe('medio')
+    }
+    expect((await c.query("SELECT linea,linea_sub FROM contacts WHERE panel='bigwin'")).rows[0]).toEqual({linea:4,linea_sub:'c'})
+  })
+  it('reuses the existing account and agent when only a line is selected, including phone-only rows',async()=>{
+    await importContacts(request({panel:'royal',linea:3,linea_sub:'b',contacts:[{phone:'+5491111111111',name:'account1'}]}))
+    const before=(await c.query('SELECT id,identity_key FROM contacts')).rows[0]
+    for(const contact of [{phone:'+5491111111111',name:'account1'},{phone:'+5491111111111'}]) {
+      const response=await importContacts(request({linea:1,linea_sub:'a',conflict_mode:'skip',contacts:[contact]}))
+      expect(response.status).toBe(200)
+      expect(await response.json()).toMatchObject({inserted:0,updated:1})
+    }
+    expect((await c.query('SELECT id,identity_key,panel,account_username,linea,linea_sub,first_name FROM contacts')).rows)
+      .toEqual([{...before,panel:'royal',account_username:'account1',first_name:'account1',linea:1,linea_sub:'a'}])
+  })
+  it('keeps the previous line and variant when no line is selected',async()=>{
+    await importContacts(request({panel:'royal',linea:4,linea_sub:'c',contacts:[{phone:'+5491111111111',name:'account1'}]}))
+    const response=await importContacts(request({panel:'royal',linea_sub:'a',contacts:[{phone:'+5491111111111',name:'account1'}]}))
+    expect(response.status).toBe(200)
+    expect((await c.query('SELECT linea,linea_sub FROM contacts')).rows).toEqual([{linea:4,linea_sub:'c'}])
+  })
+  it('assigns the selected line to both an existing and a new account in the same file',async()=>{
+    await importContacts(request({panel:'royal',linea:2,contacts:[{phone:'+5491111111111',name:'account1'}]}))
+    const response=await importContacts(request({panel:'royal',linea:1,conflict_mode:'skip',contacts:[
+      {phone:'+5491111111111',name:'account1'},{phone:'+5491111111112',name:'account2'}]}))
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({inserted:1,updated:1})
+    expect((await c.query('SELECT linea FROM contacts')).rows).toEqual([{linea:1},{linea:1}])
+  })
+  it('requires an agent for an ambiguous line assignment and rolls back the entire chunk',async()=>{
+    for(const panel of ['royal','bigwin']) await importContacts(request({panel,linea:4,contacts:[{phone:'+5491111111111',name:'sameuser'}]}))
+    const response=await importContacts(request({linea:1,contacts:[
+      {phone:'+5491111111112',name:'newuser'},{phone:'+5491111111111',name:'sameuser'}]}))
+    expect(response.status).toBe(409)
+    expect((await response.json()).error).toMatch(/Elegí el agente/)
+    expect((await c.query('SELECT linea FROM contacts')).rows).toEqual([{linea:4},{linea:4}])
+  })
+  it.each([1.5,101,-1,'invalid'])('rejects invalid line %s before importing',async linea=>{
+    const response=await importContacts(request({panel:'royal',linea,contacts:[{phone:'+5491111111111',name:'account1'}]}))
+    expect(response.status).toBe(400)
+    expect((await c.query('SELECT count(*) FROM contacts')).rows[0].count).toBe('0')
+  })
   it('rolls back imported contacts when segmentation fails',async()=>{
     await transaction('realaccount','zeus',500000)
     await c.query("ALTER TABLE contact_tags ADD CONSTRAINT reject_tag CHECK(tag='manual')")
