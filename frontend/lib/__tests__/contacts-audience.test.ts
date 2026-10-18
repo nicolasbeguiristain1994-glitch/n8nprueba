@@ -26,7 +26,7 @@ describe('Contact audience parity', () => {
     expect(selected[1]).toEqual(count[1])
     expect(downloaded[1].slice(0,-2)).toEqual(count[1])
     expect(downloadCount[1]).toEqual(count[1])
-    expect(selected[1]).toContainEqual(['1','2'])
+    expect(selected[1]).toContainEqual([1,2])
     expect(selected[0]).toContain('contact_list_members')
     expect(selected[1]).toContain('prioridad')
     expect(selected[0]).not.toContain('last_activity_at')
@@ -47,14 +47,14 @@ describe('Contact audience parity', () => {
     expect(f.params).toEqual([['vip','medio','super_vip'],['inactivo','perdido']])
   })
   it.each([
-    ['linea=1', ['1']],
-    ['linea=1,2', ['1','2']],
-    ['linea=1&linea=2', ['1','2']],
-    ['linea=1,%202&linea=2,,3&linea=', ['1','2','3']],
+    ['linea=1', [1]],
+    ['linea=1,2', [1,2]],
+    ['linea=1&linea=2', [1,2]],
+    ['linea=1,%202&linea=2,,3&linea=', [1,2,3]],
   ])('accepts single, CSV and repeated line filters: %s', (query, expected) => {
     const f = contactFilters(new URLSearchParams(query), {role:'admin',user_id:'a'})
     expect(f.params).toEqual([expected])
-    expect(f.sql).toContain('contacts.linea::text = ANY($1::text[])')
+    expect(f.sql).toContain('contacts.linea = ANY($1::int[])')
   })
   it('treats empty lines as unrestricted and ignores a retired variant from an old URL', () => {
     const f = contactFilters(new URLSearchParams('linea=, &linea=&linea_sub=%20A%20'), {role:'admin',user_id:'a'})
@@ -62,13 +62,18 @@ describe('Contact audience parity', () => {
     expect(f.sql).not.toContain('contacts.linea::text')
     expect(f.sql).not.toContain('linea_sub')
   })
-  it('binds every line value without interpolating SQL', () => {
+  it('keeps invalid line selections empty without broadening access or interpolating SQL', () => {
     const value = "1') OR TRUE --"
     const f = contactFilters(new URLSearchParams({linea:value}), {role:'operator',user_id:'operator-1',allowed_agents:['royal']})
-    expect(f.params[0]).toEqual([value])
+    expect(f.params[0]).toEqual([])
+    expect(f.sql).toContain('contacts.linea = ANY($1::int[])')
     expect(f.sql).not.toContain(value)
     expect(f.sql).toContain('operator_contact_visibility')
     expect(f.params.slice(-2)).toEqual(['operator-1',['royal']])
+  })
+  it('preserves valid line matches when mixed with unknown or noncanonical values', () => {
+    const f=contactFilters(new URLSearchParams('linea=01,1,100,101,-1,2147483648,nope'),{role:'admin',user_id:'a'})
+    expect(f.params).toEqual([[1,100]])
   })
   it('rejects invalid list IDs rather than broadening the audience',async()=>{
     expect((await GET(new NextRequest('http://localhost/api/contacts?select_all=true&list_id=invalid'))).status).toBe(400)

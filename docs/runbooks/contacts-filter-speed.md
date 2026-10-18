@@ -39,3 +39,33 @@ expansion uses `unnest` to avoid inflated row estimates from set-returning funct
 No schema migration or data rewrite is required by this optimization. Roll back
 the application to the preceding release **compatible with contact schema v2**;
 never roll back to the pre-transition data model.
+
+## Scoped searches and table rendering (2026-10-18)
+
+Last-movement lookups now fetch the latest date for each linked account with a
+lateral lookup. Date bounds are applied afterward, preserving future-date and
+cross-platform inactivity rules. Audiences up to 5,000 contacts use these scoped
+reads; larger ones keep the existing bulk aggregation. The threshold probe is
+capped, and account identity/visibility rules are unchanged.
+
+Line filters bind integer values instead of casting `contacts.linea` to text,
+allowing the existing line index to participate. Noncanonical and unknown line
+values remain non-matches; an entirely invalid selection never becomes an
+unrestricted audience.
+
+The line editor only mounts its selected option while idle. Pointer activation,
+keyboard input and focus synchronously mount all options before opening the
+native select; blur collapses it again. A 50-row page (desktop and mobile trees)
+therefore starts with 200 line options instead of 10,100, while retaining native
+keyboard editing and the same first-click interaction.
+
+Read-only production measurements from the same client reduced the combined
+agent/lines/level/inactivity request from 11,439 ms to 5,728 ms, with identical
+response hashes and exact totals. This includes remote connection overhead and
+is not a browser latency guarantee; cache state and concurrent database activity
+affect individual runs. Name search retains its existing trigram indexes and
+matching semantics, and benefits from the lighter table rendering.
+
+Regression checks cover first pointer/keyboard interaction, preserving a chosen
+line, a full 50-row page while searching, typed line filters, identical movement
+results in both query modes, and selection across pages into campaign creation.

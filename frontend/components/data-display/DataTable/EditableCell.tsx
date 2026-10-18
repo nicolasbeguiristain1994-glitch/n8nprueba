@@ -18,6 +18,8 @@
  */
 
 import { cn } from '@/lib/utils'
+import { useState } from 'react'
+import { flushSync } from 'react-dom'
 
 export interface EditableCellOption {
   value: string
@@ -37,6 +39,8 @@ export interface EditableCellProps {
   onChange: (value: string) => void
   className?: string
   ariaLabel?: string
+  /** Mount large option sets only while the native select is being used. */
+  lazyOptions?: boolean
 }
 
 export function EditableCell({
@@ -47,24 +51,35 @@ export function EditableCell({
   onChange,
   className,
   ariaLabel,
+  lazyOptions = false,
 }: EditableCellProps) {
+  const [expanded, setExpanded] = useState(false)
+  const visibleOptions = !lazyOptions || expanded ? options : options.filter(option => option.value === value)
+  const expand = () => {
+    // The native menu reads its options during the default pointer/key action.
+    // Commit them first so the first click and keyboard opening both work.
+    if (lazyOptions && !expanded) flushSync(() => setExpanded(true))
+  }
   return (
     <select
       aria-label={ariaLabel ?? placeholder}
       value={value}
       onChange={e => onChange(e.target.value)}
       onClick={e => e.stopPropagation()}
+      onFocus={expand}
+      onPointerDown={expand}
+      onKeyDown={expand}
+      onBlur={() => { if (lazyOptions) setExpanded(false) }}
       className={cn(
         'text-xs px-2 py-0.5 rounded-full font-medium',
         'border-0 cursor-pointer appearance-none bg-transparent',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         value ? activeClass : 'text-muted-foreground',
         className,
-  ariaLabel,
       )}
     >
       <option value="">{placeholder}</option>
-      {options.map(opt => (
+      {visibleOptions.map(opt => (
         <option key={opt.value} value={opt.value}>
           {opt.label}
         </option>

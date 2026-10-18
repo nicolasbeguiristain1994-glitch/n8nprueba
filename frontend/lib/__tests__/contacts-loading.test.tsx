@@ -68,3 +68,23 @@ it('keeps usable results and distinguishes failed history from missing history',
   expect(screen.queryByText('Sin movimientos registrados')).not.toBeInTheDocument()
   expect(screen.queryByText('Sin difusión')).not.toBeInTheDocument()
 })
+
+it('renders a full page without thousands of unused line options and keeps search usable', async () => {
+  vi.useFakeTimers()
+  const rows=Array.from({length:50},(_,i)=>({id:`contact-${i}`,first_name:`Cuenta ${i}`,phone_number:`+5491111${String(i).padStart(6,'0')}`,linea:8}))
+  vi.mocked(fetchJson).mockImplementation(async input => {
+    const url=String(input)
+    if(url.startsWith('/api/contacts/history?')) return new Promise(()=>{})
+    if(url.startsWith('/api/contacts?')) return {contacts:url.includes('q=Cuenta+49')?[rows[49]]:rows,total:url.includes('q=Cuenta+49')?1:50}
+    return {lists:[]}
+  })
+  const {container}=render(<Contacts />)
+  await act(async()=>{})
+  const editors=container.querySelectorAll('select[aria-label^="Editar Línea"]')
+  expect(editors.length).toBeGreaterThanOrEqual(50)
+  expect(Array.from(editors).reduce((count,editor)=>count+editor.querySelectorAll('option').length,0)).toBeLessThanOrEqual(200)
+  fireEvent.change(screen.getByRole('textbox',{name:'Buscar contactos'}),{target:{value:'Cuenta 49'}})
+  await act(async()=>{await vi.advanceTimersByTimeAsync(250)})
+  expect(screen.getAllByText('Cuenta 49').length).toBeGreaterThan(0)
+  expect(screen.queryByText('Cuenta 0')).not.toBeInTheDocument()
+})
