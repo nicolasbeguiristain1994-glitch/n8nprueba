@@ -1,10 +1,11 @@
 'use client'
 import { useState } from 'react'
 import { useCurrentUser } from '@/lib/useCurrentUser'
-import { Crown, Clock, UserCheck, CheckCircle2, Ban, ShieldOff, Loader2, Check } from 'lucide-react'
+import { Crown, Clock, UserCheck, CheckCircle2, Ban, Loader2, Check } from 'lucide-react'
+import { RemoveFromBlacklistButton } from './RemoveFromBlacklistButton'
 import type { Conv } from '@/lib/scoring/conversation-scoring'
 
-type ActionKey = 'vip' | 'process' | 'resolve' | 'schedule' | 'blacklist' | 'unblacklist'
+type ActionKey = 'vip' | 'process' | 'resolve' | 'schedule' | 'blacklist'
 
 function ActionButton({
   label, icon, onClick, loading, done, disabled,
@@ -94,7 +95,6 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
     })
   }
 
-  const removeFromBlacklist = () => window.location.assign('/blacklist')
 
   const inProcess      = conv?.conv_flow === 'en_proceso'
   const isBlacklisted  = conv?.is_blacklisted === true
@@ -163,12 +163,7 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
         )}
 
         {isBlacklisted ? (
-          <ActionButton
-            label="Remover de blacklist"
-            icon={<ShieldOff size={13} className="text-muted-foreground shrink-0" />}
-            onClick={removeFromBlacklist}
-            loading={loading === 'unblacklist'} done={done === 'unblacklist'} disabled={!canBlacklist}
-          />
+          <RemoveFromBlacklistButton key={`${phone}:${conv?.agent}`} phone={phone} agent={conv?.agent} onRemoved={onRefresh} className="w-full justify-start text-xs" />
         ) : (
           <ActionButton
             label="Agregar a blacklist"

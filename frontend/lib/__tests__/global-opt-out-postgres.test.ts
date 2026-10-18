@@ -1,12 +1,18 @@
 // @vitest-environment node
 import {beforeAll,afterAll,beforeEach,describe,it,expect,vi} from 'vitest'
 import {Pool} from 'pg'
+import {NextRequest} from 'next/server'
 import {readFileSync} from 'node:fs'
 const m=vi.hoisted(()=>({query:vi.fn(),tx:vi.fn(),post:vi.fn(),token:vi.fn(),limit:vi.fn()}))
+vi.mock('@/lib/permissions',()=>({checkPermissionWithUser:vi.fn().mockResolvedValue({ok:true,user:{user_id:'00000000-0000-4000-8000-000000000001',role:'admin'}})}))
+vi.mock('@/lib/conversation-access',()=>({canReadConversation:vi.fn().mockResolvedValue(true),conversationPhone:(phone:string)=>phone.replace(/^\+/, '')}))
+vi.mock('@/lib/sse-events',()=>({emitUpdate:vi.fn()}))
+vi.mock('@/lib/audit',()=>({audit:vi.fn()}))
 vi.mock('@/lib/db',()=>({query:m.query,withTransaction:m.tx}))
 vi.mock('@/lib/cloud-api/token-store',()=>({getTokenForNumber:m.token}))
 vi.mock('@/lib/cloud-api/rate-limiter',()=>({enforceRateLimit:m.limit}))
 vi.mock('@/lib/cloud-api/infrastructure/meta-http.gateway',()=>({MetaHttpGateway:class {post=m.post}}))
+import {PATCH as reinstateFromConversation} from '@/app/api/conversations/[phone]/blacklist/route'
 import {recordGlobalOptOut,reinstateGlobalContact,isGloballyOptedOut,withGlobalSendGuard} from '@/lib/global-opt-out'
 import {resolveConsentIdentity} from '@/lib/consent-context'
 import {sendQueuedWithConsent} from '@/lib/cloud-api/queued-send-guard'
@@ -151,6 +157,22 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
   expect(await isGloballyOptedOut(phone,{agentCode:'royal'})).toBe(true)
   await recordGlobalOptOut(request)
   expect(await isGloballyOptedOut(phone,{agentCode:'bigwin'})).toBe(false)
+ })
+ it('conversation button removes only Royal, records the operator and never revives cancelled work',async()=>{
+  await recordGlobalOptOut(request)
+  await recordGlobalOptOut({...request,sourceId:'line-2',messageId:'baja-2',metadata:{context_wamid:'royal-send'}})
+  const response=await reinstateFromConversation(new NextRequest('http://localhost/api/conversations/'+phone+'/blacklist',{
+   method:'PATCH',body:JSON.stringify({agent_code:'royal',consent_confirmed:true,consent_note:'Confirmó por WhatsApp que tocó BAJA por error'})
+  }),{params:Promise.resolve({phone})})
+  expect(response.status).toBe(200)
+  expect(await isGloballyOptedOut(phone,{agentCode:'royal'})).toBe(false)
+  expect(await isGloballyOptedOut(phone,{agentCode:'bigwin'})).toBe(true)
+  expect((await pool.query('SELECT agent_code,removed_by FROM blacklist WHERE removed_at IS NOT NULL')).rows).toEqual([{agent_code:'royal',removed_by:id(1)}])
+  expect((await pool.query("SELECT agent_user_id,metadata->>'agent_code' agent FROM cloud_consent_log WHERE event='reinstated'")).rows).toEqual([{agent_user_id:id(1),agent:'royal'}])
+  expect((await pool.query('SELECT DISTINCT status FROM campaign_recipients')).rows).toEqual([{status:'skipped'}])
+  expect((await pool.query('SELECT DISTINCT status FROM automation_message_jobs')).rows).toEqual([{status:'skipped'}])
+  expect((await pool.query("SELECT DISTINCT status FROM cloud_messages WHERE direction='outbound'")).rows).toEqual([{status:'failed'}])
+  expect(m.post).not.toHaveBeenCalled()
  })
  it('cancelled queued work cannot resume after reinstatement; other agent can send',async()=>{
   await recordGlobalOptOut(request)

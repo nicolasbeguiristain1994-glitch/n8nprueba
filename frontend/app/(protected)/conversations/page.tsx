@@ -14,6 +14,7 @@ import { ConversationFilters }    from '@/components/conversations/ConversationF
 import { ConversationHeader }     from '@/components/conversations/ConversationHeader'
 import { MessageBubble }          from '@/components/conversations/MessageBubble'
 import { ConversationSidebar }    from '@/components/conversations/ConversationSidebar'
+import { RemoveFromBlacklistButton } from '@/components/conversations/RemoveFromBlacklistButton'
 import { AssignedLineActions } from '@/components/conversations/AssignedLineActions'
 import { CloudWindowIndicator } from '@/components/conversations/CloudWindowIndicator'
 import { StickerPicker } from '@/components/conversations/StickerPicker'
@@ -162,9 +163,11 @@ export default function Conversations() {
                   </div>
                 )}
 
-                {selectedConv?.is_blacklisted && <p role="status" className="px-3 py-2 text-sm text-destructive">
-                  Blacklist · Los envíos de este agente están bloqueados para este número.
-                </p>}
+                {selectedConv?.is_blacklisted && <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-destructive/20 bg-destructive/5 px-3 py-2">
+                  <p role="status" className="text-sm text-destructive">Blacklist · Los envíos de este agente están bloqueados para este número.</p>
+                  <RemoveFromBlacklistButton key={`${selected}:${selectedConv.agent}`} phone={selected} agent={selectedConv.agent}
+                    onRemoved={() => { setSendError(null); refreshConversations() }} />
+                </div>}
                 {/* Input area */}
                 <div className="border-t border-border p-2 md:p-3 bg-card shrink-0">
                   <AssignedLineActions key={selected} conv={selectedConv} disabled={sending || !!selectedConv?.is_blacklisted} onInsert={text=>{
