@@ -25,12 +25,18 @@ export function contactLastMovementQuery(audience: { sql: string; params: unknow
     WHERE tipo IN ('carga','retiro') AND platform IN ('zeus','bet30','ganamos','argenbet')
     GROUP BY platform,lower(username)
   ),` : ''
+  // For a scoped audience, only one date per linked account is needed. Keep
+  // range bounds outside this lookup: a future/recent movement must still
+  // exclude a contact even when older movements fall inside the chosen range.
   const latest = bulk ? `SELECT a.contact_id,max(m.last_movement) AS last_movement
     FROM linked_accounts a JOIN movement_accounts m USING(platform,username_lower) GROUP BY a.contact_id`
     : `SELECT a.contact_id,max(t.fecha) AS last_movement
-    FROM linked_accounts a JOIN casino_transactions t
-      ON t.platform=a.platform AND lower(t.username)=a.username_lower
-    WHERE t.tipo IN ('carga','retiro') AND t.platform IN ('zeus','bet30','ganamos','argenbet')
+    FROM linked_accounts a CROSS JOIN LATERAL (
+      SELECT fecha FROM casino_transactions
+      WHERE platform=a.platform AND lower(username)=a.username_lower
+        AND tipo IN ('carga','retiro') AND platform IN ('zeus','bet30','ganamos','argenbet')
+      ORDER BY fecha DESC NULLS LAST LIMIT 1
+    ) t
     GROUP BY a.contact_id`
   return { params, sql: `WITH ${history} recipients AS MATERIALIZED (
     SELECT contacts.id AS contact_id FROM contacts WHERE ${audience.sql}

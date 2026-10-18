@@ -74,6 +74,7 @@ interface ContactList { is_dynamic?: boolean; refreshed_at?: string; id: string;
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas']
+const LINE_OPTIONS = Array.from({ length: 100 }, (_, i) => ({ value: String(i + 1), label: `Línea ${i + 1}` }))
 
 
 const NIVEL_LABEL: Record<string, string> = {
@@ -1150,7 +1151,8 @@ export default function Contacts() {
         <div className="flex items-center gap-0.5">
           <EditableCell
             value={row.original.linea != null ? String(row.original.linea) : ''}
-            options={Array.from({ length: 100 }, (_, i) => ({ value: String(i + 1), label: `Línea ${i + 1}` }))}
+            lazyOptions
+            options={LINE_OPTIONS}
             activeClass="bg-orange-50 text-orange-700"
             placeholder="— sin línea"
             ariaLabel={`Editar Línea de ${row.original.first_name || row.original.phone_number}`}

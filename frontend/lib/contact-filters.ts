@@ -41,7 +41,12 @@ export function contactFilters(sp: URLSearchParams, user: {
   // A selection is the union of its lines, still intersected with every other
   // filter and the user's visibility scope. Single-line URLs keep their meaning.
   const lines = csv('linea')
-  if (lines.length) where.push(`contacts.linea::text = ANY(${bind(lines)}::text[])`)
+  if (lines.length) {
+    // Cast values, not the indexed column. Keep unknown/noncanonical values as
+    // non-matches, including an entirely invalid selection (never unrestricted).
+    const numbers = lines.filter(value => /^(?:[1-9]\d?|100)$/.test(value)).map(Number)
+    where.push(`contacts.linea = ANY(${bind(numbers)}::int[])`)
+  }
   // Retired A/B/C filters from old URLs apply to the whole base line.
   for (const [key, allowed] of [['actividad', ACTIVITY], ['antiguedad', TENURE]] as const) {
     const values = csv(key, allowed)
@@ -88,12 +93,12 @@ export async function resolvedContactFilters(sp: URLSearchParams, user: Paramete
   if (!hasInactivityFilter(range)) return { ...audience, movementHistory, movementMode: range.mode }
   const platform = sp.get('plataforma') || ''
   const rows = await withContactMovementRead(async client => {
-    // A capped probe avoids expanding a huge set of contact tokens into indexed
-    // transaction lookups, while keeping small agent selections fast.
+    // Indexed latest-date lookups stay cheaper for a few thousand contacts.
+    // Only broad audiences should aggregate the entire transaction ledger.
     const sample = range.mode === 'period' ? [] : (await client.query(
-      `SELECT contacts.id FROM contacts WHERE ${audience.sql} LIMIT 501`, audience.params,
+      `SELECT contacts.id FROM contacts WHERE ${audience.sql} LIMIT 5001`, audience.params,
     )).rows
-    const bulk = sample.length > 500
+    const bulk = sample.length > 5000
     // JSON account arrays have no per-field statistics. On broad audiences the
     // planner underestimates username-only links and chooses a quadratic loop.
     if (bulk) await configureBulkMovementRead(client)

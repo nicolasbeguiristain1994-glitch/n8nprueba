@@ -480,16 +480,16 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
     expect(find('missing')).toMatchObject({days_since_last_movement:null,last_movement_date:null})
   })
 
-  it('resolves a broad audience by account batches without treating unknown history as inactivity', async () => {
+  it.each([750, 5001])('preserves exact movement results with %i contacts without history', async unknownCount => {
     await transaction('inactivewide','zeus',100)
     await c.query("UPDATE casino_transactions SET fecha=current_date-20")
     await c.query("INSERT INTO contacts(first_name) VALUES('inactivewide')")
-    await c.query("INSERT INTO contacts(first_name) SELECT 'unknown'||n FROM generate_series(1,501) n")
+    await c.query("INSERT INTO contacts(first_name) SELECT 'unknown'||n FROM generate_series(1,$1::int) n",[unknownCount])
     const range=await (await list(new NextRequest('http://localhost/api/contacts?inactividad_desde=15&inactividad_hasta=60'))).json()
     expect(range.total).toBe(1)
     expect(range.contacts[0]).toMatchObject({first_name:'inactivewide',days_since_last_movement:20})
     const missing=await (await list(new NextRequest('http://localhost/api/contacts?movimiento_modo=sin_historial'))).json()
-    expect(missing.total).toBe(501)
+    expect(missing.total).toBe(unknownCount)
     expect(missing.contacts.every((row:{days_since_last_movement:number|null})=>row.days_since_last_movement===null)).toBe(true)
   })
 
