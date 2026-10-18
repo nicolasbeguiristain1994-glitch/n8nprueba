@@ -9,7 +9,7 @@ afterEach(()=>{cleanup();vi.unstubAllGlobals()})
 describe('assigned line in conversations',()=>{
   it('shows the assignment in both list and header',()=>{
     render(<><ConversationItem conv={conv} isSelected={false} onClick={vi.fn()}/><ConversationHeader conv={conv} phone={conv.phone_number}/></>)
-    expect(screen.getAllByText('Línea 8A')).toHaveLength(2)
+    expect(screen.getAllByText('Línea 8')).toHaveLength(2)
   })
   it('copies only the number and inserts a draft without sending',async()=>{
     const copy=vi.fn().mockResolvedValue(undefined),insert=vi.fn()

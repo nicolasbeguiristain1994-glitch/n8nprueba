@@ -86,7 +86,7 @@ describe.skipIf(!url)('Dynamic audiences on local PostgreSQL',()=>{
   expect(await members(next,l)).toEqual([royal]) // no snapshot: the historical preview is unchanged
   expect((await db.query('SELECT audience_snapshot_at FROM campaigns WHERE id=$1',[next])).rows[0].audience_snapshot_at).toBeNull()
  })
- it('keeps the selected line union and variant in saved audiences and frozen campaign membership', async () => {
+ it('unifies retired variants within the selected line union in saved audiences and frozen campaign membership', async () => {
   const one=await person(500000),two=await person(500000),otherLine=await person(500000),otherVariant=await person(500000),hidden=await person(500000,'farabet'),unassigned=await person(500000)
   await db.query("UPDATE contacts SET linea=2,linea_sub='a'")
   await db.query('UPDATE contacts SET linea=1 WHERE id=$1',[one])
@@ -95,8 +95,9 @@ describe.skipIf(!url)('Dynamic audiences on local PostgreSQL',()=>{
   await db.query("UPDATE users SET role='operator',allowed_agents=ARRAY['royal'] WHERE id=$1",[admin])
   await db.query('INSERT INTO operator_contact_visibility(operator_id,contact_id) SELECT $1,unnest($2::uuid[])',[admin,[one,two,otherLine,otherVariant,hidden]])
   const filters={linea:'1,2,2',linea_sub:'A',segment:'vip'}
-  const expected=[one,two].sort()
+  const expected=[one,two,otherVariant].sort()
   expect(savedAudienceParams(filters).get('linea')).toBe('1,2,2')
+  expect(savedAudienceParams(filters).has('linea_sub')).toBe(false)
   expect(await resolveSavedAudience(filters,{role:'operator',user_id:admin,allowed_agents:['royal']})).toEqual(expected)
   const l=await list(filters),first=await campaign(l)
   await ensureCampaignAudienceSnapshot(first,l)
@@ -107,7 +108,7 @@ describe.skipIf(!url)('Dynamic audiences on local PostgreSQL',()=>{
   expect(await members(first,l)).toEqual(expected)
   const next=await campaign(l)
   await ensureCampaignAudienceSnapshot(next,l)
-  expect(await members(next,l)).toEqual([one])
+  expect(await members(next,l)).toEqual([one,otherVariant].sort())
   expect(await members(first,l)).toEqual(expected)
  })
  it('saves inactivity criteria and freezes the same global audience, including missing-history mode',async()=>{

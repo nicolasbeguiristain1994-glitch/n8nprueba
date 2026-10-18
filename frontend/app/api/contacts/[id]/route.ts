@@ -49,7 +49,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const nextLine = linea !== undefined ? bind(linea) + '::smallint' : 'linea'
     if (linea !== undefined) { sets.push(`linea=${nextLine}`); changedFields.push('linea') }
     if (linea !== undefined || linea_sub !== undefined) {
-      sets.push(`linea_sub=CASE WHEN ${nextLine} IS NULL THEN NULL ELSE ${linea_sub !== undefined ? bind(linea_sub) : 'linea_sub'} END`)
+      sets.push('linea_sub=NULL')
       if (linea_sub !== undefined) changedFields.push('linea_sub')
     }
     const scope = contactScope(user, values.length)

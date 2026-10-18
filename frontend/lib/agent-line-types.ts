@@ -5,8 +5,8 @@ export type AgentLine = {
 }
 export type AgentDirectoryEntry = { code: string; name: string; delivery_mode?: AgentDeliveryMode; lines: AgentLine[] }
 export type AssignedContactLine = Pick<AgentLine, 'label' | 'phone' | 'link_url'> & { delivery_mode?: AgentDeliveryMode }
-export function contactLineLabel(linea?: number | null, variant?: string | null): string {
-  return linea == null ? 'Sin línea' : `Línea ${linea}${(variant || '').trim().toUpperCase()}`
+export function contactLineLabel(linea?: number | null, _legacyVariant?: string | null): string {
+  return linea == null ? 'Sin línea' : `Línea ${linea}`
 }
 export function formatAgentLinePhone(phone?: string | null): string {
   const digits = (phone || '').replace(/^\+/, '')

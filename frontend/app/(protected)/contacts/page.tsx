@@ -75,8 +75,6 @@ interface ContactList { is_dynamic?: boolean; refreshed_at?: string; id: string;
 
 const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas']
 
-// Sub-variantes de línea: permiten diferenciar una misma línea (ej. "Línea 9 a")
-const LINEA_SUB_OPTIONS = [{ v: 'a', l: 'a' }, { v: 'b', l: 'b' }, { v: 'c', l: 'c' }]
 
 const NIVEL_LABEL: Record<string, string> = {
   bajo: 'Bajo', medio: 'Medio', vip: 'Vip Bajo',
@@ -215,7 +213,6 @@ export default function Contacts() {
   const [filterGaming, setFilterGaming]       = useState('')
   const [filterPanel, setFilterPanel]         = useState('')
   const [filterLinea, setFilterLinea]         = useState<string[]>([])
-  const [filterLineaSub, setFilterLineaSub]   = useState('')
   const [inactivity, setInactivity] = useState<InactivityRange>(EMPTY_INACTIVITY)
   const [filterActividad, setFilterActividad]   = useState<string[]>([])
   const [actividadOpen, setActividadOpen]       = useState(false)
@@ -241,7 +238,7 @@ export default function Contacts() {
   // ── Listas ────────────────────────────────────────────────────────────────
   const [lists, setLists]             = useState<ContactList[]>([])
   const [filterList, setFilterList]   = useState('')
-  const hasActiveFilters = !!(search || segments.length > 0 || filterGaming || filterPanel || filterLinea.length > 0 || filterLineaSub ||
+  const hasActiveFilters = !!(search || segments.length > 0 || filterGaming || filterPanel || filterLinea.length > 0 ||
     broadcast.mode || filterRecent || filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag || filterList || hasInactivityFilter(inactivity))
 
   const [showListsMenu, setShowListsMenu] = useState(false)
@@ -254,7 +251,6 @@ export default function Contacts() {
   const [importPanel, setImportPanel]   = useState('')
   const [importPanel2, setImportPanel2] = useState('')
   const [importLinea, setImportLinea]   = useState('')
-  const [importLineaSub, setImportLineaSub] = useState('')
   const [importing, setImporting]       = useState(false)
   const [importProgress, setImportProgress] = useState(0)
   const [importResult, setImportResult] = useState<{ inserted: number; updated: number; skipped: number } | null>(null)
@@ -272,7 +268,6 @@ export default function Contacts() {
   const [newGaming, setNewGaming]   = useState('')
   const [newSegment, setNewSegment] = useState('')
   const [newLinea, setNewLinea]     = useState('')
-  const [newLineaSub, setNewLineaSub] = useState('')
   const [addError, setAddError]     = useState('')
   const [addSaving, setAddSaving]   = useState(false)
 
@@ -327,7 +322,6 @@ export default function Contacts() {
   const [editLastName, setEditLastName]   = useState('')
   const [editPanel, setEditPanel]         = useState('')
   const [editLinea, setEditLinea]         = useState('')
-  const [editLineaSub, setEditLineaSub]   = useState('')
   const [editSegment, setEditSegment]     = useState('')
   const [editGaming, setEditGaming]       = useState('')
   const [editSaving, setEditSaving]       = useState(false)
@@ -398,10 +392,10 @@ export default function Contacts() {
   const buildContactParams = useCallback(() => new URLSearchParams({
     q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
     linea: filterLinea.join(','), actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
-    linea_sub: filterLineaSub, list_id: filterList, plataforma: filterPlataforma,
+    list_id: filterList, plataforma: filterPlataforma,
     sin_movimiento: String(filterSinMovimiento), tag: filterTag, depositos_recientes: filterRecent, ...inactivityParams(inactivity), ...broadcastParams(broadcast),
   }), [search, segments, filterGaming, filterPanel, filterLinea, filterActividad,
-    filterAntiguedad, filterLineaSub, filterList, filterPlataforma, filterSinMovimiento, filterTag, inactivity, filterRecent, broadcast])
+    filterAntiguedad, filterList, filterPlataforma, filterSinMovimiento, filterTag, inactivity, filterRecent, broadcast])
 
   const audienceKey = buildContactParams().toString()
   const activeAudience = useRef(audienceKey)
@@ -565,11 +559,11 @@ export default function Contacts() {
 
   // Resetear página al cambiar filtros
   const resetPage = useCallback(() => setPagination(p => ({ ...p, pageIndex: 0 })), [])
-  const viewState: ContactViewState = {broadcast,quality:'',recent:filterRecent,search,segments,gaming:filterGaming,panel:filterPanel,linea:filterLinea,lineaSub:filterLineaSub,inactivity,actividad:filterActividad,antiguedad:filterAntiguedad,plataforma:filterPlataforma,sinMovimiento:filterSinMovimiento,tag:filterTag,list:filterList,columns:contactColumns}
+  const viewState: ContactViewState = {broadcast,quality:'',recent:filterRecent,search,segments,gaming:filterGaming,panel:filterPanel,linea:filterLinea,lineaSub:'',inactivity,actividad:filterActividad,antiguedad:filterAntiguedad,plataforma:filterPlataforma,sinMovimiento:filterSinMovimiento,tag:filterTag,list:filterList,columns:contactColumns}
   const applyView = (v: ContactViewState) => {
-    setBroadcast(v.broadcast || EMPTY_BROADCAST);setFilterRecent(v.recent||'');setSearch(v.search);setSegments(v.segments);setFilterGaming(v.gaming);setFilterPanel(v.panel);setFilterLinea(normalizeContactLines(v.linea));setFilterLineaSub(v.lineaSub);setInactivity(normalizeContactInactivity(v.inactivity));setFilterActividad(v.actividad);setFilterAntiguedad(v.antiguedad);setFilterPlataforma(v.plataforma);setFilterSinMovimiento(v.sinMovimiento);setFilterTag(v.tag);setFilterList(v.list);setContactColumns(v.columns);setRowSelection({});resetPage()
+    setBroadcast(v.broadcast || EMPTY_BROADCAST);setFilterRecent(v.recent||'');setSearch(v.search);setSegments(v.segments);setFilterGaming(v.gaming);setFilterPanel(v.panel);setFilterLinea(normalizeContactLines(v.linea));setInactivity(normalizeContactInactivity(v.inactivity));setFilterActividad(v.actividad);setFilterAntiguedad(v.antiguedad);setFilterPlataforma(v.plataforma);setFilterSinMovimiento(v.sinMovimiento);setFilterTag(v.tag);setFilterList(v.list);setContactColumns(v.columns);setRowSelection({});resetPage()
   }
-  const activeFilterLabels = [broadcast.mode&&broadcastLabel(broadcast),filterRecent&&`Depósitos ${filterRecent}d (último cálculo)`,search&&`Búsqueda: ${search}`,segments.length&&`Nivel: ${segments.map(v=>NIVEL_LABEL[v]||v).join(', ')}`,filterPanel&&`Agente: ${filterPanel}`,filterLinea.length>0&&`${filterLinea.length===1?'Línea':'Líneas'}: ${filterLinea.join(', ')}`,filterLineaSub&&`Variante: ${filterLineaSub}`,filterGaming&&`Juego: ${filterGaming}`,filterPlataforma&&`Plataforma: ${filterPlataforma}`,filterActividad.length&&`Actividad: ${filterActividad.join(', ')}`,filterAntiguedad.length&&`Antigüedad: ${filterAntiguedad.join(', ')}`,(hasInactivityFilter(inactivity))&&inactivityLabel(inactivity),filterSinMovimiento&&'12 meses sin depósitos registrados',filterTag&&`Etiqueta: ${filterTag}`,filterList&&`Lista: ${lists.find(l=>l.id===filterList)?.name||'seleccionada'}`].filter(Boolean)
+  const activeFilterLabels = [broadcast.mode&&broadcastLabel(broadcast),filterRecent&&`Depósitos ${filterRecent}d (último cálculo)`,search&&`Búsqueda: ${search}`,segments.length&&`Nivel: ${segments.map(v=>NIVEL_LABEL[v]||v).join(', ')}`,filterPanel&&`Agente: ${filterPanel}`,filterLinea.length>0&&`${filterLinea.length===1?'Línea':'Líneas'}: ${filterLinea.join(', ')}`,filterGaming&&`Juego: ${filterGaming}`,filterPlataforma&&`Plataforma: ${filterPlataforma}`,filterActividad.length&&`Actividad: ${filterActividad.join(', ')}`,filterAntiguedad.length&&`Antigüedad: ${filterAntiguedad.join(', ')}`,(hasInactivityFilter(inactivity))&&inactivityLabel(inactivity),filterSinMovimiento&&'12 meses sin depósitos registrados',filterTag&&`Etiqueta: ${filterTag}`,filterList&&`Lista: ${lists.find(l=>l.id===filterList)?.name||'seleccionada'}`].filter(Boolean)
 
 
   // ── Inline edits ──────────────────────────────────────────────────────────
@@ -599,13 +593,13 @@ export default function Contacts() {
     setAddSaving(true); setAddError('')
     const res = await fetch('/api/contacts', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone: newPhone, name: newName, panel: newPanel, gaming: newGaming || null, segment: newSegment || null, linea: newLinea ? Number(newLinea) : null, linea_sub: newLinea ? (newLineaSub || null) : null }),
+      body: JSON.stringify({ phone: newPhone, name: newName, panel: newPanel, gaming: newGaming || null, segment: newSegment || null, linea: newLinea ? Number(newLinea) : null }),
     })
     const data = await res.json()
     setAddSaving(false)
     if (!res.ok) { setAddError(data.error || 'Error al guardar'); return }
     setShowAdd(false); setNewPhone(''); setNewName(''); setNewPanel('')
-    setNewGaming(''); setNewSegment(''); setNewLinea(''); setNewLineaSub(''); setAddError('')
+    setNewGaming(''); setNewSegment(''); setNewLinea(''); setAddError('')
     load()
   }
 
@@ -770,7 +764,6 @@ export default function Contacts() {
     const CHUNK_SIZE = 5_000
     const panels = [importPanel, importPanel2].filter(Boolean) as string[]
     const linea  = importLinea ? Number(importLinea) : undefined
-    const linea_sub = importLinea && importLineaSub ? importLineaSub : undefined
     const chunks: ImportRow[][] = []
     for (let i = 0; i < importRows.length; i += CHUNK_SIZE) chunks.push(importRows.slice(i, i + CHUNK_SIZE))
 
@@ -780,7 +773,7 @@ export default function Contacts() {
       for (let i = 0; i < chunks.length; i++) {
         const res = await fetch('/api/contacts/import', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contacts: chunks[i], panels, linea, linea_sub, conflict_mode: conflictMode, row_offset: i * CHUNK_SIZE }),
+          body: JSON.stringify({ contacts: chunks[i], panels, linea, conflict_mode: conflictMode, row_offset: i * CHUNK_SIZE }),
         })
         const data = await res.json().catch(() => ({}))
         if (!res.ok) { setImportError(data.error || 'Error al importar'); return }
@@ -911,7 +904,6 @@ export default function Contacts() {
     setEditLastName(c.last_name || '')
     setEditPanel(c.panel || '')
     setEditLinea(c.linea != null ? String(c.linea) : '')
-    setEditLineaSub(c.linea_sub || '')
     setEditSegment(c.segment || '')
     setEditGaming(c.gaming || '')
     setEditError(null)
@@ -925,7 +917,6 @@ export default function Contacts() {
       last_name:  editLastName.trim()  || null,
       panel:      editPanel  || null,
       linea:      editLinea  ? Number(editLinea) : null,
-      linea_sub:  editLinea  ? (editLineaSub || null) : null,
       ...(editSegment!==(editContact.segment||'') ? {segment:editSegment||null} : {}),
       gaming:     editGaming  || null,
     }
@@ -1165,16 +1156,6 @@ export default function Contacts() {
             ariaLabel={`Editar Línea de ${row.original.first_name || row.original.phone_number}`}
           onChange={v => updateField(row.original.id, 'linea', v ? Number(v) : null)}
           />
-          {row.original.linea != null && (
-            <EditableCell
-              value={row.original.linea_sub || ''}
-              options={LINEA_SUB_OPTIONS.map(o => ({ value: o.v, label: o.l }))}
-              activeClass="bg-orange-50 text-orange-700"
-              placeholder="—"
-              ariaLabel={`Editar Variante de línea de ${row.original.first_name || row.original.phone_number}`}
-          onChange={v => updateField(row.original.id, 'linea_sub', v || null)}
-            />
-          )}
         </div>
       ),
       meta: { mobileLabel: 'Línea' },
@@ -1600,13 +1581,6 @@ export default function Contacts() {
           </SelectContent>
         </Select>
         <ContactLineFilter value={filterLinea} onChange={lines => { setFilterLinea(lines); setRowSelection({}); resetPage() }} />
-        <Select value={filterLineaSub} onValueChange={v => { setFilterLineaSub(v ?? ''); resetPage() }}>
-          <SelectTrigger className="w-24"><SelectValue placeholder="Var." /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="">Todas</SelectItem>
-            {LINEA_SUB_OPTIONS.map(o => <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>)}
-          </SelectContent>
-        </Select>
         <Select value={filterGaming} onValueChange={v => { setFilterGaming(v ?? ''); resetPage() }}>
           <SelectTrigger className="w-40"><SelectValue placeholder="Juego" /></SelectTrigger>
           <SelectContent>
@@ -1945,7 +1919,7 @@ export default function Contacts() {
       <Dialog open={showImport} onOpenChange={v => {
         if (importing) return
         setShowImport(v)
-        if (!v) { setImportRows([]); setImportResult(null); setImporting(false); setImportError(null); setImportPanel(''); setImportPanel2(''); setImportLinea(''); setImportLineaSub(''); setImportCheck(null); setConflictMode('update') }
+        if (!v) { setImportRows([]); setImportResult(null); setImporting(false); setImportError(null); setImportPanel(''); setImportPanel2(''); setImportLinea(''); setImportCheck(null); setConflictMode('update') }
       }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
@@ -1958,7 +1932,7 @@ export default function Contacts() {
                 <div className="bg-blue-50 rounded-lg p-4"><p className="text-2xl font-bold text-blue-600">{importResult.updated}</p><p className="text-xs text-muted-foreground">Actualizados</p></div>
                 <div className="bg-muted rounded-lg p-4"><p className="text-2xl font-bold text-muted-foreground">{importResult.skipped}</p><p className="text-xs text-muted-foreground">Omitidos</p></div>
               </div>
-              <Button className="w-full" onClick={() => { setShowImport(false); setImportRows([]); setImportResult(null); setImportPanel(''); setImportPanel2(''); setImportLinea(''); setImportLineaSub('') }}>Cerrar</Button>
+              <Button className="w-full" onClick={() => { setShowImport(false); setImportRows([]); setImportResult(null); setImportPanel(''); setImportPanel2(''); setImportLinea(''); }}>Cerrar</Button>
             </div>
           ) : (
             <div className="space-y-3">
@@ -2046,7 +2020,7 @@ export default function Contacts() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">Línea (opcional)</label>
-                  <Select value={importLinea || 'none'} onValueChange={v => { setImportLinea(v === 'none' ? '' : (v ?? '')); setImportLineaSub('') }}>
+                  <Select value={importLinea || 'none'} onValueChange={v => { setImportLinea(v === 'none' ? '' : (v ?? '')); }}>
                     <SelectTrigger aria-label="Línea de importación"><SelectValue placeholder="Conservar líneas actuales" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Conservar líneas actuales</SelectItem>
@@ -2056,21 +2030,11 @@ export default function Contacts() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div>
-                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Variante (opcional)</label>
-                  <Select value={importLineaSub || 'none'} onValueChange={v => setImportLineaSub(v === 'none' ? '' : (v ?? ''))} disabled={!importLinea}>
-                    <SelectTrigger><SelectValue placeholder="Sin variante" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Sin variante</SelectItem>
-                      {LINEA_SUB_OPTIONS.map(o => <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
               </div>
               {importLinea && (
                 <p className="text-sm rounded-lg border border-primary/20 bg-primary/5 p-3" role="status">
-                  Todos los contactos de esta importación pasarán a la Línea {importLinea}{importLineaSub.toUpperCase()}, incluidos los existentes.
-                  {' '}Se reemplazarán su línea y variante anteriores.
+                  Todos los contactos de esta importación pasarán a la Línea {importLinea}, incluidos los existentes.
+                  {' '}Se reemplazará su línea anterior.
                   {!importPanel && !importPanel2 && ' Se conservará el agente de las cuentas existentes que coincidan por teléfono y usuario.'}
                 </p>
               )}
@@ -2145,7 +2109,6 @@ export default function Contacts() {
                       {filterPlataforma && <span className="text-xs bg-accent text-primary px-2 py-0.5 rounded-full">Plataforma: {filterPlataforma}</span>}
                       {filterGaming && <span className="text-xs bg-pink-100 text-pink-700 px-2 py-0.5 rounded-full">Juego: {filterGaming}</span>}
                       {filterLinea.length > 0 && <span className="text-xs bg-accent text-primary px-2 py-0.5 rounded-full">{filterLinea.length === 1 ? 'Línea' : 'Líneas'}: {filterLinea.join(', ')}</span>}
-                      {filterLineaSub && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Variante: {filterLineaSub}</span>}
                       {filterSinMovimiento && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">12 meses sin depósitos registrados</span>}
                     </div>
                   </>
@@ -2241,7 +2204,6 @@ export default function Contacts() {
               {[
                 { label: 'Panel', value: newPanel, set: setNewPanel, items: PANEL_OPTIONS.map(p => ({ v: p, l: p })), ph: 'Panel' },
                 { label: 'Línea', value: newLinea, set: setNewLinea, items: Array.from({ length: 100 }, (_, i) => ({ v: String(i + 1), l: `Línea ${i + 1}` })), ph: 'Línea' },
-                { label: 'Var.', value: newLineaSub, set: setNewLineaSub, items: LINEA_SUB_OPTIONS, ph: 'Var.' },
                 { label: 'Juego', value: newGaming, set: setNewGaming, items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }], ph: 'Juego' },
                 { label: 'Nivel', value: newSegment, set: setNewSegment, items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip_alto', l: 'Vip Alto' }, { v: 'vip_medio', l: 'Vip Medio' }, { v: 'vip', l: 'Vip Bajo' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }], ph: 'Nivel' },
               ].map(({ label, value, set, items, ph }) => (
@@ -2407,7 +2369,6 @@ export default function Contacts() {
               {[
                 { label: 'Panel',  value: editPanel,   set: setEditPanel,   items: PANEL_OPTIONS.map(p => ({ v: p, l: p })),                                                                                          ph: 'Panel'  },
                 { label: 'Línea',  value: editLinea,   set: setEditLinea,   items: Array.from({ length: 100 }, (_, i) => ({ v: String(i + 1), l: `Línea ${i + 1}` })),                                               ph: 'Línea'  },
-                { label: 'Var.',   value: editLineaSub, set: setEditLineaSub, items: LINEA_SUB_OPTIONS,                                                                                                             ph: 'Var.'   },
                 { label: 'Juego',  value: editGaming,  set: setEditGaming,  items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }],                         ph: 'Juego'  },
                 { label: 'Nivel',  value: editSegment, set: setEditSegment, items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip_alto', l: 'Vip Alto' }, { v: 'vip_medio', l: 'Vip Medio' }, { v: 'vip', l: 'Vip Bajo' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }], ph: 'Nivel' },
               ].map(({ label, value, set, items, ph }) => (
@@ -2661,7 +2622,6 @@ export default function Contacts() {
                 {filterAntiguedad.length > 0 && <span className="text-xs bg-violet-100 text-violet-700 px-2 py-0.5 rounded-full">Antigüedad: {filterAntiguedad.join(', ')}</span>}
                 {filterPlataforma && <span className="text-xs bg-accent text-primary px-2 py-0.5 rounded-full">Plataforma: {filterPlataforma}</span>}
                 {filterLinea.length > 0 && <span className="text-xs bg-accent text-primary px-2 py-0.5 rounded-full">{filterLinea.length === 1 ? 'Línea' : 'Líneas'}: {filterLinea.join(', ')}</span>}
-                {filterLineaSub && <span className="text-xs bg-cyan-100 text-cyan-700 px-2 py-0.5 rounded-full">Variante: {filterLineaSub}</span>}
                 {filterGaming && <span className="text-xs bg-pink-100 text-pink-700 px-2 py-0.5 rounded-full">Juego: {filterGaming}</span>}
                 {filterSinMovimiento && <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">12 meses sin depósitos registrados</span>}
               </div>

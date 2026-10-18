@@ -20,7 +20,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('agent directory on PostgreS
   const req=(method='GET',body?:unknown,user=1)=>makeReqWithSession('http://localhost/api/agents',
     makeAdminSession({user_id:id(user)}),{method,...(body?{body:JSON.stringify(body),headers:{'Content-Type':'application/json'}}:{})})
   const params=(code:string,line?:string)=>({params:Promise.resolve({code,id:line||id(99)})})
-  const line={linea:8,variant:'a',label:'Royal 8A',phone:'549 | 1112 | 345678',is_active:true}
+  const line={linea:8,variant:'',label:'Royal 8A',phone:'549 | 1112 | 345678',is_active:true}
   beforeAll(async()=>{
     const url=new URL(process.env.OPS_TEST_DATABASE_URL!)
     if(!['127.0.0.1','localhost'].includes(url.hostname))throw Error('LOCAL_ONLY')
@@ -30,6 +30,8 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('agent directory on PostgreS
     for(const role of ['anon','authenticated'])await pool.query(`DO $$ BEGIN CREATE ROLE ${role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$`)
     await pool.query(readFileSync('../db/migrations/151_agent_contact_lines.sql','utf8').replaceAll('public.',schema+'.'))
     await pool.query(readFileSync('../db/migrations/155_agent_line_links.sql','utf8').replaceAll('public.',schema+'.'))
+    await pool.query('CREATE TABLE contacts(id integer,linea smallint,linea_sub char(1))')
+    await pool.query(readFileSync('../db/migrations/156_unify_contact_line_variants.sql','utf8').replaceAll('public.',schema+'.'))
     vi.mocked(query).mockImplementation(async(sql,values)=>(await pool.query(sql,values)).rows)
     vi.stubEnv('AUTH_SECRET',TEST_AUTH_SECRET)
   })
@@ -38,7 +40,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('agent directory on PostgreS
   it('migrates all existing Ofizeus numbers and prevents direct Data API access',async()=>{
     const result=await(await GET(req())).json()
     expect(result.agents).toHaveLength(6)
-    expect(result.agents.find((a:{code:string})=>a.code==='ofizeus').lines).toHaveLength(16)
+    expect(result.agents.find((a:{code:string})=>a.code==='ofizeus').lines).toHaveLength(10)
     const rows=(await pool.query(`SELECT relrowsecurity,
       has_table_privilege('anon',oid,'SELECT') AS anon_read,has_table_privilege('authenticated',oid,'UPDATE') AS authenticated_write
       FROM pg_class WHERE relnamespace=$1::regnamespace AND relname IN ('crm_agents','agent_contact_lines')`,[schema])).rows
@@ -60,7 +62,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('agent directory on PostgreS
     expect((await editLine(req('PATCH',updated),params('bigwin',data.id))).status).toBe(404)
     expect((await editLine(req('PATCH',updated),params('royal',data.id))).status).toBe(200)
     expect((await pool.query('SELECT linea,variant,label,phone,is_active FROM agent_contact_lines WHERE id=$1',[data.id])).rows[0])
-      .toEqual({...updated,linea:8,variant:'a'})
+      .toEqual({...updated,linea:8,variant:''})
   })
   it('stores a link without a phone and scopes the delivery preference to the selected agent',async()=>{
     const created=await addLine(req('POST',{...line,phone:'',link_url:'https://example.com/royal?ref=8'}),params('royal'))
@@ -98,7 +100,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('agent directory on PostgreS
     }
   })
   it('rejects invalid numbers, variants, unknown agents and attempts to change the assignment key',async()=>{
-    for(const invalid of [{...line,phone:'1123456789'},{...line,phone:'https://evil.test'},{...line,linea:0},{...line,variant:'d'}])
+    for(const invalid of [{...line,phone:'1123456789'},{...line,phone:'https://evil.test'},{...line,linea:0},{...line,variant:'a'},{...line,variant:'b'},{...line,variant:'c'},{...line,variant:'d'}])
       expect((await addLine(req('POST',invalid),params('royal'))).status).toBe(400)
     expect((await addLine(req('POST',line),params('missing'))).status).toBe(404)
     expect((await editLine(req('PATCH',line),params('royal'))).status).toBe(400)

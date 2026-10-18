@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { phone, name, gaming, segment, linea, linea_sub } = body
+  const { phone, name, gaming, segment, linea } = body
   const panel=canonicalContactAgent(body.panel)
   const username=name?.trim().toLowerCase() || null
   const phone_clean = (phone || '').toString().trim().replace(/\s/g, '')
@@ -102,9 +102,7 @@ export async function POST(req: NextRequest) {
   const first_name = nameParts[0] || null
   const last_name  = nameParts.slice(1).join(' ') || null
   const lineaVal = linea ? Number(linea) : null
-  // Sub-variante solo válida (a/b/c) y solo cuando hay línea asignada
-  const lineaSubRaw = (linea_sub || '').toLowerCase()
-  const lineaSubVal = lineaVal !== null && ['a', 'b', 'c'].includes(lineaSubRaw) ? lineaSubRaw : null
+  const lineaSubVal = null // Retired variants from older clients are ignored.
 
   try {
     const row = await withTransaction(async client => {

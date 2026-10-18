@@ -42,8 +42,7 @@ export function contactFilters(sp: URLSearchParams, user: {
   // filter and the user's visibility scope. Single-line URLs keep their meaning.
   const lines = csv('linea')
   if (lines.length) where.push(`contacts.linea::text = ANY(${bind(lines)}::text[])`)
-  const lineVariant = sp.get('linea_sub')?.trim().toLowerCase()
-  if (lineVariant) where.push(`contacts.linea_sub::text = ${bind(lineVariant)}`)
+  // Retired A/B/C filters from old URLs apply to the whole base line.
   for (const [key, allowed] of [['actividad', ACTIVITY], ['antiguedad', TENURE]] as const) {
     const values = csv(key, allowed)
     if (values.length) where.push(`${key === 'actividad' ? profile.activity : profile.tenure} = ANY(${bind(values)}::text[])`)

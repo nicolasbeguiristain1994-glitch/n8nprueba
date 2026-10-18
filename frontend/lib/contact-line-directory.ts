@@ -3,7 +3,7 @@ import { assignedLineDestination, type AgentDeliveryMode } from './agent-line-ty
 
 /** Snapshot provided by the operator on 2026-10-06, retained for migration/tests.
  * Live automation calls pass the editable database directory explicitly.
- * Main lines have no variant. Never substitute a main line for an unknown variant.
+ * Line variants are retired; old A/B/C assignments resolve to the base number.
  * These are displayed destinations, not sending credentials or Cloud sender IDs.
  */
 export const OFIZEUS_LINES = [
@@ -38,8 +38,8 @@ export function agentLineReply(contacts: RoutingContact[], agent: string, prefix
 ): {message:string;handoff:boolean} {
   const code=directoryAgentCode(agent)
   if (!code || contacts.length!==1 || !belongsToDirectory(contacts[0],code)) return {message:ADVISOR_FALLBACK,handoff:true}
-  const c=contacts[0],variant=(c.linea_sub??'').trim().toLowerCase()
-  const line=directory.find(([n,v])=>c.linea!==null && Number(c.linea)===n && variant===v)
+  const c=contacts[0]
+  const line=directory.find(([n,v])=>c.linea!==null && Number(c.linea)===n && v==='')
   if (!line) return {message:ADVISOR_FALLBACK,handoff:true}
   const formatted = assignedLineDestination({label:line[2],phone:line[3],link_url:line[4],delivery_mode:mode})
   if (!formatted) return {message:ADVISOR_FALLBACK,handoff:true}

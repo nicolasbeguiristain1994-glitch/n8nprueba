@@ -42,7 +42,7 @@ async function openLines(user: ReturnType<typeof userEvent.setup>, label: string
   await user.click(screen.getByRole('button', { name: `Filtrar por líneas: ${label}` }))
   return within(await screen.findByRole('dialog', { name: 'Filtrar por líneas' }))
 }
-it('applies a legacy view and combines multiple lines with the existing agent and variant', async () => {
+it('applies a legacy view and combines multiple lines with the existing agent while retiring its variant', async () => {
   await mountView()
   const user = userEvent.setup()
   const picker = await openLines(user, 'Línea 2')
@@ -51,7 +51,8 @@ it('applies a legacy view and combines multiple lines with the existing agent an
   await user.click(picker.getByRole('button', { name: 'Listo' }))
   await waitFor(() => expect(lastParams().get('linea')).toBe('2,7'))
   expect(lastParams().get('panel')).toBe('royal')
-  expect(lastParams().get('linea_sub')).toBe('b')
+  expect(lastParams().has('linea_sub')).toBe(false)
+  expect(screen.queryByText('Var.')).not.toBeInTheDocument()
   expect(screen.getByLabelText('Filtros activos')).toHaveTextContent('Líneas: 2, 7')
 }, FLOW_TIMEOUT)
 it('resets pagination and selected contacts when one of several lines is removed', async () => {
@@ -81,7 +82,7 @@ it('removes the final line filter and restores the remaining filters with global
   await user.click(screen.getByRole('button', { name: 'Limpiar filtros' }))
   await waitFor(() => {
     expect(lastParams().get('panel')).toBe('')
-    expect(lastParams().get('linea_sub')).toBe('')
+    expect(lastParams().has('linea_sub')).toBe(false)
   })
   expect(screen.queryByRole('button', { name: 'Limpiar filtros' })).not.toBeInTheDocument()
   expect(screen.getByRole('region', { name: 'Filtros de contactos' })).toBeVisible()
@@ -109,7 +110,7 @@ it.each([true, false])('preserves the multiple-line audience when creating a lis
   await user.click(within(dialog).getByRole('button', { name: 'Crear lista' }))
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Crear lista de distribución' })).not.toBeInTheDocument())
   const body = JSON.parse(fetchMock.mock.calls.filter(([url]) => url === '/api/lists').at(-1)![1].body)
-  if (dynamic) expect(body).toMatchObject({ is_dynamic: true, filters: { linea: '2,7', panel: 'royal', linea_sub: 'b' } })
+  if (dynamic) expect(body).toMatchObject({ is_dynamic: true, filters: { linea: '2,7', panel: 'royal' } })
   else {
     expect(body).toMatchObject({ contact_ids: [contact.id] })
     expect(lastParams().get('select_all')).toBe('true')

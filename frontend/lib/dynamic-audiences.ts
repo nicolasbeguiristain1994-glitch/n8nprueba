@@ -2,11 +2,12 @@ import { query, withTransaction } from './db'
 import { resolvedContactFilters, ContactFilterError } from './contact-filters'
 import { contactScope, type ContactAccessUser } from './contact-visibility'
 
-const KEYS = new Set(['q','segment','gaming','panel','linea','linea_sub','actividad','antiguedad','plataforma','sin_movimiento','tag','inactividad_desde','inactividad_hasta','movimiento_modo','calidad','depositos_recientes','difusion','difusion_dias','difusion_desde','difusion_hasta'])
+const KEYS = new Set(['q','segment','gaming','panel','linea','actividad','antiguedad','plataforma','sin_movimiento','tag','inactividad_desde','inactividad_hasta','movimiento_modo','calidad','depositos_recientes','difusion','difusion_dias','difusion_desde','difusion_hasta'])
 export function savedAudienceParams(value: unknown): URLSearchParams {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ContactFilterError('Filtros de audiencia inválidos')
   const result = new URLSearchParams()
   for (const [key, v] of Object.entries(value)) {
+    if (key === 'linea_sub') continue // Compatibility with saved audiences before line unification.
     if (key === 'list_id' && v) throw new ContactFilterError('Quitá el filtro de lista antes de guardar una audiencia dinámica')
     if (v === '' || v === false || v === null || v === undefined || key === 'list_id') continue
     if (!KEYS.has(key) || !['string','boolean'].includes(typeof v)) throw new ContactFilterError('Filtro de audiencia no permitido')

@@ -179,19 +179,19 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect((await(await GET(request('?phone='+phone))).json()).messages).toHaveLength(0)
   expect(mediaMocks.token).not.toHaveBeenCalled()
  })
- it('resolves the exact agent, line and variant, and reflects edited or disabled destinations',async()=>{
+ it('resolves the base line for old letters and reflects edited or disabled destinations',async()=>{
   await db.query("UPDATE contacts SET linea=8,linea_sub='a'")
   await db.query(`INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone) VALUES
     ('royal',8,'','Royal principal','+5491111111111'),
     ('royal',8,'a','Royal 8A','+5491122222222'),
     ('ofizeus',8,'a','Ofizeus 8A','+5491133333333')`)
   const first=(await(await GET(request())).json()).conversations[0]
-  expect(first).toMatchObject({linea:8,linea_sub:'a',agent:'royal',assigned_line:{label:'Royal 8A',phone:'+5491122222222'},line_assignment_ambiguous:false})
-  await db.query("UPDATE agent_contact_lines SET phone='+5491144444444' WHERE agent_code='royal' AND variant='a'")
+  expect(first).toMatchObject({linea:8,linea_sub:'a',agent:'royal',assigned_line:{label:'Royal principal',phone:'+5491111111111'},line_assignment_ambiguous:false})
+  await db.query("UPDATE agent_contact_lines SET phone='+5491144444444' WHERE agent_code='royal' AND variant=''")
   expect((await(await GET(request())).json()).conversations[0].assigned_line.phone).toBe('+5491144444444')
-  await db.query("UPDATE crm_agents SET delivery_mode='link' WHERE code='royal';UPDATE agent_contact_lines SET link_url='https://example.com/royal8' WHERE agent_code='royal' AND variant='a'")
+  await db.query("UPDATE crm_agents SET delivery_mode='link' WHERE code='royal';UPDATE agent_contact_lines SET link_url='https://example.com/royal8' WHERE agent_code='royal' AND variant=''")
   expect((await(await GET(request())).json()).conversations[0].assigned_line).toMatchObject({delivery_mode:'link',link_url:'https://example.com/royal8'})
-  await db.query("UPDATE agent_contact_lines SET is_active=false WHERE agent_code='royal' AND variant='a'")
+  await db.query("UPDATE agent_contact_lines SET is_active=false WHERE agent_code='royal' AND variant=''")
   expect((await(await GET(request())).json()).conversations[0].assigned_line).toBeNull()
   await db.query("UPDATE contacts SET linea_sub='b'")
   expect((await(await GET(request())).json()).conversations[0].assigned_line).toBeNull()
@@ -199,16 +199,23 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
  it('keeps agent filters, blacklist and assigned lines separate on a shared phone',async()=>{
   await db.query("UPDATE contacts SET linea=8,linea_sub='a'")
   await db.query(`INSERT INTO contacts(id,phone_number,panel,linea) VALUES($1,$2,'bigwin',4)`,[id(21),'+'+phone])
-  await db.query(`INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone) VALUES ('royal',8,'a','Royal 8A','+5491122222222')`)
+  await db.query(`INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone) VALUES ('royal',8,'','Royal 8','+5491122222222')`)
   await db.query("INSERT INTO blacklist(phone_number_normalized,scope_key,agent_code) VALUES($1,'agent:bigwin','bigwin')",[phone])
   const royal=await(await GET(request('?agent=royal'))).json()
-  expect(royal.conversations[0]).toMatchObject({agent:'royal',is_blacklisted:false,line_assignment_ambiguous:false,assigned_line:{label:'Royal 8A'}})
+  expect(royal.conversations[0]).toMatchObject({agent:'royal',is_blacklisted:false,line_assignment_ambiguous:false,assigned_line:{label:'Royal 8'}})
   expect(royal.agents.map((x:{name:string})=>x.name).sort()).toEqual(['bigwin','royal'])
   expect((await(await GET(request('?agent=bigwin'))).json()).conversations[0]).toMatchObject({agent:'bigwin',is_blacklisted:true})
  })
+ it('does not treat retired letters on the same base line as conflicting assignments',async()=>{
+  await db.query("UPDATE contacts SET linea=8,linea_sub='a'")
+  await db.query(`INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone) VALUES ('royal',8,'','Royal 8','+5491122222222')`)
+  await db.query(`INSERT INTO contacts(id,phone_number,panel,linea,linea_sub) VALUES($1,$2,'royal',8,'b')`,[id(21),phone])
+  const row=(await(await GET(request())).json()).conversations[0]
+  expect(row).toMatchObject({line_assignment_ambiguous:false,assigned_line:{label:'Royal 8',phone:'+5491122222222'}})
+ })
  it('does not guess the assigned line when phone aliases disagree',async()=>{
   await db.query("UPDATE contacts SET linea=8,linea_sub='a'")
-  await db.query(`INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone) VALUES ('royal',8,'a','Royal 8A','+5491122222222')`)
+  await db.query(`INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone) VALUES ('royal',8,'','Royal 8','+5491122222222')`)
   await db.query(`INSERT INTO contacts(id,phone_number,panel,linea,linea_sub) VALUES($1,$2,'royal',9,'a')`,[id(21),phone])
   const row=(await(await GET(request())).json()).conversations[0]
   expect(row.line_assignment_ambiguous).toBe(true);expect(row.assigned_line).toBeNull()

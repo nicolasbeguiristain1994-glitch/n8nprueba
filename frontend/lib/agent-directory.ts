@@ -22,12 +22,12 @@ const destinationError = {message: 'Cargá un teléfono o un link para esta lín
 export const AgentLineDetailsSchema = AgentLineFields.refine(hasDestination, destinationError)
 export const NewAgentLineSchema = AgentLineFields.extend({
   linea: z.number().int().min(1).max(100),
-  variant: z.enum(['', 'a', 'b', 'c']),
+  variant: z.literal('', {message: 'Las variantes A, B y C ya no se utilizan. Elegí solo el número de línea.'}).default(''),
 }).refine(hasDestination, destinationError)
 export function directoryError(error: unknown): Response {
   if (error instanceof Response) return error
   if ((error as {code?: string})?.code === '23505')
-    return Response.json({ error: 'Ya existe ese agente o esa combinación de línea y variante. Editá el registro existente.' }, { status: 409 })
+    return Response.json({ error: 'Ya existe ese agente o esa línea del agente. Editá el registro existente.' }, { status: 409 })
   if ((error as {code?: string})?.code === '23503')
     return Response.json({ error: 'El agente no existe. Actualizá la página.' }, { status: 404 })
   appLog('ERROR', 'agent directory failed', { error: error instanceof Error ? error.message : 'unknown' })

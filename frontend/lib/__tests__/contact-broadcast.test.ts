@@ -75,7 +75,7 @@ describe.skipIf(!url)('Broadcast history on PostgreSQL',()=>{
   it('not sent is the exact complement, including never sent, without NULL poisoning',async()=>{
     expect(await ids('difusion=not_sent&difusion_desde=2026-10-06&difusion_hasta=2026-10-06')).toEqual([2,3,5,6,7,10,11,12])
   })
-  it('intersects broadcast history with the union of selected lines and the selected variant', async () => {
+  it('intersects broadcast history with the union of selected base lines, ignoring obsolete variant filters', async () => {
     await c.query('BEGIN')
     try {
       await c.query("UPDATE contacts SET linea=CASE WHEN id IN (1,2) THEN 1 WHEN id IN (4,8) THEN 2 ELSE 3 END,linea_sub=CASE WHEN id=8 THEN 'b' ELSE 'a' END")
@@ -83,7 +83,7 @@ describe.skipIf(!url)('Broadcast history on PostgreSQL',()=>{
         const filter = contactFilters(sp(`linea=1,2&linea_sub=A&difusion=${mode}&difusion_desde=2026-10-06&difusion_hasta=2026-10-06`), {role:'admin',user_id:'test'})
         return (await c.query(`SELECT id FROM contacts WHERE ${filter.sql} ORDER BY id`,filter.params)).rows.map(r=>r.id)
       }
-      expect(await audience('sent')).toEqual([1,4])
+      expect(await audience('sent')).toEqual([1,4,8])
       expect(await audience('not_sent')).toEqual([2])
     } finally { await c.query('ROLLBACK') }
   })

@@ -139,13 +139,13 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
       expect(await response.json()).toMatchObject({inserted:0,updated:1})
     }
     expect((await c.query('SELECT id,identity_key,panel,account_username,linea,linea_sub,first_name FROM contacts')).rows)
-      .toEqual([{...before,panel:'royal',account_username:'account1',first_name:'account1',linea:1,linea_sub:'a'}])
+      .toEqual([{...before,panel:'royal',account_username:'account1',first_name:'account1',linea:1,linea_sub:null}])
   })
-  it('keeps the previous line and variant when no line is selected',async()=>{
+  it('keeps the previous base line when no line is selected',async()=>{
     await importContacts(request({panel:'royal',linea:4,linea_sub:'c',contacts:[{phone:'+5491111111111',name:'account1'}]}))
     const response=await importContacts(request({panel:'royal',linea_sub:'a',contacts:[{phone:'+5491111111111',name:'account1'}]}))
     expect(response.status).toBe(200)
-    expect((await c.query('SELECT linea,linea_sub FROM contacts')).rows).toEqual([{linea:4,linea_sub:'c'}])
+    expect((await c.query('SELECT linea,linea_sub FROM contacts')).rows).toEqual([{linea:4,linea_sub:null}])
   })
   it('assigns the selected line to both an existing and a new account in the same file',async()=>{
     await importContacts(request({panel:'royal',linea:2,contacts:[{phone:'+5491111111111',name:'account1'}]}))
@@ -351,7 +351,7 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
     expect(listed.total).toBe(1);expect(listed.contacts.map((r:{id:string})=>r.id)).toEqual([id('match')])
     expect(selected.ids).toEqual([id('match')])
   })
-  it('unions selected lines while intersecting variant, panel, segment and tag for list/count/download/selection', async () => {
+  it('unions selected lines while intersecting panel, segment and tag while ignoring retired variants for list/count/download/selection', async () => {
     const { rows } = await c.query(`INSERT INTO contacts(first_name,phone_number,linea,linea_sub,panel,segment,segment_is_manual) VALUES
       ('line-one','+5491111111201',1,'a','royal','vip',true),
       ('line-two','+5491111111202',2,'a','royal','vip',true),
@@ -364,18 +364,18 @@ describe.skipIf(!url)('Contact endpoints on real local PostgreSQL', () => {
       ('deleted','+5491111111209',2,'a','royal','vip',true) RETURNING id,first_name`)
     await c.query("INSERT INTO contact_tags(contact_id,tag) SELECT id,'target' FROM contacts WHERE first_name<>'no-tag'")
     await c.query("UPDATE contacts SET deleted_at=NOW() WHERE first_name='deleted'")
-    const expected = rows.filter(r => ['line-one','line-two'].includes(r.first_name)).map(r => r.id).sort()
+    const expected = rows.filter(r => ['line-one','line-two','other-variant'].includes(r.first_name)).map(r => r.id).sort()
     for (const lines of ['linea=1,2','linea=1&linea=2','linea=2,1,2&linea=1']) {
       const criteria = `${lines}&linea_sub=A&panel=royal&segment=vip&tag=target`
       const listed = await (await list(new NextRequest(`http://localhost/api/contacts?${criteria}`))).json()
       const downloaded = await (await list(new NextRequest(`http://localhost/api/contacts?download=true&${criteria}`))).json()
       const selected = await (await list(new NextRequest(`http://localhost/api/contacts?select_all=true&${criteria}`))).json()
-      expect(listed.total).toBe(2)
+      expect(listed.total).toBe(3)
       expect(listed.contacts.map((r: {id:string}) => r.id).sort()).toEqual(expected)
       expect(downloaded.contacts).toEqual(listed.contacts)
-      expect(downloaded.total).toBe(2)
+      expect(downloaded.total).toBe(3)
       expect(selected.ids.sort()).toEqual(expected)
-      expect(selected.phones.sort()).toEqual(['+5491111111201','+5491111111202'])
+      expect(selected.phones.sort()).toEqual(['+5491111111201','+5491111111202','+5491111111203'])
     }
     const single = await (await list(new NextRequest('http://localhost/api/contacts?linea=1&linea_sub=a&panel=royal&segment=vip&tag=target'))).json()
     expect(single.contacts.map((r: {first_name:string}) => r.first_name)).toEqual(['line-one'])

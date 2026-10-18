@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { contacts, panel, panels, linea, linea_sub, skip_existing = false, conflict_mode, row_offset = 0 } = body
+  const { contacts, panel, panels, linea, skip_existing = false, conflict_mode, row_offset = 0 } = body
   if (!Number.isSafeInteger(row_offset) || row_offset < 0) return NextResponse.json({error:'Posición de archivo inválida'},{status:400})
   // conflict_mode takes precedence over legacy skip_existing
   const resolvedMode: 'update' | 'panels_only' | 'skip' =
@@ -50,9 +50,8 @@ export async function POST(req: NextRequest) {
   if (lineaValue !== null && (!Number.isInteger(lineaValue) || lineaValue < 1 || lineaValue > 100)) {
     return NextResponse.json({ error: 'Línea inválida (1-100)' }, { status: 400 })
   }
-  // Sub-variante (a/b/c) solo válida cuando hay línea asignada
-  const lineaSubRaw = (linea_sub || '').toLowerCase()
-  const lineaSubValue = lineaValue !== null && ['a', 'b', 'c'].includes(lineaSubRaw) ? lineaSubRaw : null
+  // Legacy A/B/C input is accepted but stored as the base line.
+  const lineaSubValue = null
 
   // Keep different phones until existing records have been resolved. Historical
   // accounts may legitimately have one record for each phone.

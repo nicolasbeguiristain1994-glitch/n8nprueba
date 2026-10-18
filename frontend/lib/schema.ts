@@ -120,7 +120,7 @@ export const UpdateContactSchema = z.object({
   gaming:     z.enum(['slots', 'deportivas', 'ambas']).nullable().optional(),
   panel:      z.enum(['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas']).nullable().optional(),
   linea:      z.number().int().min(1).max(100).nullable().optional(),
-  linea_sub:  z.enum(['a', 'b', 'c']).nullable().optional(),
+  linea_sub:  z.enum(['a', 'b', 'c']).nullable().transform(() => null).optional(), // Legacy clients cannot restore variants.
   first_name: z.string().max(100).nullable().optional(),
   last_name:  z.string().max(100).nullable().optional(),
 })

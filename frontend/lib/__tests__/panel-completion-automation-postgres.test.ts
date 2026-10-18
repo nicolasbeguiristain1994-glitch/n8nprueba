@@ -53,7 +53,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
  afterAll(async()=>{await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.end()})
  it('routes the configured link through the real automation and fails closed if the link is missing',async()=>{
   await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3,linea_sub='a';UPDATE automations SET action_config='{"message":"Tu línea: {{2}}","contact_line_directory":"ofizeus"}';
-    UPDATE crm_agents SET delivery_mode='link' WHERE code='ofizeus';UPDATE agent_contact_lines SET link_url='https://example.com/zeus3' WHERE agent_code='ofizeus' AND linea=3 AND variant='a'`)
+    UPDATE crm_agents SET delivery_mode='link' WHERE code='ofizeus';UPDATE agent_contact_lines SET link_url='https://example.com/zeus3' WHERE agent_code='ofizeus' AND linea=3 AND variant=''`)
   await evaluateAutomations(phone,'informacion','link-1',source)
   expect(m.send.mock.calls[0][0].request.text.body).toBe('Tu línea: https://example.com/zeus3')
   expect(m.send.mock.calls[0][0].request.text.body).not.toContain('549')
@@ -101,34 +101,33 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
  })
  it('uses edited destinations and hands off inactive lines without falling back to hardcoded numbers',async()=>{
   await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3,linea_sub='a';UPDATE automations SET action_config='{"message":"Tu línea:","contact_line_directory":"ofizeus"}';
-    UPDATE agent_contact_lines SET phone='+5491199999999',label='Nueva 3A' WHERE linea=3 AND variant='a'`)
+    UPDATE agent_contact_lines SET phone='+5491199999999',label='Nueva 3' WHERE linea=3 AND variant=''`)
   await evaluateAutomations(phone,'información','edited-destination',source)
-  expect(m.send.mock.calls[0][0].request.text.body).toBe('Tu línea:\n\nNueva 3A 549 | 1199 | 999999')
-  await pool.query("UPDATE agent_contact_lines SET is_active=false WHERE linea=3 AND variant='a';DELETE FROM automation_message_jobs")
+  expect(m.send.mock.calls[0][0].request.text.body).toBe('Tu línea:\n\nNueva 3 549 | 1199 | 999999')
+  await pool.query("UPDATE agent_contact_lines SET is_active=false WHERE linea=3 AND variant='';DELETE FROM automation_message_jobs")
   await evaluateAutomations(phone,'información','inactive-destination',source)
   expect(m.send.mock.calls[1][0].request.text.body).toContain('Un asesor te atenderá')
  })
- it('routes Ofizeus More info to the exact variant once per inbound event',async()=>{
+ it('routes legacy Ofizeus variants to the base line once per inbound event',async()=>{
   await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3,linea_sub='a';UPDATE automations SET trigger_type='keyword',trigger_config='{"keywords":["Más info"]}',action_config='{"message":"Hola {{nombre}}, esta es tu línea:","contact_line_directory":"ofizeus"}'`)
   await Promise.all([evaluateAutomations(phone,'Más info','routing-a',source),evaluateAutomations(phone,'Más info','routing-a',source)])
   expect(m.send).toHaveBeenCalledTimes(1)
-  expect(m.send.mock.calls[0][0].request.text.body).toBe('Hola Ana, esta es tu línea:\n\nOFI 3A 549 | 1124 | 915455')
+  expect(m.send.mock.calls[0][0].request.text.body).toBe('Hola Ana, esta es tu línea:\n\nZEUS 3 549 | 1154 | 726043')
   expect(m.send.mock.calls[0][0].request.phoneNumberId).toBe('phone-a')
  })
  it('renders the number variable before persisting and sending the reply',async()=>{
   await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3,linea_sub='a';UPDATE automations SET action_config='{"message":"Hola {{nombre}}!\\nLines designada: {{2}}","contact_line_directory":"ofizeus"}'`)
   await evaluateAutomations(phone,'información','variable-number',source)
-  const expected='Hola Ana!\nLines designada: 549 | 1124 | 915455'
+  const expected='Hola Ana!\nLines designada: 549 | 1154 | 726043'
   expect(m.send.mock.calls[0][0].request.text.body).toBe(expected)
   expect((await pool.query('SELECT body FROM automation_message_jobs')).rows[0].body).toBe(expected)
  })
- it('hands unknown variants to an advisor without substituting the primary line',async()=>{
-  await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3,linea_sub='b';UPDATE automations SET action_config='{"message":"Tu línea:","contact_line_directory":"ofizeus"}'`)
+ it.each(['a','b','c'])('routes retired variant %s to the base line without handoff',async variant=>{
+  await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3,linea_sub='${variant}';UPDATE automations SET action_config='{"message":"Tu línea:","contact_line_directory":"ofizeus"}'`)
   await evaluateAutomations(phone,'información','routing-b',source)
   expect(m.send).toHaveBeenCalledTimes(1)
-  expect(m.send.mock.calls[0][0].request.text.body).toContain('Un asesor te atenderá')
-  expect(m.send.mock.calls[0][0].request.text.body).not.toContain('wa.me')
-  expect((await pool.query('SELECT is_escalated FROM conversation_state')).rows[0].is_escalated).toBe(true)
+  expect(m.send.mock.calls[0][0].request.text.body).toBe('Tu línea:\n\nZEUS 3 549 | 1154 | 726043')
+  expect((await pool.query('SELECT is_escalated FROM conversation_state WHERE is_escalated=true')).rows).toHaveLength(0)
  })
  it('responds to More info even when EXTRA just sent its separate reply',async()=>{
   await evaluateAutomations(phone,'información','extra-before-info',source)
@@ -157,14 +156,14 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   expect(m.send).toHaveBeenCalledWith({request:{phoneNumberId:'phone-a',to:'+'+phone,agentCode:'royal',type:'text',text:{body:'Tu línea: 549 | 1100 | 000001'}}})
   expect((await pool.query('SELECT automation_id FROM automation_message_jobs')).rows).toEqual([{automation_id:id(9)}])
  })
- it('reads the edited Royal directory and exact variant',async()=>{
+ it('reads the edited Royal base line for a legacy variant',async()=>{
   await royalRule(1,'a')
-  await pool.query("UPDATE agent_contact_lines SET phone='+5491100000003' WHERE agent_code='royal' AND variant='a'")
+  await pool.query("UPDATE agent_contact_lines SET phone='+5491100000003' WHERE agent_code='royal' AND variant=''")
   await evaluateAutomations(phone,'EXTRA','royal-variant',source)
   expect(m.send.mock.calls[0][0].request.text.body).toBe('Tu línea: 549 | 1100 | 000003')
  })
- it.each(['missing','inactive','unknown-variant'])('hands off %s Royal assignments without borrowing an Ofizeus or another Royal number',async kind=>{
-  await royalRule(kind==='missing'?5:1,kind==='unknown-variant'?'b':null)
+ it.each(['missing','inactive'])('hands off %s Royal assignments without borrowing an Ofizeus or another Royal number',async kind=>{
+  await royalRule(kind==='missing'?5:1,null)
   if(kind==='inactive')await pool.query("UPDATE agent_contact_lines SET is_active=false WHERE agent_code='royal'")
   await evaluateAutomations(phone,'EXTRA','royal-'+kind,source)
   expect(m.send).toHaveBeenCalledTimes(1)

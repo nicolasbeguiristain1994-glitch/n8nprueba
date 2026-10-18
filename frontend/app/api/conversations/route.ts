@@ -102,12 +102,12 @@ export async function GET(req: NextRequest) {
           SELECT EXISTS (SELECT 1 FROM contacts other
             WHERE other.phone_number IN (page.phone_number,'+' || page.phone_number)
               AND other.deleted_at IS NULL AND other.id <> page.contact_id AND lower(trim(other.panel))=page.agent
-              AND (NULLIF(lower(trim(other.panel)),''),other.linea,COALESCE(trim(other.linea_sub),''))
-                IS DISTINCT FROM (page.agent,page.linea,COALESCE(trim(page.linea_sub),''))) AS ambiguous
+              AND (NULLIF(lower(trim(other.panel)),''),other.linea)
+                IS DISTINCT FROM (page.agent,page.linea)) AS ambiguous
         ) assignment ON true
         LEFT JOIN crm_agents agent_directory ON agent_directory.code=page.agent
         LEFT JOIN agent_contact_lines directory ON directory.agent_code=page.agent
-          AND directory.linea=page.linea AND directory.variant=COALESCE(trim(page.linea_sub),'')
+          AND directory.linea=page.linea AND directory.variant=''
           AND directory.is_active=true
         LEFT JOIN LATERAL (
           SELECT is_escalated, escalation_reason, current_flow FROM conversation_state

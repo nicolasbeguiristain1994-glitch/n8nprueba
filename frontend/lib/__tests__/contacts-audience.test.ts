@@ -56,11 +56,11 @@ describe('Contact audience parity', () => {
     expect(f.params).toEqual([expected])
     expect(f.sql).toContain('contacts.linea::text = ANY($1::text[])')
   })
-  it('treats empty lines as unrestricted and preserves a case-insensitive variant', () => {
+  it('treats empty lines as unrestricted and ignores a retired variant from an old URL', () => {
     const f = contactFilters(new URLSearchParams('linea=, &linea=&linea_sub=%20A%20'), {role:'admin',user_id:'a'})
-    expect(f.params).toEqual(['a'])
+    expect(f.params).toEqual([])
     expect(f.sql).not.toContain('contacts.linea::text')
-    expect(f.sql).toContain('contacts.linea_sub::text = $1')
+    expect(f.sql).not.toContain('linea_sub')
   })
   it('binds every line value without interpolating SQL', () => {
     const value = "1') OR TRUE --"

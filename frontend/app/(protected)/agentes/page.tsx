@@ -9,8 +9,8 @@ import { useCurrentUser } from '@/lib/useCurrentUser'
 import { contactLineLabel, formatAgentLinePhone, type AgentDirectoryEntry, type AgentLine, type AgentDeliveryMode } from '@/lib/agent-line-types'
 
 type Editor = {kind:'agent';agent?:AgentDirectoryEntry} | {kind:'line';agent:AgentDirectoryEntry;line?:AgentLine}
-type Fields = {code:string;name:string;linea:string;variant:string;label:string;phone:string;link_url:string;is_active:boolean}
-const empty:Fields = {code:'',name:'',linea:'1',variant:'',label:'',phone:'',link_url:'',is_active:true}
+type Fields = {code:string;name:string;linea:string;label:string;phone:string;link_url:string;is_active:boolean}
+const empty:Fields = {code:'',name:'',linea:'1',label:'',phone:'',link_url:'',is_active:true}
 async function api<T>(url:string,init?:RequestInit):Promise<T> {
   const response = await fetch(url,init)
   const body = await response.json().catch(()=>null)
@@ -35,7 +35,7 @@ export default function AgentsPage() {
   const open = (next:Editor) => {
     setFormError('');setNotice('');setEditor(next)
     setFields(next.kind==='agent' ? {...empty,code:next.agent?.code||'',name:next.agent?.name||''}
-      : {...empty,linea:String(next.line?.linea||1),variant:next.line?.variant||'',label:next.line?.label||'',phone:next.line?formatAgentLinePhone(next.line.phone):'',link_url:next.line?.link_url||'',is_active:next.line?.is_active??true})
+      : {...empty,linea:String(next.line?.linea||1),label:next.line?.label||'',phone:next.line?formatAgentLinePhone(next.line.phone):'',link_url:next.line?.link_url||'',is_active:next.line?.is_active??true})
   }
   const save = async(e:React.FormEvent) => {
     e.preventDefault(); if (!editor || saving) return
@@ -45,7 +45,7 @@ export default function AgentsPage() {
     const url=editor.kind==='line'?root+'/lines'+(editor.line?'/'+editor.line.id:''):root
     const body=editor.kind==='agent'
       ? {name:fields.name,...(!editor.agent?{code}: {})}
-      : {label:fields.label,phone:fields.phone,link_url:fields.link_url,is_active:fields.is_active,...(!editor.line?{linea:Number(fields.linea),variant:fields.variant}: {})}
+      : {label:fields.label,phone:fields.phone,link_url:fields.link_url,is_active:fields.is_active,...(!editor.line?{linea:Number(fields.linea)}: {})}
     try {
       await api(url,{method:(editor.kind==='agent'?editor.agent:editor.line)?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
       setEditor(null);setSelected(code);setNotice('Cambios guardados'); await load()
@@ -78,7 +78,7 @@ export default function AgentsPage() {
       </select>
       <Button variant="outline" onClick={load} disabled={loading}>Actualizar</Button>
     </div>
-    <p className="text-sm text-muted-foreground">La línea se vincula con el agente, número y variante asignados en Contactos. Las líneas inactivas no se ofrecen en los chats ni en las respuestas automáticas.</p>
+    <p className="text-sm text-muted-foreground">La línea se vincula con el agente y número asignados en Contactos. Las líneas inactivas no se ofrecen en los chats ni en las respuestas automáticas.</p>
     {notice&&<p role="status" className="text-sm text-success">{notice}</p>}
     {error&&<p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
     {loading&&!agents.length?<p role="status">Cargando agentes…</p>:shown.map(agent=><section key={agent.code} className="overflow-hidden rounded-xl border bg-card">
@@ -111,8 +111,7 @@ export default function AgentsPage() {
             <label className="block space-y-1 text-sm">Nombre del agente<Input required maxLength={100} value={fields.name} onChange={e=>setFields({...fields,name:e.target.value})}/></label>
             <label className="block space-y-1 text-sm">Identificador en Contactos<Input required maxLength={100} disabled={!!editor.agent} placeholder="royal" value={fields.code} onChange={e=>setFields({...fields,code:e.target.value})}/></label>
           </>:<>
-            <div className="grid grid-cols-2 gap-3"><label className="block space-y-1 text-sm">Número de línea<Input type="number" min={1} max={100} required disabled={!!editor?.line} value={fields.linea} onChange={e=>setFields({...fields,linea:e.target.value})}/></label>
-              <label className="block space-y-1 text-sm">Variante<select className="h-10 w-full rounded-lg border border-input bg-card px-3" disabled={!!editor?.line} value={fields.variant} onChange={e=>setFields({...fields,variant:e.target.value})}><option value="">Sin variante</option><option value="a">A</option><option value="b">B</option><option value="c">C</option></select></label></div>
+            <div><label className="block space-y-1 text-sm">Número de línea<Input type="number" min={1} max={100} required disabled={!!editor?.line} value={fields.linea} onChange={e=>setFields({...fields,linea:e.target.value})}/></label></div>
             <label className="block space-y-1 text-sm">Nombre de la línea<Input required maxLength={100} placeholder="Royal línea 8" value={fields.label} onChange={e=>setFields({...fields,label:e.target.value})}/></label>
             <label className="block space-y-1 text-sm">Teléfono<Input type="tel" required={!fields.link_url.trim()} maxLength={40} placeholder="549 | 1123 | 456789" value={fields.phone} onChange={e=>setFields({...fields,phone:e.target.value})}/></label>
             <label className="block space-y-1 text-sm">Link<Input type="url" required={!fields.phone.trim()} maxLength={2048} placeholder="https://..." value={fields.link_url} onChange={e=>setFields({...fields,link_url:e.target.value})}/></label>
