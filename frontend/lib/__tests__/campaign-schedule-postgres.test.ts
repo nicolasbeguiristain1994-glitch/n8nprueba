@@ -96,3 +96,10 @@ describe.skipIf(!localUrl)('rescheduling against the real PostgreSQL scheduler',
     expect((await db.query('SELECT scheduled_at FROM campaigns')).rows[0].scheduled_at.toISOString()).toBe(oldSchedule)
   })
 })
+
+vi.mock('@/lib/cloud-api/meta-risk-refresh', () => ({ refreshCampaignMetaRisk: vi.fn() }))
+vi.mock('@/lib/campaign-risk', () => ({
+  CampaignRiskError: class extends Error { status = 409; code = 'CAMPAIGN_RISK_BLOCKED' },
+  CAMPAIGN_RISK_CLEAR_SQL: 'true /* campaign-risk-clear */',
+  assertCampaignRiskClear: vi.fn(), evaluateCampaignRisk: vi.fn(),
+}))

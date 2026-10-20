@@ -7,6 +7,8 @@ export async function register(): Promise<void> {
       process.env.NEXT_PHASE !== 'phase-production-build' && (process.env.DATABASE_URL || process.env.DB_HOST)) {
     await import('./lib/missing-contacts').then(({ startMissingContactRefresh }) => startMissingContactRefresh())
       .catch(() => console.warn('[missing contacts] Startup refresh unavailable; will retry'))
+    await import('./lib/cloud-api/meta-risk-refresh').then(({ startMetaRiskRefresh }) => startMetaRiskRefresh())
+      .catch(() => console.warn('[campaign-risk] No se pudo iniciar la verificación periódica de Meta'))
   }
 
   if (process.env.NEXT_RUNTIME !== 'nodejs' || process.env.NODE_ENV !== 'production' ||

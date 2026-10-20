@@ -1,3 +1,5 @@
+import { refreshCampaignMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
+import { CampaignRiskError, assertCampaignRiskClear, evaluateCampaignRisk, CAMPAIGN_RISK_CLEAR_SQL } from '@/lib/campaign-risk'
 import { priorityRecipientAllowed } from './user-prioritization/broadcasts'
 import { uploadCloudSticker } from './cloud-api/infrastructure/sticker-media'
 import { ensureCampaignAudienceSnapshot, campaignMembershipSQL } from './dynamic-audiences'
@@ -604,12 +606,24 @@ export async function sendViaEvolution(
   }
 
   const url = `${evoUrl}/message/${mediaType === 'sticker' ? 'sendSticker' : 'sendText'}/${line.evolution_instance}`
-  const res = await withGlobalSendGuard(phone, () => fetch(url, {
+  const res = await withGlobalSendGuard(phone, async db => {
+    if (campaignId) {
+      try {
+        const { rows } = await db.query(`SELECT c.id FROM campaigns c WHERE c.id=$1
+          AND c.status='running' AND ${CAMPAIGN_RISK_CLEAR_SQL} FOR SHARE OF c`, [campaignId])
+        if (!rows.length) throw new CampaignRiskError('La campaña está detenida o tiene una alerta de riesgo pendiente.')
+      } catch (error) {
+        if (error instanceof CampaignRiskError) throw error
+        throw new CampaignRiskError('No se pudo verificar la seguridad de la campaña; no se envió el mensaje.')
+      }
+    }
+    return fetch(url, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json', apikey: apiKey },
     body:    JSON.stringify(body),
     signal: AbortSignal.timeout(20000),
-  }),{provider:"evolution",sourceId:line.evolution_instance,campaignId})
+  })
+  },{provider:"evolution",sourceId:line.evolution_instance,campaignId})
 
   if (!res.ok) {
     let errText: string
@@ -731,7 +745,7 @@ export async function sendViaCloud(
   } catch (error) {
     // A timeout/disconnected response cannot prove that Meta rejected the message.
     // Keep its queued fence intact instead of making an automatic duplicate possible.
-    if (error instanceof OptOutError || (error instanceof CloudApiError && error.code)) throw error
+    if (error instanceof CampaignRiskError || error instanceof OptOutError || (error instanceof CloudApiError && error.code)) throw error
     throw new CloudSendOutcomeUnknownError()
   }
 }
@@ -1329,6 +1343,16 @@ export async function sendOneUnit(
         recipientId: unit.id, lineId: line.id, detail: 'Provider accepted; preserve the fence and do not retry.' })
       return 'sent'
     }
+    if (err instanceof CampaignRiskError) {
+      await query(`UPDATE campaigns SET status='paused', pause_reason='risk_detected', updated_at=NOW()
+        WHERE id=$1 AND status='running'`, [campaignId])
+      // The guard ran before the provider; preserve pending recipients for review.
+      await query(`UPDATE whatsapp_messages SET status='failed', error_detail='risk-guard-no-send', updated_at=NOW()
+        WHERE campaign_recipient_id=$1 AND status='queued' AND evolution_message_id IS NULL`, [unit.id])
+      await query(`UPDATE campaign_recipients SET status='pending', locked_at=NULL,
+        attempts=GREATEST(attempts-1,0), error_detail='risk-guard-no-send', updated_at=NOW() WHERE id=$1`, [unit.id])
+      return 'failed'
+    }
     if (err instanceof CampaignLineUnavailableError) {
       await query(`UPDATE whatsapp_messages SET status='failed', error_detail='line-unavailable-no-send', updated_at=NOW()
         WHERE campaign_recipient_id=$1 AND status='queued'`, [unit.id])
@@ -1374,7 +1398,8 @@ export async function sendOneUnit(
       return 'skipped'
     }
 
-    const errMsg = err instanceof Error ? err.message : String(err)
+    const errMsg = err instanceof CloudApiError && err.code ? `[meta:${err.code}] ${err.message}`
+      : err instanceof Error ? err.message : String(err)
     console.error(
       `[distributor ${campaignId}] send failed ***${unit.phone_number.slice(-4)} via ${lineLabel}:`, errMsg
     )
@@ -1384,6 +1409,13 @@ export async function sendOneUnit(
     const retries = err instanceof CloudApiError && !err.retryable ? 1 : maxRetries
     await handleFailure(campaignId, unit, line, errMsg, retries,
       campaign.message_type, campaign.template_name ?? undefined)
+    // Include this persisted rejection even when it was the campaign's last recipient.
+    if (err instanceof CloudApiError && err.code === 131049) {
+      try { await evaluateCampaignRisk(campaignId) } catch {
+        await query(`UPDATE campaigns SET status='paused',pause_reason='risk_detected',updated_at=NOW()
+          WHERE id=$1 AND status='running'`, [campaignId]).catch(() => {})
+      }
+    }
     return 'failed'
   }
 }
@@ -1419,6 +1451,9 @@ export async function processMultiLineInBackground(
   const delayController = new AbortController()
 
   try {
+    await refreshCampaignMetaRisk(id)
+    await evaluateCampaignRisk(id)
+    await assertCampaignRiskClear(id)
     // ── Guard temprano de API key ─────────────────────────────────────────────
     // Solo pausar si falta EVOLUTION_API_KEY Y no hay líneas Cloud disponibles
     // que puedan cubrir la campaña. Un setup cloud-only no necesita la key de Evolution.
@@ -1441,7 +1476,7 @@ export async function processMultiLineInBackground(
           `UPDATE campaigns
            SET status = 'paused', pause_reason = 'config_missing',
                processor_locked_at = NULL, processor_lock_token = NULL
-           WHERE id = $1`,
+           WHERE id = $1 AND status = 'running'`,
           [id],
         ).catch(() => {})
         return
@@ -1465,7 +1500,7 @@ export async function processMultiLineInBackground(
         `UPDATE campaigns
          SET status = 'paused', pause_reason = 'config_missing',
              processor_locked_at = NULL, processor_lock_token = NULL
-         WHERE id = $1`,
+         WHERE id = $1 AND status = 'running'`,
         [id],
       ).catch(() => {})
       return
@@ -1572,6 +1607,10 @@ export async function processMultiLineInBackground(
         delayController.abort()  // cancelar cualquier delay en curso
         break
       }
+
+      await refreshCampaignMetaRisk(id)
+      await evaluateCampaignRisk(id)
+      await assertCampaignRiskClear(id)
 
       // ── 2. Refresh eligible lines (con cache TTL) ───────────────────────────
       // Sin cache: 1 query a whatsapp_lines por mensaje enviado.
@@ -1858,7 +1897,8 @@ export async function processMultiLineInBackground(
 
       if (finalState?.status === 'running' && pending === 0) {
         await query(
-          `UPDATE campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1`,
+          `UPDATE campaigns AS c SET status = 'completed', completed_at = NOW()
+           WHERE id = $1 AND status='running' AND ${CAMPAIGN_RISK_CLEAR_SQL}`,
           [id]
         ).catch(e =>
           clog.error({
@@ -1886,6 +1926,11 @@ export async function processMultiLineInBackground(
     }
 
   } catch (err) {
+    if (err instanceof CampaignRiskError) {
+      await query(`UPDATE campaigns SET status='paused', pause_reason='risk_detected', updated_at=NOW()
+        WHERE id=$1 AND status='running'`, [id])
+      return
+    }
     // AbortError: el delay fue cancelado porque la campaña se pausó/canceló.
     // No es un error fatal — el loop ya salió limpiamente. Dejar que el finally libere el lock.
     if (err instanceof DOMException && err.name === 'AbortError') {
@@ -2000,9 +2045,10 @@ export async function acquireProcessorLock(
   campaignId: string,
   currentStatus: string,
 ): Promise<string | null> {
+  await assertCampaignRiskClear(campaignId)
   const newToken = crypto.randomUUID()
   const rows = await query<{ id: string }>(
-    `UPDATE campaigns
+    `UPDATE campaigns AS c
      SET status = CASE
            WHEN status IN ('draft','scheduled','paused') THEN 'running'
            ELSE status
@@ -2019,6 +2065,7 @@ export async function acquireProcessorLock(
            SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = $1
          )
      WHERE id = $1
+       AND ${CAMPAIGN_RISK_CLEAR_SQL}
        AND status IN ('draft','scheduled','paused','running')
        AND (processor_locked_at IS NULL
             OR processor_locked_at < NOW() - INTERVAL '${PROCESSOR_LOCK_MINUTES} minutes')

@@ -7,6 +7,7 @@ vi.mock('@/lib/permissions', () => ({ checkPermissionWithUser: async () => ({ ok
 vi.mock('@/lib/cloud-api/access', () => ({ cloudNumberAccess: mocks.access }))
 vi.mock('@/lib/cloud-api/use-cases/send-message.use-case', () => ({ sendMessageUseCase: { execute: mocks.execute } }))
 vi.mock('@/lib/audit', () => ({ audit: vi.fn() }))
+import { CampaignRiskError } from '@/lib/campaign-risk'
 import { POST } from '@/app/api/cloud/messages/route'
 
 beforeEach(() => {
@@ -29,4 +30,12 @@ it('delegates an ordinary message with no caller-selected agent', async () => {
   const sent = mocks.execute.mock.calls[0][0].request
   expect(sent).not.toHaveProperty('agentCode')
   expect(sent).not.toHaveProperty('campaignId')
+})
+
+it('returns a distinct conflict when the shared sender blocks an unsafe send', async () => {
+  mocks.execute.mockRejectedValueOnce(new CampaignRiskError())
+  const response = await POST(request())
+  expect(response.status).toBe(409)
+  expect(await response.json()).toMatchObject({ code: 'CAMPAIGN_RISK_BLOCKED' })
+  expect(mocks.execute).toHaveBeenCalledTimes(1)
 })

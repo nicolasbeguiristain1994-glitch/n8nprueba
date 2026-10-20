@@ -60,7 +60,9 @@ jobs:
         run: |
           npm audit --omit=dev --audit-level=high
           npm audit --prefix frontend --omit=dev --audit-level=high
-      - name: Validate exact Git version, real migrations, frontend and build
+      # release.mjs includes campaign-risk-postgres.test.ts with real PostgreSQL,
+      # plus the campaign risk API/UI tests; one invocation preserves exact-SHA proof.
+      - name: Validate exact Git version, migrations, campaign risk protection, frontend and build
         run: node scripts/ops/release.mjs validate
       - uses: actions/upload-artifact@v4
         with:

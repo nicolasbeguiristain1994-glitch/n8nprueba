@@ -9,12 +9,15 @@ export interface WebhookPayload {
 
 export interface WebhookEntry {
   id:      string
+  time?:   number
   changes: WebhookChange[]
 }
 
 export type WebhookField =
   | 'messages'
   | 'message_template_status_update'
+  | 'message_template_quality_update'
+  | 'account_update'
   | 'history'
   | 'smb_app_state_sync'
   | 'smb_message_echoes'
@@ -26,8 +29,8 @@ export interface WebhookChange {
 }
 
 export interface WebhookValue {
-  messaging_product: 'whatsapp'
-  metadata:          WebhookMetadata
+  messaging_product?: 'whatsapp'
+  metadata?:          WebhookMetadata
   contacts?:         WebhookContact[]
   messages?:         WebhookMessage[]
   statuses?:         WebhookStatus[]
@@ -79,11 +82,28 @@ export interface WebhookStatus {
 }
 
 export interface WebhookTemplateStatusUpdate {
-  message_template_id:       string
+  message_template_id:       string | number
   message_template_name:     string
   message_template_language: string
-  event:                     'APPROVED' | 'REJECTED' | 'DISABLED' | 'PAUSED'
-  reason?:                   string
+  event:                     string
+  reason?:                   string | null
+}
+
+export interface WebhookTemplateQualityUpdate {
+  message_template_id: string | number
+  message_template_name: string
+  message_template_language: string
+  previous_quality_score?: string
+  new_quality_score: string
+}
+
+export interface WebhookAccountUpdate {
+  event: string
+  phone_number?: string
+  waba_info?: { waba_id?: string; partner_app_id?: string }
+  violation_info?: { violation_type?: string }
+  ban_info?: { waba_ban_state?: string; waba_ban_date?: string }
+  restriction_info?: Array<{ restriction_type?: string; expiration?: number; remediation?: string }>
 }
 
 export interface WebhookSyncEvent {

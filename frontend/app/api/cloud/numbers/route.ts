@@ -3,8 +3,8 @@ import { cloudNumberAccess } from '@/lib/cloud-api/access'
 import { NextRequest, NextResponse } from 'next/server'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { query } from '@/lib/db'
-import { MetaCloudApiClient } from '@/lib/cloud-api/client'
-import { getTokenForNumber, revokeToken } from '@/lib/cloud-api/token-store'
+import { revokeToken } from '@/lib/cloud-api/token-store'
+import { refreshPhoneMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
 import { audit } from '@/lib/audit'
 import { appLog } from '@/lib/security-log'
 
@@ -60,22 +60,13 @@ export async function POST(req: NextRequest) {
   const denied = await cloudNumberAccess(auth.user, phoneNumberId)
   if (denied) return denied
   try {
-    const token = await getTokenForNumber(phoneNumberId)
-    const client = new MetaCloudApiClient(token)
-    const info = await client.getPhoneNumberInfo(phoneNumberId)
-
-    await query(
-      `UPDATE cloud_numbers
-       SET quality_rating = $1, verified_name = $2, updated_at = NOW()
-       WHERE phone_number_id = $3`,
-      [info.quality_rating, info.verified_name, phoneNumberId],
-    )
+    const info = await refreshPhoneMetaRisk(phoneNumberId)
 
     return NextResponse.json({
       qualityRating:  info.quality_rating,
       verifiedName:   info.verified_name,
       platformType:   info.platform_type,
-      throughputLevel: info.throughput.level,
+      throughputLevel: info.throughput?.level,
     })
   } catch (err) {
     appLog('ERROR', '[cloud/numbers POST]', { error: err instanceof Error ? err.message : String(err) })

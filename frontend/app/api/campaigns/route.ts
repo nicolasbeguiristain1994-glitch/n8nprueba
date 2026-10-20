@@ -8,6 +8,7 @@ import { parseBody, handleValidationError, CreateCampaignSchema } from '@/lib/sc
 import { normalizeCampaignSchedule, validateCampaignTemplate } from '@/lib/campaign-template'
 import { getAccessibleLineIds } from '@/lib/line-visibility'
 import { CAMPAIGN_STATS_SQL } from '@/lib/campaign-stats'
+import { getCampaignRiskStates } from '@/lib/campaign-risk'
 
 export async function GET(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'campaigns', 'read')
@@ -79,7 +80,9 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ campaigns, scheduler_enabled: process.env.CAMPAIGN_SCHEDULER_ENABLED === 'true' && !!process.env.CRON_SECRET })
+    const risks = await getCampaignRiskStates(campaigns.map(campaign => String(campaign.id)))
+    return NextResponse.json({ campaigns: campaigns.map(campaign => ({ ...campaign, risk: risks[String(campaign.id)] ?? { blocked: false, incidents: [] } })),
+      scheduler_enabled: process.env.CAMPAIGN_SCHEDULER_ENABLED === 'true' && !!process.env.CRON_SECRET })
   } catch (e) {
     console.error('[/api/campaigns GET]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

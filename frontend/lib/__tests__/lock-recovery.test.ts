@@ -253,7 +253,7 @@ describe('POST /api/campaigns/[id]/force-unlock', () => {
     )
   })
 
-  it('UPDATE sets pause_reason=manual and clears lock fields', async () => {
+  it('UPDATE retains risk holds while clearing lock fields', async () => {
     mockCheckPerm.mockResolvedValueOnce({
       ok: true, user: makeUser(),
     })
@@ -270,7 +270,8 @@ describe('POST /api/campaigns/[id]/force-unlock', () => {
     const [sql, params] = mockQuery.mock.calls[1] as [string, unknown[]]
     expect(sql).toContain('processor_locked_at  = NULL')
     expect(sql).toContain('processor_lock_token = NULL')
-    expect(sql).toContain("pause_reason         = 'manual'")
+    expect(sql).toContain("THEN 'manual' ELSE 'risk_detected' END")
+    expect(sql).toContain("campaign-risk-clear")
     expect(params[0]).toBe(CAMPAIGN_ID)
     expect(params[1]).toBe(ADMIN_USER.user_id)
   })
@@ -310,3 +311,11 @@ describe('clog.critical', () => {
     expect(typeof clog.critical).toBe('function')
   })
 })
+
+vi.mock('@/lib/cloud-api/meta-risk-refresh', () => ({ refreshCampaignMetaRisk: vi.fn() }))
+vi.mock('@/lib/campaign-risk', () => ({
+  CampaignRiskError: class extends Error { status = 409; code = 'CAMPAIGN_RISK_BLOCKED' },
+  CAMPAIGN_RISK_CLEAR_SQL: 'true /* campaign-risk-clear */',
+  assertCampaignRiskClear: vi.fn(), evaluateCampaignRisk: vi.fn(),
+  assertCloudSendRiskClear: vi.fn(), recordCampaignProviderRisk: vi.fn(),
+}))

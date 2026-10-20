@@ -1,3 +1,4 @@
+import { CampaignRiskError } from '@/lib/campaign-risk'
 import type { AgentDeliveryMode } from './agent-line-types'
 import { resolveConsentIdentity } from '@/lib/consent-context'
 import { belongsToDirectory, directoryAgentCode, agentLineReply, type RoutingContact } from '@/lib/contact-line-directory'
@@ -165,6 +166,10 @@ async function sendJob(job:Job):Promise<void> {
     try {
       await sendMessageUseCase.execute({request:{phoneNumberId:job.source_id,to:'+'+job.phone,agentCode:job.agent_code??undefined,type:'text',text:{body:job.body}}})
     } catch (err) {
+      if (err instanceof CampaignRiskError) {
+        await complete(job,'skipped','Envío detenido por una alerta de riesgo; no se contactó al proveedor ni se reintenta automáticamente')
+        return
+      }
       const name=err instanceof Error?err.name:''
       await complete(job,['OptOutError','ConversationWindowError','TokenExpiredError'].includes(name)?'skipped':'uncertain',
         ['OptOutError','ConversationWindowError','TokenExpiredError'].includes(name)?'Baja, ventana cerrada o credencial no disponible':'Envío no confirmado; revisar el historial antes de reintentar')

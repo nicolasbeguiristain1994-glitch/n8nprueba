@@ -1,3 +1,4 @@
+import { CAMPAIGN_RISK_CLEAR_SQL } from '@/lib/campaign-risk'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
@@ -38,9 +39,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (row.status === status) return NextResponse.json({ ok: true, changed: false })
 
     const updated = await query<{ id: string }>(
-      `UPDATE campaigns
+      `UPDATE campaigns AS c
        SET status       = $1::campaign_status,
-           pause_reason = CASE WHEN $1 = 'paused' THEN 'manual' ELSE NULL END,
+           pause_reason = CASE WHEN $1 = 'paused' THEN CASE WHEN ${CAMPAIGN_RISK_CLEAR_SQL} THEN 'manual' ELSE 'risk_detected' END ELSE NULL END,
            scheduled_at = CASE WHEN $1 = 'draft' THEN NULL ELSE scheduled_at END,
            updated_at   = NOW(),
            updated_by   = $3

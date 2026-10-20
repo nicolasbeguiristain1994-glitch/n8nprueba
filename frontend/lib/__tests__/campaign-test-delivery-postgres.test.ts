@@ -7,6 +7,9 @@ import type { WebhookStatus } from '@/lib/cloud-api/types/webhooks'
 
 const mocks = vi.hoisted(() => ({ query: vi.fn(), transaction: vi.fn() }))
 vi.mock('@/lib/db', () => ({ query: mocks.query, withTransaction: mocks.transaction }))
+// Risk classification is covered separately; keep its attribution SQL real here
+// so this receipt fixture detects schema drift in the shared delivery handler.
+vi.mock('@/lib/campaign-risk', () => ({ recordCampaignProviderRisk: vi.fn(), evaluateCampaignRisk: vi.fn() }))
 vi.mock('@/lib/cloud-api/infrastructure/metrics', () => ({ cloudMetrics: { deliveryStatus: vi.fn() } }))
 vi.mock('@/lib/cloud-api/infrastructure/logger', () => ({ createLogger: () => ({ logInfo: vi.fn() }) }))
 import { completeCampaignTestAttempt, recordCampaignTestDelivery } from '@/lib/campaign-test-delivery'
@@ -41,10 +44,11 @@ describe.skipIf(!databaseUrl)('test delivery receipts on isolated PostgreSQL', (
       CREATE TYPE message_status AS ENUM('queued','sent','delivered','read','failed');
       CREATE TABLE whatsapp_messages(id int PRIMARY KEY,campaign_recipient_id int,evolution_message_id text,status message_status,
         direction text,delivered_at timestamptz,read_at timestamptz,failed_at timestamptz,error_detail text,updated_at timestamptz);
-      CREATE TABLE campaign_recipients(id int PRIMARY KEY,status text,error_detail text,failed_at timestamptz,locked_at timestamptz,updated_at timestamptz);
+      CREATE TABLE campaign_recipients(id int PRIMARY KEY,campaign_id int,line_id uuid,status text,error_detail text,failed_at timestamptz,locked_at timestamptz,updated_at timestamptz);
       CREATE TABLE contact_send_history(id int PRIMARY KEY,campaign_recipient_id int,frequency_released_at timestamptz,failed_message_id int);
-      CREATE TABLE campaigns(id int PRIMARY KEY,total_sent int,total_failed int,total_skipped int);
-      CREATE TABLE cloud_messages(wamid text,status text,delivered_at timestamptz,read_at timestamptz,failed_at timestamptz,
+      CREATE TABLE campaigns(id int PRIMARY KEY,template_id uuid,total_sent int,total_failed int,total_skipped int);
+      CREATE TABLE whatsapp_templates(id uuid PRIMARY KEY,name text);
+      CREATE TABLE cloud_messages(wamid text,phone_number_id text,campaign_id int,template_name text,direction text,status text,delivered_at timestamptz,read_at timestamptz,failed_at timestamptz,
         error_code int,error_title text,error_details text,pricing_model text,pricing_category text,billable boolean);`)
     await db.query(`INSERT INTO campaign_test_sends(id,line_id,status) VALUES($1,$3,'sent'),($2,$4,'uncertain')`, [id(90),id(91),id(80),id(81)])
     await db.query(`INSERT INTO cloud_numbers VALUES($1,'unique'),($2,'ambiguous-a'),($2,'ambiguous-b')`, [id(80),id(81)])
@@ -69,10 +73,10 @@ describe.skipIf(!databaseUrl)('test delivery receipts on isolated PostgreSQL', (
   })
   beforeEach(async () => {
     await db.query(`TRUNCATE campaign_test_delivery_receipts,campaign_test_sends,cloud_numbers,whatsapp_messages,
-      cloud_messages,campaign_recipients,contact_send_history,campaigns;
+      cloud_messages,campaign_recipients,contact_send_history,campaigns,whatsapp_templates;
       INSERT INTO campaign_recipients(id,status) VALUES(1,'skipped');
       INSERT INTO contact_send_history(id,campaign_recipient_id) VALUES(1,1);
-      INSERT INTO campaigns VALUES(1,0,0,1);`)
+      INSERT INTO campaigns(id,total_sent,total_failed,total_skipped) VALUES(1,0,0,1);`)
     await seed()
   })
   afterAll(async () => {
@@ -94,7 +98,7 @@ describe.skipIf(!databaseUrl)('test delivery receipts on isolated PostgreSQL', (
     expect(await current()).toMatchObject({ status: 'failed', delivery_error_code: 141006,
       error: '[meta:141006] Payment configuration required', provider_message_id: wamid })
     expect((await current()).delivery_updated_at).toEqual(new Date(1791490000 * 1000))
-    expect((await db.query('SELECT * FROM campaigns')).rows).toEqual([{ id: 1, total_sent: 0, total_failed: 0, total_skipped: 1 }])
+    expect((await db.query('SELECT id,total_sent,total_failed,total_skipped FROM campaigns')).rows).toEqual([{ id: 1, total_sent: 0, total_failed: 0, total_skipped: 1 }])
     expect((await db.query('SELECT status FROM campaign_recipients')).rows).toEqual([{ status: 'skipped' }])
     expect((await db.query('SELECT frequency_released_at,failed_message_id FROM contact_send_history')).rows)
       .toEqual([{ frequency_released_at: null, failed_message_id: null }])

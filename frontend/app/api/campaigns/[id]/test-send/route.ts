@@ -1,3 +1,4 @@
+import { CampaignRiskError } from '@/lib/campaign-risk'
 import { NextResponse } from 'next/server'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { isUUID } from '@/lib/validate'
@@ -6,6 +7,7 @@ import { CampaignTestError, SendCampaignTestSchema, getCampaignTestSnapshot, sen
 
 type Context = { params: Promise<{ id: string }> }
 function failure(error: unknown) {
+  if (error instanceof CampaignRiskError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status })
   return NextResponse.json({ error: error instanceof CampaignTestError ? error.message : 'No se pudo procesar la prueba.' },
     { status: error instanceof CampaignTestError ? error.status : 500 })
 }

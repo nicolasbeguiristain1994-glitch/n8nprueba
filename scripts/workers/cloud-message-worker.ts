@@ -62,7 +62,7 @@ const worker = new Worker<QueuedMessage>(
         `/${msg.phoneNumberId}/messages`,
         payload,
       ))
-      if (!sent) return {status: 'skipped', reason: 'Baja solicitada o mensaje ya procesado'}
+      if (!sent) return {status: 'skipped', reason: 'Envío bloqueado por baja, riesgo o mensaje ya procesado'}
       responseData = sent
     } catch (err) {
       const errorCode = (err as { code?: number }).code ?? 0

@@ -1,6 +1,7 @@
 // Caso de uso: enviar un mensaje via Cloud API.
 // Orquesta: compliance → ventana → rate limit → sender → persistencia.
 
+import { CampaignRiskError } from '@/lib/campaign-risk'
 import { randomUUID }                         from 'crypto'
 import { getTokenForNumber }                  from '../token-store'
 import { MessageSenderService, buildMessagePayload } from '../infrastructure/message-sender.service'
@@ -12,7 +13,7 @@ import { createLogger }                       from '../infrastructure/logger'
 import { createCorrelationId }                from '../correlation'
 import type { SendMessageRequest, SendMessageResult } from '../types/messages'
 import { OptOutError, ConversationWindowError, CloudApiError } from '../errors'
-import { markOptOutCancelled } from '../queued-send-guard'
+import { markOptOutCancelled, markRiskCancelled } from '../queued-send-guard'
 import { enqueueMessage }                     from '../message-queue'
 
 export interface SendMessageInput {
@@ -106,6 +107,9 @@ export class SendMessageUseCase {
 
     } catch (err) {
       if (err instanceof OptOutError) await markOptOutCancelled(messageId)
+      if (err instanceof CampaignRiskError) await markRiskCancelled(messageId).catch(() => {
+        log.logWarn('Risk guard prevented provider send; local status update failed', { messageId })
+      })
       cloudMetrics.messageFailed(phoneNumberId, type, err instanceof CloudApiError ? err.code : undefined)
       log.logError('send failed', err, { messageId })
       throw err

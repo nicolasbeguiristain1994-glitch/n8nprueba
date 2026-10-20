@@ -5,7 +5,7 @@ import {
   buildTemplatePayload, CampaignLineUnavailableError, CloudSendOutcomeUnknownError,
   getEligibleLines, sendViaCloud, sendViaEvolution, type EligibleLine,
 } from '@/lib/campaign-distributor'
-import { ConversationWindowError, OptOutError } from '@/lib/cloud-api/errors'
+import { CloudApiError, ConversationWindowError, OptOutError } from '@/lib/cloud-api/errors'
 import { sendOne, processInBackground, type CampaignRow, type RecipientRow } from '@/lib/send-processor'
 
 vi.mock('@/lib/db', () => ({ query: vi.fn() }))
@@ -238,4 +238,54 @@ describe('single-line Cloud campaign readiness', () => {
     expect(statements().some(sql => sql.includes('FOR UPDATE SKIP LOCKED'))).toBe(false)
     expect(sendViaCloud).not.toHaveBeenCalled()
   })
+})
+
+vi.mock('@/lib/cloud-api/meta-risk-refresh', () => ({ refreshCampaignMetaRisk: vi.fn() }))
+vi.mock('@/lib/campaign-risk', () => ({
+  CampaignRiskError: class extends Error { status = 409; code = 'CAMPAIGN_RISK_BLOCKED' },
+  CAMPAIGN_RISK_CLEAR_SQL: 'true /* campaign-risk-clear */',
+  assertCampaignRiskClear: vi.fn(), evaluateCampaignRisk: vi.fn(),
+  assertCloudSendRiskClear: vi.fn(), recordCampaignProviderRisk: vi.fn(),
+}))
+
+import { CampaignRiskError, assertCampaignRiskClear, evaluateCampaignRisk } from '@/lib/campaign-risk'
+it('preserves a definitely unsent recipient when the final safety gate blocks sending', async () => {
+  vi.mocked(sendViaCloud).mockRejectedValue(new CampaignRiskError('Quality hold'))
+  expect(await sendOne(campaign.id, campaign, recipient)).toBe('deferred')
+  expect(statements().some(sql => sql.includes("pause_reason='risk_detected'"))).toBe(true)
+  expect(statements().some(sql => sql.includes("SET status = 'pending'") && sql.includes('attempts - 1'))).toBe(true)
+  expect(statements().some(sql => sql.includes('risk-guard-no-send'))).toBe(true)
+  expect(statements().some(sql => sql.includes('increment_line_counters'))).toBe(false)
+})
+it('stops the single-line worker before claiming when there is an active risk', async () => {
+  vi.mocked(assertCampaignRiskClear).mockRejectedValueOnce(new CampaignRiskError())
+  await processInBackground(campaign, 'lock')
+  expect(sendViaCloud).not.toHaveBeenCalled()
+  expect(statements().some(sql => sql.includes("SET    status     = 'sending'"))).toBe(false)
+  expect(statements().some(sql => sql.includes('processor_lock_token = $2'))).toBe(true)
+})
+
+it.each([false, true])('checks the final persisted 131049 before completion (risk store unavailable=%s)', async storeUnavailable => {
+  let status = 'running', storedRejection = false, checkedFinalRejection = false
+  vi.mocked(sendViaCloud).mockRejectedValue(new CloudApiError('Healthy ecosystem', 131049))
+  vi.mocked(query).mockImplementation(async (sql, params) => {
+    if (sql.includes('SELECT status FROM campaigns')) return [{ status }]
+    if (sql.includes('FOR UPDATE SKIP LOCKED')) return [{ ...recipient, contact_id: null }]
+    if (sql.includes('UPDATE whatsapp_messages') && params?.some(p => String(p).includes('[meta:131049]'))) storedRejection = true
+    if (sql.includes("pause_reason='risk_detected'")) status = 'paused'
+    if (sql.includes('COUNT(*) FILTER')) return [{ sent: '40', failed: '10', skipped: '0', pending: '0' }]
+    return successfulDatabase(sql)
+  })
+  vi.mocked(evaluateCampaignRisk).mockImplementation(async () => {
+    if (!storedRejection) return
+    checkedFinalRejection = true
+    if (storeUnavailable) throw new Error('Risk storage unavailable')
+    status = 'paused'
+  })
+  await processInBackground(campaign, 'lock')
+  expect(checkedFinalRejection).toBe(true)
+  expect(status).toBe('paused')
+  expect(sendViaCloud).toHaveBeenCalledTimes(1)
+  expect(statements().some(sql => sql.includes("SET status = 'completed'"))).toBe(false)
+  expect(statements().some(sql => sql.includes('processor_lock_token = $2'))).toBe(true)
 })

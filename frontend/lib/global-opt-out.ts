@@ -3,6 +3,7 @@ import { query, withTransaction } from '@/lib/db'
 import { normalizePhone } from '@/lib/validate'
 import { OptOutError } from '@/lib/cloud-api/errors'
 import { resolveConsentIdentity, type ConsentContext } from './consent-context'
+import { evaluateCampaignRisk } from './campaign-risk'
 
 export const OPT_OUT_REASON = 'Baja solicitada por el contacto'
 export const OPT_OUT_CANCELLED = 'agent-opt-out'
@@ -35,10 +36,13 @@ export async function withGlobalSendGuard<T>(phone:string,send:(db:PoolClient)=>
 export async function recordGlobalOptOut(opts:{phone:string;sourceId:string;messageId?:string;text?:string;
   provider:'cloud'|'evolution';metadata?:Record<string,unknown>;agentUserId?:string;confirmation?:boolean}):Promise<void> {
   const key=phoneKey(opts.phone),sourceId=opts.provider==='cloud'?opts.sourceId:`evolution:${opts.sourceId}`
-  await withTransaction(async db=>{
+  const campaignId = await withTransaction(async db=>{
     await lockPhone(db,key)
-    if(opts.messageId && (await db.query(`SELECT 1 FROM cloud_consent_log WHERE contact_phone=$1 AND phone_number_id=$2
-      AND message_wamid=$3 AND event='opt_out' LIMIT 1`,['+'+key,sourceId,opts.messageId])).rows.length) return
+    if(opts.messageId) {
+      const existing = await db.query<{campaign_id:string|null}>(`SELECT metadata->>'campaign_id' AS campaign_id FROM cloud_consent_log WHERE contact_phone=$1 AND phone_number_id=$2
+        AND message_wamid=$3 AND event='opt_out' LIMIT 1`,['+'+key,sourceId,opts.messageId])
+      if(existing.rows.length) return existing.rows[0].campaign_id
+    }
     const identity=await resolveConsentIdentity(key,{provider:opts.provider,sourceId:opts.sourceId,messageId:opts.messageId,
       contextWamid:typeof opts.metadata?.context_wamid==='string'?opts.metadata.context_wamid:undefined},db)
     const scopeKey=identity.agent?`agent:${identity.agent}`:`source:${identity.sourceKey}`
@@ -69,7 +73,10 @@ export async function recordGlobalOptOut(opts:{phone:string;sourceId:string;mess
       AND (m.content->>'agentCode'=$2 OR EXISTS(SELECT 1 FROM campaign_recipients r WHERE r.campaign_id=m.campaign_id
         AND regexp_replace(r.phone_number,'[^0-9]','','g')=$1 AND r.agent_code=$2)
         OR ($2::text IS NULL AND 'cloud:'||m.phone_number_id=$3))`,[key,identity.agent,identity.sourceKey,OPT_OUT_CANCELLED,OPT_OUT_REASON])
+    return identity.campaignId
   })
+  // After consent commits: persistence failure can be retried without losing the baja.
+  if(campaignId) await evaluateCampaignRisk(campaignId)
 }
 export async function reinstateGlobalContact(id:string,userId:string,consent:string):Promise<boolean> {
   if(consent.trim().length<10) throw new Error('Registrá el nuevo consentimiento del contacto (al menos 10 caracteres).')

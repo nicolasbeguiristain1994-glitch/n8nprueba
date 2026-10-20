@@ -137,3 +137,11 @@ describe('manual replies preserve the incoming business number', () => {
   const res=await POST(new NextRequest('https://panel.test/api/send',{method:'POST',body:JSON.stringify({phones:['5491100000001'],message:'[Sticker]',media_url:'http://untrusted.test/image',media_type:'sticker'})}))
   expect(res.status).toBe(400);expect(mocks.cloud).not.toHaveBeenCalled()
  })
+
+vi.mock('@/lib/cloud-api/meta-risk-refresh', () => ({ refreshCampaignMetaRisk: vi.fn() }))
+vi.mock('@/lib/campaign-risk', () => ({
+  CampaignRiskError: class extends Error { status = 409; code = 'CAMPAIGN_RISK_BLOCKED' },
+  CAMPAIGN_RISK_CLEAR_SQL: 'true /* campaign-risk-clear */',
+  assertCampaignRiskClear: vi.fn(), evaluateCampaignRisk: vi.fn(),
+  assertCloudSendRiskClear: vi.fn(), recordCampaignProviderRisk: vi.fn(),
+}))

@@ -80,24 +80,24 @@ describe('campaign status controls', () => {
 
 describe('retry definite failures only', () => {
   it.each(['running', 'cancelled', 'draft', 'scheduled'])('does not reset recipients in %s', async status => {
-    mocks.txQuery.mockResolvedValueOnce({ rows: [{ status, owned_by: user.user_id, has_lock: false }] })
+    mocks.txQuery.mockResolvedValueOnce({ rows: [{ status, owned_by: user.user_id, has_lock: false, risk_clear: true }] })
     expect((await retry(req('/retry-failed'), params())).status).toBe(409)
     expect(mocks.txQuery).toHaveBeenCalledTimes(1)
   })
   it('waits for the processor to release even a paused campaign lock', async () => {
-    mocks.txQuery.mockResolvedValueOnce({ rows: [{ status: 'paused', owned_by: user.user_id, has_lock: true }] })
+    mocks.txQuery.mockResolvedValueOnce({ rows: [{ status: 'paused', owned_by: user.user_id, has_lock: true, risk_clear: true }] })
     expect((await retry(req('/retry-failed'), params())).status).toBe(409)
     expect(mocks.txQuery).toHaveBeenCalledTimes(1)
   })
   it('returns conflict when no recipient is eligible for retry', async () => {
-    mocks.txQuery.mockResolvedValueOnce({ rows: [{ status: 'completed', owned_by: user.user_id, has_lock: false }] })
+    mocks.txQuery.mockResolvedValueOnce({ rows: [{ status: 'completed', owned_by: user.user_id, has_lock: false, risk_clear: true }] })
     mocks.prepare.mockResolvedValue(0)
     expect((await retry(req('/retry-failed'), params())).status).toBe(409)
     expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({ query: mocks.txQuery }), id)
     expect(mocks.txQuery).toHaveBeenCalledTimes(1)
   })
   it('locks campaign and resets counters/state in the same transaction', async () => {
-    mocks.txQuery.mockResolvedValueOnce({ rows: [{ status: 'completed', owned_by: user.user_id, has_lock: false }] })
+    mocks.txQuery.mockResolvedValueOnce({ rows: [{ status: 'completed', owned_by: user.user_id, has_lock: false, risk_clear: true }] })
       .mockResolvedValueOnce({ rows: [] })
     mocks.prepare.mockResolvedValue(2)
     const response = await retry(req('/retry-failed'), params())
@@ -109,7 +109,7 @@ describe('retry definite failures only', () => {
     expect(mocks.fetch).not.toHaveBeenCalled()
   })
   it('propagates a state-write failure out of the transaction without success/audit', async () => {
-    mocks.txQuery.mockResolvedValueOnce({ rows: [{ status: 'completed', owned_by: user.user_id, has_lock: false }] })
+    mocks.txQuery.mockResolvedValueOnce({ rows: [{ status: 'completed', owned_by: user.user_id, has_lock: false, risk_clear: true }] })
       .mockRejectedValueOnce(new Error('synthetic rollback'))
     mocks.prepare.mockResolvedValue(2)
     expect((await retry(req('/retry-failed'), params())).status).toBe(500)
@@ -165,4 +165,21 @@ describe('ACK sync authorization and line provenance', () => {
     expect(await (await sync(req('/sync-status'), params())).json()).toMatchObject({ synced: 0 })
     expect(mocks.query.mock.calls[2][0]).toContain("WHEN 'delivered' THEN 2 ELSE 3 END < $4")
   })
+})
+
+vi.mock('@/lib/cloud-api/meta-risk-refresh', () => ({ refreshCampaignMetaRisk: vi.fn() }))
+vi.mock('@/lib/campaign-risk', () => ({
+  CampaignRiskError: class extends Error { status = 409; code = 'CAMPAIGN_RISK_BLOCKED' },
+  CAMPAIGN_RISK_CLEAR_SQL: 'true /* campaign-risk-clear */',
+  assertCampaignRiskClear: vi.fn(), evaluateCampaignRisk: vi.fn(),
+  assertCloudSendRiskClear: vi.fn(), recordCampaignProviderRisk: vi.fn(),
+}))
+
+it('does not reset failed recipients while the campaign has an unresolved risk', async () => {
+  mocks.txQuery.mockResolvedValueOnce({ rows: [{ status: 'paused', owned_by: user.user_id, has_lock: false, risk_clear: false }] })
+  const response = await retry(req('/retry-failed'), params())
+  expect(response.status).toBe(409)
+  expect(await response.json()).toMatchObject({ code: 'CAMPAIGN_RISK_BLOCKED' })
+  expect(mocks.prepare).not.toHaveBeenCalled()
+  expect(mocks.txQuery).toHaveBeenCalledTimes(1)
 })
