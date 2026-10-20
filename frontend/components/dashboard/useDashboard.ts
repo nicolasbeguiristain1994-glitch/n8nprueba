@@ -6,6 +6,7 @@ import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { takeDashboardPrefetch } from '@/lib/dashboard-prefetch'
 import { argentinaToday } from '@/lib/dashboard-format'
 import { queryDateRange } from '@/lib/dashboard-date-range'
+import type { AgentSalesComparison } from '@/lib/dashboard-casino'
 import type { DepositAnalytics } from '@/lib/dashboard-deposits'
 import type { PlatformActivity } from '@/lib/dashboard-overview'
 import type { CasinoSummary, CasinoAgente, CasinoVip, CasinoCashRankingRow, SegCount } from '@/app/api/dashboard/casino/route'
@@ -39,6 +40,7 @@ export interface DashboardData {
   activity: PlatformActivity[] | null
   crmAvailable: boolean
   casino: {
+    sales_comparison?: AgentSalesComparison
     summary:       CasinoSummary | null
     agentes:       CasinoAgente[]
     vips:          CasinoVip[]
@@ -172,7 +174,7 @@ export function useDashboard(userId?: string): UseDashboardReturn {
           if (!result && !controller.signal.aborted) result = await fetchJson(`/api/dashboard/casino?${qs}`)
           if (controller.signal.aborted) return
           recordTime(result?.updatedAt)
-          partial.casino = result ? { summary: result.summary ?? null, agentes: result.agentes ?? [],
+          partial.casino = result ? { sales_comparison: result.sales_comparison, summary: result.summary ?? null, agentes: result.agentes ?? [],
             vips: result.vips ?? [], seg_actividad: result.seg_actividad ?? [], seg_monto: result.seg_monto ?? [],
             cash_ranking: result.cash_ranking ?? null } : null
           if (!result) failed.push('cuentas')

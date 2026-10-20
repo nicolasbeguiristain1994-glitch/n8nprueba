@@ -9,6 +9,7 @@ import { useToast } from './useToast'
 import { DashboardHeader } from './DashboardHeader'
 import { DepositCharts } from './DepositCharts'
 import { PlatformOverview } from './PlatformOverview'
+import { SalesByAgent } from './SalesByAgent'
 import { NewUsersByAgent } from './NewUsersByAgent'
 import { CashRanking } from './CashRanking'
 import { WidgetGrid } from './WidgetGrid'
@@ -119,6 +120,9 @@ export function Dashboard() {
         {data.kpis.tasks_overdue > 0 && <span className="rounded-md bg-destructive/10 px-2 py-1 text-xs text-destructive"><strong className="tabular-nums">{data.kpis.tasks_overdue}</strong> vencidas</span>}
         <span className="ml-auto flex items-center gap-2 font-medium text-primary">Abrir tareas <ArrowRight size={16} aria-hidden="true" /></span>
       </Link>}
+
+      <SalesByAgent comparison={data?.casino?.sales_comparison ?? null} loading={loading && !data?.casino}
+        dateRange={dateRange} platform={platform} agent={agent} />
 
       <NewUsersByAgent agentes={data?.casino?.agentes ?? null} loading={loading && !data?.casino}
         dateRange={dateRange} platform={platform} agent={agent} />

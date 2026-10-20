@@ -23,6 +23,18 @@ export function queryDateRange(range: DashboardRangeLike): { from: string; to: s
   return range.preset === 'custom' ? { from: range.from, to: shiftDate(range.to, -1) } : { from: range.from, to: range.to }
 }
 
+/** Calendar-month comparison of inclusive API bounds. Full months stay full;
+ * partial/custom spans keep their day numbers, clamped to the previous month. */
+export function previousMonthRange(from: string, to: string): { from: string; to: string } {
+  const previous = (day: string, monthEnd = false) => {
+    const [year, month, date] = day.split('-').map(Number)
+    const last = new Date(Date.UTC(year, month - 1, 0)).getUTCDate()
+    return new Date(Date.UTC(year, month - 2, monthEnd ? last : Math.min(date, last))).toISOString().slice(0, 10)
+  }
+  const fullMonths = from.endsWith('-01') && shiftDate(to, 1).endsWith('-01')
+  return { from: previous(from), to: previous(to, fullMonths) }
+}
+
 /** Exclusive end (00:00 of the day after the last included day), for seeding custom inputs. */
 export function exclusiveEndDate(range: DashboardRangeLike): string {
   return range.preset === 'custom' ? range.to : shiftDate(range.to, 1)
