@@ -39,7 +39,7 @@ describe.skipIf(!localUrl)('rescheduling against the real PostgreSQL scheduler',
     await db.query(`CREATE TABLE campaigns (
       id uuid PRIMARY KEY, owned_by uuid, status text, scheduled_at timestamptz, started_at timestamptz,
       processor_locked_at timestamptz, processor_lock_token uuid, updated_at timestamptz, updated_by uuid,
-      pause_reason text, list_id uuid, prospect_list_id uuid, template_id uuid,
+      pause_reason text, budget_resume_at timestamptz, list_id uuid, prospect_list_id uuid, template_id uuid,
       name text, message text, template_params jsonb, total_sent int DEFAULT 0);
       CREATE TABLE users (id uuid, role text, sectors text[], is_active boolean);
       CREATE TABLE whatsapp_templates (id uuid, name text, language text, waba_id text, status text);

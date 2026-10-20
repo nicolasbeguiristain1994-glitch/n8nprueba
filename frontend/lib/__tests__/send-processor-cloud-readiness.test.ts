@@ -1,6 +1,7 @@
 /** @vitest-environment node */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { query } from '@/lib/db'
+import { reserveLineSendBudget,finishLineSendBudget,deferCampaignForLineBudget,LineSendBudgetError } from '@/lib/line-send-budget'
 import {
   buildTemplatePayload, CampaignLineUnavailableError, CloudSendOutcomeUnknownError,
   getEligibleLines, sendViaCloud, sendViaEvolution, type EligibleLine,
@@ -8,6 +9,12 @@ import {
 import { CloudApiError, ConversationWindowError, OptOutError } from '@/lib/cloud-api/errors'
 import { sendOne, processInBackground, type CampaignRow, type RecipientRow } from '@/lib/send-processor'
 
+vi.mock('@/lib/line-send-budget', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/line-send-budget')>(),
+  reserveLineSendBudget: vi.fn(async () => ({id:'budget-reservation'})),
+  finishLineSendBudget: vi.fn(async () => {}),
+  deferCampaignForLineBudget: vi.fn(async () => {}),
+}))
 vi.mock('@/lib/db', () => ({ query: vi.fn() }))
 // Routing has its own PostgreSQL suite; this adapter test must not enter a real transaction.
 vi.mock('@/lib/campaign-routing', async importOriginal => ({
@@ -68,19 +75,20 @@ beforeEach(() => {
 describe('single-line Cloud campaign readiness', () => {
   it('sends Cloud text through the guarded Cloud adapter using owner-scoped lines', async () => {
     await expect(sendOne(campaign.id, campaign, recipient)).resolves.toBe('sent')
-    expect(getEligibleLines).toHaveBeenCalledWith('operator')
+    expect(getEligibleLines).toHaveBeenCalledWith('operator',{includeBudgetWaiting:true})
     expect(sendViaCloud).toHaveBeenCalledWith(line, recipient.phone_number,
-      { kind: 'text', body: 'Hola Ana', mediaUrl: null }, campaign.id)
+      { kind: 'text', body: 'Hola Ana', mediaUrl: null }, campaign.id, {budgetReservation:{id:'budget-reservation'}})
     expect(sendViaEvolution).not.toHaveBeenCalled()
     const assignment = vi.mocked(query).mock.calls.find(([sql]) => sql.includes('SET line_id = $1'))
     expect(assignment?.[1]).toEqual([line.id, recipient.id])
-    expect(statements().filter(sql => sql.includes('increment_line_counters'))).toHaveLength(1)
+    expect(statements().filter(sql => sql.includes('increment_line_counters'))).toHaveLength(0)
+    expect(statements().filter(sql => sql.includes('total_sent=total_sent+1'))).toHaveLength(1)
   })
 
   it('retains the Cloud media payload and exact template language and WABA', async () => {
     await sendOne(campaign.id, { ...campaign, media_url: 'https://example.test/image.png' }, recipient)
     expect(sendViaCloud).toHaveBeenLastCalledWith(line, recipient.phone_number,
-      { kind: 'text', body: 'Hola Ana', mediaUrl: 'https://example.test/image.png' }, campaign.id)
+      { kind: 'text', body: 'Hola Ana', mediaUrl: 'https://example.test/image.png' }, campaign.id, {budgetReservation:{id:'budget-reservation'}})
     vi.mocked(getEligibleLines).mockResolvedValue([
       { ...line, id: 'evolution', line_type: 'evolution' },
       { ...line, id: 'other-waba', waba_id: 'another-waba' }, line,
@@ -91,7 +99,7 @@ describe('single-line Cloud campaign readiness', () => {
     }, recipient)
     expect(sendViaCloud).toHaveBeenLastCalledWith(line, recipient.phone_number, {
       kind: 'template', content: templateContent, wabaId: 'waba', templateId: 'template',
-    }, campaign.id)
+    }, campaign.id, {budgetReservation:{id:'budget-reservation'}})
     expect(sendViaEvolution).not.toHaveBeenCalled()
   })
 
@@ -288,4 +296,32 @@ it.each([false, true])('checks the final persisted 131049 before completion (ris
   expect(sendViaCloud).toHaveBeenCalledTimes(1)
   expect(statements().some(sql => sql.includes("SET status = 'completed'"))).toBe(false)
   expect(statements().some(sql => sql.includes('processor_lock_token = $2'))).toBe(true)
+})
+
+
+describe('single-line campaign budget deferral',()=>{
+ it('keeps the original recipient pending and refunds frequency without creating a provider fence',async()=>{
+  const error=new LineSendBudgetError('capacity_exhausted','2026-10-21T03:00:00Z',true)
+  vi.mocked(reserveLineSendBudget).mockRejectedValueOnce(error)
+  expect(await sendOne(campaign.id,campaign,recipient)).toBe('deferred')
+  expect(sendViaCloud).not.toHaveBeenCalled()
+  expect(deferCampaignForLineBudget).toHaveBeenCalledWith(campaign.id,error)
+  expect(statements().some(sql=>sql.includes('INSERT INTO whatsapp_messages'))).toBe(false)
+  const pending=statements().find(sql=>sql.includes("error_detail='line-budget-no-send'"))
+  expect(pending).toContain("status='pending'");expect(pending).not.toContain('line_id=NULL')
+  expect(statements().some(sql=>sql.includes('frequency_released_at=NOW()'))).toBe(true)
+ })
+ it('reserves before the queued fence and hands the same booking to the transport',async()=>{
+  await sendOne(campaign.id,campaign,recipient)
+  const bookingOrder=vi.mocked(reserveLineSendBudget).mock.invocationCallOrder[0]
+  const fenceIndex=vi.mocked(query).mock.calls.findIndex(([sql])=>isFence(sql))
+  expect(bookingOrder).toBeLessThan(vi.mocked(query).mock.invocationCallOrder[fenceIndex])
+  expect(finishLineSendBudget).not.toHaveBeenCalled() // transport owns all settlement once entered
+ })
+ it('refunds a failed pre-send persistence write, never contacting the provider',async()=>{
+  vi.mocked(query).mockImplementation(async(sql)=>{if(isFence(sql))throw Error('database unavailable');return []})
+  expect(await sendOne(campaign.id,campaign,recipient)).toBe('failed')
+  expect(sendViaCloud).not.toHaveBeenCalled()
+  expect(finishLineSendBudget).toHaveBeenCalledWith('budget-reservation','no_send')
+ })
 })

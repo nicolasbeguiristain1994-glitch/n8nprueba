@@ -6,8 +6,10 @@ import { withGlobalSendGuard, isGloballyOptedOut } from '@/lib/global-opt-out'
 import { query, withTransaction } from '@/lib/db'
 import { sendMessageUseCase } from '@/lib/cloud-api/use-cases/send-message.use-case'
 import { sseEmitter } from '@/lib/sse-events'
+import { reserveLineSendBudget, finishLineSendBudget, LineSendBudgetError, LineSendAlreadyReservedError } from '@/lib/line-send-budget'
+import { automationAdmission, automationDispatchStillAllowed, automationFingerprints, automationScope, lockAutomationConversation, recordAutomationDispatchFinished, setAutomationHandoff, withAutomationSafety } from '@/lib/automation-safety'
 
-export type AutomationSource = { provider: 'cloud'; phoneNumberId: string } | { provider: 'evolution'; instance: string }
+export type AutomationSource = ({ provider: 'cloud'; phoneNumberId: string } | { provider: 'evolution'; instance: string }) & { receivedAt?: string|Date }
 type Rule = { id: string; name: string; type: 'reply'|'flow'|'handoff'; trigger_type: string;
   trigger_config: { keywords?: string[]; once_per_chat?: boolean }; action_config: { contact_line_directory?: string; message?: string; steps?: { message: string; delay_sec?: number }[] } }
 type Job = { id: string; event_key: string; automation_id: string; automation_name: string; phone: string;
@@ -22,12 +24,12 @@ export function automationMatches(rule: Pick<Rule,'trigger_type'|'trigger_config
 export function automationSteps(rule: Pick<Rule,'type'|'action_config'>): { message:string; delay_sec:number }[] {
   const raw=rule.type==='flow'?rule.action_config.steps:[{message:rule.action_config.message??''}]
   if (rule.type==='handoff' && !rule.action_config.message?.trim()) return []
-  if (!Array.isArray(raw)||!raw.length||raw.length>20) throw Error('Configurá entre 1 y 20 pasos')
-  return raw.map(s=>{
+  if (!Array.isArray(raw)||!raw.length||raw.length>3) throw Error('Configurá entre 1 y 3 pasos')
+  return raw.map((s,index)=>{
     if (!s || typeof s.message!=='string' || !s.message.trim() || s.message.length>4096) throw Error('Cada paso requiere un mensaje de hasta 4096 caracteres')
     const delay=s.delay_sec??0
     if (!Number.isInteger(delay)||delay<0||delay>3600) throw Error('La espera debe estar entre 0 y 3600 segundos')
-    return {message:s.message.trim(),delay_sec:delay}
+    return {message:s.message.trim(),delay_sec:Math.max(index>0?10:0,delay)}
   })
 }
 
@@ -37,14 +39,21 @@ export async function evaluateAutomations(phone: string, messageText: string, me
   if (!messageId || !source || !digits(phone)) return
   const provider=source.provider, sourceId=provider==='cloud'?(source as {phoneNumberId:string}).phoneNumberId:(source as {instance:string}).instance
   if (!sourceId) return
+  const receivedAt=new Date(source.receivedAt??Date.now())
+  if(!Number.isFinite(receivedAt.getTime()) || receivedAt.getTime()<Date.now()-86_400_000) return
+  const inboundAt=new Date(Math.min(receivedAt.getTime(),Date.now())).toISOString()
   const eventKey=`${provider}:${sourceId}:${messageId}`, number=digits(phone)
   const identity=await resolveConsentIdentity(number,{provider,sourceId,messageId})
   if(await isGloballyOptedOut(number,{provider,sourceId,agentCode:identity.agent})) return
+  const safetyContext={phone:number,provider,source_id:sourceId,agent_code:identity.agent}
   await withTransaction(async db=>{
-    await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`automation:${provider}:${sourceId}:${number}`])
-    const claimed=await db.query(`INSERT INTO automation_inbound_receipts(event_key,phone,provider,source_id)
-      VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING event_key`,[eventKey,number,provider,sourceId])
+    await lockAutomationConversation(db,safetyContext)
+    const claimed=await db.query(`INSERT INTO automation_inbound_receipts(event_key,phone,provider,source_id,created_at)
+      VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING event_key`,[eventKey,number,provider,sourceId,inboundAt])
     if (!claimed.rows.length) return
+    const human=await db.query(`SELECT 1 FROM automation_conversation_safety WHERE phone=$1 AND scope_key=$2
+      AND last_human_at>clock_timestamp()-interval '24 hours'`,[number,automationScope(safetyContext)])
+    if (human.rows.length) return
     const blocked=await db.query(`SELECT 1 FROM conversation_state WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND resolved_at IS NULL AND is_escalated=true
       LIMIT 1`,[number])
     if (blocked.rows.length) return
@@ -104,6 +113,7 @@ export async function evaluateAutomations(phone: string, messageText: string, me
       handoff=routed.handoff
     }
     if (handoff) {
+      await setAutomationHandoff(db,safetyContext,eventKey)
       await db.query(`INSERT INTO conversation_state(phone_number,is_escalated,escalated_at,escalation_reason)
         VALUES($1,true,NOW(),$2) ON CONFLICT(phone_number) WHERE resolved_at IS NULL
         DO UPDATE SET is_escalated=true,escalated_at=NOW(),escalation_reason=EXCLUDED.escalation_reason,updated_at=NOW()`,[number,`Automatización: ${rule.name}`])
@@ -111,10 +121,17 @@ export async function evaluateAutomations(phone: string, messageText: string, me
     }
     let delay=0
     for (let i=0;i<steps.length;i++) {
+      const body=resolve(steps[i].message)
+      const denied=await automationAdmission(db,safetyContext,body)
+      if (denied) {
+        await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details)
+          VALUES($1,$2,$3,'skipped',$4)`,[rule.id,rule.name,number,denied]);break
+      }
+      const fingerprint=automationFingerprints(body)
       delay+=steps[i].delay_sec
-      await db.query(`INSERT INTO automation_message_jobs(event_key,automation_id,automation_name,phone,provider,source_id,body,step,handoff,legacy_message_id,run_at,agent_code)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW()+($11*interval '1 second'),$12)`,
-        [eventKey,rule.id,rule.name,number,provider,sourceId,resolve(steps[i].message),i,handoff,provider==='evolution'?messageId:null,delay,identity.agent])
+      await db.query(`INSERT INTO automation_message_jobs(event_key,automation_id,automation_name,phone,provider,source_id,body,step,handoff,legacy_message_id,run_at,agent_code,body_fingerprint,link_fingerprints)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW()+($11*interval '1 second'),$12,$13,$14)`,
+        [eventKey,rule.id,rule.name,number,provider,sourceId,body,i,handoff,provider==='evolution'?messageId:null,delay,identity.agent,fingerprint.body,fingerprint.links])
     }
   })
   await processAutomationJobs(eventKey)
@@ -122,8 +139,12 @@ export async function evaluateAutomations(phone: string, messageText: string, me
 
 async function complete(job:Job,status:'sent'|'failed'|'skipped'|'uncertain',details:string) {
   await withTransaction(async db=>{
+    await lockAutomationConversation(db,job)
     const updated=await db.query(`UPDATE automation_message_jobs SET status=$2,finished_at=NOW(),details=$3 WHERE id=$1 AND status='processing' RETURNING id`,[job.id,status,details])
     if (!updated.rows.length) return
+    if(status!=='skipped') await recordAutomationDispatchFinished(db,job)
+    if(status!=='sent') await db.query(`UPDATE automation_message_jobs SET status='skipped',finished_at=NOW(),
+      details='Un paso anterior no se completó' WHERE event_key=$1 AND step>$2 AND status='queued'`,[job.event_key,job.step])
     await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,message_id,result,details)
       VALUES($1,$2,$3,$4,$5,$6)`,[job.automation_id,job.automation_name,job.phone,job.legacy_message_id,status==='sent'?'executed':status==='skipped'?'skipped':'error',`Paso ${job.step+1}: ${details}`])
   })
@@ -140,8 +161,8 @@ async function sendJob(job:Job):Promise<void> {
   // Recheck operator handoff, opt-out and active rule/creator at send time,
   // including delayed flow steps. Each reply stays on its inbound line.
   const active=await query<Pick<Rule,'type'|'trigger_config'>>(`SELECT a.type,a.trigger_config FROM automations a JOIN users u ON u.id=a.created_by WHERE a.id=$1 AND a.is_active=true AND u.is_active=true AND u.role='admin'`,[job.automation_id])
-  const blocked=await query(`SELECT 1 FROM blacklist WHERE phone_number_normalized=$1 AND removed_at IS NULL AND (scope_key='global' OR agent_code=$3)
-    UNION ALL SELECT 1 FROM conversation_state WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND resolved_at IS NULL AND is_escalated=true AND NOT $2 LIMIT 1`,[job.phone,job.handoff,job.agent_code])
+  const blocked=await query(`SELECT 1 FROM blacklist WHERE phone_number_normalized=$1 AND removed_at IS NULL
+    AND (scope_key='global' OR agent_code=$2) LIMIT 1`,[job.phone,job.agent_code])
   if (!active.length||blocked.length) { await complete(job,'skipped','Regla pausada, baja solicitada o conversación atendida por un operador');return }
   if (active[0].type==='reply' && active[0].trigger_config.once_per_chat===true) {
     // The option can be enabled after multiple replies were queued. Keep only
@@ -157,43 +178,78 @@ async function sendJob(job:Job):Promise<void> {
     })
     if (duplicate) { await complete(job,'skipped','Respuesta única por chat: ya enviada o reservada por otro mensaje');return }
   }
+  const guarded=await withAutomationSafety(job,()=>sendAutomaticReply(job))
+  if (guarded.kind==='deferred') return
+  if (guarded.kind==='skipped') {await complete(job,'skipped',guarded.detail);return}
+  if(guarded.value.status==='deferred') return
+  await complete(job,guarded.value.status,guarded.value.details)
+  if(guarded.value.status==='sent') sseEmitter.emit('update',{source:'message'})
+}
+
+type SendOutcome = { status:'sent'|'failed'|'skipped'|'uncertain'|'deferred';details:string }
+async function reserveAutomationCapacity(job:Job,lineId:string):Promise<{id:string}|SendOutcome> {
+  try {return await reserveLineSendBudget({lineId,purpose:'automation',sendKey:`automation:${job.id}`})}
+  catch(error) {
+    if(error instanceof LineSendBudgetError && error.code==='LINE_SEND_BUDGET_WAIT') {
+      await query(`UPDATE automation_message_jobs SET status='queued',started_at=NULL,dispatch_authorized_at=NULL,run_at=GREATEST(run_at,$2::timestamptz),
+        details='En espera del cupo diario u horario de la línea de origen' WHERE id=$1 AND status='processing'`,[job.id,error.retryAt])
+      return {status:'deferred',details:'En espera del cupo de la línea'}
+    }
+    if(error instanceof LineSendAlreadyReservedError)
+      return {status:'uncertain',details:'El cupo ya estaba reservado; revisar el intento anterior antes de reenviar'}
+    throw error
+  }
+}
+async function sendAutomaticReply(job:Job):Promise<SendOutcome> {
   if (job.provider==='cloud') {
-    const ready=await query(`SELECT 1 FROM cloud_numbers cn JOIN whatsapp_lines wl ON wl.id=cn.whatsapp_line_id
+    const ready=await query<{id:string}>(`SELECT wl.id FROM cloud_numbers cn JOIN whatsapp_lines wl ON wl.id=cn.whatsapp_line_id
       WHERE cn.phone_number_id=$1 AND cn.status='active' AND wl.status='active' AND wl.is_connected=true AND wl.sending_enabled=true`,[job.source_id])
-    if (!ready.length) {await complete(job,'skipped','La línea Cloud de origen no está habilitada');return}
-    // This use case enforces opt-out, 24-hour window and rate limits, and stores
-    // the outbound before making the request. Never choose another phone number.
+    if (!ready.length) return {status:'skipped',details:'La línea Cloud de origen no está habilitada'}
+    const reservation=await reserveAutomationCapacity(job,ready[0].id)
+    if('status' in reservation) return reservation
+    if(!await automationDispatchStillAllowed(job)) {
+      await finishLineSendBudget(reservation.id,'no_send')
+      return {status:'skipped',details:'Un asesor intervino antes de iniciar el envío'}
+    }
+    // This use case preserves opt-out, risk and the service window on the same sender.
     try {
       await sendMessageUseCase.execute({request:{phoneNumberId:job.source_id,to:'+'+job.phone,agentCode:job.agent_code??undefined,type:'text',text:{body:job.body}}})
     } catch (err) {
-      if (err instanceof CampaignRiskError) {
-        await complete(job,'skipped','Envío detenido por una alerta de riesgo; no se contactó al proveedor ni se reintenta automáticamente')
-        return
-      }
-      const name=err instanceof Error?err.name:''
-      await complete(job,['OptOutError','ConversationWindowError','TokenExpiredError'].includes(name)?'skipped':'uncertain',
-        ['OptOutError','ConversationWindowError','TokenExpiredError'].includes(name)?'Baja, ventana cerrada o credencial no disponible':'Envío no confirmado; revisar el historial antes de reintentar')
-      return
+      const known=err instanceof CampaignRiskError || ['OptOutError','ConversationWindowError','TokenExpiredError','RateLimitError'].includes(err instanceof Error?err.name:'')
+      await finishLineSendBudget(reservation.id,known?'no_send':'consumed')
+      if (err instanceof CampaignRiskError) return {status:'skipped',details:'Envío detenido por una alerta de riesgo; no se contactó al proveedor ni se reintenta automáticamente'}
+      return {status:known?'skipped':'uncertain',details:known?'Baja, ventana cerrada o credencial no disponible':'Envío no confirmado; revisar el historial antes de reintentar'}
     }
+    await finishLineSendBudget(reservation.id,'consumed')
   } else {
     const [line]=await query<{id:string;evolution_url:string;evolution_instance:string}>(`SELECT id,evolution_url,evolution_instance FROM whatsapp_lines
       WHERE evolution_instance=$1 AND line_type='evolution' AND status='active' AND is_connected=true AND sending_enabled=true LIMIT 1`,[job.source_id])
-    if (!line) {await complete(job,'skipped','La línea Evolution de origen no está habilitada');return}
+    if (!line) return {status:'skipped',details:'La línea Evolution de origen no está habilitada'}
+    const reservation=await reserveAutomationCapacity(job,line.id)
+    if('status' in reservation) return reservation
+    if(!await automationDispatchStillAllowed(job)) {
+      await finishLineSendBudget(reservation.id,'no_send')
+      return {status:'skipped',details:'Un asesor intervino antes de iniciar el envío'}
+    }
     const [stored]=await query<{id:string}>(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,metadata)
       VALUES($1,$2,'outbound','queued',$3::jsonb) RETURNING id`,['+'+job.phone,job.body,JSON.stringify({line_id:line.id,source:'automation',automation_id:job.automation_id,automation_job_id:job.id,agent_code:job.agent_code})])
     let response:Response
     try {
       response=await withGlobalSendGuard(job.phone, () => fetch(`${line.evolution_url}/message/sendText/${line.evolution_instance}`,{method:'POST',headers:{'Content-Type':'application/json',apikey:process.env.EVOLUTION_API_KEY??''},body:JSON.stringify({number:job.phone,text:job.body}),signal:AbortSignal.timeout(20000)}),{provider:'evolution',sourceId:job.source_id,agentCode:job.agent_code})
-    } catch (err) {await complete(job,err instanceof Error && err.name==='OptOutError'?'skipped':'uncertain',err instanceof Error && err.name==='OptOutError'?'Baja solicitada por el contacto':'Sin confirmación del proveedor; no se reenvía automáticamente');return}
+    } catch (err) {
+      const optedOut=err instanceof Error && err.name==='OptOutError'
+      await finishLineSendBudget(reservation.id,optedOut?'no_send':'consumed')
+      return {status:optedOut?'skipped':'uncertain',details:optedOut?'Baja solicitada por el contacto':'Sin confirmación del proveedor; no se reenvía automáticamente'}
+    }
+    await finishLineSendBudget(reservation.id,'consumed')
     if (!response.ok) {
       await query(`UPDATE whatsapp_messages SET status='failed' WHERE id=$1`,[stored.id])
-      await complete(job,'failed',`Proveedor rechazó el envío (HTTP ${response.status})`);return
+      return {status:'failed',details:`Proveedor rechazó el envío (HTTP ${response.status})`}
     }
     const data=await response.json().catch(()=>null)
-    await query(`UPDATE whatsapp_messages SET status='sent',evolution_message_id=$2 WHERE id=$1`,[stored.id,data?.key?.id??data?.id??null])
+    await query(`UPDATE whatsapp_messages SET status='sent',evolution_message_id=$2,sent_at=NOW() WHERE id=$1`,[stored.id,data?.key?.id??data?.id??null])
   }
-  await complete(job,'sent','Mensaje aceptado por el proveedor')
-  sseEmitter.emit('update',{source:'message'})
+  return {status:'sent',details:'Mensaje aceptado por el proveedor'}
 }
 
 export async function processAutomationJobs(eventKey:string|null=null):Promise<number> {

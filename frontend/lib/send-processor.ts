@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import { reserveLineSendBudget, finishLineSendBudget, deferCampaignForLineBudget, LineSendBudgetError, type LineSendBudgetReservation } from '@/lib/line-send-budget'
 import { refreshCampaignMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
 import { CampaignRiskError, assertCampaignRiskClear, evaluateCampaignRisk, CAMPAIGN_RISK_CLEAR_SQL } from '@/lib/campaign-risk'
 import { OptOutError } from '@/lib/cloud-api/errors'
@@ -265,7 +267,7 @@ export async function sendOne(
   // Scope both providers to the campaign owner's lines, including the kill switch.
   let eligibleLines: Awaited<ReturnType<typeof getEligibleLines>> = []
   try {
-    eligibleLines = await getEligibleLines(campaign.owned_by)
+    eligibleLines = await getEligibleLines(campaign.owned_by,{includeBudgetWaiting:true})
     if (isTemplate) {
       eligibleLines = eligibleLines.filter(line =>
         line.line_type === 'cloud' && line.waba_id === campaign.template_waba_id)
@@ -282,6 +284,26 @@ export async function sendOne(
   const line = eligibleLines.find(candidate => candidate.id === assignedLineId)
   if (!line) return deferRecipient(recipient, 'assigned-line-unavailable')
 
+  let budgetReservation: LineSendBudgetReservation
+  try { budgetReservation = await reserveLineSendBudget({lineId:line.id,purpose:'campaign',sendKey:`campaign:${campaignId}:${recipient.id}:${randomUUID()}`}) }
+  catch (error) {
+    if (!(error instanceof LineSendBudgetError)) throw error
+    await deferCampaignForLineBudget(campaignId,error)
+    // Preserve routing affinity and refund the contact frequency reservation: no message was attempted.
+    await query(`UPDATE campaign_recipients SET status='pending',locked_at=NULL,
+      attempts=GREATEST(attempts-1,0),error_detail='line-budget-no-send',updated_at=NOW() WHERE id=$1`,[recipient.id])
+    await query(`UPDATE contact_send_history SET frequency_released_at=NOW()
+      WHERE campaign_recipient_id=$1 AND frequency_released_at IS NULL`,[recipient.id])
+    return 'deferred'
+  }
+  let transportOwnsSettlement = false
+  try { return await sendReservedOne(campaignId,campaign,recipient,line,isTemplate,personalizedMsg,budgetReservation,() => { transportOwnsSettlement=true }) }
+  finally { if (!transportOwnsSettlement) await finishLineSendBudget(budgetReservation.id,'no_send').catch(() => {}) }
+}
+
+async function sendReservedOne(campaignId:string,campaign:CampaignRow,recipient:RecipientRow,
+  line:Awaited<ReturnType<typeof getEligibleLines>>[number],isTemplate:boolean,personalizedMsg:string,
+  budgetReservation:LineSendBudgetReservation,onTransport:()=>void):Promise<'sent'|'failed'|'skipped'|'deferred'> {
   // Only an inserted row or a definite previous failure may authorize a send.
   // In-flight and already accepted rows must survive manual recipient resets.
   try {
@@ -346,6 +368,7 @@ export async function sendOne(
   }
 
   let messageId: string | null
+  onTransport()
   try {
     const result = line.line_type === 'cloud'
       ? await sendViaCloud(line, recipient.phone_number, isTemplate
@@ -359,8 +382,8 @@ export async function sendOne(
               wabaId: campaign.template_waba_id!,
               templateId: campaign.template_id!,
             }
-          : { kind: 'text', body: personalizedMsg, mediaUrl: campaign.media_url || null }, campaignId)
-      : await sendViaEvolution(line, recipient.phone_number, personalizedMsg, campaign.media_url || null,undefined,campaign.id)
+          : { kind: 'text', body: personalizedMsg, mediaUrl: campaign.media_url || null }, campaignId, {budgetReservation})
+      : await sendViaEvolution(line, recipient.phone_number, personalizedMsg, campaign.media_url || null,undefined,campaign.id,budgetReservation)
     messageId = result.messageId
   } catch (e) {
     if (e instanceof CampaignRiskError) {
@@ -444,10 +467,7 @@ export async function sendOne(
      WHERE id = $3`,
     [personalizedMsg, messageId, recipient.id, line.id],
   ).catch(logWriteError)
-  await query(
-    `SELECT increment_line_counters($1)`,
-    [line.id],
-  ).catch(logWriteError)
+  await query('UPDATE whatsapp_lines SET total_sent=total_sent+1,updated_at=NOW() WHERE id=$1',[line.id]).catch(logWriteError)
   clog.info({
     event: 'recipient.sent', campaignId, mode: 'single-line',
     recipientId: recipient.id, contactId: recipient.contact_id,
@@ -506,7 +526,7 @@ export async function processInBackground(
       // ── 2. Claim one recipient ──────────────────────────────────────────
       let recipient: Awaited<ReturnType<typeof claimOne>>
       try {
-        let lines = await getEligibleLines(campaign.owned_by)
+        let lines = await getEligibleLines(campaign.owned_by,{includeBudgetWaiting:true})
         if (campaign.message_type === 'template') {
           lines = lines.filter(line => line.line_type === 'cloud' && line.waba_id === campaign.template_waba_id)
         }

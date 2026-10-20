@@ -1,3 +1,4 @@
+vi.mock('@/lib/automation-safety', () => ({ recordHumanAutomationIntervention: vi.fn().mockResolvedValue(undefined) }))
 /**
  * webhook-evolution.test.ts
  * @vitest-environment node

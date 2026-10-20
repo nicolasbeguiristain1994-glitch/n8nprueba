@@ -1,3 +1,7 @@
+import { randomUUID } from 'node:crypto'
+import { query } from '@/lib/db'
+import { reserveLineSendBudget,finishLineSendBudget,LineSendBudgetError } from '@/lib/line-send-budget'
+import { recordHumanAutomationIntervention } from '@/lib/automation-safety'
 import { CampaignRiskError } from '@/lib/campaign-risk'
 import { buildMessagePayload } from '@/lib/cloud-api/infrastructure/message-sender.service'
 import { cloudNumberAccess } from '@/lib/cloud-api/access'
@@ -47,12 +51,20 @@ export async function POST(req: NextRequest) {
   if (denied) return denied
   if (enqueue && process.env.CLOUD_MESSAGE_WORKER_ENABLED !== 'true') return NextResponse.json({ error: 'La cola requiere un worker habilitado. Usá envío directo.' }, { status: 503 })
 
+  let reservationId:string|null=null
+  let accepted=false
   try {
+    const [line]=await query<{id:string}>('SELECT whatsapp_line_id AS id FROM cloud_numbers WHERE phone_number_id=$1',[phoneNumberId])
+    if(!line?.id) return NextResponse.json({error:'La línea de origen no está disponible.'},{status:409})
+    const agentCode=await recordHumanAutomationIntervention(to,{provider:'cloud',sourceId:phoneNumberId})
+    reservationId=(await reserveLineSendBudget({lineId:line.id,purpose:'service',sendKey:`service:${auth.user.user_id}:${randomUUID()}`})).id
     const result = await sendMessageUseCase.execute({
-      request:  { ...body, sentByUserId: auth.user.user_id } as SendMessageRequest,
+      request:  { ...body,...(agentCode?{agentCode}:{}), sentByUserId: auth.user.user_id } as SendMessageRequest,
       enqueue:  enqueue ?? false,
     })
 
+    accepted=true
+    await finishLineSendBudget(reservationId,'consumed')
     void audit({
       req, action: 'create', resource: 'send',
       metadata: { phoneNumberId, to, type, wamid: result.wamid, messageId: result.messageId },
@@ -61,6 +73,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result)
 
   } catch (err) {
+    if(reservationId) {
+      const noSend=!accepted && (err instanceof CampaignRiskError || err instanceof OptOutError || err instanceof ConversationWindowError || err instanceof RateLimitError || (err instanceof Error && err.name==='TokenExpiredError'))
+      await finishLineSendBudget(reservationId,noSend?'no_send':'consumed').catch(()=>{})
+    }
+    if(err instanceof LineSendBudgetError) return NextResponse.json({error:err.message,code:err.code,retryAt:err.retryAt},{status:409})
     if (err instanceof CampaignRiskError) {
       return NextResponse.json({ error: err.message, code: err.code }, { status: 409 })
     }

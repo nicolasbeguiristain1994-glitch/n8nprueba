@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import { reserveLineSendBudget, finishLineSendBudget, deferCampaignForLineBudget, LineSendBudgetError, type LineSendBudgetReservation } from '@/lib/line-send-budget'
 import { refreshCampaignMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
 import { CampaignRiskError, assertCampaignRiskClear, evaluateCampaignRisk, CAMPAIGN_RISK_CLEAR_SQL } from '@/lib/campaign-risk'
 import { priorityRecipientAllowed } from './user-prioritization/broadcasts'
@@ -302,8 +304,17 @@ function isNetworkError(err: unknown): boolean {
  * Refresh expired quotas before selection; replies/tests must not depend on a
  * running campaign or an external scheduler to regain capacity.
  */
-export async function getEligibleLines(operatorId?: string | null): Promise<EligibleLine[]> {
-  return getLinesMatching(operatorId, `(${lineEligibleExpr('wl')} OR (${cloudEligibleExpr('wl')} AND cn.id IS NOT NULL))`)
+function campaignConnectionExpr(alias: string): string {
+  return `(${alias}.status='active' AND ${alias}.is_connected=true AND ${alias}.sending_enabled=true
+    AND (${alias}.allowed_types IS NULL OR ${alias}.allowed_types @> '["campaign"]'::jsonb))`
+}
+
+export async function getEligibleLines(operatorId?: string | null, options: {includeBudgetWaiting?: boolean} = {}): Promise<EligibleLine[]> {
+  // Campaign processors must see protected but exhausted lines to schedule a wait.
+  // Manual/test callers retain ordinary capacity filtering.
+  const waiting = options.includeBudgetWaiting
+    ? ` OR (wl.respect_daily_recommendation = true AND ${campaignConnectionExpr('wl')} AND (wl.line_type='evolution' OR cn.id IS NOT NULL))` : ''
+  return getLinesMatching(operatorId, `(${lineEligibleExpr('wl')} OR (${cloudEligibleExpr('wl')} AND cn.id IS NOT NULL)${waiting})`)
 }
 
 export async function getEligibleReplyLines(operatorId?: string | null): Promise<EligibleLine[]> {
@@ -513,7 +524,7 @@ export async function getDispatchSummary(campaignId: string, operatorId?: string
      WHERE c.id = $1`,
     [campaignId]
   )
-  const availableLines = await getEligibleLines(operatorId)
+  const availableLines = await getEligibleLines(operatorId,{includeBudgetWaiting:true})
   // Count the same template/account boundary enforced by the actual dispatcher.
   // A healthy line in another WABA cannot send this campaign's template.
   const eligibleLines = !campaign ? [] : campaign.message_type === 'template'
@@ -568,13 +579,45 @@ export async function getDispatchSummary(campaignId: string, operatorId?: string
  *
  * Throws on HTTP error or network failure — callers must handle this.
  */
-export async function sendViaEvolution(
+/** A reservation is charged once even when callers already reserved before writing their message fence. */
+async function withCampaignLineBudget<T>(lineId: string, campaignId: string | undefined,
+  reservation: LineSendBudgetReservation | undefined, send: (started: () => void, booking?: LineSendBudgetReservation) => Promise<T>): Promise<T> {
+  if (!campaignId) return send(() => {})
+  let booking: LineSendBudgetReservation
+  try { booking = reservation ?? await reserveLineSendBudget({ lineId, purpose:'campaign', sendKey:`campaign-direct:${campaignId}:${randomUUID()}` }) }
+  catch (error) { if(error instanceof LineSendBudgetError) await deferCampaignForLineBudget(campaignId,error); throw error }
+  let attempted = false
+  try { return await send(() => { attempted=true }, booking) }
+  catch (error) {
+    // These guards are guaranteed to run before the provider HTTP request.
+    if(error instanceof CampaignRiskError || error instanceof OptOutError) attempted=false
+    throw error
+  } finally {
+    await finishLineSendBudget(booking.id,attempted ? 'consumed' : 'no_send').catch(error =>
+      clog.error({event:'line.budget.settle.error',campaignId,lineId,error:error instanceof Error ? error.message : String(error)}))
+  }
+}
+
+export async function sendViaEvolution(line: EligibleLine, phone: string, message: string,
+  mediaUrl?: string | null, mediaType?: 'sticker', campaignId?: string, budgetReservation?: LineSendBudgetReservation): Promise<{messageId:string|null}> {
+  return withCampaignLineBudget(line.id,campaignId,budgetReservation,started =>
+    sendViaEvolutionUnbudgeted(line,phone,message,mediaUrl,mediaType,campaignId,started))
+}
+
+export async function sendViaCloud(line: Pick<EligibleLine,'id'|'phone_number_id'>,phone:string,payload:CloudSendPayload,
+  campaignId?:string,options:{reserveCapacity?:boolean;purpose?:'conversation_reply';budgetReservation?:LineSendBudgetReservation}={}): Promise<{messageId:string|null}> {
+  return withCampaignLineBudget(line.id,campaignId,options.budgetReservation,(started,booking) =>
+    sendViaCloudUnbudgeted(line,phone,payload,campaignId,{...options,budgetReservation:booking,onProviderAttempt:started}))
+}
+
+async function sendViaEvolutionUnbudgeted(
   line: EligibleLine,
   phone: string,
   message: string,
   mediaUrl?: string | null,
   mediaType?: 'sticker',
   campaignId?: string,
+  onProviderAttempt: () => void = () => {},
 ): Promise<{ messageId: string | null }> {
   // Prefer EVOLUTION_GLOBAL_API_KEY (shared admin key) over per-instance key.
   // QR routes use this same fallback pattern — keep them in sync.
@@ -617,6 +660,7 @@ export async function sendViaEvolution(
         throw new CampaignRiskError('No se pudo verificar la seguridad de la campaña; no se envió el mensaje.')
       }
     }
+    onProviderAttempt()
     return fetch(url, {
     method:  'POST',
     headers: { 'Content-Type': 'application/json', apikey: apiKey },
@@ -661,18 +705,19 @@ export async function sendViaEvolution(
  * Rate limiting (20 msg/s) is enforced via enforceRateLimit().
  * Pacing between messages is handled by the distributor's humanLikeDelay.
  */
-export async function sendViaCloud(
+async function sendViaCloudUnbudgeted(
   line:      Pick<EligibleLine, 'id' | 'phone_number_id'>,
   phone:     string,
   payload:   CloudSendPayload,
   campaignId?: string,
-  options: { reserveCapacity?: boolean; purpose?: 'conversation_reply' } = {},
+  options: { reserveCapacity?: boolean; purpose?: 'conversation_reply'; budgetReservation?: LineSendBudgetReservation; onProviderAttempt?: () => void } = {},
 ): Promise<{ messageId: string | null }> {
   const phoneNumberId = line.phone_number_id
   if (!phoneNumberId) throw new Error(`No phone_number_id for cloud line ${line.id}`)
   const isReply = options.purpose === 'conversation_reply'
   if (isReply && (campaignId || payload.kind === 'template')) throw new CloudApiError('La respuesta manual no admite campañas ni plantillas.')
-  const eligibility = isReply ? cloudReplyEligibleExpr('wl') : cloudEligibleExpr('wl')
+  const eligibility = isReply ? cloudReplyEligibleExpr('wl') : campaignId && options.budgetReservation
+    ? `(wl.line_type='cloud' AND ${campaignConnectionExpr('wl')})` : cloudEligibleExpr('wl')
   const unavailable = () => isReply
     ? new CloudApiError('La línea de la conversación ya no está conectada o no tiene capacidad para responder.')
     : new CampaignLineUnavailableError()
@@ -724,7 +769,7 @@ export async function sendViaCloud(
   }
   // Standalone tests and replies reserve capacity atomically before touching Meta. These
   // attempts count toward line limits even if Meta's response is uncertain.
-  if (options.reserveCapacity) {
+  if (options.reserveCapacity && !options.budgetReservation) {
     const reserved = await query(
       `UPDATE whatsapp_lines wl SET msgs_sent_hour=msgs_sent_hour+1,
          msgs_sent_today=msgs_sent_today+1,
@@ -739,6 +784,7 @@ export async function sendViaCloud(
   if (payload.kind === 'sticker') req.sticker = {id:await uploadCloudSticker(phoneNumberId,accessToken,payload.data)}
   const sender = new MessageSenderService(accessToken, phoneNumberId)
   try {
+    options.onProviderAttempt?.()
     const { wamid } = await sender.send(req)
     if (!wamid) throw new CloudSendOutcomeUnknownError()
     return { messageId: wamid }
@@ -937,20 +983,10 @@ async function handleSuccess(
       AND wm.status='failed' AND wm.evolution_message_id=$2`, [unit.id, messageId])
     .catch(e => clog.warn({ event: 'delivery.reconcile.error', campaignId, error: e instanceof Error ? e.message : String(e) }))
 
-  // Queries 3 + 4: no críticas, independientes entre sí → paralelo, swallow errors
-  await Promise.all([
-    query(`SELECT increment_line_counters($1)`, [line.id]).catch(e =>
-      clog.error({
-        event: 'increment.counters.error', campaignId, mode: 'multi-line',
-        lineId: line.id, error: e instanceof Error ? e.message : String(e),
-      })
-    ),
-    query(
-      `INSERT INTO line_usage_log (line_id, campaign_id, recipient_id, status)
-       VALUES ($1, $2, $3, 'sent')`,
-      [line.id, campaignId, unit.id]
-    ).catch(() => {}),
-  ])
+  // Capacity was reserved before the provider. Lifetime acceptance remains a separate statistic.
+  await query('UPDATE whatsapp_lines SET total_sent=total_sent+1,updated_at=NOW() WHERE id=$1',[line.id]).catch(() => {})
+  await query(`INSERT INTO line_usage_log (line_id, campaign_id, recipient_id, status)
+    VALUES ($1, $2, $3, 'sent')`, [line.id,campaignId,unit.id]).catch(() => {})
 
   clog.info({
     event:       'recipient.sent',
@@ -1139,6 +1175,26 @@ export async function sendOneUnit(
   }
   if (!unit) return 'no-unit'
 
+  let budgetReservation: LineSendBudgetReservation
+  try { budgetReservation = await reserveLineSendBudget({lineId:line.id,purpose:'campaign',sendKey:`campaign:${campaignId}:${unit.id}:${randomUUID()}`}) }
+  catch (error) {
+    if (!(error instanceof LineSendBudgetError)) throw error
+    await deferCampaignForLineBudget(campaignId,error)
+    await query(`UPDATE campaign_recipients SET status='pending',locked_at=NULL,
+      attempts=GREATEST(attempts-1,0),error_detail='line-budget-no-send',updated_at=NOW() WHERE id=$1`,[unit.id])
+    return 'failed'
+  }
+  let transportOwnsSettlement = false
+  try { return await sendReservedUnit(campaignId,line,campaign,maxRetries,opts,unit,budgetReservation,() => { transportOwnsSettlement=true }) }
+  finally {
+    // Frequency/storage/fence failures before the transport must refund a definite non-send.
+    // A transport-consumed reservation is immutable and cannot be refunded here.
+    if (!transportOwnsSettlement) await finishLineSendBudget(budgetReservation.id,'no_send').catch(() => {})
+  }
+}
+
+async function sendReservedUnit(campaignId:string,line:EligibleLine,campaign:CampaignForDispatch,maxRetries:number,
+  opts:SendOneUnitOptions,unit:DispatchUnit,budgetReservation:LineSendBudgetReservation,onTransport:()=>void):Promise<'sent'|'failed'|'no-unit'|'skipped'> {
   if (campaign.is_priority_broadcast) {
     let allowed=false
     try { allowed=!!unit.contact_id && await priorityRecipientAllowed(campaignId,unit.contact_id,unit.phone_number) }
@@ -1321,6 +1377,7 @@ export async function sendOneUnit(
   }
 
   let providerAccepted = false
+  onTransport()
   try {
     const { messageId } = line.line_type === 'cloud'
       ? await sendViaCloud(
@@ -1328,9 +1385,9 @@ export async function sendOneUnit(
           campaign.message_type === 'template'
             ? { kind: 'template', content: buildTemplatePayload(campaign, unit), wabaId: campaign.template_waba_id!, templateId: campaign.template_id! }
             : { kind: 'text', body: messageBody, mediaUrl: campaign.media_url },
-          campaignId,
+          campaignId, { budgetReservation },
         )
-      : await sendViaEvolution(line, unit.phone_number, messageBody, campaign.media_url,undefined,campaignId)
+      : await sendViaEvolution(line, unit.phone_number, messageBody, campaign.media_url,undefined,campaignId,budgetReservation)
 
     providerAccepted = true
     await handleSuccess(campaignId, unit, line, messageId, messageBody,
@@ -1525,7 +1582,7 @@ export async function processMultiLineInBackground(
 
     // ── Hydratar personalidades desde DB (evita reset a 'normal' en cada restart) ──
     try {
-      const linesToHydrate = await getEligibleLines(campaign.owned_by)
+      const linesToHydrate = await getEligibleLines(campaign.owned_by,{includeBudgetWaiting:true})
       if (linesToHydrate.length > 0) {
         const personalityRows = await query<{ id: string; personality_config: unknown }>(
           `SELECT id, personality_config FROM whatsapp_lines WHERE id = ANY($1::uuid[])`,
@@ -1618,7 +1675,7 @@ export async function processMultiLineInBackground(
       const nowMs = Date.now()
       if (cachedEligibleLines.length === 0 || nowMs - eligibleLinesFetchedAt > ELIGIBLE_TTL_MS) {
         try {
-          cachedEligibleLines = await getEligibleLines(campaign.owned_by)
+          cachedEligibleLines = await getEligibleLines(campaign.owned_by,{includeBudgetWaiting:true})
           eligibleLinesFetchedAt = nowMs
         } catch (linesErr) {
           clog.warn({

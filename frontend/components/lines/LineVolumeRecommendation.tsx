@@ -17,15 +17,17 @@ function timeLabel(value: string | null, timeZone: string) {
   catch { return 'Sin datos' }
 }
 
-export function LineVolumeRecommendation({ recommendation, lineName, compact = false, loading = false, onDetails }: {
+export function LineVolumeRecommendation({ recommendation, lineName, compact = false, loading = false, respectDailyRecommendation = false, onDetails }: {
   recommendation?: Recommendation
   lineName: string
   compact?: boolean
   loading?: boolean
+  respectDailyRecommendation?: boolean
   onDetails?: () => void
 }) {
   if (!recommendation) return <div className={compact ? 'min-w-44 text-xs text-muted-foreground' : 'rounded-xl border p-4 text-sm text-muted-foreground'}>
     <p>{loading ? 'Consultando recomendación…' : 'Sin recomendación'}</p>
+    {respectDailyRecommendation && <p className="mt-1">Control diario automático activo. Si falta una evaluación vigente, las campañas quedan en espera.</p>}
     {!compact && <p className="mt-1">Actualizá las líneas para volver a comprobarla.</p>}
   </div>
 
@@ -43,6 +45,7 @@ export function LineVolumeRecommendation({ recommendation, lineName, compact = f
 
   if (compact) return <div className="min-w-44 max-w-56 space-y-1.5 text-xs">
     {badge}
+    <p className="text-muted-foreground">Control automático: {respectDailyRecommendation ? 'activo' : 'desactivado'}</p>
     {r.suggestedToday === null ? <p className="text-muted-foreground">Total sugerido: sin datos</p>
       : <p><strong className="tabular-nums">{number(r.suggestedToday)}</strong> sugeridos hoy · <strong className="tabular-nums">{number(r.remainingToday)}</strong> restantes</p>}
     {bar}
@@ -62,12 +65,19 @@ export function LineVolumeRecommendation({ recommendation, lineName, compact = f
     <dl className="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
       {[
         ['Total sugerido hoy', r.suggestedToday], ['Restantes sugeridos hoy', r.remainingToday],
-        ['Mensajes registrados hoy', r.attemptedToday], ['Disponibles ahora por cupo horario', r.availableNow],
-        ['Aceptados por WhatsApp hoy', r.acceptedToday], ['Límite diario configurado', r.dailyLimit],
+        ['Mensajes de campañas registrados hoy', r.attemptedToday], ['Disponibilidad estimada antes de reserva', r.availableNow],
+        ['Mensajes de campañas aceptados hoy', r.acceptedToday], ['Límite diario configurado', r.dailyLimit],
       ].map(([label, value]) => <div key={String(label)}><dt className="text-xs text-muted-foreground">{label}</dt><dd className="font-semibold tabular-nums">{number(value as number | null)}</dd></div>)}
     </dl>
     {bar}
     <p className="text-xs text-muted-foreground">Los mensajes registrados incluyen fallos. Esta orientación no modifica los límites configurados ni inicia envíos.</p>
+    <div className="rounded-lg border border-border p-3 text-xs space-y-1">
+      <p className="font-semibold">Control diario automático: {respectDailyRecommendation ? 'activado' : 'desactivado'}</p>
+      <p className="text-muted-foreground">{respectDailyRecommendation
+        ? 'Las campañas respetan la cantidad recomendada y reservan el 20% del cupo diario y horario configurado para atención. Al agotarse el cupo de campañas, sus destinatarios quedan pendientes hasta una nueva evaluación con disponibilidad.'
+        : 'La recomendación es informativa. Podés activar su cumplimiento automático para campañas desde Editar línea.'}</p>
+      {respectDailyRecommendation && <p className="text-muted-foreground">Las cifras corresponden a campañas y se comparten entre todas las campañas de la línea. Las respuestas automáticas y la atención consumen el cupo total; la reserva de atención puede reducir la disponibilidad para campañas. No hay una fecha de envío garantizada.</p>}
+    </div>
     {r.status !== 'stop' && r.status !== 'unavailable' && <div className="space-y-1.5 border-t pt-3">
       <h4 className="text-xs font-semibold">Condiciones para aumentar</h4>
       <p className="text-sm"><strong>{r.qualifyingDays} de {r.requiredDays} días</strong> con actividad suficiente y resultados maduros.</p>

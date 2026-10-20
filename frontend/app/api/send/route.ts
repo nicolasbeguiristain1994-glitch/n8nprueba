@@ -1,3 +1,5 @@
+import { LineSendBudgetError } from '@/lib/line-send-budget'
+import { recordHumanAutomationIntervention } from '@/lib/automation-safety'
 import { CampaignRiskError, assertCampaignRiskClear, evaluateCampaignRisk } from '@/lib/campaign-risk'
 import { refreshCampaignMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
 import { verifyStickerToken, stickerPreview } from '@/lib/conversation-stickers'
@@ -111,7 +113,7 @@ export async function POST(req: NextRequest) {
   // move to another business number when its original sender has no capacity.
   const isManualReply = !campaign_id && uniquePhones.length === 1
   const [eligibleLines, manualReplyLines, accessibleLineIds] = await Promise.all([
-    getEligibleLines(session.is_super_admin ? undefined : session.user_id),
+    getEligibleLines(session.is_super_admin ? undefined : session.user_id,{includeBudgetWaiting:!!campaign_id}),
     isManualReply ? getEligibleReplyLines(session.is_super_admin ? undefined : session.user_id) : Promise.resolve([]),
     getAccessibleLineIds(session),
   ])
@@ -120,6 +122,7 @@ export async function POST(req: NextRequest) {
   }
 
   const results = []
+  let budgetWait:LineSendBudgetError|null=null
   const logs: LogEntry[] = []
 
   // Send sequentially (antiblock) — collect results in memory
@@ -128,6 +131,8 @@ export async function POST(req: NextRequest) {
       const replyLine = await findConversationReplyLine(phone, accessibleLineIds, isManualReply ? manualReplyLines : eligibleLines)
       if (!replyLine && eligibleLines.length === 0) throw new Error('No hay líneas de WhatsApp disponibles para iniciar esta conversación.')
       const line = replyLine ?? await getOrAssignLine(phone, eligibleLines)
+      const manualAgent=isManualReply?await recordHumanAutomationIntervention(phone,{provider:line.line_type==='cloud'?'cloud':'evolution',
+        sourceId:(line.line_type==='cloud'?line.phone_number_id:line.evolution_instance)??''}):null
       const payload = sticker
         ? { kind: 'sticker' as const, data: sticker_data! }
         : { kind: 'text' as const, body: messageStr, mediaUrl: media_url || null }
@@ -142,7 +147,7 @@ export async function POST(req: NextRequest) {
         created_at: sentAt,
         phone_number:         phone,
         message_body:         sticker ? '[Sticker]' : messageStr,
-        metadata: {media_type:sticker?'sticker':media_url?'image':'text',sticker_preview:preview,line_id:line.id},
+        metadata: {media_type:sticker?'sticker':media_url?'image':'text',sticker_preview:preview,line_id:line.id,agent_code:manualAgent},
         status:               'sent',
         evolution_message_id: messageId ?? '',
         campaign_id:          campaign_id ?? '',
@@ -150,6 +155,9 @@ export async function POST(req: NextRequest) {
       })
       results.push({ phone, status: 'sent', id: messageId, sent_at: sentAt })
     } catch (e) {
+      if(e instanceof LineSendBudgetError) {
+        budgetWait=e;results.push({phone,status:'pending',error:e.message,code:e.code,retryAt:e.retryAt});break
+      }
       const errMsg = e instanceof Error ? e.message : String(e)
       logs.push({
         created_at: new Date().toISOString(),
@@ -199,5 +207,5 @@ export async function POST(req: NextRequest) {
 
   void audit({ req, action: 'send', resource: 'send',
     metadata: { count: uniquePhones.length, campaign_id: campaign_id ?? null } })
-  return NextResponse.json({ results, total: uniquePhones.length })
+  return NextResponse.json({ results, total: uniquePhones.length,...(budgetWait?{code:budgetWait.code,retryAt:budgetWait.retryAt}:{}) },{status:budgetWait?409:200})
 }

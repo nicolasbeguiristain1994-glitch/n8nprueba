@@ -11,6 +11,7 @@ vi.mock('@/lib/consent-context',()=>({resolveConsentIdentity:async(phone:string)
  return {agent:rows.length===1?rows[0].agent:null,campaignId:null,sourceKey:null}
 }}))
 vi.mock('@/lib/sse-events',()=>({sseEmitter:{emit:m.emit}}))
+vi.mock('@/lib/line-send-budget',()=>({reserveLineSendBudget:vi.fn().mockResolvedValue({id:'synthetic-reservation'}),finishLineSendBudget:vi.fn(),LineSendBudgetError:class extends Error{},LineSendAlreadyReservedError:class extends Error{}}))
 import {evaluateAutomations,processAutomationJobs,automationMatches,automationSteps} from '@/lib/automation-engine'
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`
 const phone='5491100000001',source={provider:'cloud' as const,phoneNumberId:'phone-a'}
@@ -37,14 +38,17 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
    INSERT INTO users VALUES('${id(1)}',true,'admin');INSERT INTO contacts(phone_number,first_name,panel) VALUES('${phone}','Ana','Panel');
    INSERT INTO whatsapp_lines VALUES('${id(2)}','active',true,true);INSERT INTO cloud_numbers VALUES('phone-a','${id(2)}','active'),('phone-b','${id(2)}','active');`)
   await pool.query(readFileSync('../db/migrations/134_automation_delivery_jobs.sql','utf8'))
-  await pool.query('ALTER TABLE automation_message_jobs ADD COLUMN agent_code text')
+  await pool.query(`ALTER TABLE automation_message_jobs ADD COLUMN agent_code text,ADD COLUMN body_fingerprint text,
+    ADD COLUMN link_fingerprints text[] NOT NULL DEFAULT '{}',ADD COLUMN dispatch_authorized_at timestamptz;
+   CREATE TABLE automation_conversation_safety(phone text,scope_key text,last_human_at timestamptz,last_automation_at timestamptz,
+    handoff_event_key text,updated_at timestamptz DEFAULT now(),PRIMARY KEY(phone,scope_key))`)
   for (const [linea,variant,label,number] of OFIZEUS_LINES)
     await pool.query("INSERT INTO agent_contact_lines VALUES('ofizeus',$1,$2,$3,$4,true)",[linea,variant,label,'+'+number])
   m.query.mockImplementation(async(sql,params)=>(await pool.query(sql,params)).rows)
   m.tx.mockImplementation(async fn=>{const db=await pool.connect();try{await db.query('BEGIN');const r=await fn(db);await db.query('COMMIT');return r}catch(e){await db.query('ROLLBACK');throw e}finally{db.release()}})
  })
  beforeEach(async()=>{
-  await pool.query(`UPDATE crm_agents SET delivery_mode='phone';UPDATE agent_contact_lines SET link_url=NULL;TRUNCATE automation_message_jobs,automation_inbound_receipts,automations,automation_logs,conversation_state,blacklist;DELETE FROM agent_contact_lines WHERE agent_code='royal';UPDATE contacts SET panel='Panel',linea=NULL,linea_sub=NULL,deleted_at=NULL;UPDATE users SET is_active=true;UPDATE whatsapp_lines SET sending_enabled=true;
+  await pool.query(`UPDATE crm_agents SET delivery_mode='phone';UPDATE agent_contact_lines SET link_url=NULL;TRUNCATE automation_conversation_safety,automation_message_jobs,automation_inbound_receipts,automations,automation_logs,conversation_state,blacklist;DELETE FROM agent_contact_lines WHERE agent_code='royal';UPDATE contacts SET panel='Panel',linea=NULL,linea_sub=NULL,deleted_at=NULL;UPDATE users SET is_active=true;UPDATE whatsapp_lines SET sending_enabled=true;
    INSERT INTO automations VALUES('${id(3)}','Reply','reply','contains','{"keywords":["información"]}','{"message":"Hola {{nombre}}"}','${id(1)}',true,1,NOW())`)
   m.send.mockReset().mockResolvedValue({status:'sent',wamid:'fake'});m.emit.mockClear()
   for (const [linea,variant,label,number] of OFIZEUS_LINES)
@@ -57,7 +61,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   await evaluateAutomations(phone,'informacion','link-1',source)
   expect(m.send.mock.calls[0][0].request.text.body).toBe('Tu línea: https://example.com/zeus3')
   expect(m.send.mock.calls[0][0].request.text.body).not.toContain('549')
-  await pool.query("DELETE FROM automation_message_jobs;UPDATE agent_contact_lines SET link_url=NULL")
+  await pool.query("DELETE FROM automation_message_jobs;DELETE FROM automation_conversation_safety;UPDATE agent_contact_lines SET link_url=NULL")
   await evaluateAutomations(phone,'informacion','link-2',source)
   expect(m.send.mock.calls.at(-1)?.[0].request.text.body).toBe('Gracias por escribirnos. Un asesor te atenderá para indicarte tu línea correspondiente.')
  })
@@ -71,8 +75,9 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   await pool.query(`UPDATE automations SET type='flow',action_config='{"steps":[{"message":"one"},{"message":"two","delay_sec":60},{"message":"three"}]}'`)
   await evaluateAutomations(phone,'informacion','event-2',source);expect(m.send).toHaveBeenCalledTimes(1)
   await processAutomationJobs();expect(m.send).toHaveBeenCalledTimes(1)
-  await pool.query("UPDATE automation_message_jobs SET run_at=NOW() WHERE status='queued'")
-  await Promise.all([processAutomationJobs(),processAutomationJobs()]);await processAutomationJobs()
+  await pool.query("UPDATE automation_message_jobs SET run_at=NOW() WHERE status='queued';UPDATE automation_conversation_safety SET last_automation_at=NOW()-interval '11 seconds'")
+  await Promise.all([processAutomationJobs(),processAutomationJobs()]);
+  await pool.query("UPDATE automation_message_jobs SET run_at=NOW() WHERE status='queued';UPDATE automation_conversation_safety SET last_automation_at=NOW()-interval '11 seconds'");await processAutomationJobs()
   expect(m.send.mock.calls.map(c=>c[0].request.text.body)).toEqual(['one','two','three'])
  })
  it('rechecks opt-out and rule pauses before delayed sends',async()=>{
@@ -104,7 +109,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
     UPDATE agent_contact_lines SET phone='+5491199999999',label='Nueva 3' WHERE linea=3 AND variant=''`)
   await evaluateAutomations(phone,'información','edited-destination',source)
   expect(m.send.mock.calls[0][0].request.text.body).toBe('Tu línea:\n\nNueva 3 549 | 1199 | 999999')
-  await pool.query("UPDATE agent_contact_lines SET is_active=false WHERE linea=3 AND variant='';DELETE FROM automation_message_jobs")
+  await pool.query("UPDATE agent_contact_lines SET is_active=false WHERE linea=3 AND variant='';DELETE FROM automation_message_jobs;DELETE FROM automation_conversation_safety")
   await evaluateAutomations(phone,'información','inactive-destination',source)
   expect(m.send.mock.calls[1][0].request.text.body).toContain('Un asesor te atenderá')
  })
@@ -182,7 +187,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
  })
 
  const once=()=>pool.query(`UPDATE automations SET trigger_type='keyword',trigger_config='{"keywords":["EXTRA","Mas info"],"once_per_chat":true}'`)
- const ageJobs=()=>pool.query("UPDATE automation_message_jobs SET created_at=NOW()-interval '2 days'")
+ const ageJobs=()=>pool.query("UPDATE automation_message_jobs SET created_at=NOW()-interval '2 days',started_at=NOW()-interval '2 days',finished_at=NOW()-interval '2 days';UPDATE automation_conversation_safety SET last_automation_at=NOW()-interval '2 days'")
  it('sends one reply for EXTRA and Mas info together, including later days and edited text',async()=>{
   await once()
   await evaluateAutomations(phone,'EXTRA','first-extra',source)
@@ -232,7 +237,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   await once();await pool.query('UPDATE whatsapp_lines SET sending_enabled=false')
   await evaluateAutomations(phone,'EXTRA','line-disabled',source)
   expect(m.send).not.toHaveBeenCalled()
-  await pool.query('UPDATE whatsapp_lines SET sending_enabled=true')
+  await pool.query("UPDATE whatsapp_lines SET sending_enabled=true;UPDATE automation_conversation_safety SET last_automation_at=NOW()-interval '11 seconds'")
   await evaluateAutomations(phone,'Mas info','line-restored',source)
   expect(m.send).toHaveBeenCalledTimes(1)
  })

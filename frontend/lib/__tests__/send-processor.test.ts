@@ -20,6 +20,12 @@ import {
 } from '@/lib/send-processor'
 
 // ── Mock DB ──────────────────────────────────────────────────────────────────
+vi.mock('@/lib/line-send-budget', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/line-send-budget')>(),
+  reserveLineSendBudget: vi.fn(async () => ({id:'budget-reservation'})),
+  finishLineSendBudget: vi.fn(async () => {}),
+  deferCampaignForLineBudget: vi.fn(async () => {}),
+}))
 vi.mock('@/lib/db', () => ({
   query: vi.fn(),
 }))

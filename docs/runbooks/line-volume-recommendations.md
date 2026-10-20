@@ -5,8 +5,10 @@ resultados reales. No predice una suspensión, no garantiza un volumen libre de
 sanciones y no autoriza envíos. Consultar también
 [Protección de campañas](campaign-risk-guard.md).
 
-La recomendación es informativa: no cambia `msg_per_day`, `msg_per_hour`,
-`sending_enabled`, las campañas ni sus destinatarios. No genera mensajes para
+La recomendación por sí sola es informativa: no cambia `msg_per_day`,
+`msg_per_hour`, `sending_enabled` ni los destinatarios. La opción por línea
+**Respetar automáticamente la recomendación diaria** permite usarla como máximo
+de campaña; ver [controles de protección](line-protection-controls.md). No genera mensajes para
 completar muestras, no utiliza conversaciones artificiales y no propone cambiar
 de línea para sortear restricciones.
 

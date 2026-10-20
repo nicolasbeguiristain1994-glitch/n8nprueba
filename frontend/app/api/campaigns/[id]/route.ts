@@ -22,8 +22,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { status } = parsed.data
 
   try {
-    const [row] = await query<{ owned_by: string | null; status: string; is_priority_broadcast?: boolean }>(
-      'SELECT owned_by, status, is_priority_broadcast FROM campaigns WHERE id = $1', [id]
+    const [row] = await query<{ owned_by: string | null; status: string; pause_reason?: string | null; is_priority_broadcast?: boolean }>(
+      'SELECT owned_by, status, pause_reason, is_priority_broadcast FROM campaigns WHERE id = $1', [id]
     )
     if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
     if (!isCampaignOwnerOrAdmin(session, row.owned_by))
@@ -36,13 +36,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (!allowedFrom[status].includes(row.status)) {
       return NextResponse.json({ error: `No se puede cambiar una campaña ${row.status} a ${status}` }, { status: 409 })
     }
-    if (row.status === status) return NextResponse.json({ ok: true, changed: false })
+    if (row.status === status && !(status === 'paused' && row.pause_reason === 'line_budget')) return NextResponse.json({ ok: true, changed: false })
 
     const updated = await query<{ id: string }>(
       `UPDATE campaigns AS c
        SET status       = $1::campaign_status,
            pause_reason = CASE WHEN $1 = 'paused' THEN CASE WHEN ${CAMPAIGN_RISK_CLEAR_SQL} THEN 'manual' ELSE 'risk_detected' END ELSE NULL END,
            scheduled_at = CASE WHEN $1 = 'draft' THEN NULL ELSE scheduled_at END,
+           budget_resume_at = NULL,
            updated_at   = NOW(),
            updated_by   = $3
        WHERE id = $2 AND status = $4::campaign_status
