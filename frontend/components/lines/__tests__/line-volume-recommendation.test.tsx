@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LineVolumeRecommendation as Recommendation } from '@/lib/line-volume-policy'
 import { LineVolumeRecommendation } from '../LineVolumeRecommendation'
@@ -103,6 +103,16 @@ describe('recommendations inside Lines', () => {
     expect(within(detail).getByText('Calidad alta')).toBeInTheDocument()
     expect(within(detail).queryByText(/sin restricciones|Tier de envíos|1K \/ día/)).not.toBeInTheDocument()
     expect(within(detail).getByText(/El cupo vigente puede ser compartido/)).toBeInTheDocument()
+    noWrites()
+  })
+  it('focuses the detail title on opening instead of scrolling to the history disclosure', async () => {
+    render(<LinesPage />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Ver recomendación de Línea de prueba' }))
+    const detail = screen.getByRole('dialog')
+    const title = within(detail).getByRole('heading', { name: /Línea de prueba/ })
+    await waitFor(() => expect(title).toHaveFocus())
+    expect(title).toHaveAttribute('tabindex', '-1')
+    expect(detail.querySelector('summary')).not.toHaveFocus()
     noWrites()
   })
   it.each(['UNKNOWN', 'NA', null])('shows unrated Meta quality %s neutrally in the table and detail', async (quality) => {

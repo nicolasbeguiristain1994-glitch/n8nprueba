@@ -140,6 +140,7 @@ export default function Lines() {
 
   // Detail modal
   const [detailLine, setDetailLine] = useState<Line | null>(null)
+  const detailTitleRef = useRef<HTMLHeadingElement>(null)
 
   // Edit line modal
   const [editTarget, setEditTarget]         = useState<Line | null>(null)
@@ -974,9 +975,9 @@ export default function Lines() {
 
       {/* ── Modal detalle de línea ── */}
       <Dialog open={!!detailLine} onOpenChange={open => { if (!open) setDetailLine(null) }}>
-        <DialogContent className="max-w-xl">
+        <DialogContent className="max-w-xl" initialFocus={detailTitleRef}>
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2.5">
+            <DialogTitle ref={detailTitleRef} tabIndex={-1} className="flex items-center gap-2.5">
               {detailLine?.line_type === 'cloud'
                 ? <span className="p-1.5 rounded-lg bg-blue-50"><Cloud size={15} className="text-blue-500" /></span>
                 : <span className="p-1.5 rounded-lg bg-muted"><Zap  size={15} className="text-slate-500" /></span>
