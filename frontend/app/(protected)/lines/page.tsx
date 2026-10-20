@@ -1,5 +1,7 @@
 'use client'
 
+import { LineVolumeRecommendation } from '@/components/lines/LineVolumeRecommendation'
+import type { LineVolumeRecommendation as Recommendation } from '@/lib/line-volume-policy'
 import { LineProfilePhoto } from '@/components/lines/LineProfilePhoto'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useEffect, useState, useCallback, useRef } from 'react'
@@ -63,12 +65,26 @@ const EVO_MANAGER  = process.env.NEXT_PUBLIC_EVOLUTION_MANAGER_URL ?? ''
 
 function formatTier(tier: string | null): string {
   switch (tier) {
-    case 'TIER_1K':    return '1K / día'
-    case 'TIER_10K':   return '10K / día'
-    case 'TIER_100K':  return '100K / día'
-    case 'UNLIMITED':  return 'Sin límite'
+    case 'TIER_1K':    return '1K (registro previo)'
+    case 'TIER_10K':   return '10K (registro previo)'
+    case 'TIER_100K':  return '100K (registro previo)'
+    case 'UNLIMITED':  return 'Sin límite (registro previo)'
     default:           return '—'
   }
+}
+
+function MetaQualityBadge({ quality, detail = false }: { quality: string | null; detail?: boolean }) {
+  const presentation = quality === 'GREEN'
+    ? { label: 'Calidad alta', text: 'text-success', dot: 'bg-green-500' }
+    : quality === 'YELLOW'
+      ? { label: 'Calidad media', text: 'text-yellow-700', dot: 'bg-yellow-400' }
+      : quality === 'RED'
+        ? { label: 'Calidad baja', text: 'text-destructive', dot: 'bg-red-500' }
+        : { label: 'Sin evaluar', text: 'text-muted-foreground', dot: 'bg-muted-foreground' }
+  return <span className={`flex items-center gap-1.5 ${detail ? 'text-sm font-semibold' : 'font-medium'} ${presentation.text}`}>
+    <span className={`rounded-full flex-shrink-0 ${detail ? 'w-2.5 h-2.5' : 'w-2 h-2'} ${presentation.dot}`} />
+    {presentation.label}
+  </span>
 }
 
 function ineligibilityReason(l: Line): string | null {
@@ -95,6 +111,10 @@ export default function Lines() {
   const [loading, setLoading]     = useState(false)
   const [toggling, setToggling]   = useState<string | null>(null)
   const [syncing, setSyncing]     = useState<string | null>(null)
+  const [recommendations, setRecommendations] = useState<Record<string, Recommendation>>({})
+  const [recommendationsLoading, setRecommendationsLoading] = useState(true)
+  const [recommendationsError, setRecommendationsError] = useState(false)
+  const recommendationsAbort = useRef<AbortController | null>(null)
 
   // QR modal
   const [qrLine, setQrLine]           = useState<Line | null>(null)
@@ -258,7 +278,29 @@ export default function Lines() {
   const [addLoading, setAddLoading]         = useState(false)
   const [addError, setAddError]             = useState<string | null>(null)
 
+  const loadRecommendations = useCallback(() => {
+    if (document.hidden) return
+    recommendationsAbort.current?.abort()
+    const controller = new AbortController()
+    recommendationsAbort.current = controller
+    setRecommendationsLoading(true)
+    void fetchJson<{ recommendations: Record<string, Recommendation> }>('/api/lines/recommendations', {
+      signal: controller.signal, cache: 'no-store',
+    }).then(data => {
+      if (controller.signal.aborted) return
+      if (!data.recommendations || typeof data.recommendations !== 'object' || Array.isArray(data.recommendations))
+        throw new Error('Invalid recommendation response')
+      setRecommendations(data.recommendations)
+      setRecommendationsError(false)
+    }).catch(() => {
+      if (controller.signal.aborted) return
+      setRecommendations({})
+      setRecommendationsError(true)
+    }).finally(() => { if (!controller.signal.aborted) setRecommendationsLoading(false) })
+  }, [])
+
   const load = useCallback(() => {
+    loadRecommendations()
     setLoading(true)
     fetchJson<{ lines: Line[], metaConfigured?: boolean, metaAppId?: string, metaConfigId?: string, chatwootConfigured?: boolean }>('/api/lines')
       .then(d => {
@@ -274,9 +316,23 @@ export default function Lines() {
         setLoadError(e instanceof Error ? e.message : 'Error al cargar líneas')
       })
       .finally(() => setLoading(false))
-  }, [])
+  }, [loadRecommendations])
 
   useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (!document.hidden) loadRecommendations()
+      else recommendationsAbort.current?.abort()
+    }
+    const timer = setInterval(() => { if (!document.hidden) loadRecommendations() }, 60_000)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      recommendationsAbort.current?.abort()
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [loadRecommendations])
 
   // Countdown del QR — al llegar a 0 solo actualiza la UI.
   // NO detiene el poll: el usuario puede haber escaneado en los últimos segundos
@@ -642,7 +698,7 @@ export default function Lines() {
           <p className="text-2xl font-bold text-primary">{eligible}</p>
         </CardContent></Card>
         <Card><CardContent className="pt-4">
-          <p className="text-xs text-muted-foreground mb-1">Total enviados hoy</p>
+          <p className="text-xs text-muted-foreground mb-1">Uso de cupo diario</p>
           <p className="text-2xl font-bold">{lines.reduce((a, l) => a + l.msgs_sent_today, 0).toLocaleString()}</p>
         </CardContent></Card>
         <Card><CardContent className="pt-4">
@@ -667,17 +723,24 @@ export default function Lines() {
         </CardContent></Card>
       </div>
 
+      <div className="space-y-1 text-xs text-muted-foreground">
+        <p>La recomendación es informativa y no modifica los límites configurados.</p>
+        <p>Orientación interna; no garantiza evitar restricciones. Respetá el cupo compartido de Meta y el consentimiento.</p>
+        {recommendationsError && <p role="status" className="text-amber-800">No se pudieron actualizar las recomendaciones. Las líneas siguen disponibles; usá Actualizar líneas para volver a comprobarlas.</p>}
+      </div>
+
       {/* Tabla */}
-      <Card>
-        <CardContent className="p-0">
+      <Card className="min-w-0">
+        <CardContent className="overflow-x-auto p-0">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-background">
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Línea</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Recomendación hoy</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Proveedor</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Estado</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Elegible</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Hoy</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Cupo diario</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Esta hora</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Total enviados</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Envíos</th>
@@ -687,7 +750,7 @@ export default function Lines() {
             </thead>
             <tbody>
               {lines.length === 0
-                ? <tr><td colSpan={10} className="text-center py-10 text-muted-foreground">
+                ? <tr><td colSpan={11} className="text-center py-10 text-muted-foreground">
                     {loading ? 'Cargando…' : 'Sin líneas configuradas'}
                   </td></tr>
                 : lines.map(l => {
@@ -734,26 +797,15 @@ export default function Lines() {
                             </div>
                           </div>
                         </td>
+                        <td className="px-4 py-3">
+                          <LineVolumeRecommendation compact lineName={l.display_name || l.line_key}
+                            recommendation={recommendations[l.id]} loading={recommendationsLoading}
+                            onDetails={() => setDetailLine(l)} />
+                        </td>
                         <td className="px-4 py-3 text-xs">
                           {l.line_type === 'cloud'
                             ? <div className="flex flex-col gap-1">
-                                {l.cloud_quality_rating
-                                  ? <span className={`flex items-center gap-1.5 font-medium ${
-                                      l.cloud_quality_rating === 'GREEN'  ? 'text-success' :
-                                      l.cloud_quality_rating === 'YELLOW' ? 'text-yellow-700' :
-                                      'text-destructive'
-                                    }`}>
-                                      <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                                        l.cloud_quality_rating === 'GREEN'  ? 'bg-green-500' :
-                                        l.cloud_quality_rating === 'YELLOW' ? 'bg-yellow-400' :
-                                        'bg-red-500'
-                                      }`} />
-                                      {l.cloud_quality_rating === 'GREEN'  ? 'Calidad alta' :
-                                       l.cloud_quality_rating === 'YELLOW' ? 'Calidad media' :
-                                       'Calidad baja'}
-                                    </span>
-                                  : <span className="text-muted-foreground">Sin rating</span>
-                                }
+                                <MetaQualityBadge quality={l.cloud_quality_rating} />
                                 {l.cloud_coexistence_enabled && (
                                   <span className="flex items-center gap-1 text-violet-700 font-medium">
                                     <Zap size={9} className="flex-shrink-0" />
@@ -774,7 +826,7 @@ export default function Lines() {
                                   l.cloud_messaging_limit_tier               ? 'bg-muted text-slate-600' :
                                                                                'bg-background  text-muted-foreground'
                                 }`}>
-                                  {formatTier(l.cloud_messaging_limit_tier)}
+                                  Cupo compartido en Meta
                                 </span>
                               </div>
                             : <span className="font-mono text-[11px] text-muted-foreground">{l.evolution_instance}</span>
@@ -964,6 +1016,9 @@ export default function Lines() {
                 }
               </div>
 
+              <LineVolumeRecommendation lineName={detailLine.display_name || detailLine.line_key}
+                recommendation={recommendations[detailLine.id]} loading={recommendationsLoading} />
+
               {/* ── Sección Cloud ── */}
               {detailLine.line_type === 'cloud' && (
                 <>
@@ -971,25 +1026,11 @@ export default function Lines() {
                     <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Calidad y límites</p>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-1">
-                        <p className="text-[10px] text-muted-foreground">Quality Rating</p>
-                        {detailLine.cloud_quality_rating
-                          ? <span className={`flex items-center gap-1.5 text-sm font-semibold ${
-                              detailLine.cloud_quality_rating === 'GREEN'  ? 'text-success' :
-                              detailLine.cloud_quality_rating === 'YELLOW' ? 'text-yellow-700' : 'text-destructive'
-                            }`}>
-                              <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
-                                detailLine.cloud_quality_rating === 'GREEN'  ? 'bg-green-500' :
-                                detailLine.cloud_quality_rating === 'YELLOW' ? 'bg-yellow-400' : 'bg-red-500'
-                              }`} />
-                              {detailLine.cloud_quality_rating === 'GREEN'  ? 'Alta — sin restricciones' :
-                               detailLine.cloud_quality_rating === 'YELLOW' ? 'Media — monitorear' :
-                               'Baja — envíos limitados'}
-                            </span>
-                          : <span className="text-sm text-muted-foreground">Sin datos</span>
-                        }
+                        <p className="text-[10px] text-muted-foreground">Calidad de Meta</p>
+                        <MetaQualityBadge quality={detailLine.cloud_quality_rating} detail />
                       </div>
                       <div className="space-y-1">
-                        <p className="text-[10px] text-muted-foreground">Tier de envíos</p>
+                        <p className="text-[10px] text-muted-foreground">Referencia de cupo almacenada</p>
                         <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${
                           detailLine.cloud_messaging_limit_tier === 'UNLIMITED' ? 'bg-accent text-primary' :
                           detailLine.cloud_messaging_limit_tier                 ? 'bg-muted text-slate-700' :
@@ -997,6 +1038,7 @@ export default function Lines() {
                         }`}>
                           {formatTier(detailLine.cloud_messaging_limit_tier)}
                         </span>
+                        <p className="text-[10px] text-muted-foreground">El cupo vigente puede ser compartido entre líneas. Verificalo en Meta.</p>
                       </div>
                     </div>
                     <div className="space-y-1 pt-1 border-t border-border">
@@ -1078,7 +1120,7 @@ export default function Lines() {
                 <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Estadísticas de uso</p>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <p className="text-[10px] text-muted-foreground">Hoy</p>
+                    <p className="text-[10px] text-muted-foreground">Cupo diario</p>
                     <div className="flex items-center gap-2">
                       <div className="flex-1 bg-border rounded-full h-1.5">
                         <div className="bg-green-500 h-1.5 rounded-full transition-all" style={{
@@ -1620,7 +1662,7 @@ export default function Lines() {
                   <p className="text-xs text-muted-foreground leading-relaxed">Solo Cloud API. Máxima velocidad para campañas, bots y automatización sin límites de app.</p>
                   <div className="space-y-0.5">
                     <p className="text-[11px] text-success">✓ Plantillas Meta aprobadas</p>
-                    <p className="text-[11px] text-success">✓ Tiers de hasta 100K/día</p>
+                    <p className="text-[11px] text-success">✓ Cupo compartido según Meta</p>
                   </div>
                 </button>
 
