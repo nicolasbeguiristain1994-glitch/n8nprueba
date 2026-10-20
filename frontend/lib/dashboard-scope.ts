@@ -5,10 +5,10 @@ export const DASHBOARD_TIMEZONE = 'America/Argentina/Buenos_Aires'
 // Equivalences are scoped by the movement's explicit platform, never inferred
 // from an agent name shared by two platforms.
 const ALIASES: Record<SyncPlatform, Record<string, string>> = {
-  zeus: {},
-  bet30: { btcuno: 'betcoin', btcdos: 'farabet', zeus: 'ofizeus', zeusroyal: 'royal' },
-  ganamos: { adminbtc: 'betcoin', adminzeus: 'ofizeus', adminroyal: 'royal', admbigwin: 'bigwin', adminfara: 'farabet', amdfarabet: 'farabet', admfarabet: 'farabet', adminimperio: 'imperio' },
-  argenbet: { adminbtc: 'betcoin', adminzeus: 'ofizeus', adminroyal: 'royal' },
+  zeus: { facuadmin1: 'elduende' },
+  bet30: { btcuno: 'betcoin', btcdos: 'farabet', zeus: 'ofizeus', zeusroyal: 'royal', duendeverde: 'elduende' },
+  ganamos: { adminbtc: 'betcoin', adminzeus: 'ofizeus', adminroyal: 'royal', admbigwin: 'bigwin', adminfara: 'farabet', amdfarabet: 'farabet', admfarabet: 'farabet', adminimperio: 'imperio', duendeverde: 'elduende' },
+  argenbet: { adminbtc: 'betcoin', adminzeus: 'ofizeus', adminroyal: 'royal', duendeverde: 'elduende' },
 }
 
 export function dashboardAgents(platform: Platform): string[] {

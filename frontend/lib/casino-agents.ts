@@ -3,10 +3,10 @@
  * adminbet y surmar son agentes internos/de capital — se excluyen de todas
  * las vistas del dashboard para no distorsionar métricas de operación.
  */
-export const AGENTES_PERMITIDOS = ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet', 'lasvegas'] as const
+export const AGENTES_PERMITIDOS = ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet', 'lasvegas', 'elduende'] as const
 
 /** Literal SQL para filtrar por agentes permitidos en queries de Postgres. */
-export const AGENTES_SQL_ARRAY = `'{bigwin,ofizeus,betcoin,royal,farabet,lasvegas}'::text[]`
+export const AGENTES_SQL_ARRAY = `'{bigwin,ofizeus,betcoin,royal,farabet,lasvegas,elduende}'::text[]`
 
 // ── Multi-platform support ────────────────────────────────────────────────────
 
@@ -40,14 +40,14 @@ export type SyncPlatform = typeof SYNC_PLATFORMS[number]
  * /api/dashboard/casino/sync (H4).
  */
 const PLATFORM_AGENTS_BASE: Record<Exclude<Platform, 'consolidado'>, string[]> = {
-  zeus:     ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet', 'imperio', 'lasvegas'],
-  bet30:    ['bigwin', 'zeus', 'zeusroyal', 'btcuno', 'btcdos', 'imperio'],
+  zeus:     ['bigwin', 'ofizeus', 'betcoin', 'royal', 'farabet', 'imperio', 'lasvegas', 'facuadmin1'],
+  bet30:    ['bigwin', 'zeus', 'zeusroyal', 'btcuno', 'btcdos', 'imperio', 'duendeverde'],
   // adminbtc→betcoin, adminzeus→ofizeus, adminroyal→royal, admbigwin→bigwin,
   // adminfara→farabet, adminimperio→imperio (mapeo a operador canónico, plan §8.2)
-  ganamos:  ['adminbtc', 'adminzeus', 'adminroyal', 'admbigwin', 'adminfara', 'adminimperio'],
-  // Nivel 2 del árbol bajo "peaky" — únicos 3 agentes que operan jugadores (D7/H10).
+  ganamos:  ['adminbtc', 'adminzeus', 'adminroyal', 'admbigwin', 'adminfara', 'adminimperio', 'duendeverde'],
+  // Cuentas originales bajo "peaky" y la cuenta de El Duende.
   // adminbtc→betcoin, adminzeus→ofizeus, adminroyal→royal.
-  argenbet: ['adminbtc', 'adminzeus', 'adminroyal'],
+  argenbet: ['adminbtc', 'adminzeus', 'adminroyal', 'duendeverde'],
 }
 
 const PLATFORM_AGENTS: Record<Platform, string[]> = {
@@ -76,6 +76,9 @@ const PLATFORM_AGENTS: Record<Platform, string[]> = {
  * son nombres canónicos en sí mismos.
  */
 export const AGENT_TO_CANONICAL: Record<string, string> = {
+  // El Duende: Zeus account confirmed by the operator; the other panels share this name.
+  facuadmin1:  'elduende',
+  duendeverde: 'elduende',
   // bet30
   btcuno:    'betcoin',
   btcdos:    'farabet',

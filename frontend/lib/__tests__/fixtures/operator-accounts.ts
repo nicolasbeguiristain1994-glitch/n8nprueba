@@ -9,4 +9,5 @@ export const OPERATOR_ACCOUNTS: Record<string, Record<SyncPlatform, string[]>> =
   farabet:  { zeus: ['farabet'],  bet30: ['btcdos'],    ganamos: ['adminfara'],    argenbet: [] },
   imperio:  { zeus: ['imperio'],  bet30: ['imperio'],   ganamos: ['adminimperio'], argenbet: [] },
   lasvegas: { zeus: ['lasvegas'], bet30: [],            ganamos: [],               argenbet: [] },
+  elduende: { zeus: ['facuadmin1'], bet30: ['duendeverde'], ganamos: ['duendeverde'], argenbet: ['duendeverde'] },
 }
