@@ -23,6 +23,7 @@ import { CloudReadiness } from '@/components/campaigns/CloudReadiness'
 import { CampaignTestSend } from '@/components/campaigns/CampaignTestSend'
 import { CampaignScheduleDialog } from '@/components/campaigns/CampaignScheduleDialog'
 import { CampaignRiskReview } from '@/components/campaigns/CampaignRiskReview'
+import { CampaignBudgetWait } from '@/components/campaigns/CampaignBudgetWait'
 import type { CampaignRiskState } from '@/lib/campaign-risk'
 import { CONTACT_NAME_VARIABLE, hasTemplateContactName } from '@/lib/campaign-personalization'
 
@@ -45,9 +46,10 @@ interface Campaign {
   prospect_list_id: string | null; prospect_list_name: string | null
   antiblock_delay_min: number; antiblock_delay_max: number
   personalize_name: boolean; use_multi_line: boolean; created_at: string
-  pause_reason: 'manual' | 'no_eligible_lines' | 'all_lines_outside_schedule' | 'systemic_error' | 'config_missing' | 'frequency_exhausted' | 'assigned_line_unavailable' | 'risk_detected' | 'unknown' | null
+  pause_reason: 'manual' | 'no_eligible_lines' | 'all_lines_outside_schedule' | 'systemic_error' | 'config_missing' | 'frequency_exhausted' | 'assigned_line_unavailable' | 'risk_detected' | 'line_budget' | 'unknown' | null
   risk?: CampaignRiskState
   processor_locked_at: string | null
+  budget_resume_at?: string | null
   // Opcionales: sólo presentes si la API los devuelve
   message_type?: 'text' | 'template' | null
   template_id?: string | null
@@ -111,6 +113,7 @@ export default function Campaigns() {
   const [riskToReview, setRiskToReview] = useState<Campaign | null>(null)
   const [scheduleNotice, setScheduleNotice] = useState<string | null>(null)
   const canEditSchedule = isAdmin || ((permissions?.campaigns?.includes('update') ?? false) && (permissions?.send?.includes('send') ?? false))
+  const canPauseCampaign = isAdmin || (permissions?.campaigns?.includes('update') ?? false)
   const canOpenNew = isAdmin || (permissions?.campaigns?.includes('create') ?? false)
   const canReviewRisk = isAdmin || ((permissions?.campaigns?.includes('update') ?? false) && (permissions?.send?.includes('send') ?? false))
   const [contactSelection, setContactSelection] = useState<CampaignSelectionDraft | null>(null)
@@ -767,7 +770,7 @@ export default function Campaigns() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2 mb-1">
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_BADGE[c.status] || ''}`}>
-                          {STATUS_LABEL[c.status] ?? c.status}
+                          {c.status === 'paused' && c.pause_reason === 'line_budget' ? 'Esperando cupo' : STATUS_LABEL[c.status] ?? c.status}
                         </span>
                         {c.use_multi_line && (
                           <span className="text-xs bg-accent text-primary px-1.5 py-0.5 rounded-full flex items-center gap-1">
@@ -848,7 +851,7 @@ export default function Campaigns() {
                                 disabled={!!c.risk?.blocked || sending === c.id || resuming === c.id}>
                           {(sending === c.id || resuming === c.id)
                             ? <Loader2 size={13} className="animate-spin"/>
-                            : <><Play size={13} className="mr-1"/>Reanudar</>}
+                            : <><Play size={13} className="mr-1"/>{c.pause_reason === 'line_budget' ? 'Revisar disponibilidad' : 'Reanudar'}</>}
                         </Button>
                       )}
 
@@ -932,8 +935,13 @@ export default function Campaigns() {
                     <p className="mt-1 text-xs text-muted-foreground">La campaña no se reanudará automáticamente. Revisá la señal y las medidas necesarias antes de continuar.</p>
                     <Button variant="outline" size="sm" className="mt-2" onClick={() => setRiskToReview(c)} aria-label={`Revisar alerta de ${c.name}`}>Revisar alerta{c.risk.incidents.length > 1 ? ` (${c.risk.incidents.length})` : ''}</Button>
                   </div>}
+                  {c.status === 'paused' && c.pause_reason === 'line_budget' && !c.risk?.blocked && <CampaignBudgetWait
+                    pending={Math.max(0, c.total_targets - c.total_sent - c.total_failed - c.total_skipped)}
+                    reviewAt={c.budget_resume_at ?? null} schedulerEnabled={schedulerEnabled}
+                    busy={actioning === c.id}
+                    onKeepPaused={canPauseCampaign && (isAdmin || c.owned_by === user?.id) ? () => updateStatus(c.id, 'paused') : undefined} />}
                   {/* Aviso de pausa */}
-                  {c.status === 'paused' && !c.risk?.blocked && (
+                  {c.status === 'paused' && c.pause_reason !== 'line_budget' && !c.risk?.blocked && (
                     <div className="mt-2 flex items-start gap-1.5 text-xs text-orange-600">
                       <AlertTriangle size={11} className="shrink-0 mt-0.5" />
                       <span>
@@ -1004,7 +1012,7 @@ export default function Campaigns() {
                   {['running','paused','completed'].includes(c.status) && c.total_targets > 0 && (
                     <div className="mt-3">
                       <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                        <span>{c.risk?.blocked ? 'Envíos detenidos' : c.status === 'paused' ? 'Pausado' : c.status === 'completed' ? 'Procesados' : 'Enviando…'}</span>
+                        <span>{c.risk?.blocked ? 'Envíos detenidos' : c.status === 'paused' ? c.pause_reason === 'line_budget' ? 'Esperando cupo recomendado' : 'Pausado' : c.status === 'completed' ? 'Procesados' : 'Enviando…'}</span>
                         <span>{c.total_sent + c.total_failed + c.total_skipped}/{c.total_targets}</span>
                       </div>
                       <div className="w-full bg-muted rounded-full h-1.5">
@@ -1596,6 +1604,9 @@ export default function Campaigns() {
                 <p className="mt-1">{selected.risk.incidents[0]?.title || 'Hay una alerta pendiente de revisión.'}</p>
                 <Button className="mt-2" size="sm" variant="outline" onClick={() => { setRiskToReview(selected); closeDetail() }}>Revisar alerta</Button>
               </div>}
+              {selected.status === 'paused' && selected.pause_reason === 'line_budget' && !selected.risk?.blocked && <CampaignBudgetWait
+                pending={Math.max(0, selected.total_targets - selected.total_sent - selected.total_failed - selected.total_skipped)}
+                reviewAt={selected.budget_resume_at ?? null} schedulerEnabled={schedulerEnabled} />}
               {isAdmin && !selected.risk?.blocked && selected.message_type === 'template' && <CampaignTestSend key={selected.id} campaignId={selected.id} />}
               {/* Métricas */}
               <div className={`grid gap-3 text-center ${selected.total_skipped > 0 ? 'grid-cols-5' : 'grid-cols-4'}`}>

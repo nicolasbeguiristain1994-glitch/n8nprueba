@@ -6,6 +6,12 @@ const mocks = vi.hoisted(() => ({
   updateActivity: vi.fn(), delay: vi.fn(), personality: vi.fn(), loadedPersonality: vi.fn(), activeNow: vi.fn(),
 }))
 vi.mock('@/lib/user-prioritization/broadcasts',()=>({priorityRecipientAllowed:mocks.priorityAllowed}))
+vi.mock('@/lib/line-send-budget', async importOriginal => ({
+  ...await importOriginal<typeof import('@/lib/line-send-budget')>(),
+  reserveLineSendBudget: vi.fn(async () => ({id:'budget-reservation'})),
+  finishLineSendBudget: vi.fn(async () => {}),
+  deferCampaignForLineBudget: vi.fn(async () => {}),
+}))
 vi.mock('@/lib/db', () => ({ query: mocks.query, withTransaction: vi.fn() }))
 vi.mock('@/lib/cloud-api/rate-limiter', () => ({ enforceRateLimit: mocks.rate }))
 vi.mock('@/lib/cloud-api/token-store', () => ({ getTokenForNumber: mocks.token }))
@@ -31,6 +37,7 @@ import {
   buildTemplatePayload, sendViaCloud, sendOneUnit, processMultiLineInBackground, CampaignLineUnavailableError, CloudSendOutcomeUnknownError,
   type CampaignForDispatch, type EligibleLine,
 } from '@/lib/campaign-distributor'
+import { reserveLineSendBudget,finishLineSendBudget,deferCampaignForLineBudget,LineSendBudgetError } from '@/lib/line-send-budget'
 import { CloudApiError, ConversationWindowError, OptOutError } from '@/lib/cloud-api/errors'
 
 const line: EligibleLine = {
@@ -444,4 +451,52 @@ it('evaluates a synchronous 131049 only after the multi-line failure row is pers
   expect(await sendOneUnit(campaign.id, line, campaign, 3)).toBe('failed')
   expect(evaluateCampaignRisk).toHaveBeenCalledWith(campaign.id)
   expect(mocks.send).toHaveBeenCalledTimes(1)
+})
+
+
+describe('campaign budget transport boundary',()=>{
+ it('defers without a message fence, frequency claim, or Meta call when the line budget is exhausted',async()=>{
+  const error=new LineSendBudgetError('capacity_exhausted','2026-10-21T03:00:00Z',true)
+  vi.mocked(reserveLineSendBudget).mockRejectedValueOnce(error)
+  expect(await sendOneUnit(campaign.id,line,campaign,3)).toBe('failed')
+  expect(mocks.send).not.toHaveBeenCalled();expect(mocks.frequency).not.toHaveBeenCalled()
+  expect(deferCampaignForLineBudget).toHaveBeenCalledWith(campaign.id,error)
+  expect(mocks.query.mock.calls.some(([sql])=>sql.includes('INSERT INTO whatsapp_messages'))).toBe(false)
+  const pending=mocks.query.mock.calls.find(([sql])=>sql.includes("error_detail='line-budget-no-send'"))?.[0]
+  expect(pending).toContain("status='pending'");expect(pending).not.toContain('line_id=NULL')
+ })
+ it('reserves only once before the fence, and does not double charge after acceptance',async()=>{
+  expect(await sendOneUnit(campaign.id,line,campaign,3)).toBe('sent')
+  expect(reserveLineSendBudget).toHaveBeenCalledTimes(1)
+  const fence=mocks.query.mock.calls.findIndex(([sql])=>sql.includes('INSERT INTO whatsapp_messages'))
+  expect(vi.mocked(reserveLineSendBudget).mock.invocationCallOrder[0]).toBeLessThan(mocks.query.mock.invocationCallOrder[fence])
+  expect(finishLineSendBudget).toHaveBeenCalledExactlyOnceWith('budget-reservation','consumed')
+  expect(mocks.query.mock.calls.some(([sql])=>sql.includes('increment_line_counters'))).toBe(false)
+  expect(mocks.query.mock.calls.some(([sql])=>sql.includes('total_sent=total_sent+1'))).toBe(true)
+ })
+ it.each([new CloudApiError('Rejected',131049),new Error('socket timeout')])('retains quota for a provider rejection or ambiguous outcome',async error=>{
+  mocks.send.mockRejectedValue(error)
+  await sendOneUnit(campaign.id,line,campaign,3)
+  expect(finishLineSendBudget).toHaveBeenCalledExactlyOnceWith('budget-reservation','consumed')
+ })
+ it('refunds a last-mile safety hold known to precede HTTP',async()=>{
+  mocks.send.mockRejectedValue(new CampaignRiskError())
+  await sendOneUnit(campaign.id,line,campaign,3)
+  expect(finishLineSendBudget).toHaveBeenCalledExactlyOnceWith('budget-reservation','no_send')
+ })
+ it('does not refund an accepted send if its consumed-booking write fails',async()=>{
+  vi.mocked(finishLineSendBudget).mockRejectedValueOnce(Error('settlement unavailable'))
+  expect(await sendOneUnit(campaign.id,line,campaign,3)).toBe('sent')
+  expect(finishLineSendBudget).toHaveBeenCalledExactlyOnceWith('budget-reservation','consumed')
+  expect(mocks.send).toHaveBeenCalledTimes(1)
+ })
+ it('guards direct campaign sends and leaves manual/test sends on their existing path',async()=>{
+  const error=new LineSendBudgetError('capacity_exhausted','2026-10-21T03:00:00Z',true)
+  vi.mocked(reserveLineSendBudget).mockRejectedValueOnce(error)
+  await expect(sendViaCloud(line,unit.phone_number,templatePayload(),campaign.id)).rejects.toBe(error)
+  expect(mocks.send).not.toHaveBeenCalled()
+  vi.mocked(reserveLineSendBudget).mockClear()
+  await sendViaCloud(line,unit.phone_number,templatePayload())
+  expect(reserveLineSendBudget).not.toHaveBeenCalled();expect(mocks.send).toHaveBeenCalledTimes(1)
+ })
 })

@@ -21,6 +21,7 @@ vi.mock('@/lib/cloud-api/infrastructure/meta-http.gateway',()=>({MetaHttpGateway
 import {PATCH as reinstateFromConversation} from '@/app/api/conversations/[phone]/blacklist/route'
 import {recordGlobalOptOut,reinstateGlobalContact,isGloballyOptedOut,withGlobalSendGuard} from '@/lib/global-opt-out'
 import {resolveConsentIdentity} from '@/lib/consent-context'
+import {recordHumanAutomationIntervention,automationAdmission,lockAutomationConversation} from '@/lib/automation-safety'
 import {sendQueuedWithConsent} from '@/lib/cloud-api/queued-send-guard'
 import {sendOptOutConfirmation} from '@/lib/opt-out-confirmation'
 import {OptOutError} from '@/lib/cloud-api/errors'
@@ -45,7 +46,8 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
    CREATE UNIQUE INDEX idx_contacts_phone_unique ON contacts(phone_number);
    CREATE TABLE whatsapp_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),contact_id uuid,campaign_id uuid,campaign_recipient_id uuid,phone_number varchar(20),message_body text,direction text,status text,evolution_message_id varchar(255),sent_at timestamptz,created_at timestamptz DEFAULT now(),updated_at timestamptz,metadata jsonb);
    CREATE TABLE campaign_recipients(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),campaign_id uuid,contact_id uuid,phone_number text,status text DEFAULT 'pending',line_id uuid,locked_at timestamptz,error_detail text,updated_at timestamptz);
-   CREATE TABLE automation_message_jobs(id uuid,phone text,status text,provider text,source_id text,finished_at timestamptz,details text);
+   CREATE TABLE automation_message_jobs(id uuid,phone text,status text,provider text,source_id text,finished_at timestamptz,details text,dispatch_authorized_at timestamptz);
+   CREATE TABLE automation_conversation_safety(phone text,scope_key text,last_human_at timestamptz,last_automation_at timestamptz,handoff_event_key text,updated_at timestamptz DEFAULT now(),PRIMARY KEY(phone,scope_key));
    CREATE TABLE cloud_conversations(id uuid PRIMARY KEY,contact_phone text,phone_number_id text,window_expires_at timestamptz);
    CREATE TABLE cloud_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),conversation_id uuid,phone_number_id text,campaign_id uuid,direction text,message_type text,content jsonb,status text,wamid text,queued_at timestamptz,created_at timestamptz DEFAULT now(),sent_at timestamptz,failed_at timestamptz,error_code int,error_title text,error_details text);
    CREATE TABLE whatsapp_lines(id uuid PRIMARY KEY,evolution_instance varchar(100),evolution_url text,line_type text,status text,is_connected bool,sending_enabled bool);
@@ -70,7 +72,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
  })
  beforeEach(async()=>{
   m.post.mockReset();m.post.mockResolvedValue({messages:[{id:'confirmation-id'}]});m.token.mockResolvedValue('test-only');m.limit.mockResolvedValue(undefined)
-  await pool.query(`TRUNCATE contacts,blacklist,cloud_opt_outs,cloud_consent_log,whatsapp_messages,campaign_recipients,automation_message_jobs,cloud_messages,cloud_conversations,users,campaigns,whatsapp_lines,cloud_numbers CASCADE;
+  await pool.query(`TRUNCATE automation_conversation_safety,contacts,blacklist,cloud_opt_outs,cloud_consent_log,whatsapp_messages,campaign_recipients,automation_message_jobs,cloud_messages,cloud_conversations,users,campaigns,whatsapp_lines,cloud_numbers CASCADE;
    INSERT INTO users(id) VALUES('${id(1)}'); INSERT INTO campaigns(id) VALUES('${id(20)}'),('${id(21)}');
    INSERT INTO contacts(id,phone_number,first_name,panel,casino_accounts,account_username,identity_key) VALUES
     ('${id(2)}','+${phone}','juan24z','bigwin','[{"panel":"bigwin","username":"juan24z"}]','juan24z','["bigwin", "juan24z"]'),
@@ -93,6 +95,32 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
     ('${id(60)}','${phone}','queued','cloud','line-1','bigwin'),('${id(61)}','${phone}','queued','cloud','line-2','royal');`)
  })
  afterAll(async()=>{if(pool){await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.end()}})
+
+ it.each(['cloud','evolution'] as const)('keeps the Royal human hold across a persisted %s manual reply and a new inbound',async provider=>{
+  if(provider==='evolution')await pool.query("UPDATE whatsapp_lines SET line_type='evolution',evolution_instance='royal-instance' WHERE id=$1",[id(9)])
+  const sourceId=provider==='cloud'?'line-2':'royal-instance'
+  const source={provider,sourceId}
+  expect((await resolveConsentIdentity(phone,source)).agent).toBe('royal')
+  const agent=await recordHumanAutomationIntervention(phone,source)
+  expect(agent).toBe('royal')
+  if(provider==='cloud') {
+   await pool.query(`INSERT INTO cloud_messages(conversation_id,phone_number_id,direction,message_type,content,status,wamid,sent_at)
+    VALUES($1,'line-2','outbound','text',$2::jsonb,'sent','manual-royal',clock_timestamp())`,[id(41),JSON.stringify({agentCode:agent,text:{body:'Respuesta humana sintética'}})])
+   await pool.query(`INSERT INTO cloud_messages(conversation_id,phone_number_id,direction,message_type,content,status,wamid,sent_at)
+    VALUES($1,'line-2','inbound','text','{}','delivered','new-inbound',clock_timestamp())`,[id(41)])
+  } else {
+   await pool.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,evolution_message_id,sent_at,metadata)
+    VALUES($1,'Respuesta humana sintética','outbound','sent','manual-royal',clock_timestamp(),$2::jsonb)`,['+'+phone,JSON.stringify({line_id:id(9),agent_code:agent})])
+   await pool.query(`INSERT INTO whatsapp_messages(phone_number,direction,status,evolution_message_id,created_at,metadata)
+    VALUES($1,'inbound','received','new-inbound',clock_timestamp(),$2::jsonb)`,['+'+phone,JSON.stringify({line_id:id(9)})])
+  }
+  const inbound=await resolveConsentIdentity(phone,{...source,messageId:'new-inbound'})
+  expect(inbound.agent).toBe('royal')
+  const context={phone,provider,source_id:sourceId,agent_code:inbound.agent}
+  const blocked=await m.tx(async(db:import('pg').PoolClient)=>{await lockAutomationConversation(db,context);return automationAdmission(db,context,'No debe enviarse')})
+  expect(blocked).toContain('asesor')
+  expect(m.post).not.toHaveBeenCalled()
+ })
  it('splits the example into separate account rows with the same phone',()=>{
   expect(migrationFacts.map(r=>[r.first_name,r.panel,r.phone_number])).toEqual([['juan24z','bigwin','+'+phone],['juan244z','royal','+'+phone]])
   expect(migrationFacts[0].identity_key).toBe(contactAccountKey('bigwin','juan24z','+'+phone))

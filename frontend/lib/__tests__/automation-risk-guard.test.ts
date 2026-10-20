@@ -1,6 +1,8 @@
 // @vitest-environment node
 import { beforeEach, expect, it, vi } from 'vitest'
 const m = vi.hoisted(() => ({ query: vi.fn(), tx: vi.fn(), execute: vi.fn(), emit: vi.fn() }))
+vi.mock('@/lib/automation-safety',()=>({withAutomationSafety:async(_job:unknown,send:()=>Promise<unknown>)=>({kind:'dispatched',value:await send()}),automationDispatchStillAllowed:async()=>true,lockAutomationConversation:async()=>{},recordAutomationDispatchFinished:async()=>{}}))
+vi.mock('@/lib/line-send-budget',()=>({reserveLineSendBudget:vi.fn().mockResolvedValue({id:'reservation'}),finishLineSendBudget:vi.fn(),LineSendBudgetError:class extends Error{},LineSendAlreadyReservedError:class extends Error{}}))
 vi.mock('@/lib/db', () => ({ query: m.query, withTransaction: async (fn: (db: unknown) => unknown) => fn({ query: m.tx }) }))
 vi.mock('@/lib/cloud-api/use-cases/send-message.use-case', () => ({ sendMessageUseCase: { execute: m.execute } }))
 vi.mock('@/lib/sse-events', () => ({ sseEmitter: { emit: m.emit } }))

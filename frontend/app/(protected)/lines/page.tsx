@@ -43,6 +43,7 @@ interface Line {
   id: string; line_key: string; display_name: string; phone_number: string
   evolution_instance: string; status: string; is_connected: boolean
   sending_enabled: boolean; eligible: boolean; line_type: string
+  respect_daily_recommendation: boolean; owner_user_id: string | null
   msgs_sent_today: number; msgs_sent_hour: number
   msg_per_day: number; msg_per_hour: number
   total_sent: number; total_failed: number
@@ -100,8 +101,10 @@ const QR_TTL_MS    = 60_000   // WhatsApp QR expira en ~60s
 const STATUS_INTERVAL_MS = 3_000  // polling de estado post-scan
 
 export default function Lines() {
-  const { user } = useCurrentUser()
+  const { user, permissions } = useCurrentUser()
   const isAdmin = user?.role === 'admin'
+  const canEditLine = (line: Line) => (isAdmin || permissions?.lines?.includes('update') === true)
+    && (isAdmin || line.owner_user_id === user?.id)
 
   const [lines, setLines]         = useState<Line[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -144,7 +147,7 @@ export default function Lines() {
 
   // Edit line modal
   const [editTarget, setEditTarget]         = useState<Line | null>(null)
-  const [editForm, setEditForm]             = useState({ display_name: '', msg_per_day: '', msg_per_hour: '', priority: '' })
+  const [editForm, setEditForm]             = useState({ display_name: '', msg_per_day: '', msg_per_hour: '', priority: '', respect_daily_recommendation: false })
   const [editLoading, setEditLoading]       = useState(false)
   const [editError, setEditError]           = useState<string | null>(null)
 
@@ -155,6 +158,7 @@ export default function Lines() {
       msg_per_day:  String(l.msg_per_day),
       msg_per_hour: String(l.msg_per_hour),
       priority:     String(l.priority),
+      respect_daily_recommendation: l.respect_daily_recommendation === true,
     })
     setEditError(null)
   }
@@ -172,6 +176,7 @@ export default function Lines() {
           msg_per_day:  Number(editForm.msg_per_day),
           msg_per_hour: Number(editForm.msg_per_hour),
           priority:     Number(editForm.priority),
+          respect_daily_recommendation: editForm.respect_daily_recommendation,
         }),
       })
       const data = await res.json()
@@ -772,7 +777,7 @@ export default function Lines() {
                             }
                             <div>
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                {isAdmin
+                                {canEditLine(l)
                                   ? <button
                                       onClick={() => openEdit(l)}
                                       className="font-medium hover:text-primary flex items-center gap-1 group"
@@ -801,6 +806,7 @@ export default function Lines() {
                         <td className="px-4 py-3">
                           <LineVolumeRecommendation compact lineName={l.display_name || l.line_key}
                             recommendation={recommendations[l.id]} loading={recommendationsLoading}
+                            respectDailyRecommendation={l.respect_daily_recommendation === true}
                             onDetails={() => setDetailLine(l)} />
                         </td>
                         <td className="px-4 py-3 text-xs">
@@ -1018,7 +1024,10 @@ export default function Lines() {
               </div>
 
               <LineVolumeRecommendation lineName={detailLine.display_name || detailLine.line_key}
-                recommendation={recommendations[detailLine.id]} loading={recommendationsLoading} />
+                recommendation={recommendations[detailLine.id]} loading={recommendationsLoading}
+                respectDailyRecommendation={detailLine.respect_daily_recommendation === true} />
+              {canEditLine(detailLine) && <Button size="sm" variant="outline"
+                onClick={() => { setDetailLine(null); openEdit(detailLine) }}>Configurar control diario</Button>}
 
               {/* ── Sección Cloud ── */}
               {detailLine.line_type === 'cloud' && (
@@ -1233,6 +1242,16 @@ export default function Lines() {
                 value={editForm.priority}
                 onChange={e => setEditForm(f => ({ ...f, priority: e.target.value }))}
               />
+            </div>
+            <div className="space-y-2 rounded-lg border border-border p-3">
+              <label className="flex items-start gap-2 text-sm font-medium">
+                <input type="checkbox" className="mt-0.5 accent-primary"
+                  checked={editForm.respect_daily_recommendation} disabled={editLoading}
+                  aria-describedby="daily-recommendation-help"
+                  onChange={e => setEditForm(f => ({ ...f, respect_daily_recommendation: e.target.checked }))} />
+                Respetar automáticamente la recomendación diaria
+              </label>
+              <p id="daily-recommendation-help" className="text-xs text-muted-foreground">Las campañas respetan la recomendación vigente y reservan el 20% del cupo diario y horario configurado para atención. Sus destinatarios pendientes requieren cupo y una nueva evaluación; no hay una fecha de envío garantizada. No cambia los límites configurados ni garantiza evitar restricciones.</p>
             </div>
             {editError && (
               <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded p-2">{editError}</p>

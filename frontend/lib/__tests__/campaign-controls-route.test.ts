@@ -183,3 +183,14 @@ it('does not reset failed recipients while the campaign has an unresolved risk',
   expect(mocks.prepare).not.toHaveBeenCalled()
   expect(mocks.txQuery).toHaveBeenCalledTimes(1)
 })
+
+
+it('turns a budget wait into a manual pause and cancels automatic continuation', async () => {
+  mocks.query.mockResolvedValueOnce([{ status: 'paused', pause_reason: 'line_budget', owned_by: user.user_id }])
+    .mockResolvedValueOnce([{ id }])
+  expect((await PATCH(req('', { status: 'paused' }), params())).status).toBe(200)
+  expect(mocks.query).toHaveBeenCalledTimes(2)
+  expect(mocks.query.mock.calls[1][0]).toContain('budget_resume_at = NULL')
+  expect(mocks.query.mock.calls[1][0]).toContain("THEN 'manual' ELSE 'risk_detected'")
+  expect(mocks.fetch).not.toHaveBeenCalled()
+})

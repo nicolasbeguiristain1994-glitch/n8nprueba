@@ -28,7 +28,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('standalone Cloud cap
     db=new Pool({connectionString:url.toString(),max:8,options:`-c search_path=${schema},public`})
     await db.query(`CREATE SCHEMA ${schema}`)
     await db.query(`CREATE TABLE whatsapp_lines(id uuid PRIMARY KEY,line_type text DEFAULT 'cloud',
-      status text DEFAULT 'active',is_connected bool DEFAULT true,sending_enabled bool DEFAULT true,
+      status text DEFAULT 'active',is_connected bool DEFAULT true,sending_enabled bool DEFAULT true,respect_daily_recommendation boolean DEFAULT false,
       msgs_sent_hour int DEFAULT 0,msgs_sent_today int DEFAULT 0,msg_per_hour int DEFAULT 30,msg_per_day int DEFAULT 50,
       hour_reset_at timestamptz,day_reset_at timestamptz,updated_at timestamptz,allowed_types jsonb,
       evolution_instance text,evolution_url text,priority int DEFAULT 1,last_seen_at timestamptz,personality_config jsonb);
@@ -69,6 +69,13 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('standalone Cloud cap
     expect((await getEligibleReplyLines()).map(l=>l.id)).toEqual([line.id])
     await db.query("UPDATE whatsapp_lines SET msgs_sent_today=50,day_reset_at=NOW()-INTERVAL '1 second'")
     expect((await getEligibleLines()).map(l=>l.id)).toEqual([line.id])
+  })
+  it('only campaign budget selection retains an opted-in exhausted line; normal/manual selection still excludes it',async()=>{
+    await db.query("UPDATE whatsapp_lines SET respect_daily_recommendation=true,msgs_sent_today=50,day_reset_at=NOW()+INTERVAL '1 hour'")
+    expect(await getEligibleLines()).toEqual([])
+    expect((await getEligibleLines(undefined,{includeBudgetWaiting:true})).map(l=>l.id)).toEqual([line.id])
+    await db.query('UPDATE whatsapp_lines SET sending_enabled=false')
+    expect(await getEligibleLines(undefined,{includeBudgetWaiting:true})).toEqual([])
   })
   it('keeps daily exhaustion after the hourly window expires',async()=>{
     await db.query("UPDATE whatsapp_lines SET msgs_sent_hour=30,msgs_sent_today=50,hour_reset_at=NOW()-INTERVAL '1 second',day_reset_at=NOW()+INTERVAL '1 hour'")

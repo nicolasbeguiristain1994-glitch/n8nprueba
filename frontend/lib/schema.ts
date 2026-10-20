@@ -287,6 +287,7 @@ export type UpdateAutomationInput = z.infer<typeof UpdateAutomationSchema>
 export const PatchLineSchema = z.object({
   id:              z.string().uuid('id must be a valid UUID'),
   sending_enabled: z.boolean().optional(),
+  respect_daily_recommendation: z.boolean().optional(),
   display_name:    z.string().trim().min(1, 'display_name no puede estar vacío').max(100).optional(),
   msg_per_day:     z.number().min(1, 'msg_per_day debe ser >= 1').optional(),
   msg_per_hour:    z.number().min(1, 'msg_per_hour debe ser >= 1').optional(),

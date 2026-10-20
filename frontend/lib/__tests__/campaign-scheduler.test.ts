@@ -208,3 +208,34 @@ it('stops a claimed scheduled campaign when preflight finds a risk', async () =>
   expect(mocks.multi).not.toHaveBeenCalled()
   expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining('processor_lock_token = $2'), [id, 'synthetic-token', 'risk_detected'])
 })
+
+
+describe('daily budget waits', () => {
+  it('claims only the budget wait transition and records that the original audience must be preserved', async () => {
+    mocks.tx.mockResolvedValueOnce({ rows: [{ ...campaign, status: 'paused', pause_reason: 'line_budget' }] })
+      .mockResolvedValueOnce({ rows: [owner] }).mockResolvedValueOnce({ rows: [{ owned_by: ownerId }] })
+      .mockResolvedValueOnce({ rows: [{ id }] })
+    const result = await claimDueCampaigns()
+    expect(result.jobs[0].resumingBudget).toBe(true)
+    expect(mocks.tx.mock.calls[0][0]).toContain("c.pause_reason = 'line_budget' AND c.budget_resume_at <= NOW()")
+    expect(mocks.tx.mock.calls[3][0]).toContain('budget_resume_at = NULL')
+    expect(mocks.tx.mock.calls[3][0]).toContain('campaign-risk-clear')
+  })
+  it('resumes the recorded recipients without reimporting a changed contact list', async () => {
+    const resumed = { ...job(), resumingBudget: true }
+    mocks.query.mockResolvedValueOnce([{ ...owner, status: 'running', processor_lock_token: resumed.lockToken }])
+      .mockResolvedValueOnce([{ total: 7 }]).mockResolvedValueOnce([]).mockResolvedValueOnce([owner])
+    await processScheduledCampaign(resumed)
+    expect(mocks.seed).not.toHaveBeenCalled()
+    expect(mocks.seedProspects).not.toHaveBeenCalled()
+    expect(mocks.multi).toHaveBeenCalledTimes(1)
+  })
+  it('a newly reported risk prevents budget continuation', async () => {
+    vi.mocked(assertCampaignRiskClear).mockRejectedValueOnce(new CampaignRiskError())
+    mocks.query.mockResolvedValue([])
+    await processScheduledCampaign({ ...job(), resumingBudget: true })
+    expect(mocks.seed).not.toHaveBeenCalled()
+    expect(mocks.multi).not.toHaveBeenCalled()
+    expect(mocks.query).toHaveBeenCalledWith(expect.any(String), [id, 'synthetic-token', 'risk_detected'])
+  })
+})
