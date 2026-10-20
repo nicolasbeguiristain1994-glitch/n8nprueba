@@ -110,8 +110,8 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
         {contact_id:id(21),platform:'zeus',username_lower:'sample323z'},
         {contact_id:id(22),platform:'bet30',username_lower:'sampleño94b'},
         {contact_id:id(22),platform:'zeus',username_lower:'sampleño94z'},
-        {contact_id:id(23),platform:'zeus',username_lower:'sample82zs'},
         {contact_id:id(23),platform:'zeus',username_lower:'sample41zs'},
+        {contact_id:id(23),platform:'zeus',username_lower:'sample82zs'},
       ])
       // This recovery is limited to statistics, not audience selection.
       expect(await compoundLinks([20,21,22,23],false)).toEqual([])
