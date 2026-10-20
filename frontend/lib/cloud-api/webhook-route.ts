@@ -6,9 +6,11 @@ import { handleDeliveryStatus }       from '@/lib/cloud-api/webhook-handlers/del
 import { handleEchoMessage }          from '@/lib/cloud-api/webhook-handlers/echo-message.handler'
 import { handleTemplateStatusUpdate } from '@/lib/cloud-api/webhook-handlers/template-status.handler'
 import { handleCoexistenceSyncEvent } from '@/lib/cloud-api/webhook-handlers/coexistence-sync.handler'
+import { handleAccountRisk, handleTemplateQualityRisk, webhookObservedAt } from '@/lib/cloud-api/webhook-handlers/meta-risk.handler'
+import { refreshPhoneMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
 import { createCorrelationId }        from '@/lib/cloud-api/correlation'
 import { createLogger }               from '@/lib/cloud-api/infrastructure/logger'
-import type { WebhookPayload, WebhookTemplateStatusUpdate, WebhookSyncEvent } from '@/lib/cloud-api/types/webhooks'
+import type { WebhookPayload, WebhookTemplateStatusUpdate, WebhookTemplateQualityUpdate, WebhookAccountUpdate, WebhookSyncEvent } from '@/lib/cloud-api/types/webhooks'
 import type { SmbSyncType } from '@/lib/cloud-api/types/domain'
 import { cloudNumberRepository } from '@/lib/cloud-api/repositories/cloud-number.repository'
 import { metaApp, type MetaAppConfig } from './app-config'
@@ -77,6 +79,11 @@ export async function handleWebhookPost(req: NextRequest, appId?: string) {
   if (payload.entry.some(entry => !app.permitsWaba(entry.id))) {
     return NextResponse.json({ error: 'WABA not assigned to app' }, { status: 403 })
   }
+  if (payload.entry.some(entry => entry.changes.some(change => {
+    if (change.field !== 'account_update') return false
+    const info = (change.value as unknown as WebhookAccountUpdate).waba_info
+    return !!info?.waba_id && info.waba_id !== entry.id
+  }))) return NextResponse.json({ error: 'Inconsistent WABA envelope' }, { status: 403 })
 
   const correlationId = createCorrelationId()
   const log           = createLogger({ correlationId, operation: 'webhook_dispatch' })
@@ -102,14 +109,41 @@ async function dispatch(
   for (const entry of payload.entry) {
     for (const change of entry.changes) {
       // Template updates have no phone metadata.
-      const phoneNumberId = change.field === 'message_template_status_update' ? undefined : change.value.metadata?.phone_number_id
+      const phoneNumberId = change.value.metadata?.phone_number_id
+      const observedAt = webhookObservedAt(entry.time)
 
       try {
         if (change.field === 'message_template_status_update') {
           await handleTemplateStatusUpdate(
             change.value as unknown as WebhookTemplateStatusUpdate, correlationId,
-            { wabaId: entry.id, includeLegacy: app.legacy },
+            { wabaId: entry.id, includeLegacy: app.legacy, ...(observedAt ? { observedAt } : {}) },
           )
+          continue
+        }
+        if (change.field === 'account_update') {
+          const update = change.value as unknown as WebhookAccountUpdate
+          if (!update.waba_info?.partner_app_id || update.waba_info.partner_app_id === app.appId) {
+            await handleAccountRisk(update, entry.id, observedAt)
+          }
+          continue
+        }
+        if (change.field === 'message_template_quality_update') {
+          const known = await query(`SELECT 1 FROM cloud_numbers WHERE waba_id=$1 LIMIT 1`, [entry.id])
+          if (known.length) await handleTemplateQualityRisk(change.value as unknown as WebhookTemplateQualityUpdate, entry.id, observedAt)
+          continue
+        }
+        if (change.field === 'phone_number_quality_update') {
+          // The current event contains display_phone_number, no metadata. Its
+          // documented events concern throughput; read actual quality from Meta.
+          const value = change.value as unknown as { display_phone_number?: string }
+          if (typeof value.display_phone_number === 'string') {
+            const matches = await query<{ phone_number_id: string }>(
+              `SELECT phone_number_id FROM cloud_numbers WHERE waba_id=$1
+               AND regexp_replace(display_phone, '[^0-9]', '', 'g')=$2`,
+              [entry.id, value.display_phone_number.replace(/\D/g, '')],
+            )
+            if (matches.length === 1) await refreshPhoneMetaRisk(matches[0].phone_number_id)
+          }
           continue
         }
         if (!phoneNumberId) continue

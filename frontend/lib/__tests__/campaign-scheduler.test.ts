@@ -189,3 +189,22 @@ describe('cron endpoint', () => {
     expect(mocks.transaction).not.toHaveBeenCalled()
   })
 })
+
+vi.mock('@/lib/cloud-api/meta-risk-refresh', () => ({ refreshCampaignMetaRisk: vi.fn() }))
+vi.mock('@/lib/campaign-risk', () => ({
+  CampaignRiskError: class extends Error { status = 409; code = 'CAMPAIGN_RISK_BLOCKED' },
+  CAMPAIGN_RISK_CLEAR_SQL: 'true /* campaign-risk-clear */',
+  assertCampaignRiskClear: vi.fn(), evaluateCampaignRisk: vi.fn(),
+  assertCloudSendRiskClear: vi.fn(), recordCampaignProviderRisk: vi.fn(),
+}))
+
+import { CampaignRiskError, assertCampaignRiskClear } from '@/lib/campaign-risk'
+it('stops a claimed scheduled campaign when preflight finds a risk', async () => {
+  vi.mocked(assertCampaignRiskClear).mockRejectedValueOnce(new CampaignRiskError())
+  mocks.query.mockResolvedValue([])
+  await processScheduledCampaign(job())
+  expect(mocks.seed).not.toHaveBeenCalled()
+  expect(mocks.single).not.toHaveBeenCalled()
+  expect(mocks.multi).not.toHaveBeenCalled()
+  expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining('processor_lock_token = $2'), [id, 'synthetic-token', 'risk_detected'])
+})

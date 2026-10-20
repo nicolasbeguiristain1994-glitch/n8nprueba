@@ -1,3 +1,5 @@
+import { CampaignRiskError, assertCampaignRiskClear, evaluateCampaignRisk } from '@/lib/campaign-risk'
+import { refreshCampaignMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
 import { campaignAudienceError } from '@/lib/campaign-audience'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
@@ -60,6 +62,16 @@ export async function POST(
   if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
+  try {
+    await refreshCampaignMetaRisk(id)
+    await evaluateCampaignRisk(id)
+    await assertCampaignRiskClear(id)
+  } catch (error) {
+    if (error instanceof CampaignRiskError)
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status })
+    return NextResponse.json({ error: 'No se pudo verificar el riesgo de la campaña; los envíos siguen detenidos.' }, { status: 503 })
+  }
+
   if (campaign.message_type === 'template' && (!campaign.template_name || !campaign.template_waba_id || campaign.template_status !== 'APROBADA')) {
     return NextResponse.json({ error: 'La plantilla no está aprobada o no tiene una cuenta de WhatsApp validada' }, { status: 409 })
   }
@@ -109,6 +121,7 @@ export async function POST(
   try {
     lockToken = await acquireProcessorLock(id, campaign.status)
   } catch (e) {
+    if (e instanceof CampaignRiskError) return NextResponse.json({ error: e.message, code: e.code }, { status: e.status })
     console.error('[POST /dispatch/process] lock error:', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

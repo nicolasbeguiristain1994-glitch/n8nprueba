@@ -73,3 +73,20 @@ describe('campaign tests authorization and validation', () => {
     expect(mocks.query.mock.calls.every(([sql]) => !sql.includes('DELETE'))).toBe(true)
   })
 })
+
+vi.mock('@/lib/cloud-api/meta-risk-refresh', () => ({ refreshCampaignMetaRisk: vi.fn() }))
+vi.mock('@/lib/campaign-risk', () => ({
+  CampaignRiskError: class extends Error { status = 409; code = 'CAMPAIGN_RISK_BLOCKED' },
+  CAMPAIGN_RISK_CLEAR_SQL: 'true /* campaign-risk-clear */',
+  assertCampaignRiskClear: vi.fn(), evaluateCampaignRisk: vi.fn(),
+  assertCloudSendRiskClear: vi.fn(), recordCampaignProviderRisk: vi.fn(),
+}))
+
+import { CampaignRiskError } from '@/lib/campaign-risk'
+it('returns risk conflicts without presenting a test as sent', async () => {
+  mocks.send.mockRejectedValue(new CampaignRiskError('Riesgo detectado'))
+  const response = await POST(req(), context)
+  expect(response.status).toBe(409)
+  expect(await response.json()).toMatchObject({ code: 'CAMPAIGN_RISK_BLOCKED' })
+  expect(mocks.audit).not.toHaveBeenCalled()
+})

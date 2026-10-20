@@ -22,6 +22,8 @@ import { useCurrentUser } from '@/lib/useCurrentUser'
 import { CloudReadiness } from '@/components/campaigns/CloudReadiness'
 import { CampaignTestSend } from '@/components/campaigns/CampaignTestSend'
 import { CampaignScheduleDialog } from '@/components/campaigns/CampaignScheduleDialog'
+import { CampaignRiskReview } from '@/components/campaigns/CampaignRiskReview'
+import type { CampaignRiskState } from '@/lib/campaign-risk'
 import { CONTACT_NAME_VARIABLE, hasTemplateContactName } from '@/lib/campaign-personalization'
 
 interface CampaignList { id: string; name: string; contact_count: number }
@@ -43,7 +45,8 @@ interface Campaign {
   prospect_list_id: string | null; prospect_list_name: string | null
   antiblock_delay_min: number; antiblock_delay_max: number
   personalize_name: boolean; use_multi_line: boolean; created_at: string
-  pause_reason: 'manual' | 'no_eligible_lines' | 'all_lines_outside_schedule' | 'systemic_error' | 'config_missing' | 'frequency_exhausted' | 'assigned_line_unavailable' | 'unknown' | null
+  pause_reason: 'manual' | 'no_eligible_lines' | 'all_lines_outside_schedule' | 'systemic_error' | 'config_missing' | 'frequency_exhausted' | 'assigned_line_unavailable' | 'risk_detected' | 'unknown' | null
+  risk?: CampaignRiskState
   processor_locked_at: string | null
   // Opcionales: sólo presentes si la API los devuelve
   message_type?: 'text' | 'template' | null
@@ -105,9 +108,11 @@ export default function Campaigns() {
   const [prospectLists, setProspectLists] = useState<ProspectListOption[]>([])
   const [showNew, setShowNew]             = useState(false)
   const [scheduleToEdit, setScheduleToEdit] = useState<Campaign | null>(null)
+  const [riskToReview, setRiskToReview] = useState<Campaign | null>(null)
   const [scheduleNotice, setScheduleNotice] = useState<string | null>(null)
   const canEditSchedule = isAdmin || ((permissions?.campaigns?.includes('update') ?? false) && (permissions?.send?.includes('send') ?? false))
   const canOpenNew = isAdmin || (permissions?.campaigns?.includes('create') ?? false)
+  const canReviewRisk = isAdmin || ((permissions?.campaigns?.includes('update') ?? false) && (permissions?.send?.includes('send') ?? false))
   const [contactSelection, setContactSelection] = useState<CampaignSelectionDraft | null>(null)
   const [selectionToken, setSelectionToken] = useState<string | null>(null)
   const [selectionSummary, setSelectionSummary] = useState<CampaignSelectionSummary | null>(null)
@@ -315,6 +320,12 @@ export default function Campaigns() {
   }, [])
 
   useEffect(() => { loadCampaigns(); loadLookups() }, [loadCampaigns, loadLookups])
+  useEffect(() => {
+    const refreshVisible = () => { if (document.visibilityState === 'visible') loadCampaigns() }
+    const timer = setInterval(refreshVisible, 15_000)
+    document.addEventListener('visibilitychange', refreshVisible)
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', refreshVisible) }
+  }, [loadCampaigns])
 
   const resetTemplateState = () => {
     setUseTemplate(false)
@@ -419,6 +430,7 @@ export default function Campaigns() {
   const updateMessage = (i: number, val: string) => setMessages(m => m.map((v, idx) => idx === i ? val : v))
 
   const sendNow = async (campaign: Campaign) => {
+    if (campaign.risk?.blocked) { setRiskToReview(campaign); return }
     setSending(campaign.id)
     setSendError(null)
     try {
@@ -429,12 +441,8 @@ export default function Campaigns() {
       const res = await fetch(endpoint, { method: 'POST' })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
-        // 409 = campaign auto-completed (all contacts already processed) — just refresh
-        if (res.status === 409) {
-          loadCampaigns()
-        } else {
-          setSendError(d.error || `Error ${res.status}`)
-        }
+        setSendError(d.error || `Error ${res.status}`)
+        if (res.status === 409) loadCampaigns()
       } else {
         setTimeout(loadCampaigns,1000)
       }
@@ -446,6 +454,7 @@ export default function Campaigns() {
   }
 
   const resetFreq = async (campaign: Campaign) => {
+    if (campaign.risk?.blocked) { setRiskToReview(campaign); return }
     if (!confirm(`¿Reiniciar los destinatarios sin envío de "${campaign.name}"?\n\nEl historial se conservará y la campaña quedará pausada. Para iniciar el envío después, presioná Reanudar.\n\nSi hay mensajes aceptados o pendientes de confirmación, el reinicio se bloqueará: creá una campaña nueva para un nuevo envío.`)) return
     setFreqResetting(campaign.id)
     try {
@@ -467,6 +476,7 @@ export default function Campaigns() {
   }
 
   const retryFailed = async (campaign: Campaign) => {
+    if (campaign.risk?.blocked) { setRiskToReview(campaign); return }
     if (!confirm(`¿Reintentar los fallos confirmados y los omitidos por frecuencia de "${campaign.name}"?\n\nLos fallos confirmados no consumirán el límite de frecuencia. Se conservará el historial y se excluirán los mensajes entregados o pendientes de confirmación. Los omitidos volverán a evaluarse con los límites vigentes.`)) return
     setRetryingFailed(campaign.id)
     setSendError(null)
@@ -536,6 +546,8 @@ export default function Campaigns() {
   }
 
   const resumeProcessor = async (id: string) => {
+    const campaign = campaigns.find(c => c.id === id)
+    if (campaign?.risk?.blocked) { setRiskToReview(campaign); return }
     setResuming(id)
     setSendError(null)
     try {
@@ -543,12 +555,8 @@ export default function Campaigns() {
       const res = await fetch(`/api/campaigns/${id}/dispatch`, { method: 'POST' })
       if (!res.ok) {
         const d = await res.json().catch(() => ({}))
-        if (res.status === 409) {
-          // All contacts already processed → campaign auto-completed → just refresh
-          loadCampaigns()
-        } else {
-          setSendError(d.error || `Error al reanudar`)
-        }
+        setSendError(d.error || 'Error al reanudar')
+        if (res.status === 409) loadCampaigns()
       } else {
         setTimeout(loadCampaigns,1500)
       }
@@ -817,7 +825,7 @@ export default function Campaigns() {
 
                       {c.status === 'scheduled' && c.scheduled_at && !c.started_at && !c.processor_locked_at && canEditSchedule && (isAdmin || c.owned_by === user?.id) && (
                         <Button variant="outline" size="sm" aria-label={`Editar horario de ${c.name}`}
-                          disabled={!schedulerEnabled || sending === c.id || actioning === c.id}
+                          disabled={!!c.risk?.blocked || !schedulerEnabled || sending === c.id || actioning === c.id}
                           onClick={() => { setScheduleNotice(null); setScheduleToEdit(c) }}>
                           <Clock size={13} /> Editar horario
                         </Button>
@@ -826,7 +834,7 @@ export default function Campaigns() {
                       {/* Enviar: draft, scheduled */}
                       {(c.status === 'draft' || c.status === 'scheduled') && (c.list_name || c.prospect_list_name) && (
                         <Button size="sm" className="bg-primary hover:bg-primary/90"
-                                onClick={() => sendNow(c)} disabled={sending === c.id}>
+                                onClick={() => sendNow(c)} disabled={!!c.risk?.blocked || sending === c.id}>
                           {sending === c.id
                             ? <Loader2 size={13} className="animate-spin"/>
                             : <><Play size={13} className="mr-1"/>Enviar</>}
@@ -837,7 +845,7 @@ export default function Campaigns() {
                       {c.status === 'paused' && (c.list_name || c.prospect_list_name) && (
                         <Button size="sm" className="bg-primary hover:bg-primary/90"
                                 onClick={() => c.use_multi_line ? resumeProcessor(c.id) : sendNow(c)}
-                                disabled={sending === c.id || resuming === c.id}>
+                                disabled={!!c.risk?.blocked || sending === c.id || resuming === c.id}>
                           {(sending === c.id || resuming === c.id)
                             ? <Loader2 size={13} className="animate-spin"/>
                             : <><Play size={13} className="mr-1"/>Reanudar</>}
@@ -848,7 +856,7 @@ export default function Campaigns() {
                       {c.status === 'running' && c.total_sent > 0 && c.use_multi_line && (
                         <Button size="sm" className="bg-primary hover:bg-primary/90"
                                 onClick={() => resumeProcessor(c.id)}
-                                disabled={resuming === c.id}>
+                                disabled={!!c.risk?.blocked || resuming === c.id}>
                           {resuming === c.id
                             ? <Loader2 size={13} className="animate-spin"/>
                             : <><CheckCheck size={13} className="mr-1"/>Verificar</>}
@@ -896,7 +904,7 @@ export default function Campaigns() {
                                 className="border-destructive/20 text-destructive hover:bg-destructive/10"
                                 title="Reintentar fallidos y omitidos por frecuencia"
                                 onClick={() => retryFailed(c)}
-                                disabled={retryingFailed === c.id || resuming === c.id}>
+                                disabled={!!c.risk?.blocked || retryingFailed === c.id || resuming === c.id}>
                           {retryingFailed === c.id
                             ? <Loader2 size={13} className="animate-spin"/>
                             : <span className="text-xs font-bold">Reintentar</span>}
@@ -909,7 +917,7 @@ export default function Campaigns() {
                                 className="border-orange-200 text-orange-500 hover:bg-orange-50"
                                 title="Reiniciar destinatarios sin envío confirmado (admin)"
                                 onClick={() => resetFreq(c)}
-                                disabled={freqResetting === c.id}>
+                                disabled={!!c.risk?.blocked || freqResetting === c.id}>
                           {freqResetting === c.id
                             ? <Loader2 size={13} className="animate-spin"/>
                             : <><RefreshCw size={13} /> Reiniciar</>}
@@ -918,8 +926,14 @@ export default function Campaigns() {
                     </div>
                   </div>
 
+                  {c.risk?.blocked && <div role="alert" className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
+                    <p className="flex items-center gap-2 font-semibold text-destructive"><AlertTriangle size={16} /> Protección activa: envíos detenidos</p>
+                    <p className="mt-1 break-words">{c.risk.incidents[0]?.title || 'Hay una alerta pendiente de revisión.'}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">La campaña no se reanudará automáticamente. Revisá la señal y las medidas necesarias antes de continuar.</p>
+                    <Button variant="outline" size="sm" className="mt-2" onClick={() => setRiskToReview(c)} aria-label={`Revisar alerta de ${c.name}`}>Revisar alerta{c.risk.incidents.length > 1 ? ` (${c.risk.incidents.length})` : ''}</Button>
+                  </div>}
                   {/* Aviso de pausa */}
-                  {c.status === 'paused' && (
+                  {c.status === 'paused' && !c.risk?.blocked && (
                     <div className="mt-2 flex items-start gap-1.5 text-xs text-orange-600">
                       <AlertTriangle size={11} className="shrink-0 mt-0.5" />
                       <span>
@@ -990,7 +1004,7 @@ export default function Campaigns() {
                   {['running','paused','completed'].includes(c.status) && c.total_targets > 0 && (
                     <div className="mt-3">
                       <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                        <span>Enviando…</span>
+                        <span>{c.risk?.blocked ? 'Envíos detenidos' : c.status === 'paused' ? 'Pausado' : c.status === 'completed' ? 'Procesados' : 'Enviando…'}</span>
                         <span>{c.total_sent + c.total_failed + c.total_skipped}/{c.total_targets}</span>
                       </div>
                       <div className="w-full bg-muted rounded-full h-1.5">
@@ -1560,6 +1574,10 @@ export default function Campaigns() {
           loadCampaigns()
         }} />}
 
+      {riskToReview && <CampaignRiskReview key={riskToReview.id} campaign={riskToReview}
+        canReview={canReviewRisk && (isAdmin || riskToReview.owned_by === user?.id)}
+        onClose={() => setRiskToReview(null)} onRefresh={loadCampaigns} />}
+
       {/* Modal detalle campaña */}
       <Dialog open={!!selected} onOpenChange={v => { if (!v) closeDetail() }}>
         <DialogContent className="w-[95vw] max-w-7xl sm:w-[95vw] sm:max-w-7xl max-h-[90vh] overflow-y-auto">
@@ -1573,7 +1591,12 @@ export default function Campaigns() {
           </DialogHeader>
           {selected && (
             <div className="space-y-4">
-              {isAdmin && selected.message_type === 'template' && <CampaignTestSend key={selected.id} campaignId={selected.id} />}
+              {selected.risk?.blocked && <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
+                <p className="font-semibold text-destructive">Protección activa: envíos detenidos</p>
+                <p className="mt-1">{selected.risk.incidents[0]?.title || 'Hay una alerta pendiente de revisión.'}</p>
+                <Button className="mt-2" size="sm" variant="outline" onClick={() => { setRiskToReview(selected); closeDetail() }}>Revisar alerta</Button>
+              </div>}
+              {isAdmin && !selected.risk?.blocked && selected.message_type === 'template' && <CampaignTestSend key={selected.id} campaignId={selected.id} />}
               {/* Métricas */}
               <div className={`grid gap-3 text-center ${selected.total_skipped > 0 ? 'grid-cols-5' : 'grid-cols-4'}`}>
                 <StatBox label="Enviados"    value={selected.total_sent}      color="blue"   />

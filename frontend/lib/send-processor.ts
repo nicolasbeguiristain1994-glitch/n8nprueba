@@ -1,3 +1,5 @@
+import { refreshCampaignMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
+import { CampaignRiskError, assertCampaignRiskClear, evaluateCampaignRisk, CAMPAIGN_RISK_CLEAR_SQL } from '@/lib/campaign-risk'
 import { OptOutError } from '@/lib/cloud-api/errors'
 import { query } from '@/lib/db'
 import { prepareCampaignRouting, getCampaignAssignedLine, campaignRoutingCondition } from '@/lib/campaign-routing'
@@ -361,6 +363,13 @@ export async function sendOne(
       : await sendViaEvolution(line, recipient.phone_number, personalizedMsg, campaign.media_url || null,undefined,campaign.id)
     messageId = result.messageId
   } catch (e) {
+    if (e instanceof CampaignRiskError) {
+      await query(`UPDATE campaigns SET status='paused', pause_reason='risk_detected', updated_at=NOW()
+        WHERE id=$1 AND status='running'`, [campaignId])
+      await query(`UPDATE whatsapp_messages SET status='failed', error_detail='risk-guard-no-send', updated_at=NOW()
+        WHERE campaign_recipient_id=$1 AND status='queued' AND evolution_message_id IS NULL`, [recipient.id])
+      return deferRecipient(recipient, 'risk-guard-no-send')
+    }
     if (e instanceof CampaignLineUnavailableError) {
       // The line was disabled or exhausted after selection; no provider was called.
       await query(
@@ -372,13 +381,21 @@ export async function sendOne(
       )
       return deferRecipient(recipient, 'line-unavailable-before-send')
     }
-    const errMsg = e instanceof Error ? e.message : 'provider error'
+    const errMsg = e instanceof CloudApiError && e.code ? `[meta:${e.code}] ${e.message}`
+      : e instanceof Error ? e.message : 'provider error'
     const skip = e instanceof OptOutError || (line.line_type === 'cloud' && e instanceof CloudApiError &&
       [131021, 131026, 131047].includes(e.code ?? -1))
     const unknownOutcome = e instanceof CloudSendOutcomeUnknownError
     const detail = unknownOutcome
       ? `[provider-outcome-unknown-no-resend] ${errMsg}` : errMsg
     await recordFailure(campaignId, recipient, personalizedMsg, detail, unknownOutcome)
+    // Include this persisted rejection even when it was the campaign's last recipient.
+    if (e instanceof CloudApiError && e.code === 131049) {
+      try { await evaluateCampaignRisk(campaignId) } catch {
+        await query(`UPDATE campaigns SET status='paused',pause_reason='risk_detected',updated_at=NOW()
+          WHERE id=$1 AND status='running'`, [campaignId]).catch(() => {})
+      }
+    }
     if (skip) {
       await query(
         `UPDATE campaign_recipients SET status = 'skipped', locked_at = NULL, updated_at = NOW() WHERE id = $1`,
@@ -454,6 +471,9 @@ export async function processInBackground(
   clog.info({ event: 'processor.start', campaignId: id, mode: 'single-line' })
 
   try {
+    await refreshCampaignMetaRisk(id)
+    await evaluateCampaignRisk(id)
+    await assertCampaignRiskClear(id)
     await recoverStaleRows(id)
 
     while (true) {
@@ -478,6 +498,10 @@ export async function processInBackground(
         })
         break
       }
+
+      await refreshCampaignMetaRisk(id)
+      await evaluateCampaignRisk(id)
+      await assertCampaignRiskClear(id)
 
       // ── 2. Claim one recipient ──────────────────────────────────────────
       let recipient: Awaited<ReturnType<typeof claimOne>>
@@ -636,7 +660,8 @@ export async function processInBackground(
 
       if (finalState?.status === 'running' && pending === 0) {
         await query(
-          `UPDATE campaigns SET status = 'completed', completed_at = NOW() WHERE id = $1`, [id]
+          `UPDATE campaigns AS c SET status = 'completed', completed_at = NOW()
+           WHERE id = $1 AND status='running' AND ${CAMPAIGN_RISK_CLEAR_SQL}`, [id]
         ).catch(e =>
           clog.error({
             event: 'completion.update.error', campaignId: id, mode: 'single-line',
@@ -662,6 +687,10 @@ export async function processInBackground(
       })
     }
 
+  } catch (error) {
+    if (!(error instanceof CampaignRiskError)) throw error
+    await query(`UPDATE campaigns SET status='paused', pause_reason='risk_detected', updated_at=NOW()
+      WHERE id=$1 AND status='running'`, [id])
   } finally {
     await query(
       `UPDATE campaigns

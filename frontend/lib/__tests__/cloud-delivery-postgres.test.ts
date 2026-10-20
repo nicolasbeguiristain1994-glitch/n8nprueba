@@ -1,3 +1,4 @@
+vi.mock('@/lib/campaign-risk-alerts', () => ({ recordCampaignRiskAlertDelivery: vi.fn() }))
 // @vitest-environment node
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Client } from 'pg'
@@ -5,6 +6,7 @@ const mocks = vi.hoisted(() => ({ query: vi.fn(), status: vi.fn() }))
 vi.mock('@/lib/db', () => ({ query: mocks.query }))
 // This suite isolates legacy campaign delivery; the test ledger has its own real-Postgres suite.
 vi.mock('@/lib/campaign-test-delivery', () => ({ recordCampaignTestDelivery: vi.fn() }))
+vi.mock('@/lib/campaign-risk', () => ({ recordCampaignProviderRisk: vi.fn(), evaluateCampaignRisk: vi.fn() }))
 vi.mock('@/lib/cloud-api/repositories/conversation.repository', () => ({ messageRepository: { updateStatus: mocks.status } }))
 vi.mock('@/lib/cloud-api/infrastructure/metrics', () => ({ cloudMetrics: { deliveryStatus: vi.fn() } }))
 vi.mock('@/lib/cloud-api/infrastructure/logger', () => ({ createLogger: () => ({ logInfo: vi.fn() }) }))
@@ -23,7 +25,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('Cloud delivery event
       SET LOCAL search_path=pg_temp,public;
       INSERT INTO campaign_recipients(id,status) VALUES(1,'sent'),(2,'sent');
       INSERT INTO whatsapp_messages(campaign_recipient_id,evolution_message_id,status,direction) VALUES(1,'wamid.failure','sent','outbound'),(2,'wamid.delivered','delivered','outbound'),(NULL,'wamid.quick','sent','outbound');`)
-    mocks.query.mockImplementation(async (sql, params) => (await db.query(sql, params)).rows)
+    // Risk attribution has a separate unit suite; this fixture tests receipt SQL.
+    mocks.query.mockImplementation(async (sql, params) => sql.startsWith('SELECT cr.campaign_id') ? [] : (await db.query(sql, params)).rows)
     mocks.status.mockResolvedValue(undefined)
   })
   afterAll(async () => { if (db) { await db.query('ROLLBACK'); await db.end() } })

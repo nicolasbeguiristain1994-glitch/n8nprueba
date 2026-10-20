@@ -1,3 +1,4 @@
+import { CampaignRiskError } from '@/lib/campaign-risk'
 import { buildMessagePayload } from '@/lib/cloud-api/infrastructure/message-sender.service'
 import { cloudNumberAccess } from '@/lib/cloud-api/access'
 import { NextRequest, NextResponse }  from 'next/server'
@@ -60,6 +61,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(result)
 
   } catch (err) {
+    if (err instanceof CampaignRiskError) {
+      return NextResponse.json({ error: err.message, code: err.code }, { status: 409 })
+    }
     if (err instanceof OptOutError) {
       return NextResponse.json({ error: err.message, code: 'OPT_OUT' }, { status: 422 })
     }

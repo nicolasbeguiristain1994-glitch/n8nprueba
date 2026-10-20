@@ -1,3 +1,5 @@
+import { CampaignRiskError, assertCampaignRiskClear, evaluateCampaignRisk } from '@/lib/campaign-risk'
+import { refreshCampaignMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
 import { z } from 'zod'
 import { query, withTransaction } from '@/lib/db'
 import { cloudEligibleExpr } from '@/lib/line-eligibility'
@@ -62,6 +64,9 @@ export async function getCampaignTestSnapshot(campaignId: string): Promise<Campa
 export async function sendCampaignTest(
   campaignId: string, input: z.infer<typeof SendCampaignTestSchema>, userId: string,
 ): Promise<CampaignTestAttempt> {
+  await refreshCampaignMetaRisk(campaignId)
+  await evaluateCampaignRisk(campaignId)
+  await assertCampaignRiskClear(campaignId)
   const claim = await withTransaction(async client => {
     const read: Reader = async <T>(sql: string, values?: unknown[]) => (await client.query(sql, values)).rows as T[]
     // A global request lock prevents the same UUID being used concurrently with different inputs.
@@ -103,6 +108,7 @@ export async function sendCampaignTest(
   let providerId: string | null = null
   let error: string | null = null
   try {
+    await assertCampaignRiskClear(campaignId)
     const result = await sendViaCloud(claim.line, claim.attempt.phone_number, {
       kind: 'template', content: claim.content,
       templateId: claim.campaign.template_id!, wabaId: claim.campaign.template_waba_id!,
@@ -110,10 +116,10 @@ export async function sendCampaignTest(
     providerId = result.messageId
     if (!providerId) throw new CloudSendOutcomeUnknownError()
   } catch (err) {
-    const uncertain = err instanceof CloudSendOutcomeUnknownError || !(err instanceof CloudApiError)
+    const uncertain = !(err instanceof CampaignRiskError) && (err instanceof CloudSendOutcomeUnknownError || !(err instanceof CloudApiError))
     status = uncertain ? 'uncertain' : 'failed'
     error = uncertain ? 'No se pudo confirmar el resultado. Revisá el WhatsApp destinatario; esta prueba no se reenviará automáticamente.'
-      : err.message.slice(0, 500)
+      : (err as Error).message.slice(0, 500)
   }
   try {
     return await completeCampaignTestAttempt(input.request_id, claim.line.phone_number_id, status, providerId, error)

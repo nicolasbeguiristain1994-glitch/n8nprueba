@@ -81,6 +81,7 @@ function makeCampaign(over: Record<string, unknown> = {}) {
     read_rate: 0, delivery_rate: 0, list_name: null, list_id: null, prospect_list_id: null, prospect_list_name: null,
     antiblock_delay_min: 3, antiblock_delay_max: 8, personalize_name: true, use_multi_line: false,
     created_at: '2026-09-01T12:00:00Z', pause_reason: null, processor_locked_at: null,
+    risk: undefined as import('@/lib/campaign-risk').CampaignRiskState | undefined,
     ...over,
   }
 }
@@ -687,6 +688,98 @@ describe('Campañas — reiniciar una cancelada sin envíos', () => {
     await screen.findByText('Promo Mayo')
     expect(screen.queryByRole('button', { name: 'Reiniciar' })).not.toBeInTheDocument()
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('Campañas — protección y revisión de riesgo', () => {
+  const incident = {
+    id: '22222222-2222-4222-8222-222222222222', source: 'panel', scopeType: 'campaign', scopeId: 'c-a',
+    signal: 'opt_out_rate', title: 'Aumento de bajas', detail: 'La campaña superó el control preventivo de bajas.',
+    detectedAt: '2026-10-19T15:00:00Z', metrics: { delivered: 50, optOuts: 5 }, signalActive: true,
+  }
+  const blocked = (over: Record<string, unknown> = {}) => makeCampaign({
+    status: 'paused', pause_reason: 'risk_detected', owned_by: 'owner', list_id: 'l1', list_name: 'VIP',
+    total_sent: 50, total_failed: 2, total_targets: 91, use_multi_line: true,
+    risk: { blocked: true, incidents: [incident] }, ...over,
+  })
+
+  it('shows the persistent reason and disables resume, retry and reset while held', async () => {
+    routeFetchJson(() => Promise.resolve({ campaigns: [blocked()] }))
+    render(<Page />)
+    expect(await screen.findByText('Protección activa: envíos detenidos')).toBeInTheDocument()
+    expect(screen.getByText('Aumento de bajas')).toBeInTheDocument()
+    for (const name of ['Reanudar', 'Reintentar', 'Reiniciar']) expect(screen.getByRole('button', { name })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Revisar alerta de Promo Mayo' })).toBeEnabled()
+  })
+
+  it('records a review without dispatching, then exposes a separate resume action', async () => {
+    let campaign = blocked()
+    routeFetchJson(() => Promise.resolve({ campaigns: [campaign] }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe('/api/campaigns/c-a/risk')
+      if (init?.method === 'POST') {
+        expect(JSON.parse(String(init.body))).toEqual({ note: 'Corregí la audiencia y aclaré la oferta.', incidentIds: [incident.id] })
+        campaign = blocked({ risk: { blocked: false, incidents: [] }, pause_reason: 'manual' })
+        return jsonResponse({ ok: true })
+      }
+      return jsonResponse(campaign.risk)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<Page />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Revisar alerta de Promo Mayo' }))
+    const save = await screen.findByRole('button', { name: 'Registrar revisión' })
+    expect(save).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('Qué revisaste y qué corregiste'), { target: { value: 'Corregí la audiencia y aclaré la oferta.' } })
+    fireEvent.click(save)
+    expect(await screen.findByText(/Revisión registrada. No se inició ningún envío/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reanudar' })).toBeEnabled()
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
+    expect(fetchMock.mock.calls.some(([url]) => /\/(dispatch|send|retry-failed)$/.test(url))).toBe(false)
+  })
+
+  it('prevents reviewing an active official signal', async () => {
+    const state = { blocked: true, incidents: [{ ...incident, source: 'meta' }] }
+    routeFetchJson(() => Promise.resolve({ campaigns: [blocked({ risk: state })] }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(state)))
+    render(<Page />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Revisar alerta de Promo Mayo' }))
+    expect(await screen.findByText('La señal oficial sigue activa; no se puede levantar este bloqueo.')).toBeInTheDocument()
+    expect(screen.getByLabelText('Qué revisaste y qué corregiste')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Registrar revisión' })).toBeDisabled()
+  })
+
+  it('allows viewers to inspect, without offering a release action', async () => {
+    currentUser.value = { user: { role: 'viewer', id: 'owner' }, permissions: { campaigns: ['read'] } }
+    routeFetchJson(() => Promise.resolve({ campaigns: [blocked()] }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(blocked().risk)))
+    render(<Page />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Revisar alerta de Promo Mayo' }))
+    await screen.findByText('Envíos bloqueados hasta revisar')
+    expect(screen.queryByRole('button', { name: 'Registrar revisión' })).not.toBeInTheDocument()
+  })
+
+  it('keeps an unavailable Meta check blocked until an explicit refresh verifies recovery', async () => {
+    const pending = { blocked: true, incidents: [{ ...incident, signal: 'meta_check_unavailable' }] }
+    routeFetchJson(() => Promise.resolve({ campaigns: [blocked({ risk: pending })] }))
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(pending))
+      .mockResolvedValueOnce(jsonResponse({ ...pending, incidents: [{ ...pending.incidents[0], signalActive: false }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<Page />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Revisar alerta de Promo Mayo' }))
+    await screen.findByText(/Falta verificar el estado de Meta/)
+    expect(screen.getByLabelText('Qué revisaste y qué corregiste')).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Actualizar estado' }))
+    await waitFor(() => expect(screen.getByLabelText('Qué revisaste y qué corregiste')).toBeEnabled())
+    expect(screen.getByRole('button', { name: 'Reanudar' })).toBeDisabled()
+    expect(fetchMock.mock.calls.every(([, init]) => init?.method !== 'POST')).toBe(true)
+  })
+
+  it('shows409 protection errors instead of silently swallowing a stale resume', async () => {
+    routeFetchJson(() => Promise.resolve({ campaigns: [blocked({ risk: { blocked: false, incidents: [] }, pause_reason: 'manual' })] }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ error: 'Hay una nueva alerta de riesgo pendiente', code: 'CAMPAIGN_RISK_BLOCKED' }, 409)))
+    render(<Page />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Reanudar' }))
+    expect(await screen.findByText('Hay una nueva alerta de riesgo pendiente')).toBeInTheDocument()
   })
 })
 

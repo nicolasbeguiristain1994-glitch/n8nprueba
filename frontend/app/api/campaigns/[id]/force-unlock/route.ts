@@ -1,3 +1,4 @@
+import { CAMPAIGN_RISK_CLEAR_SQL } from '@/lib/campaign-risk'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
@@ -63,9 +64,9 @@ export async function POST(
     }
 
     const [updated] = await query<{ id: string }>(
-      `UPDATE campaigns
+      `UPDATE campaigns AS c
        SET status               = 'paused',
-           pause_reason         = 'manual',
+           pause_reason         = CASE WHEN ${CAMPAIGN_RISK_CLEAR_SQL} THEN 'manual' ELSE 'risk_detected' END,
            processor_locked_at  = NULL,
            processor_lock_token = NULL,
            updated_at           = NOW(),

@@ -243,3 +243,11 @@ describe('SendMessageUseCase', () => {
     })).rejects.toBeInstanceOf(ConversationWindowError)
   })
 })
+
+vi.mock('@/lib/cloud-api/meta-risk-refresh', () => ({ refreshCampaignMetaRisk: vi.fn() }))
+vi.mock('@/lib/campaign-risk', () => ({
+  CampaignRiskError: class extends Error { status = 409; code = 'CAMPAIGN_RISK_BLOCKED' },
+  CAMPAIGN_RISK_CLEAR_SQL: 'true /* campaign-risk-clear */',
+  assertCampaignRiskClear: vi.fn(), evaluateCampaignRisk: vi.fn(),
+  assertCloudSendRiskClear: vi.fn(), recordCampaignProviderRisk: vi.fn(),
+}))

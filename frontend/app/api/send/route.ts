@@ -1,3 +1,5 @@
+import { CampaignRiskError, assertCampaignRiskClear, evaluateCampaignRisk } from '@/lib/campaign-risk'
+import { refreshCampaignMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
 import { verifyStickerToken, stickerPreview } from '@/lib/conversation-stickers'
 import { contactPhoneScope } from '@/lib/contact-visibility'
 import { NextRequest, NextResponse } from 'next/server'
@@ -95,6 +97,14 @@ export async function POST(req: NextRequest) {
     if (!camp) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
     if (!isOwnerOrAdmin(session, camp.owned_by))
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    try {
+      await refreshCampaignMetaRisk(campaign_id)
+      await evaluateCampaignRisk(campaign_id)
+      await assertCampaignRiskClear(campaign_id)
+    } catch (error) {
+      if (error instanceof CampaignRiskError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status })
+      return NextResponse.json({ error: 'No se pudo verificar el riesgo de la campaña; no se enviaron mensajes.' }, { status: 503 })
+    }
   }
 
   // Visibility includes temporarily unavailable lines: a reply must not silently
@@ -151,6 +161,7 @@ export async function POST(req: NextRequest) {
         error_detail:         errMsg,
       })
       results.push({ phone, status: 'error', error: errMsg })
+      if (e instanceof CampaignRiskError) break
     }
     await new Promise(r => setTimeout(r, 200))
   }

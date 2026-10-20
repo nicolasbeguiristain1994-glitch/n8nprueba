@@ -1,3 +1,5 @@
+import { refreshCampaignMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
+import { CampaignRiskError, assertCampaignRiskClear, evaluateCampaignRisk, CAMPAIGN_RISK_CLEAR_SQL } from '@/lib/campaign-risk'
 import { randomUUID } from 'node:crypto'
 import { query, withTransaction } from '@/lib/db'
 import { canAccess } from '@/lib/permissions'
@@ -27,7 +29,7 @@ export async function claimDueCampaigns(): Promise<{ jobs: ScheduledJob[]; block
       `SELECT c.*, wt.name AS template_name, wt.language AS template_language,
               wt.waba_id AS template_waba_id, wt.status AS template_status
        FROM campaigns c LEFT JOIN whatsapp_templates wt ON wt.id = c.template_id
-       WHERE c.status = 'scheduled' AND c.scheduled_at <= NOW()
+       WHERE c.status = 'scheduled' AND c.scheduled_at <= NOW() AND ${CAMPAIGN_RISK_CLEAR_SQL}
          AND c.processor_locked_at IS NULL AND c.processor_lock_token IS NULL
        ORDER BY c.scheduled_at, c.id LIMIT 10 FOR UPDATE OF c SKIP LOCKED`
     )
@@ -56,10 +58,11 @@ export async function claimDueCampaigns(): Promise<{ jobs: ScheduledJob[]; block
       }
       const lockToken = randomUUID()
       const { rows } = await client.query<{ id: string }>(
-        `UPDATE campaigns SET status = 'running', started_at = COALESCE(started_at, NOW()),
+        `UPDATE campaigns AS c SET status = 'running', started_at = COALESCE(started_at, NOW()),
            pause_reason = NULL, processor_locked_at = NOW(), processor_lock_token = $2,
            updated_at = NOW()
          WHERE id = $1 AND status = 'scheduled' AND scheduled_at <= NOW()
+           AND ${CAMPAIGN_RISK_CLEAR_SQL}
            AND processor_locked_at IS NULL AND processor_lock_token IS NULL
            AND owned_by IS NOT DISTINCT FROM $3::uuid
          RETURNING id`, [campaign.id, lockToken, campaign.owned_by])
@@ -69,7 +72,7 @@ export async function claimDueCampaigns(): Promise<{ jobs: ScheduledJob[]; block
   })
 }
 
-async function stopClaim(job: ScheduledJob, reason: 'config_missing' | 'systemic_error') {
+async function stopClaim(job: ScheduledJob, reason: 'config_missing' | 'systemic_error' | 'risk_detected') {
   await query(
     `UPDATE campaigns SET status = CASE WHEN status = 'running' THEN 'paused' ELSE status END,
        pause_reason = CASE WHEN status = 'running' THEN $3 ELSE pause_reason END,
@@ -84,6 +87,9 @@ export async function processScheduledCampaign(job: ScheduledJob): Promise<void>
   const { campaign, lockToken } = job
   try {
     if (!isCampaignSchedulerEnabled()) { await stopClaim(job, 'config_missing'); return }
+    await refreshCampaignMetaRisk(campaign.id)
+    await evaluateCampaignRisk(campaign.id)
+    await assertCampaignRiskClear(campaign.id)
     const [current] = await query<Owner & { status: string; processor_lock_token: string | null }>(
       `SELECT c.status, c.processor_lock_token, u.role, u.sectors, u.is_active
        FROM campaigns c LEFT JOIN users u ON u.id = c.owned_by
@@ -108,6 +114,7 @@ export async function processScheduledCampaign(job: ScheduledJob): Promise<void>
     if (campaign.use_multi_line) await processMultiLineInBackground(campaign, lockToken)
     else await processInBackground({ ...campaign, media_url: campaign.media_url ?? '' } as CampaignRow, lockToken)
   } catch (error) {
+    if (error instanceof CampaignRiskError) { await stopClaim(job, 'risk_detected'); return }
     clog.error({ event: 'scheduler.process.failed', campaignId: campaign.id,
       error: error instanceof Error ? error.message : 'Scheduled processor failed' })
     await stopClaim(job, 'systemic_error').catch(() => {})

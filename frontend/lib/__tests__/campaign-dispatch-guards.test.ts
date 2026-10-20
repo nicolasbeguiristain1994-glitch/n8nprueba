@@ -171,3 +171,36 @@ describe.each(routes)('%s crash recovery respects lock ownership', (_name, route
     expect(mocks.critical).toHaveBeenCalledWith(expect.objectContaining({ event: 'processor.crash.cleanup.failed' }))
   })
 })
+
+vi.mock('@/lib/cloud-api/meta-risk-refresh', () => ({ refreshCampaignMetaRisk: vi.fn() }))
+vi.mock('@/lib/campaign-risk', () => ({
+  CampaignRiskError: class extends Error { status = 409; code = 'CAMPAIGN_RISK_BLOCKED' },
+  CAMPAIGN_RISK_CLEAR_SQL: 'true /* campaign-risk-clear */',
+  assertCampaignRiskClear: vi.fn(), evaluateCampaignRisk: vi.fn(),
+  assertCloudSendRiskClear: vi.fn(), recordCampaignProviderRisk: vi.fn(),
+}))
+
+import { CampaignRiskError, assertCampaignRiskClear } from '@/lib/campaign-risk'
+import { refreshCampaignMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
+
+describe.each(routes)('%s risk preflight', (_name, route) => {
+  it('rejects an unresolved risk before seeding or acquiring a processor', async () => {
+    vi.mocked(assertCampaignRiskClear).mockRejectedValueOnce(new CampaignRiskError('Alerta de calidad pendiente'))
+    const response = await invoke(route)
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ code: 'CAMPAIGN_RISK_BLOCKED' })
+    expect(mocks.seed).not.toHaveBeenCalled()
+    expect(mocks.lock).not.toHaveBeenCalled()
+    expect(mocks.single).not.toHaveBeenCalled()
+    expect(mocks.multi).not.toHaveBeenCalled()
+    expect(mocks.query.mock.calls.some(([sql]) => /UPDATE|INSERT/.test(sql))).toBe(false)
+  })
+  it('does not send when live quality cannot be verified', async () => {
+    vi.mocked(refreshCampaignMetaRisk).mockRejectedValueOnce(new Error('Meta unavailable'))
+    expect((await invoke(route)).status).toBe(503)
+    expect(mocks.seed).not.toHaveBeenCalled()
+    expect(mocks.lock).not.toHaveBeenCalled()
+    expect(mocks.single).not.toHaveBeenCalled()
+    expect(mocks.multi).not.toHaveBeenCalled()
+  })
+})

@@ -2,7 +2,7 @@
 import { beforeEach, afterEach, it, expect, vi } from 'vitest'
 import { createHmac } from 'crypto'
 import { NextRequest } from 'next/server'
-const mocks=vi.hoisted(()=>({inbound:vi.fn(),status:vi.fn(),echo:vi.fn(),template:vi.fn(),sync:vi.fn(),find:vi.fn(),query:vi.fn()}))
+const mocks=vi.hoisted(()=>({inbound:vi.fn(),status:vi.fn(),echo:vi.fn(),template:vi.fn(),sync:vi.fn(),find:vi.fn(),query:vi.fn(),accountRisk:vi.fn(),templateRisk:vi.fn(),refresh:vi.fn()}))
 vi.mock('@/lib/db',()=>({query:mocks.query}))
 vi.mock('@/lib/cloud-api/repositories/cloud-number.repository',()=>({cloudNumberRepository:{findByPhoneNumberId:mocks.find}}))
 vi.mock('@/lib/cloud-api/webhook-handlers/inbound-message.handler',()=>({handleInboundMessage:mocks.inbound}))
@@ -10,6 +10,8 @@ vi.mock('@/lib/cloud-api/webhook-handlers/delivery-status.handler',()=>({handleD
 vi.mock('@/lib/cloud-api/webhook-handlers/echo-message.handler',()=>({handleEchoMessage:mocks.echo}))
 vi.mock('@/lib/cloud-api/webhook-handlers/template-status.handler',()=>({handleTemplateStatusUpdate:mocks.template}))
 vi.mock('@/lib/cloud-api/webhook-handlers/coexistence-sync.handler',()=>({handleCoexistenceSyncEvent:mocks.sync}))
+vi.mock('@/lib/cloud-api/webhook-handlers/meta-risk.handler',()=>({handleAccountRisk:mocks.accountRisk,handleTemplateQualityRisk:mocks.templateRisk,webhookObservedAt:(time?:number)=>time?new Date(time*1000).toISOString():undefined}))
+vi.mock('@/lib/cloud-api/meta-risk-refresh',()=>({refreshPhoneMetaRisk:mocks.refresh}))
 import { POST, GET } from '@/app/api/cloud/webhook/route'
 import { POST as appPOST, GET as appGET } from '@/app/api/cloud/webhook/[appId]/route'
 const message={id:'wamid.test',from:'5491100000000',timestamp:'1780000000',type:'text',text:{body:'Hola'}}
@@ -104,4 +106,38 @@ it('fails closed for both callbacks when the server registry is malformed',async
  expect(result.status).toBe(503);expect(await result.text()).not.toContain('do-not-expose')
  expect((await appPOST(request(),nexusContext)).status).toBe(503)
  expect(mocks.inbound).not.toHaveBeenCalled()
+})
+
+it('processes account and template quality events without phone metadata', async () => {
+ mocks.query.mockResolvedValue([{}])
+ const account = {event:'DISABLED_UPDATE',ban_info:{waba_ban_state:'DISABLE'}}
+ const quality = {message_template_id:42,message_template_name:'benefit',new_quality_score:'RED'}
+ expect((await POST(request([{field:'account_update',value:account},{field:'message_template_quality_update',value:quality}]))).status).toBe(200)
+ expect(mocks.accountRisk).toHaveBeenCalledWith(account,'23456',undefined)
+ expect(mocks.templateRisk).toHaveBeenCalledWith(quality,'23456',undefined)
+ expect(mocks.find).not.toHaveBeenCalled()
+})
+it('requires a locally known WABA before accepting template quality', async () => {
+ const quality = {message_template_id:42,message_template_name:'benefit',new_quality_score:'RED'}
+ expect((await POST(request([{field:'message_template_quality_update',value:quality}]))).status).toBe(200)
+ expect(mocks.templateRisk).not.toHaveBeenCalled()
+})
+it('rejects a signed account event with a conflicting nested WABA before mutations', async () => {
+ expect((await POST(request([change,{field:'account_update',value:{event:'PARTNER_REMOVED',waba_info:{waba_id:'other'}}}]))).status).toBe(403)
+ expect(mocks.inbound).not.toHaveBeenCalled(); expect(mocks.accountRisk).not.toHaveBeenCalled(); expect(mocks.query).not.toHaveBeenCalled()
+})
+it('returns 503 if a risk incident cannot be persisted', async () => {
+ mocks.accountRisk.mockRejectedValue(new Error('DB unavailable'))
+ expect((await POST(request([{field:'account_update',value:{event:'ACCOUNT_VIOLATION'}}]))).status).toBe(503)
+})
+it('refreshes actual phone quality for throughput events using its WABA and display number', async () => {
+ mocks.query.mockResolvedValue([{phone_number_id:'34567'}])
+ expect((await POST(request([{field:'phone_number_quality_update',value:{event:'THROUGHPUT_UPGRADE',display_phone_number:'+1 555-123-4567'}}]))).status).toBe(200)
+ expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining('WHERE waba_id=$1'),['23456','15551234567'])
+ expect(mocks.refresh).toHaveBeenCalledWith('34567')
+ expect(mocks.accountRisk).not.toHaveBeenCalled()
+})
+it('does not mutate health for a different partner app uninstall event', async () => {
+ expect((await POST(request([{field:'account_update',value:{event:'PARTNER_APP_UNINSTALLED',waba_info:{waba_id:'23456',partner_app_id:'99999'}}}]))).status).toBe(200)
+ expect(mocks.accountRisk).not.toHaveBeenCalled()
 })

@@ -407,3 +407,41 @@ describe('template campaign dispatch selection', () => {
   await expect(sendViaCloud(line,unit.phone_number,{kind:'sticker',data:'data:image/webp;base64,dGVzdA=='})).rejects.toBeInstanceOf(OptOutError)
   expect(fetch).not.toHaveBeenCalled();expect(mocks.send).not.toHaveBeenCalled()
  })
+
+vi.mock('@/lib/cloud-api/meta-risk-refresh', () => ({ refreshCampaignMetaRisk: vi.fn() }))
+vi.mock('@/lib/campaign-risk', () => ({
+  CampaignRiskError: class extends Error { status = 409; code = 'CAMPAIGN_RISK_BLOCKED' },
+  CAMPAIGN_RISK_CLEAR_SQL: 'true /* campaign-risk-clear */',
+  assertCampaignRiskClear: vi.fn(), evaluateCampaignRisk: vi.fn(),
+  assertCloudSendRiskClear: vi.fn(), recordCampaignProviderRisk: vi.fn(),
+}))
+
+import { CampaignRiskError, assertCampaignRiskClear, evaluateCampaignRisk } from '@/lib/campaign-risk'
+it('keeps a risk-blocked recipient pending with definite no-send evidence', async () => {
+  mocks.send.mockRejectedValueOnce(new CampaignRiskError('Quality hold'))
+  expect(await sendOneUnit(campaign.id, line, campaign, 3)).toBe('failed')
+  expect(mocks.query.mock.calls.some(([sql]) => sql.includes("pause_reason='risk_detected'"))).toBe(true)
+  expect(mocks.query.mock.calls.some(([sql]) => sql.includes("SET status='pending'") && sql.includes('attempts=GREATEST(attempts-1,0)'))).toBe(true)
+  expect(mocks.query.mock.calls.some(([sql]) => sql.includes('risk-guard-no-send'))).toBe(true)
+  expect(mocks.query.mock.calls.some(([sql]) => sql.includes('[provider-outcome-unknown-no-resend]') && !sql.includes('INSERT INTO whatsapp_messages'))).toBe(false)
+})
+it('stops a multi-line worker before any recipient claim when risk remains active', async () => {
+  vi.mocked(assertCampaignRiskClear).mockRejectedValueOnce(new CampaignRiskError())
+  await processMultiLineInBackground(campaign, 'lock')
+  expect(mocks.send).not.toHaveBeenCalled()
+  expect(mocks.query.mock.calls.some(([sql]) => sql.includes('WITH claimed AS'))).toBe(false)
+  expect(mocks.query.mock.calls.some(([sql]) => sql.includes('processor_lock_token = $2'))).toBe(true)
+})
+
+it('evaluates a synchronous 131049 only after the multi-line failure row is persisted', async () => {
+  let storedRejection = false
+  mocks.send.mockRejectedValueOnce(new CloudApiError('Healthy ecosystem', 131049))
+  mocks.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+    if (sql.includes('UPDATE whatsapp_messages') && params?.some(p => String(p).includes('[meta:131049]'))) storedRejection = true
+    return successfulDb(sql)
+  })
+  vi.mocked(evaluateCampaignRisk).mockImplementationOnce(async () => { expect(storedRejection).toBe(true) })
+  expect(await sendOneUnit(campaign.id, line, campaign, 3)).toBe('failed')
+  expect(evaluateCampaignRisk).toHaveBeenCalledWith(campaign.id)
+  expect(mocks.send).toHaveBeenCalledTimes(1)
+})

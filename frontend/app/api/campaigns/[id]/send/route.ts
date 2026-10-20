@@ -1,3 +1,5 @@
+import { CampaignRiskError, assertCampaignRiskClear, evaluateCampaignRisk, CAMPAIGN_RISK_CLEAR_SQL } from '@/lib/campaign-risk'
+import { refreshCampaignMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
 import { POST as dispatchDynamic } from '../dispatch/route'
 import { campaignAudienceError } from '@/lib/campaign-audience'
 import { NextRequest, NextResponse } from 'next/server'
@@ -36,6 +38,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   if (!isCampaignOwnerOrAdmin(session, campaign.owned_by)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  try {
+    await refreshCampaignMetaRisk(id)
+    await evaluateCampaignRisk(id)
+    await assertCampaignRiskClear(id)
+  } catch (error) {
+    if (error instanceof CampaignRiskError)
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status })
+    return NextResponse.json({ error: 'No se pudo verificar el riesgo de la campaña; los envíos siguen detenidos.' }, { status: 503 })
   }
 
   if ((campaign as CampaignRow & {message_type?: string}).message_type === 'template') {
@@ -151,10 +163,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (Number(totals?.sent || 0) > 0) {
       try {
         const completed = await query<{ id: string }>(
-          `UPDATE campaigns
+          `UPDATE campaigns AS c
          SET status = 'completed', completed_at = COALESCE(completed_at, NOW()),
              pause_reason = NULL
          WHERE id = $1 AND status = $2::campaign_status
+           AND ${CAMPAIGN_RISK_CLEAR_SQL}
            AND owned_by IS NOT DISTINCT FROM $3::uuid
            AND processor_locked_at IS NULL AND processor_lock_token IS NULL
            AND NOT EXISTS (SELECT 1 FROM campaign_recipients
@@ -270,7 +283,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   try {
     const newToken = crypto.randomUUID()
     const rows = await query<{ id: string }>(
-      `UPDATE campaigns
+      `UPDATE campaigns AS c
        SET status = CASE
              WHEN status IN ('draft','scheduled','paused') THEN 'running'
              ELSE status
@@ -286,6 +299,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
              SELECT COUNT(*) FROM campaign_recipients WHERE campaign_id = $1
            )
        WHERE id = $1
+         AND ${CAMPAIGN_RISK_CLEAR_SQL}
          AND status IN ('draft','scheduled','paused','running')
          AND (processor_locked_at IS NULL
               OR processor_locked_at < NOW() - INTERVAL '${PROCESSOR_LOCK_MINUTES} minutes')

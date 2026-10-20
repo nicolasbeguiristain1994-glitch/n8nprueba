@@ -16,7 +16,7 @@ function invoke(body: unknown = { confirm_reset: true }) {
   }), { params: Promise.resolve({ id }) })
 }
 function fixture(options: { status?: string; hasLock?: boolean; recipients?: object[]; messages?: object[]; history?: boolean } = {}) {
-  mocks.query.mockResolvedValueOnce({ rows: [{ status: options.status ?? 'paused', has_lock: options.hasLock ?? false }] })
+  mocks.query.mockResolvedValueOnce({ rows: [{ status: options.status ?? 'paused', has_lock: options.hasLock ?? false, risk_clear: true }] })
     .mockResolvedValueOnce({ rows: options.recipients ?? [recipient] })
     .mockResolvedValueOnce({ rows: options.messages ?? [message] })
     .mockResolvedValueOnce({ rows: [{ exists: options.history ?? false }] })
@@ -125,7 +125,7 @@ describe('definite failures reset atomically without removing logs', () => {
     mocks.transaction.mockImplementation(async fn => {
       try { return await fn({ query: mocks.query }) } catch (error) { rejection = error; throw error }
     })
-    mocks.query.mockResolvedValueOnce({ rows: [{ status: 'paused', has_lock: false }] })
+    mocks.query.mockResolvedValueOnce({ rows: [{ status: 'paused', has_lock: false, risk_clear: true }] })
       .mockResolvedValueOnce({ rows: [recipient] }).mockResolvedValueOnce({ rows: [message] })
       .mockResolvedValueOnce({ rows: [{ exists: false }] }).mockResolvedValueOnce({ rows: [{ count: '1' }] })
       .mockRejectedValueOnce(new Error('synthetic update failed'))
@@ -134,10 +134,27 @@ describe('definite failures reset atomically without removing logs', () => {
     expect(mocks.audit).not.toHaveBeenCalled()
   })
   it('history lookup failure does not silently authorize a reset', async () => {
-    mocks.query.mockResolvedValueOnce({ rows: [{ status: 'paused', has_lock: false }] })
+    mocks.query.mockResolvedValueOnce({ rows: [{ status: 'paused', has_lock: false, risk_clear: true }] })
       .mockResolvedValueOnce({ rows: [recipient] }).mockResolvedValueOnce({ rows: [message] })
       .mockRejectedValueOnce(new Error('synthetic history read failed'))
     expect((await invoke()).status).toBe(500)
     expectNoWrites()
   })
+})
+
+vi.mock('@/lib/cloud-api/meta-risk-refresh', () => ({ refreshCampaignMetaRisk: vi.fn() }))
+vi.mock('@/lib/campaign-risk', () => ({
+  CampaignRiskError: class extends Error { status = 409; code = 'CAMPAIGN_RISK_BLOCKED' },
+  CAMPAIGN_RISK_CLEAR_SQL: 'true /* campaign-risk-clear */',
+  assertCampaignRiskClear: vi.fn(), evaluateCampaignRisk: vi.fn(),
+  assertCloudSendRiskClear: vi.fn(), recordCampaignProviderRisk: vi.fn(),
+}))
+
+it('does not reset recipient evidence while a risk hold is unresolved', async () => {
+  mocks.query.mockResolvedValueOnce({ rows: [{ status: 'paused', has_lock: false, risk_clear: false }] })
+  const response = await invoke()
+  expect(response.status).toBe(409)
+  expect(await response.json()).toMatchObject({ code: 'CAMPAIGN_RISK_BLOCKED' })
+  expect(mocks.query).toHaveBeenCalledTimes(1)
+  expectNoWrites()
 })

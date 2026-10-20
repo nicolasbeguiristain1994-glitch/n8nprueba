@@ -9,6 +9,12 @@ vi.mock('@/lib/conversation-access',()=>({canReadConversation:vi.fn().mockResolv
 vi.mock('@/lib/sse-events',()=>({emitUpdate:vi.fn()}))
 vi.mock('@/lib/audit',()=>({audit:vi.fn()}))
 vi.mock('@/lib/db',()=>({query:m.query,withTransaction:m.tx}))
+vi.mock('@/lib/campaign-risk',()=>({
+ CampaignRiskError:class extends Error {status=409;code='CAMPAIGN_RISK_BLOCKED'},
+ CAMPAIGN_RISK_CLEAR_SQL:'true /* campaign-risk-clear */',
+ evaluateCampaignRisk:vi.fn().mockResolvedValue(undefined),assertCloudSendRiskClear:vi.fn(),recordCampaignProviderRisk:vi.fn(),
+}))
+vi.mock('@/lib/cloud-api/meta-risk-refresh',()=>({refreshCampaignMetaRisk:vi.fn()}))
 vi.mock('@/lib/cloud-api/token-store',()=>({getTokenForNumber:m.token}))
 vi.mock('@/lib/cloud-api/rate-limiter',()=>({enforceRateLimit:m.limit}))
 vi.mock('@/lib/cloud-api/infrastructure/meta-http.gateway',()=>({MetaHttpGateway:class {post=m.post}}))
@@ -31,7 +37,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
   pool=new Pool({connectionString:url.toString(),ssl:false,max:6,options:`-c search_path=${schema}`})
   await pool.query(`CREATE SCHEMA ${schema};
    CREATE TABLE users(id uuid PRIMARY KEY,allowed_agents text[] DEFAULT '{}');
-   CREATE TABLE campaigns(id uuid PRIMARY KEY);
+   CREATE TABLE campaigns(id uuid PRIMARY KEY,status text DEFAULT 'running');
    CREATE TABLE contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),external_id text UNIQUE,phone_number varchar(20),
     first_name text,last_name text,panel text,panels_assigned text[] DEFAULT '{}',casino_accounts jsonb DEFAULT '[]',
     status text DEFAULT 'active',opt_in_marketing bool DEFAULT true,opt_in_sms bool DEFAULT true,do_not_contact bool DEFAULT false,
@@ -65,7 +71,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
  beforeEach(async()=>{
   m.post.mockReset();m.post.mockResolvedValue({messages:[{id:'confirmation-id'}]});m.token.mockResolvedValue('test-only');m.limit.mockResolvedValue(undefined)
   await pool.query(`TRUNCATE contacts,blacklist,cloud_opt_outs,cloud_consent_log,whatsapp_messages,campaign_recipients,automation_message_jobs,cloud_messages,cloud_conversations,users,campaigns,whatsapp_lines,cloud_numbers CASCADE;
-   INSERT INTO users(id) VALUES('${id(1)}'); INSERT INTO campaigns VALUES('${id(20)}'),('${id(21)}');
+   INSERT INTO users(id) VALUES('${id(1)}'); INSERT INTO campaigns(id) VALUES('${id(20)}'),('${id(21)}');
    INSERT INTO contacts(id,phone_number,first_name,panel,casino_accounts,account_username,identity_key) VALUES
     ('${id(2)}','+${phone}','juan24z','bigwin','[{"panel":"bigwin","username":"juan24z"}]','juan24z','["bigwin", "juan24z"]'),
     ('${id(3)}','+${phone}','juan244z','royal','[{"panel":"royal","username":"juan244z"}]','juan244z','["royal", "juan244z"]');

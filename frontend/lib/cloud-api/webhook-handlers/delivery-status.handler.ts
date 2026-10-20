@@ -1,5 +1,7 @@
 import { query } from '@/lib/db'
+import { recordCampaignRiskAlertDelivery } from '@/lib/campaign-risk-alerts'
 import { recordCampaignTestDelivery } from '@/lib/campaign-test-delivery'
+import { recordCampaignProviderRisk, evaluateCampaignRisk } from '@/lib/campaign-risk'
 // Handler: actualización de estado de entrega (sent/delivered/read/failed).
 
 import { messageRepository }    from '../repositories/conversation.repository'
@@ -53,6 +55,33 @@ export async function handleDeliveryStatus(
       (h.campaign_recipient_id=u.campaign_recipient_id OR h.failed_message_id=u.id)`, [status.status,status.id,failureDetail])
 
   cloudMetrics.deliveryStatus(phoneNumberId, status.status)
+
+  if (status.status === 'failed' && error?.code) {
+    // Re-read persisted outcomes, rather than relying on UPDATE RETURNING:
+    // Meta retries must re-attempt risk persistence after a partial failure.
+    const outcomes = await query<{ campaign_id: string | null; template_name: string | null; status: string }>(
+      `SELECT cr.campaign_id, wt.name AS template_name, wm.status::text
+       FROM whatsapp_messages wm
+       JOIN campaign_recipients cr ON cr.id=wm.campaign_recipient_id
+       JOIN cloud_numbers cn ON cn.whatsapp_line_id=cr.line_id AND cn.phone_number_id=$2
+       LEFT JOIN campaigns c ON c.id=cr.campaign_id
+       LEFT JOIN whatsapp_templates wt ON wt.id=c.template_id
+       WHERE wm.evolution_message_id=$1 AND wm.direction='outbound'
+       UNION ALL
+       SELECT cm.campaign_id, cm.template_name, cm.status::text FROM cloud_messages cm
+       WHERE cm.wamid=$1 AND cm.phone_number_id=$2 AND cm.direction='outbound'`, [status.id, phoneNumberId],
+    )
+    if (!outcomes.some(outcome => ['read', 'delivered'].includes(outcome.status))) {
+      const campaign = outcomes.find(outcome => outcome.campaign_id)
+      await recordCampaignProviderRisk({ phoneNumberId, campaignId: campaign?.campaign_id ?? undefined,
+        templateName: campaign?.template_name ?? undefined, errorCode: error.code, errorMessage: details ?? '' })
+      if (campaign?.campaign_id) await evaluateCampaignRisk(campaign.campaign_id)
+    }
+  }
+
+  // Persist operational delivery last. If this fails, the webhook retries while
+  // the primary message/risk writes above remain durable and idempotent.
+  await recordCampaignRiskAlertDelivery(phoneNumberId,status)
 
   // 131026 means undeliverable; it does not prove that the recipient opted out.
 
