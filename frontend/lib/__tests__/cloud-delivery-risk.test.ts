@@ -1,8 +1,9 @@
 // @vitest-environment node
 import { beforeEach, expect, it, vi } from 'vitest'
-const mocks = vi.hoisted(() => ({ query: vi.fn(), status: vi.fn(), risk: vi.fn(), evaluate: vi.fn() }))
+const mocks = vi.hoisted(() => ({ query: vi.fn(), status: vi.fn(), risk: vi.fn(), evaluate: vi.fn(), alert: vi.fn() }))
 vi.mock('@/lib/db', () => ({ query: mocks.query }))
 vi.mock('@/lib/campaign-test-delivery', () => ({ recordCampaignTestDelivery: vi.fn() }))
+vi.mock('@/lib/campaign-risk-alerts', () => ({ recordCampaignRiskAlertDelivery: mocks.alert }))
 vi.mock('@/lib/campaign-risk', () => ({ recordCampaignProviderRisk: mocks.risk, evaluateCampaignRisk: mocks.evaluate }))
 vi.mock('@/lib/cloud-api/repositories/conversation.repository', () => ({ messageRepository: { updateStatus: mocks.status } }))
 vi.mock('@/lib/cloud-api/infrastructure/metrics', () => ({ cloudMetrics: { deliveryStatus: vi.fn() } }))
@@ -37,4 +38,15 @@ it('does not acknowledge persistence failure before evaluating risk', async () =
   mocks.query.mockRejectedValue(new Error('DB unavailable'))
   await expect(handleDeliveryStatus('12345', failed, 'test')).rejects.toThrow('DB unavailable')
   expect(mocks.risk).not.toHaveBeenCalled()
+})
+
+it('retries an alert receipt failure only after primary delivery and risk writes have persisted', async () => {
+  mocks.alert.mockRejectedValueOnce(new Error('Alert receipt storage unavailable'))
+  await expect(handleDeliveryStatus('12345', failed, 'test')).rejects.toThrow('Alert receipt storage unavailable')
+  expect(mocks.status).toHaveBeenCalledTimes(1)
+  expect(mocks.risk).toHaveBeenCalledTimes(1)
+  expect(mocks.evaluate).toHaveBeenCalledTimes(1)
+  expect(mocks.evaluate.mock.invocationCallOrder[0]).toBeLessThan(mocks.alert.mock.invocationCallOrder[0])
+  await handleDeliveryStatus('12345', failed, 'test')
+  expect(mocks.alert).toHaveBeenCalledTimes(2)
 })

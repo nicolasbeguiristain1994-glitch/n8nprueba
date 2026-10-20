@@ -1,3 +1,4 @@
+vi.mock('@/lib/campaign-risk-alerts', () => ({ recordCampaignRiskAlertDelivery: vi.fn() }))
 /** @vitest-environment node */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pool } from 'pg'

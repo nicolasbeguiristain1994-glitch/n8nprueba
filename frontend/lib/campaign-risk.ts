@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { enqueueCampaignRiskWhatsAppAlerts } from '@/lib/campaign-risk-alerts'
 import { query, withTransaction } from '@/lib/db'
 
 type Scope = 'campaign' | 'waba' | 'phone' | 'template'
@@ -75,6 +76,7 @@ async function attachSignals(db: DB, campaignIds?: string[]) {
     FROM campaign_risk_incidents i JOIN campaigns c ON c.id=i.campaign_id
     JOIN users u ON u.is_active AND (u.role='admin' OR u.id=c.owned_by)
     WHERE c.id=ANY($1::uuid[]) AND i.resolved_at IS NULL ON CONFLICT DO NOTHING`, [ids])
+  await enqueueCampaignRiskWhatsAppAlerts(db,ids)
 }
 
 export async function raiseRiskIncident(input: RiskInput): Promise<void> {

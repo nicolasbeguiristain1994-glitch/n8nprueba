@@ -58,10 +58,37 @@ o el estado de la campaña no elimina la protección. Los mensajes ya aceptados
 por WhatsApp pueden terminar de entregarse; una pausa no puede retirarlos. Un
 envío que ya estaba en curso puede completar su respuesta del proveedor.
 
-La alerta en el panel no equivale a un correo, SMS, notificación móvil o aviso de
-WhatsApp. Esos canales requieren una integración y destino configurados. Cerrar
-el navegador no desactiva la protección del servidor, pero impide ver los avisos
-de la interfaz hasta volver a abrirla.
+Cerrar el navegador no desactiva la protección del servidor. La alerta interna
+permanece guardada, y el envío por WhatsApp funciona cuando su canal está
+configurado y disponible.
+
+## Alerta operativa por WhatsApp
+
+Configurar únicamente en el servidor `RISK_ALERT_WHATSAPP_TO`,
+`RISK_ALERT_WHATSAPP_PHONE_NUMBER_ID`, `RISK_ALERT_WHATSAPP_TEMPLATE_NAME` y
+`RISK_ALERT_WHATSAPP_LANGUAGE`. `RISK_ALERT_WHATSAPP_TEMPLATE_ID` permite fijar
+además el identificador oficial. No incluir destinos, credenciales ni números
+privados en el repositorio público. El destino debe haber solicitado estos avisos.
+
+La plantilla fija `alerta_seguridad_campana` debe pertenecer a la cuenta del
+emisor, estar aprobada por Meta y conservar categoría `UTILITY`. No contiene datos
+de clientes, nombres de campañas ni contenido promocional. Una plantilla en
+revisión deja la alerta en espera; no se utiliza texto libre para eludir la
+ventana de atención. Tampoco se cambia de línea automáticamente ante una
+restricción. La aprobación de una plantilla no garantiza la entrega.
+
+La misma transacción que guarda la pausa registra un envío pendiente durable.
+Varias señales de una misma pausa sin revisar generan una sola alerta por
+destino. Un trabajador reclama el envío y confirma su reserva antes de contactar
+al proveedor; no se hacen solicitudes HTTP dentro de la transacción de pausa.
+La cuenta, línea, plantilla y bajas se verifican otra vez antes del envío.
+
+Un envío aceptado por WhatsApp todavía no equivale a una entrega confirmada. Los
+estados se consultan en **Revisar alerta**, junto con el motivo de una espera o
+fallo. Ante un resultado incierto, interrupción o timeout después de iniciar el
+envío, no se reenvía automáticamente. La alerta del panel permanece disponible
+incluso cuando WhatsApp no puede entregarla. Consultar el historial antes de
+considerar un nuevo envío; no resetear la reserva para forzar un reintento.
 
 ## Revisar y continuar
 
@@ -84,7 +111,8 @@ reactivar una campaña.
 ## Validación y publicación
 
 Seguir [Publicaciones verificadas](verified-releases.md). La validación local y
-GitHub Actions ejecutan `campaign-risk-postgres.test.ts` con PostgreSQL 17,
+GitHub Actions ejecutan `campaign-risk-postgres.test.ts` y
+`campaign-risk-alerts-postgres.test.ts` con PostgreSQL 17,
 además de las pruebas de rutas, interfaz y controles de envío. La suite PostgreSQL
 usa `RUN_CAMPAIGN_PG_TESTS=1` y `DATABASE_URL` local, rechaza servidores remotos y
 crea un esquema independiente con datos sintéticos.

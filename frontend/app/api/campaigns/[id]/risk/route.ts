@@ -4,6 +4,7 @@ import { checkPermissionWithUser, isCampaignOwnerOrAdmin } from '@/lib/permissio
 import { isUUID } from '@/lib/validate'
 import { CampaignRiskError, getCampaignRiskState, reviewCampaignRisk } from '@/lib/campaign-risk'
 import { audit } from '@/lib/audit'
+import { getCampaignRiskWhatsAppAlerts, type CampaignRiskWhatsAppAlertSummary } from '@/lib/campaign-risk-alerts'
 import { refreshCampaignMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
 
 type Context = { params: Promise<{ id: string }> }
@@ -30,7 +31,12 @@ export async function GET(req: Request, context: Context) {
     if (auth.response) return auth.response
     try { await refreshCampaignMetaRisk(auth.id!) }
     catch (error) { if (!(error instanceof CampaignRiskError)) throw error }
-    return NextResponse.json(await getCampaignRiskState(auth.id!), { headers: { 'Cache-Control': 'no-store' } })
+    const state = await getCampaignRiskState(auth.id!)
+    let whatsappAlerts: CampaignRiskWhatsAppAlertSummary[] = []
+    let whatsappAlertsUnavailable = false
+    try { whatsappAlerts = await getCampaignRiskWhatsAppAlerts(auth.id!) }
+    catch { whatsappAlertsUnavailable = true }
+    return NextResponse.json({ ...state, whatsappAlerts, whatsappAlertsUnavailable }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     console.error('[GET /campaigns/risk]', error instanceof Error ? error.message : error)
     return NextResponse.json({ error: 'No se pudo consultar la protección de la campaña' }, { status: 500 })

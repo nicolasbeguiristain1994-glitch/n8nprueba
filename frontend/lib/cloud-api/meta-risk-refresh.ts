@@ -1,5 +1,5 @@
 import { query } from '@/lib/db'
-import { CampaignRiskError, raiseRiskIncident, clearMetaRiskSignal } from '@/lib/campaign-risk'
+import { CampaignRiskError, raiseRiskIncident, clearMetaRiskSignal, assertCloudSendRiskClear } from '@/lib/campaign-risk'
 import { distributorVisibilityClause } from '@/lib/line-visibility'
 import { MetaHttpGateway } from './infrastructure/meta-http.gateway'
 import type { PhoneNumberInfo } from './infrastructure/phone-number.service'
@@ -9,6 +9,7 @@ import { applyPhoneQualityRisk, applyPhoneHealthRisk, type MetaHealthStatus, han
 const CACHE_MS = 60_000
 const inFlight = new Map<string, Promise<unknown>>()
 const phoneQualities = new Set(['GREEN', 'YELLOW', 'RED', 'UNKNOWN', 'NA'])
+const operationalChecks = new Map<string, { checkedAt: number; templateId: string; wabaId: string }>()
 type PhoneRow = { phone_number_id: string; waba_id: string; risk_checked_at: Date | string | null }
 type TemplateRow = { id: string; name: string; language: string; waba_id: string; whatsapp_template_id: string; risk_checked_at: Date | string | null }
 
@@ -76,6 +77,102 @@ async function refreshTemplate(row: TemplateRow, phoneNumberId: string): Promise
       WHERE id=$3 AND waba_id=$4 AND whatsapp_template_id=$5
         AND (risk_checked_at IS NULL OR risk_checked_at<=$2::timestamptz)`, [status, observedAt, row.id, row.waba_id, row.whatsapp_template_id])
   })
+}
+
+type OperationalTemplate = {
+  id: string; name: string; language: string; category: string; status: string
+  quality_score?: { score?: string }
+  components?: Array<{ type: string; format?: string; text?: string; buttons?: Array<{ type: string; text?: string; url?: string }> }>
+}
+
+function fixedOperationalComponents(components: OperationalTemplate['components']): boolean {
+  if (!Array.isArray(components) || components.filter(c => c.type === 'BODY').length !== 1) return false
+  if (JSON.stringify(components).includes('{{') || JSON.stringify(components).includes('}}')) return false
+  const seen = new Set<string>()
+  for (const component of components) {
+    if (seen.has(component.type)) return false
+    seen.add(component.type)
+    if (['BODY', 'FOOTER'].includes(component.type)) {
+      if (typeof component.text !== 'string' || !component.text.trim()) return false
+    } else if (component.type === 'HEADER') {
+      if (component.format !== 'TEXT' || typeof component.text !== 'string' || !component.text.trim()) return false
+    } else if (component.type === 'BUTTONS') {
+      if (!Array.isArray(component.buttons) || !component.buttons.length) return false
+      for (const button of component.buttons) {
+        if (button.type !== 'URL' || typeof button.text !== 'string' || !button.text.trim() || typeof button.url !== 'string') return false
+        try {
+          const url = new URL(button.url)
+          if (url.protocol !== 'https:' || url.username || url.password) return false
+        } catch { return false }
+      }
+    } else return false
+  }
+  return true
+}
+
+/** Preflight for the explicitly configured operational alert sender, never a campaign fallback. */
+export async function refreshOperationalAlertMeta(
+  phoneNumberId: string, templateName: string, language: string, templateId?: string,
+): Promise<{ templateId: string; wabaId: string }> {
+  if (!/^\d+$/.test(phoneNumberId) || !/^[a-z0-9_]+$/.test(templateName)
+    || !/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(language) || (templateId !== undefined && !/^\d+$/.test(templateId))) {
+    throw new CampaignRiskError('La configuración de la alerta de WhatsApp es inválida.')
+  }
+  // Recheck local availability on every send, including a cached remote check.
+  const [sender] = await query<{ waba_id: string }>(`SELECT cn.waba_id FROM cloud_numbers cn
+    JOIN whatsapp_lines wl ON wl.id=cn.whatsapp_line_id
+    WHERE cn.phone_number_id=$1 AND cn.status='active' AND wl.line_type='cloud'
+      AND wl.status='active' AND wl.sending_enabled=true AND wl.is_connected=true`, [phoneNumberId])
+  if (!sender || !/^\d+$/.test(sender.waba_id)) {
+    throw new CampaignRiskError('La línea configurada para alertas no está disponible.')
+  }
+  const key = JSON.stringify([phoneNumberId, sender.waba_id, templateName, language, templateId ?? null])
+  const result = await once(`operational:${key}`, async () => {
+    const cached = operationalChecks.get(key)
+    if (cached && Date.now() >= cached.checkedAt && Date.now() - cached.checkedAt < CACHE_MS) return cached
+    operationalChecks.delete(key)
+    const checkedAt = Date.now()
+    const info = await refreshPhoneMetaRisk(phoneNumberId) as PhoneNumberInfo & { health_status: MetaHealthStatus }
+    if (['YELLOW', 'RED'].includes(info.quality_rating) || info.health_status.can_send_message === 'BLOCKED'
+      || info.health_status.entities.some(entity => entity.can_send_message === 'BLOCKED')) {
+      throw new CampaignRiskError('Meta informa una restricción o calidad insuficiente en la línea de alertas.')
+    }
+    const token = await getTokenForNumber(phoneNumberId)
+    const gateway = new MetaHttpGateway(token, { timeoutMs: 8_000 })
+    // Read through this WABA's collection even when an explicit remote ID is
+    // configured: fetching a template by ID alone does not prove ownership.
+    const params = new URLSearchParams({ name: templateName, fields: 'id,name,language,category,status,quality_score,components', limit: '100' })
+    const list = await gateway.get<{ data?: OperationalTemplate[]; paging?: { next?: string } }>(`/${sender.waba_id}/message_templates?${params}`)
+    if (!Array.isArray(list.data) || list.paging?.next) throw new Error('Meta no devolvió una lista completa de plantillas de alerta')
+    const matches = list.data.filter(template => template.name === templateName && template.language === language)
+    if (matches.length !== 1 || !/^\d+$/.test(String(matches[0].id))
+      || (templateId !== undefined && String(matches[0].id) !== templateId)) {
+      throw new CampaignRiskError('La plantilla de alerta no pertenece a la cuenta o no coincide con la configuración.')
+    }
+    const template = matches[0]
+    const quality = template.quality_score?.score
+    const observedAt = new Date(checkedAt).toISOString()
+    const identity = { message_template_id: String(template.id), message_template_name: templateName, message_template_language: language }
+    await handleTemplateStatusRisk({ ...identity, event: template.status }, sender.waba_id, observedAt)
+    if (quality && ['GREEN', 'YELLOW', 'RED', 'UNKNOWN'].includes(quality)) {
+      await handleTemplateQualityRisk({ ...identity, new_quality_score: quality }, sender.waba_id, observedAt)
+    }
+    if (template.category !== 'UTILITY' || template.status !== 'APPROVED' || !quality || !['GREEN', 'UNKNOWN'].includes(quality)
+      || !fixedOperationalComponents(template.components)) {
+      throw new CampaignRiskError('La alerta requiere una plantilla UTILITY aprobada, de calidad válida y sin parámetros.')
+    }
+    const verified = { checkedAt, templateId: String(template.id), wabaId: sender.waba_id }
+    // Do not cache before persistence and the active-signal guard succeed.
+    await assertCloudSendRiskClear({ phoneNumberId, templateName })
+    for (const [existingKey, check] of operationalChecks) {
+      if (Date.now() - check.checkedAt >= CACHE_MS) operationalChecks.delete(existingKey)
+    }
+    operationalChecks.set(key, verified)
+    return verified
+  })
+  // A webhook received after the cached GET must still prevent the next send.
+  await assertCloudSendRiskClear({ phoneNumberId, templateName })
+  return { templateId: result.templateId, wabaId: result.wabaId }
 }
 
 async function runBounded<T>(items: T[], work: (item: T) => Promise<void>): Promise<void> {

@@ -1,4 +1,5 @@
 import { query } from '@/lib/db'
+import { recordCampaignRiskAlertDelivery } from '@/lib/campaign-risk-alerts'
 import { recordCampaignTestDelivery } from '@/lib/campaign-test-delivery'
 import { recordCampaignProviderRisk, evaluateCampaignRisk } from '@/lib/campaign-risk'
 // Handler: actualización de estado de entrega (sent/delivered/read/failed).
@@ -77,6 +78,10 @@ export async function handleDeliveryStatus(
       if (campaign?.campaign_id) await evaluateCampaignRisk(campaign.campaign_id)
     }
   }
+
+  // Persist operational delivery last. If this fails, the webhook retries while
+  // the primary message/risk writes above remain durable and idempotent.
+  await recordCampaignRiskAlertDelivery(phoneNumberId,status)
 
   // 131026 means undeliverable; it does not prove that the recipient opted out.
 

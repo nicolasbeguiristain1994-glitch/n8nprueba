@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Pool } from 'pg'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
@@ -51,6 +51,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign risk holds 
     await db.query(readFileSync(new URL('../../../db/migrations/048_notifications.sql', import.meta.url), 'utf8'))
     const migration = readFileSync(new URL('../../../db/migrations/157_campaign_risk_guard.sql', import.meta.url), 'utf8')
     await db.query(migration); await db.query(migration)
+    await db.query(readFileSync(new URL('../../../db/migrations/158_campaign_risk_whatsapp_alerts.sql', import.meta.url), 'utf8'))
     mocks.query.mockImplementation(async (sql, params) => (await db.query(sql, params)).rows)
     mocks.transaction.mockImplementation(async fn => {
       const client = await db.connect()
@@ -61,6 +62,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign risk holds 
   })
   beforeEach(async () => {
     mocks.provider.mockReset()
+    await db.query('DROP TRIGGER IF EXISTS reject_risk_alert ON campaign_risk_whatsapp_alerts')
     await db.query(`TRUNCATE campaign_risk_signals,campaign_risk_incidents,notifications,notification_preferences,
       campaign_recipients,whatsapp_templates,whatsapp_lines,cloud_numbers,whatsapp_messages,cloud_messages,cloud_conversations,cloud_consent_log,campaigns,users CASCADE`)
     await db.query(`INSERT INTO users(id,role,is_active,sectors) VALUES
@@ -73,6 +75,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign risk holds 
     await db.query('INSERT INTO whatsapp_lines(id) VALUES($1),($2)',[lineA,lineC])
     await db.query(`INSERT INTO campaign_recipients(campaign_id,line_id) VALUES($1,$4),($2,$4),($3,$5)`, [a,b,c,lineA,lineC])
   })
+  afterEach(() => { vi.unstubAllEnvs() })
   afterAll(async () => {
     if (db) await db.end()
     if (admin) { await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`); await admin.end() }
@@ -261,5 +264,35 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign risk holds 
     await db.query("UPDATE whatsapp_messages SET error_detail='[meta:131049] Healthy ecosystem' WHERE evolution_message_id='failure-10'")
     await evaluateCampaignRisk(a)
     expect((await getCampaignRiskState(a)).incidents[0]).toMatchObject({signal:'panel_ecosystem_rate',metrics:{attempts:50,ecosystem:10}})
+  })
+
+  const configureWhatsAppAlerts = () => {
+    vi.stubEnv('RISK_ALERT_WHATSAPP_TO', '+15555550123')
+    vi.stubEnv('RISK_ALERT_WHATSAPP_PHONE_NUMBER_ID', '10001')
+    vi.stubEnv('RISK_ALERT_WHATSAPP_TEMPLATE_NAME', 'alerta_seguridad_campana')
+    vi.stubEnv('RISK_ALERT_WHATSAPP_LANGUAGE', 'es_AR')
+    vi.stubEnv('RISK_ALERT_WHATSAPP_TEMPLATE_ID', '')
+  }
+  it('commits the pause, internal notification and single WhatsApp alert for the same hold together', async () => {
+    configureWhatsAppAlerts()
+    await raiseRiskIncident(signal())
+    await raiseRiskIncident(signal({ signal: 'panel_ecosystem_rejections', title: 'Rechazos elevados' }))
+    expect(await campaign()).toMatchObject({ status: 'paused', pause_reason: 'risk_detected' })
+    expect((await db.query('SELECT count(*)::int AS count FROM campaign_risk_incidents WHERE campaign_id=$1', [a])).rows[0].count).toBe(2)
+    const alerts = (await db.query('SELECT status,campaign_id FROM campaign_risk_whatsapp_alerts')).rows
+    expect(alerts).toEqual([{ status: 'pending', campaign_id: a }])
+    expect((await db.query('SELECT count(*)::int AS count FROM notifications')).rows[0].count).toBeGreaterThan(0)
+    expect(mocks.provider).not.toHaveBeenCalled()
+  })
+  it('rolls back the whole risk transaction when its durable WhatsApp outbox insert fails', async () => {
+    configureWhatsAppAlerts()
+    await db.query(`CREATE OR REPLACE FUNCTION reject_whatsapp_alert() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'Synthetic outbox failure'; END $$;
+      CREATE TRIGGER reject_risk_alert BEFORE INSERT ON campaign_risk_whatsapp_alerts FOR EACH ROW EXECUTE FUNCTION reject_whatsapp_alert()`)
+    await expect(raiseRiskIncident(signal())).rejects.toThrow('Synthetic outbox failure')
+    expect(await campaign()).toMatchObject({ status: 'running', pause_reason: null })
+    expect((await db.query('SELECT count(*)::int AS count FROM campaign_risk_incidents')).rows[0].count).toBe(0)
+    expect((await db.query('SELECT count(*)::int AS count FROM notifications')).rows[0].count).toBe(0)
+    expect(mocks.provider).not.toHaveBeenCalled()
   })
 })

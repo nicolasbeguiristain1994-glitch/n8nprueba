@@ -6,6 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import type { CampaignRiskState } from '@/lib/campaign-risk'
+import type { CampaignRiskWhatsAppAlertSummary } from '@/lib/campaign-risk-alerts'
+import { CampaignRiskWhatsAppStatus } from './CampaignRiskWhatsAppStatus'
+
+type CampaignRiskDetail = CampaignRiskState & { whatsappAlerts?: CampaignRiskWhatsAppAlertSummary[]; whatsappAlertsUnavailable?: boolean }
 
 const SCOPE_LABEL = { campaign: 'Campaña', waba: 'Cuenta de WhatsApp', phone: 'Línea', template: 'Plantilla' }
 const METRIC_LABEL: Record<string, string> = {
@@ -22,7 +26,7 @@ export function CampaignRiskReview({ campaign, canReview, onClose, onRefresh }: 
   onClose: () => void
   onRefresh: () => void
 }) {
-  const [state, setState] = useState<CampaignRiskState | null>(null)
+  const [state, setState] = useState<CampaignRiskDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -96,6 +100,7 @@ export function CampaignRiskReview({ campaign, canReview, onClose, onRefresh }: 
         {incident.signal === 'meta_check_unavailable' && incident.signalActive && <p className="text-xs font-medium">Falta verificar el estado de Meta. Usá Actualizar estado después de restablecer la conexión; el bloqueo se mantiene hasta completar el control.</p>}
         {incident.source === 'panel' && <p className="text-xs text-muted-foreground">Es un criterio preventivo interno, no un umbral de sanción publicado por Meta.</p>}
       </article>)}
+      {state && <CampaignRiskWhatsAppStatus alerts={state.whatsappAlerts ?? []} unavailable={state.whatsappAlertsUnavailable === true} />}
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       {notice && <p role="status" className="rounded-lg bg-success/10 p-3 text-sm">{notice}</p>}
       {state?.blocked && canReview && <form onSubmit={review} className="space-y-3">

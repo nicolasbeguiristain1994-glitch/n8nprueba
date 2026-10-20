@@ -1,9 +1,10 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
-const mocks = vi.hoisted(() => ({ query: vi.fn(), auth: vi.fn(), owner: vi.fn(), state: vi.fn(), review: vi.fn(), audit: vi.fn(), refresh: vi.fn() }))
+const mocks = vi.hoisted(() => ({ query: vi.fn(), auth: vi.fn(), owner: vi.fn(), state: vi.fn(), review: vi.fn(), audit: vi.fn(), refresh: vi.fn(), alerts: vi.fn() }))
 vi.mock('@/lib/db', () => ({ query: mocks.query }))
 vi.mock('@/lib/permissions', () => ({ checkPermissionWithUser: mocks.auth, isCampaignOwnerOrAdmin: mocks.owner }))
+vi.mock('@/lib/campaign-risk-alerts', () => ({ getCampaignRiskWhatsAppAlerts: mocks.alerts }))
 vi.mock('@/lib/audit', () => ({ audit: mocks.audit }))
 vi.mock('@/lib/cloud-api/meta-risk-refresh', () => ({ refreshCampaignMetaRisk: mocks.refresh }))
 vi.mock('@/lib/campaign-risk', () => ({
@@ -26,13 +27,14 @@ beforeEach(() => {
   mocks.auth.mockResolvedValue({ ok: true, user }); mocks.owner.mockReturnValue(true)
   mocks.query.mockResolvedValue([{ owned_by: user.user_id }])
   mocks.state.mockResolvedValue({ blocked: true, incidents: [{ id: incidentId }] })
+  mocks.alerts.mockResolvedValue([])
 })
 
 describe('campaign risk visibility and review', () => {
   it('returns authorized risk state without caching', async () => {
     const response = await GET(req(), context())
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({ blocked: true, incidents: [{ id: incidentId }] })
+    expect(await response.json()).toEqual({ blocked: true, incidents: [{ id: incidentId }], whatsappAlerts: [], whatsappAlertsUnavailable: false })
     expect(response.headers.get('Cache-Control')).toBe('no-store')
     expect(mocks.state).toHaveBeenCalledWith(id)
     expect(mocks.refresh).toHaveBeenCalledWith(id)
@@ -41,7 +43,7 @@ describe('campaign risk visibility and review', () => {
     mocks.owner.mockReturnValue(false)
     expect((await GET(req(), context())).status).toBe(403)
     expect((await POST(req(body), context())).status).toBe(403)
-    expect(mocks.state).not.toHaveBeenCalled(); expect(mocks.review).not.toHaveBeenCalled()
+    expect(mocks.state).not.toHaveBeenCalled(); expect(mocks.review).not.toHaveBeenCalled(); expect(mocks.alerts).not.toHaveBeenCalled()
   })
   it.each(['campaigns', 'send'])('requires %s permission for review', async resource => {
     mocks.auth.mockImplementation(async (_req, key) => key === resource
@@ -94,5 +96,27 @@ describe('campaign risk visibility and review', () => {
     const response = await GET(req(), context())
     expect(response.status).toBe(200)
     expect(await response.json()).toMatchObject({ blocked: true })
+  })
+})
+
+
+describe('campaign risk WhatsApp status', () => {
+  it('exposes the durable alert status only after campaign ownership authorization', async () => {
+    const alert = { id: 'alert', incidentId, status: 'blocked', detail: 'La plantilla todavía no está aprobada.', updatedAt: '2026-10-19T15:00:00Z' }
+    mocks.alerts.mockResolvedValue([alert])
+    const response = await GET(req(), context())
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ blocked: true, whatsappAlerts: [alert], whatsappAlertsUnavailable: false })
+    expect(mocks.alerts).toHaveBeenCalledWith(id)
+    expect(mocks.review).not.toHaveBeenCalled()
+  })
+  it('preserves the campaign hold when querying WhatsApp delivery fails', async () => {
+    mocks.alerts.mockRejectedValue(new Error('storage failure with private configuration'))
+    const response = await GET(req(), context())
+    expect(response.status).toBe(200)
+    const data = await response.json()
+    expect(data).toEqual({ blocked: true, incidents: [{ id: incidentId }], whatsappAlerts: [], whatsappAlertsUnavailable: true })
+    expect(JSON.stringify(data)).not.toContain('private configuration')
+    expect(mocks.review).not.toHaveBeenCalled()
   })
 })
