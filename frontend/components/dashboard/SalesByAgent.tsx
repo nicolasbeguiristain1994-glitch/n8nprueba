@@ -41,7 +41,7 @@ export function SalesByAgent({ comparison, loading, dateRange, platform, agent }
   const rows = [...(comparison?.rows ?? [])].sort((a,b) => Number(b.amount)-Number(a.amount) || a.agente.localeCompare(b.agente,'es'))
   const total = rows.reduce((sum,row) => sum+Number(row.amount),0)
   return <section aria-label="Ventas por agente" className="surface mb-6 overflow-hidden">
-    <div className="flex flex-wrap items-start justify-between gap-4 px-5 py-4">
+    <div className="flex flex-col gap-4 px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0 flex-1">
         <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
           <ChartNoAxesCombined size={20} className="shrink-0 text-primary" aria-hidden="true" />Ventas por agente
@@ -51,7 +51,7 @@ export function SalesByAgent({ comparison, loading, dateRange, platform, agent }
           {comparison && <> · Comparado con {formatDay(comparison.previous.from)} al {formatDay(comparison.previous.to)} (mes anterior)</>}
         </p>
       </div>
-      <div className="max-w-full rounded-xl bg-primary/10 px-4 py-3 text-right">
+      <div className="max-w-full self-start rounded-xl bg-primary/10 px-4 py-3 text-right sm:self-auto">
         <p className="text-xs font-medium text-primary">Ventas del período</p>
         <p className="mt-1 break-words text-xl font-semibold tracking-tight tabular-nums">{loading || !comparison ? '—' : formatPesos(total)}</p>
       </div>
