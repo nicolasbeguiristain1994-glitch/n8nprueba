@@ -12,19 +12,28 @@ export const canonicalAccountAgentSql = (value: string) => `CASE lower(trim(${va
   WHEN 'btcuno' THEN 'betcoin' WHEN 'btcdos' THEN 'farabet' WHEN 'zeus' THEN 'ofizeus'
   WHEN 'zeusroyal' THEN 'royal' ELSE NULLIF(lower(trim(${value})),'') END`
 
-export function contactAccountLinksSql(useMovementHistory = false, financials = false) {
+export function contactAccountLinksSql(useMovementHistory = false, financials = false, compoundAccounts = false) {
   if (useMovementHistory && financials) throw Error('Financial detail requires scoped account reads')
   const amounts = financials ? ',total_cargas,total_retiros,fecha_ultima' : ''
   const resultAmounts = financials ? ',p.id AS player_id,p.agente,p.total_cargas,p.total_retiros,p.fecha_ultima' : ''
+  const matchingExplicit = compoundAccounts ? 'matching_explicit' : 'explicit'
   return `
   WITH scoped_contacts AS MATERIALIZED (
     SELECT id,first_name,last_name,casino_accounts,to_jsonb(contacts)->>'account_username' AS account_username FROM contacts
     WHERE deleted_at IS NULL AND id IN (SELECT contact_id FROM recipients)
-  ), explicit AS MATERIALIZED (
+  ), ${compoundAccounts ? 'raw_explicit' : 'explicit'} AS MATERIALIZED (
     SELECT c.id,lower(trim(a->>'username')) AS username,
       a->>'platform' AS platform,${canonicalAccountAgentSql("a->>'panel'")} AS panel
     FROM scoped_contacts c CROSS JOIN LATERAL unnest(ARRAY(SELECT jsonb_array_elements(c.casino_accounts))) a
-  ), tokens AS MATERIALIZED (
+  )${compoundAccounts ? `, explicit AS MATERIALIZED (
+    SELECT e.*,e.username AS source_username FROM raw_explicit e
+    UNION
+    SELECT e.id,lower(tok),e.platform,e.panel,e.username
+    FROM raw_explicit e
+    CROSS JOIN LATERAL unnest(regexp_split_to_array(e.username,'[,;()/[:space:]]+')) tok
+    WHERE e.username ~ '[,;()/[:space:]]'
+      AND length(tok)>=4 AND tok ~ '[[:alpha:]]' AND tok ~ '[0-9]'
+  )` : ''}, tokens AS MATERIALIZED (
     SELECT c.id,lower(tok) AS username FROM scoped_contacts c
     CROSS JOIN LATERAL unnest(regexp_split_to_array(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,''),'[^a-zA-Z0-9_]+')) tok
     WHERE length(tok)>=4 AND c.account_username IS NULL
@@ -47,7 +56,13 @@ export function contactAccountLinksSql(useMovementHistory = false, financials = 
       ${financials ? `,coalesce(sum(t.monto) FILTER (WHERE t.tipo='carga'),0) AS total_cargas,
       coalesce(sum(t.monto) FILTER (WHERE t.tipo='retiro'),0) AS total_retiros,
       max(t.fecha) FILTER (WHERE t.tipo='carga') AS fecha_ultima` : ''}
-    FROM casino_transactions t JOIN names n ON n.username=lower(t.username)
+    ${compoundAccounts ? `-- Bound each imported-history lookup to a candidate username; the
+    -- compound-name expansion must not cause a scan of every transaction.
+    FROM names n CROSS JOIN LATERAL (
+      SELECT t.* FROM casino_transactions t
+      WHERE t.source_id IS NOT NULL AND lower(t.username)=n.username
+      OFFSET 0
+    ) t` : 'FROM casino_transactions t JOIN names n ON n.username=lower(t.username)'}
     WHERE t.source_id IS NOT NULL
     GROUP BY t.platform,lower(t.username)`}
 
@@ -68,23 +83,33 @@ export function contactAccountLinksSql(useMovementHistory = false, financials = 
       SELECT username_lower,panel,id FROM players
       UNION SELECT username_lower,lower(trim(agente)),id FROM players
     ) names GROUP BY username_lower,panel HAVING count(DISTINCT id)=1
-  )
+  )${compoundAccounts ? `, matching_explicit AS MATERIALIZED (
+    -- Legacy imports sometimes stored several usernames in one explicit entry.
+    -- Resolve each literal username with that entry's agent/platform constraints.
+    -- A whole, valid username takes precedence over any possible split; never
+    -- interpret punctuation or notes as a different account when it resolves.
+    SELECT e.* FROM explicit e
+    WHERE e.username=e.source_username
+      OR NOT EXISTS (SELECT 1 FROM players p WHERE p.username_lower=e.source_username)
+  )` : ''}
   SELECT e.id AS contact_id,p.platform,p.username_lower${resultAmounts}
-  FROM explicit e JOIN players p ON p.username_lower=e.username AND p.platform=e.platform
+  FROM ${matchingExplicit} e JOIN players p ON p.username_lower=e.username AND p.platform=e.platform
     AND (e.panel IS NULL OR e.panel=p.panel)
   UNION
-  SELECT e.id,p.platform,p.username_lower${resultAmounts} FROM explicit e
+  SELECT e.id,p.platform,p.username_lower${resultAmounts} FROM ${matchingExplicit} e
   JOIN unique_panels up ON up.username_lower=e.username AND up.panel=e.panel
   JOIN players p ON p.id=up.player_id WHERE e.platform IS NULL
   UNION
-  SELECT e.id,p.platform,p.username_lower${resultAmounts} FROM explicit e
+  SELECT e.id,p.platform,p.username_lower${resultAmounts} FROM ${matchingExplicit} e
   JOIN players p ON p.username_lower=e.username AND p.name_count=1
   WHERE e.platform IS NULL AND e.panel IS NULL
   UNION
   SELECT t.id,p.platform,p.username_lower${resultAmounts} FROM tokens t
   JOIN players p ON p.username_lower=t.username AND p.name_count=1
-  LEFT JOIN explicit e ON e.id=t.id AND e.username=t.username
+  LEFT JOIN ${matchingExplicit} e ON e.id=t.id AND e.username=t.username
   WHERE e.id IS NULL AND t.username NOT IN ('farabet','betcoin','bigwin','royal','ofizeus','zeus','zeusroyal','btcuno','btcdos','adminbet','surmar','lemon','apolo','horus','peaky','soporte','reclamos','linea','admin','mismo','usuario','titular','carga','mucho')`
 }
 
-export const CAMPAIGN_CONTACT_ACCOUNTS_SQL = contactAccountLinksSql()
+// Attribution can recover historical compound names without changing contact
+// identities or which accounts are selected for future campaign audiences.
+export const CAMPAIGN_CONTACT_ACCOUNTS_SQL = contactAccountLinksSql(false, false, true)

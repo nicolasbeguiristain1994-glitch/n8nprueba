@@ -82,4 +82,62 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
       expect(await links([4])).toEqual([])
     } finally { await db.query('ROLLBACK TO SAVEPOINT imports') }
   })
+  const compoundLinks = async (ids: number[], enabled = true) =>
+    (await db.query(`WITH recipients AS (SELECT unnest($1::uuid[]) AS contact_id)
+      SELECT * FROM (${contactAccountLinksSql(false, false, enabled)}) links
+      ORDER BY contact_id,platform,username_lower`, [ids.map(id)])).rows
+
+  it('attributes literal accounts inside compound imports, including parentheses, notes and ñ', async () => {
+    await db.query('SAVEPOINT compound')
+    try {
+      await db.query(`ALTER TABLE contacts ADD account_username text;
+        INSERT INTO casino_players VALUES
+          ('${id(201)}','zeus','sample95z','royal'),
+          ('${id(202)}','bet30','sample95bt','zeusroyal'),
+          ('${id(203)}','zeus','sample323z','royal'),
+          ('${id(204)}','zeus','sampleño94z','royal'),
+          ('${id(205)}','bet30','sampleño94b','zeusroyal'),
+          ('${id(206)}','zeus','sample41zs','royal'),
+          ('${id(207)}','zeus','sample82zs','royal');
+        INSERT INTO contacts(id,first_name,casino_accounts,account_username) VALUES
+          ('${id(20)}','sample95bt sample95z','[{"username":"sample95bt sample95z","panel":"royal"}]','sample95bt sample95z'),
+          ('${id(21)}','sample323z(Zeus Y Fara)','[{"username":"sample323z(Zeus Y Fara)","panel":"royal"}]','sample323z(zeus y fara)'),
+          ('${id(22)}','sampleño94z // sampleño94b','[{"username":"sampleño94z // sampleño94b","panel":"royal"}]','sampleño94z // sampleño94b'),
+          ('${id(23)}','Sample82zs Mismo Titular Sample41zs','[{"username":"Sample82zs Mismo Titular Sample41zs","panel":"royal"}]','sample82zs mismo titular sample41zs');`)
+      expect(await compoundLinks([20,21,22,23])).toEqual([
+        {contact_id:id(20),platform:'bet30',username_lower:'sample95bt'},
+        {contact_id:id(20),platform:'zeus',username_lower:'sample95z'},
+        {contact_id:id(21),platform:'zeus',username_lower:'sample323z'},
+        {contact_id:id(22),platform:'bet30',username_lower:'sampleño94b'},
+        {contact_id:id(22),platform:'zeus',username_lower:'sampleño94z'},
+        {contact_id:id(23),platform:'zeus',username_lower:'sample82zs'},
+        {contact_id:id(23),platform:'zeus',username_lower:'sample41zs'},
+      ])
+      // This recovery is limited to statistics, not audience selection.
+      expect(await compoundLinks([20,21,22,23],false)).toEqual([])
+    } finally { await db.query('ROLLBACK TO SAVEPOINT compound') }
+  })
+  it('preserves exact identities, platform/agent restrictions and ambiguous compound names', async () => {
+    await db.query('SAVEPOINT compound_safety')
+    try {
+      await db.query(`ALTER TABLE contacts ADD account_username text;
+        INSERT INTO casino_players VALUES
+          ('${id(210)}','zeus','whole12/other34','royal'),
+          ('${id(211)}','zeus','whole12','royal'),
+          ('${id(212)}','zeus','other34','royal'),
+          ('${id(213)}','bet30','multi99','royal'),
+          ('${id(214)}','zeus','multi99','royal'),
+          ('${id(215)}','zeus','fara88','farabet'),
+          ('${id(216)}','zeus','nota77','royal');
+        INSERT INTO contacts(id,first_name,casino_accounts,account_username) VALUES
+          ('${id(30)}','whole12/other34','[{"username":"whole12/other34","panel":"royal"}]','whole12/other34'),
+          ('${id(31)}','multi99 / fara88','[{"username":"multi99 / fara88","panel":"royal"}]','multi99 / fara88'),
+          ('${id(32)}','other34 / nota77','[{"username":"other34 / nota77","platform":"bet30","panel":"royal"}]','other34 / nota77'),
+          ('${id(33)}','multi99 / fara88','[{"username":"multi99 / fara88","platform":"bet30","panel":"royal"}]','multi99 / fara88');`)
+      expect(await compoundLinks([30,31,32,33])).toEqual([
+        {contact_id:id(30),platform:'zeus',username_lower:'whole12/other34'},
+        {contact_id:id(33),platform:'bet30',username_lower:'multi99'},
+      ])
+    } finally { await db.query('ROLLBACK TO SAVEPOINT compound_safety') }
+  })
 })
