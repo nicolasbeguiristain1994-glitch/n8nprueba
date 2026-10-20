@@ -730,7 +730,7 @@ export default function Lines() {
       </div>
 
       <div className="space-y-1 text-xs text-muted-foreground">
-        <p>La recomendación es informativa y no modifica los límites configurados.</p>
+        <p>La recomendación se aplica como máximo de campañas si activás el control diario automático. No modifica los límites configurados.</p>
         <p>Orientación interna; no garantiza evitar restricciones. Respetá el cupo compartido de Meta y el consentimiento.</p>
         {recommendationsError && <p role="status" className="text-amber-800">No se pudieron actualizar las recomendaciones. Las líneas siguen disponibles; usá Actualizar líneas para volver a comprobarlas.</p>}
       </div>
