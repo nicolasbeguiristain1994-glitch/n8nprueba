@@ -35,7 +35,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('campaign test sends 
         status text DEFAULT 'running', total_sent int DEFAULT 0, total_skipped int DEFAULT 2);
       CREATE TABLE whatsapp_templates(id uuid PRIMARY KEY, name text, language text, waba_id text, status text, components jsonb);
       CREATE TABLE whatsapp_lines(id uuid PRIMARY KEY, display_name text, line_key text, line_type text,
-        status text, is_connected boolean, sending_enabled boolean, msgs_sent_hour int, msg_per_hour int,
+        status text, is_connected boolean, sending_enabled boolean, respect_daily_recommendation boolean NOT NULL DEFAULT false, msgs_sent_hour int, msg_per_hour int,
         msgs_sent_today int, msg_per_day int, allowed_types jsonb, priority int,
         evolution_instance text, evolution_url text, last_seen_at timestamptz, personality_config jsonb,
         hour_reset_at timestamptz,day_reset_at timestamptz,updated_at timestamptz);

@@ -1,3 +1,4 @@
+vi.mock('@/lib/automation-safety', () => ({ recordHumanAutomationIntervention: vi.fn().mockResolvedValue(undefined) }))
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
@@ -12,6 +13,7 @@ vi.mock('@/lib/sse-events', () => ({ sseEmitter: { emit: vi.fn() } }))
 import sharp from 'sharp'
 import { signStickerToken } from '@/lib/conversation-stickers'
 import { POST } from '@/app/api/send/route'
+import { recordHumanAutomationIntervention } from '@/lib/automation-safety'
 
 const lineA = { id: 'a', line_type: 'cloud', phone_number_id: '10001' }
 const lineB = { id: 'b', line_type: 'cloud', phone_number_id: '10002' }
@@ -145,3 +147,10 @@ vi.mock('@/lib/campaign-risk', () => ({
   assertCampaignRiskClear: vi.fn(), evaluateCampaignRisk: vi.fn(),
   assertCloudSendRiskClear: vi.fn(), recordCampaignProviderRisk: vi.fn(),
 }))
+
+it('preserves the internally resolved agent in manual legacy history',async()=>{
+ vi.mocked(recordHumanAutomationIntervention).mockResolvedValueOnce('royal')
+ expect((await POST(request())).status).toBe(200)
+ const insert=mocks.query.mock.calls.find(([sql])=>sql.includes('INSERT INTO whatsapp_messages'))!
+ expect(JSON.parse(insert[1][0])[0].metadata.agent_code).toBe('royal')
+})

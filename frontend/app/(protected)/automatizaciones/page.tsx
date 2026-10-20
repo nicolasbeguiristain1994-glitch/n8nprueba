@@ -98,6 +98,7 @@ const BLANK_FORM = {
   message:       '',          // para reply / handoff
   contact_line_directory: '',
   flow_steps:    '',          // para flow: un paso por línea
+  flow_delays:   [] as number[],
   handoff_msg:   '',
   priority:      '100',
   is_active:     true,
@@ -213,6 +214,7 @@ export default function AutomatizacionesPage() {
       message,
       contact_line_directory: typeof ac.contact_line_directory === 'string' ? ac.contact_line_directory : '',
       flow_steps:   flowSteps,
+      flow_delays:   a.type === 'flow' ? ((ac.steps as FlowStep[]) ?? []).map(s => s.delay_sec ?? 0) : [],
       handoff_msg:  handoffMsg,
       priority:     String(a.priority),
       is_active:    a.is_active,
@@ -267,8 +269,10 @@ export default function AutomatizacionesPage() {
       if (hasAssignedLineVariable(form.message) && !form.contact_line_directory) { setSaveError('Elegí el agente de la línea asignada para usar {{2}}'); return }
       action_config = { message: form.message.trim(), ...(form.contact_line_directory ? { contact_line_directory: form.contact_line_directory } : {}) }
     } else if (form.type === 'flow') {
-      const steps = form.flow_steps.split('\n').map(l => l.trim()).filter(Boolean).map(l => ({ message: l }))
+      const steps = form.flow_steps.split('\n').map(l => l.trim()).filter(Boolean)
+        .map((message, index) => ({ message, delay_sec: Math.max(index === 0 ? 0 : 10, form.flow_delays[index] || 0) }))
       if (steps.length === 0) { setSaveError('Ingresá al menos un paso'); return }
+      if (steps.length > 3) { setSaveError('El flujo admite como máximo 3 mensajes. Reducí los pasos antes de guardar.'); return }
       action_config = { steps }
     } else {
       action_config = { message: form.handoff_msg.trim() || undefined } as HandoffActionConfig
@@ -346,6 +350,16 @@ export default function AutomatizacionesPage() {
           <Plus size={14} /> Nueva automatización
         </Button>
       </PageHeader>
+
+      <section aria-label="Protección de respuestas automáticas" className="rounded-xl border border-border bg-muted/30 p-4 text-sm space-y-2">
+        <h2 className="font-semibold">Protección de respuestas automáticas</h2>
+        <ul className="list-disc pl-4 space-y-1 text-xs text-muted-foreground">
+          <li>Máximo 3 respuestas automáticas por cliente y agente en 24 horas móviles, incluidas las reservadas. Un nuevo mensaje del cliente no reinicia ese límite.</li>
+          <li>No se repite el mismo texto o enlace durante 24 horas. Los mensajes se separan al menos 10 segundos.</li>
+          <li>Cuando interviene un asesor, se cancelan los mensajes automáticos pendientes y se suspenden las respuestas automáticas durante 24 horas para ese cliente y agente.</li>
+        </ul>
+        <p className="text-xs text-muted-foreground">La confirmación de BAJA conserva su tratamiento especial. Estos controles no garantizan evitar restricciones.</p>
+      </section>
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
@@ -723,17 +737,17 @@ export default function AutomatizacionesPage() {
 
               {form.type === 'flow' && (
                 <div>
-                  <label className="block text-xs text-muted-foreground mb-1">
-                    Pasos del flujo (un mensaje por línea) *
+                  <label htmlFor="automation-flow-steps" className="block text-xs text-muted-foreground mb-1">
+                    Pasos del flujo (máximo 3 mensajes, uno por línea) *
                   </label>
-                  <textarea
+                  <textarea id="automation-flow-steps"
                     className="w-full border border-input rounded-md text-sm px-3 py-2 h-32 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500"
                     value={form.flow_steps}
                     onChange={e => setForm(f => ({ ...f, flow_steps: e.target.value }))}
                     placeholder={`Hola {{nombre}}! ¿En qué podemos ayudarte hoy?\nOpción 1: Consultas\nOpción 2: Soporte`}
                   />
                   <p className="text-xs text-amber-600 bg-warning/10 rounded px-2 py-1 mt-1">
-                    Escribí un mensaje por línea. Los pasos se procesan en orden; revisá el resultado de cada uno en Historial de ejecuciones.
+                    Escribí hasta 3 mensajes. Desde el segundo paso se esperan al menos 10 segundos entre mensajes; se conservan las demoras mayores ya configuradas. Los límites de 24 horas pueden detener el flujo. Revisá cada resultado en Historial de ejecuciones.
                   </p>
                 </div>
               )}

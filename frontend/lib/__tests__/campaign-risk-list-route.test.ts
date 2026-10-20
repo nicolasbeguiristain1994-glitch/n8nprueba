@@ -39,3 +39,11 @@ it('denies the list before reading protection data', async () => {
   expect((await GET(new NextRequest('http://localhost/api/campaigns'))).status).toBe(403)
   expect(mocks.query).not.toHaveBeenCalled(); expect(mocks.states).not.toHaveBeenCalled()
 })
+
+
+it('returns the budget evaluation timestamp from the authorized campaign row', async () => {
+  mocks.query.mockResolvedValue([{ id: 'first', pause_reason: 'line_budget', budget_resume_at: '2026-10-21T03:00:00Z' }])
+  const response = await GET(new NextRequest('http://localhost/api/campaigns'))
+  expect(mocks.query.mock.calls[0][0]).toContain("to_jsonb(c)->>'budget_resume_at' AS budget_resume_at")
+  expect((await response.json()).campaigns[0]).toMatchObject({ pause_reason: 'line_budget', budget_resume_at: '2026-10-21T03:00:00Z' })
+})

@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
 
     const lines = await query(`
       SELECT l.id, l.line_key, l.display_name, l.phone_number, l.evolution_instance,
-             l.status, l.is_connected, l.sending_enabled, l.line_type,
+             l.status, l.is_connected, l.sending_enabled, l.respect_daily_recommendation, l.line_type,
              l.msgs_sent_today, l.msgs_sent_hour,
              l.msg_per_day, l.msg_per_hour, l.total_sent, l.total_failed,
              l.priority, l.last_seen_at, l.owner_user_id,
@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
 }
 
 // PATCH /api/lines — update a line's fields
-// Body: { id, sending_enabled?, display_name?, msg_per_day?, msg_per_hour?, priority? }
+// Body: { id, sending_enabled?, respect_daily_recommendation?, display_name?, msg_per_day?, msg_per_hour?, priority? }
 // Authorization: user must be able to access the line (accessible via ownership or grant).
 //   sending_enabled is admin-only (kill switch that affects all campaigns on that line).
 export async function PATCH(req: NextRequest) {
@@ -65,7 +65,7 @@ export async function PATCH(req: NextRequest) {
   const parsed  = parseBody(PatchLineSchema, rawBody)
   if (!parsed.ok) return handleValidationError(req, parsed.error, 'lines')
 
-  const { id, sending_enabled, display_name, msg_per_day, msg_per_hour, priority } = parsed.data
+  const { id, sending_enabled, respect_daily_recommendation, display_name, msg_per_day, msg_per_hour, priority } = parsed.data
   const session = auth.user
   const isAdmin = session.role === 'admin' || session.is_super_admin
 
@@ -93,6 +93,7 @@ export async function PATCH(req: NextRequest) {
   const params: unknown[] = []
 
   if (sending_enabled !== undefined) { params.push(sending_enabled); sets.push(`sending_enabled = $${params.length}`) }
+  if (respect_daily_recommendation !== undefined) { params.push(respect_daily_recommendation); sets.push(`respect_daily_recommendation = $${params.length}`) }
   if (display_name    !== undefined) { params.push(display_name);    sets.push(`display_name = $${params.length}`) }
   if (msg_per_day     !== undefined) { params.push(msg_per_day);     sets.push(`msg_per_day = $${params.length}`) }
   if (msg_per_hour    !== undefined) { params.push(msg_per_hour);    sets.push(`msg_per_hour = $${params.length}`) }
@@ -109,10 +110,10 @@ export async function PATCH(req: NextRequest) {
     )
     if (rows.length === 0)
       return NextResponse.json({ error: 'Line not found' }, { status: 404 })
-    const changedFields = (['sending_enabled', 'display_name', 'msg_per_day', 'msg_per_hour', 'priority'] as const)
+    const changedFields = (['sending_enabled', 'respect_daily_recommendation', 'display_name', 'msg_per_day', 'msg_per_hour', 'priority'] as const)
       .filter(k => parsed.data[k] !== undefined)
     void audit({ req, action: 'update', resource: 'lines', resource_id: id,
-      metadata: { changedFields } })
+      metadata: { changedFields, ...(respect_daily_recommendation !== undefined ? { respect_daily_recommendation } : {}) } })
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[/api/lines PATCH]', e instanceof Error ? e.message : e)

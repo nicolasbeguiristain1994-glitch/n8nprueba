@@ -829,3 +829,62 @@ describe('Campañas desde contactos seleccionados', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   })
 })
+
+
+describe('campaigns waiting for the recommended line budget', () => {
+  const waiting = (over: Record<string, unknown> = {}) => makeCampaign({
+    status: 'paused', pause_reason: 'line_budget', owned_by: 'owner', list_id: 'l1', list_name: 'VIP',
+    total_targets: 91, total_sent: 20, total_failed: 1, total_skipped: 0, use_multi_line: true,
+    budget_resume_at: '2026-10-21T03:00:00Z', ...over,
+  })
+  it('shows pending recipients and the next conditional evaluation, without dispatching', async () => {
+    routeFetchJson(() => Promise.resolve({ campaigns: [waiting()], scheduler_enabled: true }))
+    const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock)
+    render(<Page />)
+    const notice = await screen.findByRole('region', { name: 'Espera por cupo recomendado' })
+    expect(notice).toHaveTextContent('70 destinatarios pendientes')
+    expect(notice).toHaveTextContent('21/10/2026')
+    expect(notice).toHaveTextContent('esta fecha no garantiza un envío')
+    expect(screen.getByRole('button', { name: 'Revisar disponibilidad' })).toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+  it('changes an automatic wait into a manual pause without sending or retrying', async () => {
+    let campaign = waiting()
+    routeFetchJson(() => Promise.resolve({ campaigns: [campaign], scheduler_enabled: true }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe('/api/campaigns/c-a'); expect(init?.method).toBe('PATCH')
+      expect(JSON.parse(String(init?.body))).toEqual({ status: 'paused' })
+      campaign = waiting({ pause_reason: 'manual', budget_resume_at: null })
+      return jsonResponse({ ok: true })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<Page />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Mantener en pausa' }))
+    expect(await screen.findByText('Pausado manualmente.')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Espera por cupo recomendado' })).not.toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+  it('preserves the wait and shows the server error when manual pause fails', async () => {
+    routeFetchJson(() => Promise.resolve({ campaigns: [waiting()], scheduler_enabled: true }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ error: 'No se pudo guardar la pausa manual' }, 409)))
+    render(<Page />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Mantener en pausa' }))
+    expect(await screen.findByText('No se pudo guardar la pausa manual')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Espera por cupo recomendado' })).toBeInTheDocument()
+  })
+  it('does not offer manual control to viewers and does not promise automatic evaluation when disabled', async () => {
+    currentUser.value = { user: { role: 'viewer', id: 'owner' }, permissions: { campaigns: ['read'] } }
+    routeFetchJson(() => Promise.resolve({ campaigns: [waiting()], scheduler_enabled: false }))
+    render(<Page />)
+    expect(await screen.findByText('La revisión automática no está habilitada. Revisá la disponibilidad antes de continuar.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Mantener en pausa' })).not.toBeInTheDocument()
+  })
+  it('gives risk holds priority over automatic budget continuation', async () => {
+    routeFetchJson(() => Promise.resolve({ campaigns: [waiting({ risk: { blocked: true, incidents: [] } })], scheduler_enabled: true }))
+    render(<Page />)
+    expect(await screen.findByText('Protección activa: envíos detenidos')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Espera por cupo recomendado' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Revisar disponibilidad' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Mantener en pausa' })).not.toBeInTheDocument()
+  })
+})

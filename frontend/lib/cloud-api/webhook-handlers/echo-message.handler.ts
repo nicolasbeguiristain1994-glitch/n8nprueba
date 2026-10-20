@@ -1,3 +1,4 @@
+import { recordHumanAutomationIntervention } from '@/lib/automation-safety'
 // Handler: mensajes enviados desde la WhatsApp Business App (smb_message_echoes).
 // Coexistence los refleja para mantener historial unificado.
 
@@ -16,6 +17,8 @@ export async function handleEchoMessage(
 
   if (!msg.to) return
   const contactPhone = `+${msg.to.replace(/^\+/, '')}`
+
+  await recordHumanAutomationIntervention(contactPhone,{provider:'cloud',sourceId:phoneNumberId},new Date(Number(msg.timestamp)*1000))
 
   if (msg.type === 'reaction') {
     await conversationRepository.receiveReaction(phoneNumberId,contactPhone,msg,'echo')

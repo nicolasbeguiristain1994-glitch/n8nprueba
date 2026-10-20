@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
              c.use_multi_line, c.message_type, c.template_id, c.template_params,
              (SELECT wt.name FROM whatsapp_templates wt WHERE wt.id=c.template_id) AS template_name,
              ${includePauseReason ? 'c.pause_reason,' : 'NULL::text AS pause_reason,'}
-             c.processor_locked_at,
+             c.processor_locked_at, to_jsonb(c)->>'budget_resume_at' AS budget_resume_at,
              c.created_at, c.owned_by, CASE WHEN cl.source='campaign_selection' THEN 'Selección desde Contactos' ELSE cl.name END AS list_name, cl.id AS list_id,
              ${includeProspectList ? 'c.prospect_list_id, pl.name AS prospect_list_name,' : 'NULL::uuid AS prospect_list_id, NULL::text AS prospect_list_name,'}
              stats.sent AS total_sent, stats.delivered AS total_delivered,

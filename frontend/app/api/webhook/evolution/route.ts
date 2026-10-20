@@ -1,3 +1,4 @@
+import { recordHumanAutomationIntervention } from '@/lib/automation-safety'
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
 import { query } from '@/lib/db'
@@ -108,6 +109,22 @@ export async function POST(req: NextRequest) {
       }
       // Mensaje propio (outbound): Evolution confirmó envío — guardar el ID para tracking
       if (fromMe) {
+        const sourceId=typeof body.instance==='string'?body.instance:''
+        const outgoing=data.message as Record<string,unknown>|null
+        const text=typeof outgoing?.conversation==='string'?outgoing.conversation:
+          (outgoing?.extendedTextMessage as {text?:string}|undefined)?.text
+        // API echoes can precede the HTTP response. Only a matching pending
+        // API message on this exact line is evidence that this is not a human.
+        const known=msgId?await query(`SELECT 1 FROM whatsapp_messages w WHERE w.direction='outbound' AND
+          (w.evolution_message_id=$1 OR (w.evolution_message_id IS NULL AND w.status='queued'
+            AND regexp_replace(w.phone_number,'[^0-9]','','g')=$2 AND w.message_body=$3
+            AND w.created_at>NOW()-interval '30 seconds' AND (
+              w.metadata->>'line_id' IN(SELECT id::text FROM whatsapp_lines WHERE evolution_instance=$4)
+              OR EXISTS(SELECT 1 FROM campaign_recipients r JOIN whatsapp_lines l ON l.id=r.line_id
+                WHERE r.id=w.campaign_recipient_id AND l.evolution_instance=$4)))) LIMIT 1`,
+          [msgId,phone.replace(/\D/g,''),text??null,sourceId]):[]
+        if(sourceId && !known.length) await recordHumanAutomationIntervention(phone,{provider:'evolution',sourceId},
+          new Date(Number(data.messageTimestamp)*1000))
         if (msgId) {
           await query(
             `UPDATE whatsapp_messages
@@ -214,7 +231,7 @@ export async function POST(req: NextRequest) {
         const messageId = insertedMsg[0]?.id ?? null
 
         // Fire-and-forget: no bloquea la respuesta al webhook
-        await evaluateAutomations(phone, body_text, messageId, { provider: 'evolution', instance: typeof body.instance === 'string' ? body.instance : '' })
+        await evaluateAutomations(phone, body_text, messageId, { provider: 'evolution', instance: typeof body.instance === 'string' ? body.instance : '', receivedAt:sent_at })
       }
 
       return NextResponse.json({ ok: true })
