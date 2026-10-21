@@ -10,6 +10,7 @@ import { GET as casino } from '@/app/api/dashboard/casino/route'
 import { GET as overview } from '@/app/api/dashboard/casino/overview/route'
 import { GET as crm } from '@/app/api/dashboard/crm/route'
 import { GET as caja } from '@/app/api/dashboard/caja/route'
+import { GET as deposits } from '@/app/api/dashboard/casino/deposits/route'
 
 describe.skipIf(process.env.RUN_DASHBOARD_PG_TESTS !== '1')('dashboard SQL against PostgreSQL', () => {
   let client: Client
@@ -39,14 +40,18 @@ describe.skipIf(process.env.RUN_DASHBOARD_PG_TESTS !== '1')('dashboard SQL again
       (7,7,'2026-09-22',NULL,'bigwin','ambiguous','carga',99999),
       (8,8,'2026-09-21','ganamos','adminbtc','prior','carga',70),
       (9,9,'2026-09-22','ganamos','adminroyal','moved','carga',20.05),
-      (10,10,'2026-09-23','ganamos','adminbtc','moved','carga',10.01)`)
+      (10,10,'2026-09-23','ganamos','adminbtc','moved','carga',10.01),
+      (11,11,'2026-09-22','zeus',' LasVegas ','retired','carga',99999)`)
+    await client.query(`INSERT INTO casino_financial_source_records VALUES
+      ('zeus','retired-bonus','bono',NULL,'lasvegas','retired',888,'2026-09-22',NULL)`)
     await client.query(`INSERT INTO casino_dashboard_players VALUES
       ('shared','ganamos','adminbtc','2026-09-22','2026-09-24','vip_medio','activo',1099.25,30.10,2,1),
       ('prior','ganamos','adminbtc','2026-09-21','2026-09-21','vip_alto','inactivo',70,0,1,0),
       ('moved','ganamos','adminbtc','2026-09-22','2026-09-23','bajo','activo',30.06,0,2,0),
       ('shared','argenbet','adminbtc','2026-09-22','2026-09-22','vip','activo',200.33,0,1,0),
       ('shared','zeus','bigwin','2026-09-22','2026-09-22','bajo','activo',300.45,0,1,0),
-      ('shared','bet30','bigwin','2026-09-22','2026-09-22','bajo','activo',400.55,0,1,0)`)
+      ('shared','bet30','bigwin','2026-09-22','2026-09-22','bajo','activo',400.55,0,1,0),
+      ('retired','zeus',' LasVegas ','2026-09-22','2026-09-22','vip','inactivo',99999,0,1,0)`)
     await client.query(`ALTER TABLE casino_dashboard_players ADD COLUMN first_deposit_agent text`)
     await client.query(`UPDATE casino_dashboard_players SET first_deposit_agent=CASE WHEN username_lower='moved' THEN 'adminroyal' ELSE agente END`)
     await client.query(`CREATE TEMP TABLE tasks (id text, title text, due_date timestamptz, priority text, status text, deleted_at timestamptz, updated_at timestamptz) ON COMMIT DROP`)
@@ -97,6 +102,27 @@ describe.skipIf(process.env.RUN_DASHBOARD_PG_TESTS !== '1')('dashboard SQL again
     expect(body.totals).toEqual({ depositos: '100.25', retiros: '30.10', saldo: '70.15', deposito_bonificado: '0' })
     expect(body.rows.map((r: { id_rec: string }) => r.id_rec)).toContain('9007199254740993')
     expect(body.rows[0].fecha).toBe('2026-09-23')
+  })
+  it('excludes retired agents from every dashboard total and explicit filter without deleting their history', async () => {
+    for (const platform of ['zeus', 'consolidado']) {
+      const scope = `platform=${platform}`
+      const body = await (await casino(request('casino', scope))).json()
+      expect(body.summary.total_jugadores).toBe(platform === 'zeus' ? 1 : 6)
+      for (const rows of [body.agentes, body.sales_comparison.rows, body.vips]) {
+        expect(rows.some((r: {agente: string}) => r.agente?.trim().toLowerCase() === 'lasvegas')).toBe(false)
+      }
+      const activity = await (await overview(request('casino/overview', scope))).json()
+      expect(activity.activity.find((r: {platform: string; agente: string | null}) => r.platform === 'zeus' && r.agente === null)).toMatchObject({depositos: '300.45', bonos: '0', cuentas: 1})
+      const graph = await (await deposits(request('casino/deposits', scope))).json()
+      const cash = await (await caja(request('caja', scope))).json()
+      expect(cash.totals.depositos).toBe(graph.total.amount)
+      expect(cash.rows.some((r: {username: string}) => r.username === 'retired')).toBe(false)
+      const hidden = await (await casino(request('casino', `${scope}&agent=lasvegas`))).json()
+      expect(hidden.summary.total_jugadores).toBe(0)
+      expect(hidden.sales_comparison.rows).toEqual([])
+      expect((await (await caja(request('caja', `${scope}&agent=lasvegas`))).json()).total).toBe(0)
+    }
+    expect((await client.query("SELECT count(*)::int AS n FROM casino_transactions WHERE username='retired'")).rows[0].n).toBe(1)
   })
   it('CRM uses real task states, assignments and excludes deleted tasks', async () => {
     const res = await crm(new NextRequest('http://localhost/api/dashboard/crm'))

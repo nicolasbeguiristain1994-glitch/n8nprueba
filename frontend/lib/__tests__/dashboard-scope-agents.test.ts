@@ -5,8 +5,8 @@ import {
   normalizedSavedFilters, platformCanonicalAgent, platformCanonicalAgentSql,
 } from '@/lib/dashboard-scope'
 import { OPERATOR_ACCOUNTS } from './fixtures/operator-accounts'
-const OPERATORS = Object.keys(OPERATOR_ACCOUNTS)
-const CONFIGURED = SYNC_PLATFORMS.flatMap(p => getAgentsForPlatform(p).map(raw => ({ p, raw })))
+const OPERATORS = Object.keys(OPERATOR_ACCOUNTS).filter(op => op !== 'lasvegas')
+const CONFIGURED = SYNC_PLATFORMS.flatMap(p => getAgentsForPlatform(p).filter(raw => raw !== 'lasvegas').map(raw => ({ p, raw })))
 
 /** Evaluates the generated CASE the way PostgreSQL would for one (platform, agente) row. */
 function evalCanonicalSql(platform: string, agente: string): string {
@@ -19,7 +19,15 @@ function evalCanonicalSql(platform: string, agente: string): string {
   return name
 }
 
-describe('dashboard agent scope — every configured platform account', () => {
+describe('dashboard agent scope — every visible platform account', () => {
+  it('clears saved Las Vegas filters while preserving the configured historical account', () => {
+    expect(getAgentsForPlatform('zeus')).toContain('lasvegas')
+    for (const platform of ['zeus', 'consolidado'] as const) {
+      expect(dashboardAgents(platform)).not.toContain('lasvegas')
+      expect(normalizedSavedFilters(platform, ' LasVegas ')).toEqual({ platform, agent: '' })
+      expect(configuredAgentAccounts(platform, 'zeus', 'lasvegas')).toEqual([])
+    }
+  })
   it('the consolidated selector lists exactly the configured operators', () => {
     expect([...dashboardAgents('consolidado')].sort()).toEqual([...OPERATORS].sort())
   })
@@ -27,7 +35,7 @@ describe('dashboard agent scope — every configured platform account', () => {
   it('every configured account belongs to exactly one operator', () => {
     for (const p of SYNC_PLATFORMS) {
       const covered = OPERATORS.flatMap(op => OPERATOR_ACCOUNTS[op][p])
-      expect([...covered].sort(), p).toEqual([...getAgentsForPlatform(p)].sort())
+      expect([...covered].sort(), p).toEqual(getAgentsForPlatform(p).filter(raw => raw !== 'lasvegas').sort())
     }
   })
 
@@ -77,11 +85,11 @@ describe('dashboard agent scope — every configured platform account', () => {
   })
 
   it('filters a single platform by its raw name without the consolidated CASE', () => {
-    expect(dashboardAgentSql('bet30', 3)).toBe('($3::text IS NULL OR LOWER(BTRIM(agente)) = $3)')
+    expect(dashboardAgentSql('bet30', 3)).toContain('($3::text IS NULL OR LOWER(BTRIM(agente)) = $3)')
     expect(dashboardAgentSql('consolidado', 3)).toContain(`WHEN 'farabet' THEN ARRAY['btcdos','farabet']::text[]`)
   })
 
   it('returns every configured account when no agent is selected', () => {
-    for (const p of SYNC_PLATFORMS) expect(configuredAgentAccounts('consolidado', p, '')).toEqual(getAgentsForPlatform(p))
+    for (const p of SYNC_PLATFORMS) expect(configuredAgentAccounts('consolidado', p, '')).toEqual(getAgentsForPlatform(p).filter(raw => raw !== 'lasvegas'))
   })
 })

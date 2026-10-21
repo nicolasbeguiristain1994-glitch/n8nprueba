@@ -2,6 +2,12 @@ import { AGENT_TO_CANONICAL, getAgentsForPlatform, type Platform, type SyncPlatf
 
 export const DASHBOARD_TIMEZONE = 'America/Argentina/Buenos_Aires'
 
+// Retired operators are hidden only from dashboard reporting, preserving their history.
+const HIDDEN_DASHBOARD_AGENTS = ['lasvegas']
+export function isDashboardAgentVisible(agent: string): boolean {
+  return !HIDDEN_DASHBOARD_AGENTS.includes(agent.trim().toLowerCase())
+}
+
 // Equivalences are scoped by the movement's explicit platform, never inferred
 // from an agent name shared by two platforms.
 const ALIASES: Record<SyncPlatform, Record<string, string>> = {
@@ -12,7 +18,7 @@ const ALIASES: Record<SyncPlatform, Record<string, string>> = {
 }
 
 export function dashboardAgents(platform: Platform): string[] {
-  const agents = getAgentsForPlatform(platform)
+  const agents = getAgentsForPlatform(platform).filter(isDashboardAgentVisible)
   return platform === 'consolidado'
     ? [...new Set(agents.map(a => AGENT_TO_CANONICAL[a] ?? a))]
     : agents
@@ -32,7 +38,7 @@ export function platformCanonicalAgent(platform: SyncPlatform, value: string): s
 
 /** Configured accounts of `platform` covered by the selected agent; all of them when no agent is selected. */
 export function configuredAgentAccounts(scope: Platform, platform: SyncPlatform, agent: string): string[] {
-  const agents = getAgentsForPlatform(platform)
+  const agents = getAgentsForPlatform(platform).filter(isDashboardAgentVisible)
   if (!agent) return agents
   return agents.filter(name => scope === 'consolidado' ? platformCanonicalAgent(platform, name) === agent : name === agent)
 }
@@ -55,7 +61,8 @@ export function platformCanonicalAgentSql(alias = ''): string {
 export function dashboardAgentSql(platform: Platform, param: number, alias = ''): string {
   const col = alias ? `${alias}.agente` : 'agente'
   const name = `LOWER(BTRIM(${col}))`
-  if (platform !== 'consolidado') return `($${param}::text IS NULL OR ${name} = $${param})`
+  const visible = `COALESCE(${name}, '') NOT IN (${HIDDEN_DASHBOARD_AGENTS.map(agent => `'${agent}'`).join(',')})`
+  if (platform !== 'consolidado') return `(${visible} AND ($${param}::text IS NULL OR ${name} = $${param}))`
   // Resolve the selected operator's aliases once, from the parameter. Mapping
   // every movement's agent through the canonical CASE repeated LOWER/BTRIM for
   // every possible alias, even when a monthly view needed only one operator.
@@ -69,7 +76,7 @@ export function dashboardAgentSql(platform: Platform, param: number, alias = '')
     return `WHEN '${p}' THEN CASE $${param} ${choices.join(' ')} ELSE ARRAY[$${param}] END`
   })
   const platformCol = alias ? `${alias}.platform` : 'platform'
-  return `($${param}::text IS NULL OR ${name} = ANY(CASE ${platformCol} ${cases.join(' ')} ELSE ARRAY[$${param}] END))`
+  return `(${visible} AND ($${param}::text IS NULL OR ${name} = ANY(CASE ${platformCol} ${cases.join(' ')} ELSE ARRAY[$${param}] END)))`
 }
 
 /** Calendar date for date-only records; timestamps always converted to Argentina. */

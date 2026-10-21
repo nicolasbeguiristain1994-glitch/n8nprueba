@@ -1,6 +1,6 @@
 import { previousMonthRange } from './dashboard-date-range'
 import { financialLedgerSql } from './dashboard-financial-ledger'
-import { dashboardAgents, dashboardAgentSql, movementDateSql, movementPeriodSql, platformCanonicalAgentSql } from './dashboard-scope'
+import { dashboardAgents, dashboardAgentSql, isDashboardAgentVisible, movementDateSql, movementPeriodSql, platformCanonicalAgentSql } from './dashboard-scope'
 import { query } from './db'
 import { getPlatformFilterSql, type Platform } from './casino-agents'
 
@@ -196,6 +196,6 @@ export async function casinoDashboard(platform: Platform, from: string, to: stri
         'seg_actividad', COALESCE((SELECT json_agg(a) FROM activity_segments a), '[]'::json),
         'seg_monto', COALESCE((SELECT json_agg(v) FROM value_segments v), '[]'::json)
       ) AS dashboard
-    `, [from, to, agent, previous.from, previous.to, agent ? [agent] : dashboardAgents(platform)])
+    `, [from, to, agent, previous.from, previous.to, agent ? [agent].filter(isDashboardAgentVisible) : dashboardAgents(platform)])
   return result[0].dashboard
 }

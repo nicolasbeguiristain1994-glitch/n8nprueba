@@ -56,12 +56,12 @@ export async function GET(req: Request) {
   if (!isValidPlatform(platform) || !validDateRange(from, to) || !Number.isSafeInteger(page) || !Number.isSafeInteger(perPage) || !Number.isSafeInteger(offset)) {
     return NextResponse.json({ error: 'Plataforma, fechas o paginación inválidas' }, { status: 400 })
   }
-  const baseParams: (string | number)[] = [from, to]
+  const baseParams: (string | number | null)[] = [from, to]
   const agent = dashboardAgent(platform, url.searchParams.get('agent') || '')
-  const agentIndex = agent ? baseParams.push(agent) : 0
+  const agentIndex = baseParams.push(agent || null)
   const searchIndex = search ? baseParams.push(`%${search.toLowerCase()}%`) : 0
   const scope = (alias: string) => `${movementPeriodSql(alias)} AND ${getPlatformFilterSql(platform, alias)}
-    ${agentIndex ? `AND ${dashboardAgentSql(platform, agentIndex, alias)}` : ''}
+    AND ${dashboardAgentSql(platform, agentIndex, alias)}
     ${searchIndex ? `AND LOWER(${alias}.${searchBy === 'agente' ? 'agente' : 'username'}) LIKE $${searchIndex}` : ''}`
   const pIdx = baseParams.length
 

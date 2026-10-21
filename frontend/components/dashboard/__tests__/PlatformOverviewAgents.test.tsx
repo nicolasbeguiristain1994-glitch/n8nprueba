@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { SYNC_PLATFORMS, type SyncPlatform } from '@/lib/casino-agents'
 import type { PlatformActivity } from '@/lib/dashboard-overview'
 import { PlatformOverview, UNCONFIGURED_ACCOUNT } from '../PlatformOverview'
-import { OPERATOR_ACCOUNTS } from '@/lib/__tests__/fixtures/operator-accounts'
+import { OPERATOR_ACCOUNTS as ALL_OPERATOR_ACCOUNTS } from '@/lib/__tests__/fixtures/operator-accounts'
+const OPERATOR_ACCOUNTS = Object.fromEntries(Object.entries(ALL_OPERATOR_ACCOUNTS).filter(([agent]) => agent !== 'lasvegas'))
 
 afterEach(cleanup)
 const LABELS: Record<SyncPlatform, string> = { zeus: 'Zeus', bet30: 'Bet30', ganamos: 'Ganamos', argenbet: 'Argenbet' }
@@ -69,9 +70,10 @@ describe('PlatformOverview — every operator on every platform', () => {
     expect(within(rows[0]).getAllByText('$ 10,00')).toHaveLength(2)
   })
 
-  it('shows every configured account when no agent is selected', () => {
+  it('shows every visible configured account when no agent is selected', () => {
     render(<PlatformOverview {...props} agent="" activity={[]} />)
     expect(screen.queryByText(new RegExp(UNCONFIGURED_ACCOUNT))).not.toBeInTheDocument()
+    expect(screen.queryByRole('rowheader', { name: /lasvegas/i })).not.toBeInTheDocument()
     const total = SYNC_PLATFORMS.reduce((n, p) => n + Object.values(OPERATOR_ACCOUNTS).reduce((m, a) => m + a[p].length, 0), 0)
     expect(screen.getByText(`Ver movimientos y última fecha de cada agente (${total})`)).toBeInTheDocument()
   })
