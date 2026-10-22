@@ -19,7 +19,7 @@ describe('useDashboard', () => {
       result.current.setDateRange({ preset: 'custom', from: '2026-09-22', to: '2026-09-23' })
     })
     await waitFor(() => expect(result.current.loading).toBe(false))
-    for (const path of ['/api/dashboard/casino?', '/api/dashboard/casino/overview?']) {
+    for (const path of ['/api/dashboard/casino/agents?', '/api/dashboard/casino?', '/api/dashboard/casino/overview?']) {
       const call = fetcher.mock.calls.filter(([url]) => String(url).startsWith(path)).at(-1)!
       const query = new URL(String(call[0]), 'http://localhost').searchParams
       // Custom end is exclusive (23/09 00:00): the APIs receive the last included day.
@@ -33,7 +33,7 @@ describe('useDashboard', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
     act(() => result.current.setDateRange({ preset: 'custom', from: '2026-08-01', to: '2026-09-01' }))
     await waitFor(() => expect(result.current.loading).toBe(false))
-    for (const path of ['/api/dashboard/casino?', '/api/dashboard/casino/overview?', '/api/dashboard/casino/deposits?']) {
+    for (const path of ['/api/dashboard/casino/agents?', '/api/dashboard/casino?', '/api/dashboard/casino/overview?', '/api/dashboard/casino/deposits?']) {
       const call = fetcher.mock.calls.filter(([url]) => String(url).startsWith(path)).at(-1)!
       const query = new URL(String(call[0]), 'http://localhost').searchParams
       expect([query.get('from'), query.get('to')]).toEqual(['2026-08-01', '2026-08-31'])
@@ -149,13 +149,13 @@ describe('bounded dashboard refresh',()=>{
 it('starts agents on entry without waiting for other blocks or the filter debounce', async () => {
  vi.useFakeTimers()
  try {
-  const fetcher = vi.fn((url: string) => url.startsWith('/api/dashboard/casino?')
-    ? Promise.resolve(response({ agentes: [{ agente: 'royal', total: 7 }] })) : new Promise(() => {}))
+  const fetcher = vi.fn((url: string) => url.startsWith('/api/dashboard/casino/agents?')
+    ? Promise.resolve(response({ agentes: [{ agente: 'royal', nuevos_mes: 7 }] })) : new Promise(() => {}))
   vi.stubGlobal('fetch', fetcher)
   const { result } = renderHook(useDashboard)
   await act(async () => { await vi.advanceTimersByTimeAsync(1) })
-  expect(String(fetcher.mock.calls[0][0])).toContain('/api/dashboard/casino?')
-  expect(result.current.data?.casino?.agentes[0].total).toBe(7)
+  expect(String(fetcher.mock.calls[0][0])).toContain('/api/dashboard/casino/agents?')
+  expect(result.current.data?.agentSummary?.agentes[0].nuevos_mes).toBe(7)
   expect(result.current.activityLoading).toBe(true)
  } finally { vi.useRealTimers() }
 })
@@ -164,31 +164,31 @@ it('requests fresh financial results on manual refresh', async () => {
  const fetcher = vi.fn().mockResolvedValue(response()); vi.stubGlobal('fetch', fetcher)
  const { result } = renderHook(useDashboard); await waitFor(() => expect(result.current.loading).toBe(false))
  act(() => result.current.refresh()); await waitFor(() => expect(result.current.loading).toBe(false))
- for (const path of ['casino?', 'casino/overview?', 'casino/deposits?']) {
+ for (const path of ['casino/agents?', 'casino?', 'casino/overview?', 'casino/deposits?']) {
   expect(fetcher.mock.calls.filter(([url]) => String(url).includes(path)).at(-1)?.[0]).toContain('refresh=1')
  }
 })
 
 it('retains the visible agents during a requested fresh recalculation', async () => {
  const fetcher = vi.fn((url: string) => url.includes('refresh=1') ? new Promise(() => {})
-   : Promise.resolve(response(url.startsWith('/api/dashboard/casino?') ? { agentes: [{ agente: 'royal', total: 7 }] } : {})))
+   : Promise.resolve(response(url.startsWith('/api/dashboard/casino/agents?') ? { agentes: [{ agente: 'royal', nuevos_mes: 7 }] } : {})))
  vi.stubGlobal('fetch', fetcher)
  const { result } = renderHook(useDashboard); await waitFor(() => expect(result.current.loading).toBe(false))
  act(() => result.current.refresh())
- expect(result.current.data?.casino?.agentes[0].total).toBe(7)
+ expect(result.current.data?.agentSummary?.agentes[0].nuevos_mes).toBe(7)
  expect(result.current.softLoading).toBe(true)
 })
 
 it('uses the authorized navigation request once instead of fetching agents again after mounting', async () => {
  const { prefetchDashboard, clearDashboardPrefetch } = await import('@/lib/dashboard-prefetch')
- const fetcher = vi.fn().mockResolvedValue(response({ agentes: [{ agente: 'royal', total: 7 }] }))
+ const fetcher = vi.fn().mockResolvedValue(response({ agentes: [{ agente: 'royal', nuevos_mes: 7 }] }))
  vi.stubGlobal('fetch', fetcher)
  try {
   prefetchDashboard('current-user')
   const { result } = renderHook(() => useDashboard('current-user'))
   await waitFor(() => expect(result.current.loading).toBe(false))
-  expect(result.current.data?.casino?.agentes[0].total).toBe(7)
-  expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/dashboard/casino?'))).toHaveLength(1)
+  expect(result.current.data?.agentSummary?.agentes[0].nuevos_mes).toBe(7)
+  expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/dashboard/casino/agents?'))).toHaveLength(1)
  } finally { clearDashboardPrefetch() }
 })
 
@@ -197,7 +197,7 @@ it('keeps a slow monthly navigation request alive under the dashboard deadline',
  try {
   localStorage.setItem('dashboard:dateRange', JSON.stringify({ preset: 'custom', from: '2026-09-01', to: '2026-10-01' }))
   const fetcher = vi.fn((url: string, options: { signal: AbortSignal }) => {
-   if (!url.startsWith('/api/dashboard/casino?')) return Promise.resolve(response())
+   if (!url.startsWith('/api/dashboard/casino/agents?')) return Promise.resolve(response())
    return new Promise((resolve, reject) => {
     const timer = setTimeout(() => resolve(response({ agentes: [{ agente: 'royal', nuevos_mes: 55 }] })), 12000)
     options.signal.addEventListener('abort', () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')) }, { once: true })
@@ -211,29 +211,29 @@ it('keeps a slow monthly navigation request alive under the dashboard deadline',
   expect(result.current.loading).toBe(true)
   expect(fetcher.mock.calls[0][1].signal.aborted).toBe(false)
   await act(async () => { await vi.advanceTimersByTimeAsync(1001) })
-  expect(result.current.data?.casino?.agentes[0].nuevos_mes).toBe(55)
+  expect(result.current.data?.agentSummary?.agentes[0].nuevos_mes).toBe(55)
   expect(result.current.loading).toBe(false)
-  expect(fetcher.mock.calls.filter(([url]) => url.startsWith('/api/dashboard/casino?'))).toHaveLength(1)
+  expect(fetcher.mock.calls.filter(([url]) => url.startsWith('/api/dashboard/casino/agents?'))).toHaveLength(1)
  } finally { cleanup(); vi.useRealTimers() }
 })
 
 it('retries a failed navigation prefetch once using the current dashboard request', async () => {
- const fetcher = vi.fn().mockResolvedValue(response({ agentes: [{ agente: 'royal', total: 7 }] }))
+ const fetcher = vi.fn().mockResolvedValue(response({ agentes: [{ agente: 'royal', nuevos_mes: 7 }] }))
    .mockRejectedValueOnce(new Error('Navigation request failed'))
  vi.stubGlobal('fetch', fetcher)
  prefetchDashboard('current-user')
  const { result } = renderHook(() => useDashboard('current-user'))
  await waitFor(() => expect(result.current.loading).toBe(false))
- expect(result.current.data?.casino?.agentes[0].total).toBe(7)
+ expect(result.current.data?.agentSummary?.agentes[0].nuevos_mes).toBe(7)
  expect(result.current.error).toBeNull()
- expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/dashboard/casino?'))).toHaveLength(2)
+ expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/dashboard/casino/agents?'))).toHaveLength(2)
 })
 
 it('cancels a consumed prefetch when filters change and ignores its late result', async () => {
  vi.useFakeTimers()
  try {
   let finish!: (value: ReturnType<typeof response>) => void
-  const fetcher = vi.fn().mockResolvedValue(response({ agentes: [{ agente: 'royal', total: 7 }] }))
+  const fetcher = vi.fn().mockResolvedValue(response({ agentes: [{ agente: 'royal', nuevos_mes: 7 }] }))
    .mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
   vi.stubGlobal('fetch', fetcher)
   prefetchDashboard('current-user')
@@ -242,8 +242,8 @@ it('cancels a consumed prefetch when filters change and ignores its late result'
   act(() => result.current.setAgent('royal'))
   expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true)
   await act(async () => { await vi.advanceTimersByTimeAsync(200) })
-  await act(async () => { finish(response({ agentes: [{ agente: 'old', total: 999 }] })) })
-  expect(result.current.data?.casino?.agentes).toEqual([{ agente: 'royal', total: 7 }])
+  await act(async () => { finish(response({ agentes: [{ agente: 'old', nuevos_mes: 999 }] })) })
+  expect(result.current.data?.agentSummary?.agentes).toEqual([{ agente: 'royal', nuevos_mes: 7 }])
  } finally { cleanup(); vi.useRealTimers() }
 })
 
@@ -258,18 +258,18 @@ it('still aborts a consumed navigation request at the dashboard deadline without
   expect(result.current.loading).toBe(false)
   expect(result.current.error).toContain('tardó demasiado')
   expect(fetcher.mock.calls[0][1].signal.aborted).toBe(true)
-  expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/dashboard/casino?'))).toHaveLength(1)
+  expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/dashboard/casino/agents?'))).toHaveLength(1)
  } finally { cleanup(); vi.useRealTimers() }
 })
 
 it('reports a persistent account error after one prefetch recovery attempt', async () => {
  const fetcher = vi.fn(async (url: string) => response())
- fetcher.mockImplementation(async (url: string) => url.startsWith('/api/dashboard/casino?') ? { ok: false, json: async () => ({}) } : response())
+ fetcher.mockImplementation(async (url: string) => url.startsWith('/api/dashboard/casino/agents?') ? { ok: false, json: async () => ({}) } : response())
  vi.stubGlobal('fetch', fetcher)
  prefetchDashboard('current-user')
  const { result } = renderHook(() => useDashboard('current-user'))
  await waitFor(() => expect(result.current.loading).toBe(false))
- expect(result.current.error).toContain('cuentas')
- expect(result.current.data?.casino).toBeNull()
- expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/dashboard/casino?'))).toHaveLength(2)
+ expect(result.current.error).toContain('ventas y usuarios por agente')
+ expect(result.current.data?.agentSummary).toBeNull()
+ expect(fetcher.mock.calls.filter(([url]) => String(url).startsWith('/api/dashboard/casino/agents?'))).toHaveLength(2)
 })

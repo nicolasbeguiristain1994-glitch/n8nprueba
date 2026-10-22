@@ -1,3 +1,4 @@
+import { casinoAgentSummary, type DashboardAgentSummary } from './dashboard-agent-summary'
 import { query } from './db'
 import { dashboardSnapshotQuery } from './dashboard-snapshot-query'
 import type { Platform } from './casino-agents'
@@ -7,7 +8,7 @@ import { depositAnalytics, depositAnalyticsSql, type DepositAggregateRow, type D
 import { DashboardSnapshotStore } from './dashboard-snapshot-store'
 
 export interface DashboardScope { platform: Platform; from: string; to: string; agent: string | null }
-interface Results { casino: CasinoDashboardData; overview: { activity: PlatformActivity[] }; deposits: DepositAnalytics }
+interface Results { agents: DashboardAgentSummary; casinoDetails: CasinoDashboardData; casino: CasinoDashboardData; overview: { activity: PlatformActivity[] }; deposits: DepositAnalytics }
 type Kind = keyof Results
 const key = (kind: Kind, scope: DashboardScope) => JSON.stringify([kind, scope.platform, scope.from, scope.to, scope.agent])
 type Runtime = typeof globalThis & { __dashboardSnapshotV1?: DashboardSnapshotStore }
@@ -17,6 +18,8 @@ export const dashboardSnapshot = runtime.__dashboardSnapshotV1 ??= new Dashboard
 async function load<K extends Kind>(kind: K, scope: DashboardScope): Promise<Results[K]> {
   const { platform, from, to, agent } = scope
   const runQuery = process.env.NODE_ENV === 'production' ? dashboardSnapshotQuery : query
+  if (kind === 'agents') return await casinoAgentSummary(platform, from, to, agent, runQuery) as Results[K]
+  if (kind === 'casinoDetails') return await casinoDashboard(platform, from, to, agent, runQuery, false) as Results[K]
   if (kind === 'casino') return await casinoDashboard(platform, from, to, agent, runQuery) as Results[K]
   if (kind === 'overview') return { activity: await runQuery<PlatformActivity>(overviewSql(platform), [from, to, agent]) } as Results[K]
   const rows = await runQuery<DepositAggregateRow>(depositAnalyticsSql(platform), [from, to, agent])

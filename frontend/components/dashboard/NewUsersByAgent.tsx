@@ -11,7 +11,7 @@ const PLATFORM_LABELS: Record<Platform, string> = {
 }
 
 export function NewUsersByAgent({ agentes, loading, dateRange, platform, agent }: {
-  agentes: CasinoAgente[] | null
+  agentes: Pick<CasinoAgente, 'agente' | 'nuevos_mes'>[] | null
   loading: boolean
   dateRange: DateRange
   platform: Platform

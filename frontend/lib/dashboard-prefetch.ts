@@ -21,7 +21,7 @@ export function prefetchDashboard(userId: string) {
   if (pending?.userId === userId && pending.query === query && pending.expires > Date.now()) return
   clearDashboardPrefetch()
   const controller = new AbortController()
-  const result = fetch(`/api/dashboard/casino?${query}`, { cache: 'no-store', signal: controller.signal })
+  const result = fetch(`/api/dashboard/casino/agents?${query}`, { cache: 'no-store', signal: controller.signal })
     .then(response => response.ok ? response.json() : null).catch(() => null)
   const timer = setTimeout(clearDashboardPrefetch, 5000)
   pending = { userId, query, expires: Date.now() + 5000, result, controller, timer }

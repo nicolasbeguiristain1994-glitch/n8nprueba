@@ -18,7 +18,7 @@ export async function GET(req: Request) {
   }
   const agent = dashboardAgent(platform, params.get('agent') || '') || null
   try {
-    const snapshot = await readDashboardSnapshot('casino', { platform, from, to, agent }, params.get('refresh') === '1')
+    const snapshot = await readDashboardSnapshot(params.get('details') === '1' ? 'casinoDetails' : 'casino', { platform, from, to, agent }, params.get('refresh') === '1')
     return NextResponse.json({ ...snapshot.value, updatedAt: new Date(snapshot.updatedAt).toISOString() }, { headers: { 'Cache-Control': 'no-store' } })
   } catch (e) {
     console.error('[/api/dashboard/casino GET]', e instanceof Error ? e.message : e)

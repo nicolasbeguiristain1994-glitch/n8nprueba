@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Client } from 'pg'
 vi.mock('@/lib/db',()=>({query:vi.fn()}))
+import { casinoAgentSummary } from '../dashboard-agent-summary'
 import { casinoDashboard } from '../dashboard-casino'
 import type { query } from '../db'
 
@@ -58,6 +59,35 @@ describe.skipIf(process.env.RUN_DASHBOARD_PG_TESTS!=='1')('sales month compariso
       const partial=await casinoDashboard('consolidado','2026-09-01','2026-09-15',null,run)
       expect(partial.sales_comparison!.previous).toEqual({from:'2026-08-01',to:'2026-08-15'})
       expect(Number(partial.sales_comparison!.rows.find(r=>r.agente==='royal')!.previous_amount)).toBe(100)
+      // Fast cards must agree with the complete account report, including moved
+      // accounts, first-deposit attribution, aliases, zero sales and hidden agents.
+      await db.query(`INSERT INTO casino_dashboard_players(platform,username_lower,agente,first_deposit_agent,fecha_primera) VALUES
+        ('zeus','a','farabet','royal','2026-09-01'),
+        ('bet30','a','zeusroyal','zeusroyal','2026-09-30'),
+        ('ganamos','other','duendeverde','duendeverde','2026-09-10'),
+        ('zeus','old','bigwin','bigwin','2026-08-01'),
+        ('zeus','hidden','lasvegas','lasvegas','2026-09-01');
+        INSERT INTO casino_transactions(id,platform,agente,username,tipo,monto,fecha) VALUES
+          (20,'zeus','unknown-gap','gap','carga',99,'2026-08-20'),
+          (21,'zeus','lasvegas','hidden','carga',999,'2026-09-01');`)
+      for (const [platform,agent,from,to] of [
+        ['consolidado',null,'2026-09-01','2026-09-30'],
+        ['consolidado','royal','2026-09-01','2026-09-30'],
+        ['bet30','zeusroyal','2026-09-01','2026-09-30'],
+        ['consolidado',null,'2026-09-01','2026-09-15'],
+        ['consolidado',null,'2026-11-01','2026-11-30'],
+      ] as const) {
+        const full=await casinoDashboard(platform,from,to,agent,run)
+        const fast=await casinoAgentSummary(platform,from,to,agent,run)
+        const normalize=(rows:typeof fast.sales_comparison.rows)=>rows.map(r=>({...r,amount:Number(r.amount),previous_amount:Number(r.previous_amount),difference:Number(r.difference)}))
+        expect(normalize(fast.sales_comparison.rows)).toEqual(normalize(full.sales_comparison!.rows))
+        expect(fast.sales_comparison.previous).toEqual(full.sales_comparison!.previous)
+        const users=(rows:{agente:string,nuevos_mes:number}[])=>rows.map(({agente,nuevos_mes})=>({agente,nuevos_mes})).sort((a,b)=>a.agente.localeCompare(b.agente))
+        expect(users(fast.agentes)).toEqual(users(full.agentes))
+        const details=await casinoDashboard(platform,from,to,agent,run,false)
+        const {sales_comparison,...remaining}=full
+        expect(details).toEqual(remaining)
+      }
     }finally{await db.query('ROLLBACK');await db.end()}
   })
 })

@@ -64,7 +64,7 @@ export interface AgentSalesComparison {
 }
 export interface CasinoDashboardData { sales_comparison?: AgentSalesComparison; summary: CasinoSummary; agentes: CasinoAgente[]; vips: CasinoVip[]; seg_actividad: SegCount[]; seg_monto: SegCount[]; cash_ranking: CasinoCashRankingRow[] }
 
-export async function casinoDashboard(platform: Platform, from: string, to: string, agent: string | null, runQuery: typeof query = query): Promise<CasinoDashboardData> {
+export async function casinoDashboard(platform: Platform, from: string, to: string, agent: string | null, runQuery: typeof query = query, includeAgentSales = true): Promise<CasinoDashboardData> {
   const previous = previousMonthRange(from, to)
   const filter = getPlatformFilterSql(platform)
   const cpFilter = getPlatformFilterSql(platform, 'cp')
@@ -188,7 +188,7 @@ export async function casinoDashboard(platform: Platform, from: string, to: stri
       value_segments AS (SELECT seg_monto AS seg, COUNT(*)::int AS cnt FROM players
         WHERE ${filter} AND ${dashboardAgentSql(platform, 3)} GROUP BY seg_monto)
       SELECT json_build_object(
-        'sales_comparison', json_build_object('previous',json_build_object('from',$4::text,'to',$5::text),'rows',COALESCE((SELECT json_agg(s) FROM sales s),'[]'::json)),
+        ${includeAgentSales ? "'sales_comparison', json_build_object('previous',json_build_object('from',$4::text,'to',$5::text),'rows',COALESCE((SELECT json_agg(s) FROM sales s),'[]'::json))," : ''}
         'summary', (SELECT row_to_json(s) FROM summary s),
         'agentes', COALESCE((SELECT json_agg(a) FROM agents a), '[]'::json),
         'cash_ranking', COALESCE((SELECT json_agg(r) FROM cash_ranking r), '[]'::json),

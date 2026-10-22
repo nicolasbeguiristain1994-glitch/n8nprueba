@@ -6,6 +6,7 @@ import { useLocalStorage } from '@/hooks/useLocalStorage'
 import { takeDashboardPrefetch } from '@/lib/dashboard-prefetch'
 import { argentinaToday } from '@/lib/dashboard-format'
 import { queryDateRange } from '@/lib/dashboard-date-range'
+import type { DashboardAgentSummary } from '@/lib/dashboard-agent-summary'
 import type { AgentSalesComparison } from '@/lib/dashboard-casino'
 import type { DepositAnalytics } from '@/lib/dashboard-deposits'
 import type { PlatformActivity } from '@/lib/dashboard-overview'
@@ -36,6 +37,7 @@ export interface MsgsStats {
 }
 
 export interface DashboardData {
+  agentSummary?: DashboardAgentSummary | null
   deposits: DepositAnalytics | null
   activity: PlatformActivity[] | null
   crmAvailable: boolean
@@ -61,6 +63,7 @@ interface UseDashboardReturn extends DashboardFilters {
   layout:             DashboardLayout
   data:               DashboardData | null
   financeLoading: boolean
+  agentsLoading: boolean
   activityLoading: boolean
   depositsLoading: boolean
   loading:            boolean
@@ -96,6 +99,7 @@ export function useDashboard(userId?: string): UseDashboardReturn {
 
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [agentsLoading, setAgentsLoading] = useState(true)
   const [activityLoading, setActivityLoading] = useState(true)
   const [depositsLoading, setDepositsLoading] = useState(true)
   const [softLoading, setSoftLoading] = useState(false)
@@ -136,7 +140,7 @@ export function useDashboard(userId?: string): UseDashboardReturn {
     if (force) qs.set('refresh', '1')
     if (force || soft) setRevision(value => value + 1)
     setLoading(true)
-    setActivityLoading(true)
+    setAgentsLoading(true); setActivityLoading(true)
     setDepositsLoading(true)
     setSoftLoading(soft)
     if (!soft) { setData(null); setLastUpdated(null) }
@@ -153,10 +157,16 @@ export function useDashboard(userId?: string): UseDashboardReturn {
     try {
       const cached = auxRef.current
       const reuseAux = !force && cached && Date.now() - cached.at < AUTO_REFRESH_INTERVAL
-      const partial: DashboardData = { activity: null, deposits: null, casino: null,
+      const partial: DashboardData = { agentSummary: null, activity: null, deposits: null, casino: null,
         crmAvailable: !!reuseAux, kpis: reuseAux ? cached.crm.kpis : FALLBACK_KPIS,
         tasks: reuseAux ? cached.crm.tasks : [], msgs: reuseAux ? cached.msgs.stats ?? null : null }
-      const publish = () => { if (!controller.signal.aborted) setData({ ...partial }) }
+      const publish = () => {
+        if (!controller.signal.aborted) setData(previous => ({ ...partial,
+          // Keep these cards visible while refreshing the same filters. A filter
+          // change uses soft=false and clears them before its request starts.
+          agentSummary: partial.agentSummary ?? (soft ? previous?.agentSummary ?? null : null),
+        }))
+      }
       const failed: string[] = []
       const financialTimes: number[] = []
       const recordTime = (value: unknown) => {
@@ -170,15 +180,13 @@ export function useDashboard(userId?: string): UseDashboardReturn {
           const prepared = takeDashboardPrefetch(userIdRef.current, qs, controller.signal)
           let result = prepared ? await Promise.race([prepared, aborted]) as Awaited<ReturnType<typeof json>> : null
           // Navigation prefetch is an optimization, not the only chance to load
-          // accounts. Recover once if it failed, within this request's deadline.
-          if (!result && !controller.signal.aborted) result = await fetchJson(`/api/dashboard/casino?${qs}`)
+          // agent cards. Recover once if it failed, within this request's deadline.
+          if (!result && !controller.signal.aborted) result = await fetchJson(`/api/dashboard/casino/agents?${qs}`)
           if (controller.signal.aborted) return
           recordTime(result?.updatedAt)
-          partial.casino = result ? { sales_comparison: result.sales_comparison, summary: result.summary ?? null, agentes: result.agentes ?? [],
-            vips: result.vips ?? [], seg_actividad: result.seg_actividad ?? [], seg_monto: result.seg_monto ?? [],
-            cash_ranking: result.cash_ranking ?? null } : null
-          if (!result) failed.push('cuentas')
-          publish()
+          partial.agentSummary = result
+          if (!result) failed.push('ventas y usuarios por agente')
+          publish(); setAgentsLoading(false)
         },
         async () => {
           const result = await fetchJson(`/api/dashboard/casino/overview?${qs}`)
@@ -187,6 +195,16 @@ export function useDashboard(userId?: string): UseDashboardReturn {
           partial.activity = result?.activity ?? null
           if (!result) failed.push('movimientos')
           publish(); setActivityLoading(false)
+        },
+        async () => {
+          const result = await fetchJson(`/api/dashboard/casino?${qs}&details=1`)
+          if (controller.signal.aborted) return
+          recordTime(result?.updatedAt)
+          partial.casino = result ? { sales_comparison: result.sales_comparison, summary: result.summary ?? null, agentes: result.agentes ?? [],
+            vips: result.vips ?? [], seg_actividad: result.seg_actividad ?? [], seg_monto: result.seg_monto ?? [],
+            cash_ranking: result.cash_ranking ?? null } : null
+          if (!result) failed.push('cuentas')
+          publish()
         },
         async () => {
           const result = await fetchJson(`/api/dashboard/casino/deposits?${qs}`)
@@ -233,7 +251,7 @@ export function useDashboard(userId?: string): UseDashboardReturn {
       if (requestRef.current === controller) {
         requestRef.current = null
         if (timedOut) setError('La consulta tardó demasiado. Podés cambiar las fechas o reintentar; los bloques disponibles se conservan.')
-        setSoftLoading(false); setLoading(false); setActivityLoading(false); setDepositsLoading(false)
+        setSoftLoading(false); setLoading(false); setAgentsLoading(false); setActivityLoading(false); setDepositsLoading(false)
       }
     }
   }, [])
@@ -242,7 +260,7 @@ export function useDashboard(userId?: string): UseDashboardReturn {
     // Coalesce rapid selection changes before they reach the server. Aborting a
     // browser request alone does not cancel already-running SQL.
     const running = requestRef.current; requestRef.current = null; running?.abort()
-    setLoading(true); setActivityLoading(true); setDepositsLoading(true); setData(null)
+    setLoading(true); setAgentsLoading(true); setActivityLoading(true); setDepositsLoading(true); setData(null)
     // Start immediately on entry; debounce only subsequent filter edits.
     const timer = setTimeout(() => { void fetchData(dateRange) }, initialFetchRef.current ? 0 : 180)
     initialFetchRef.current = false
@@ -311,6 +329,7 @@ export function useDashboard(userId?: string): UseDashboardReturn {
     data,
     loading,
     financeLoading: activityLoading || depositsLoading,
+    agentsLoading,
     activityLoading,
     depositsLoading,
     softLoading,

@@ -23,7 +23,7 @@ export function Dashboard() {
     layout,
     data,
     loading,
-    activityLoading,
+    agentsLoading, activityLoading,
     depositsLoading,
     softLoading,
     error,
@@ -121,10 +121,10 @@ export function Dashboard() {
         <span className="ml-auto flex items-center gap-2 font-medium text-primary">Abrir tareas <ArrowRight size={16} aria-hidden="true" /></span>
       </Link>}
 
-      <SalesByAgent comparison={data?.casino?.sales_comparison ?? null} loading={loading && !data?.casino}
+      <SalesByAgent comparison={data?.agentSummary?.sales_comparison ?? null} loading={agentsLoading && !data?.agentSummary}
         dateRange={dateRange} platform={platform} agent={agent} />
 
-      <NewUsersByAgent agentes={data?.casino?.agentes ?? null} loading={loading && !data?.casino}
+      <NewUsersByAgent agentes={data?.agentSummary?.agentes ?? null} loading={agentsLoading && !data?.agentSummary}
         dateRange={dateRange} platform={platform} agent={agent} />
 
       {/* PlatformOverview labels "from al to" inclusively: give it the days actually queried. */}
