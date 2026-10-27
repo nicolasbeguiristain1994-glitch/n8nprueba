@@ -1,5 +1,5 @@
 import { contactScope, type ContactAccessUser } from '@/lib/contact-visibility'
-import { query } from '@/lib/db'
+import { getLongRunningClient, query } from '@/lib/db'
 import type { ValueTier } from '@/lib/user-prioritization/config'
 
 // ── Tipos públicos ────────────────────────────────────────────────────────────
@@ -68,26 +68,33 @@ export class LtvRepository {
    * Retorna las métricas del run.
    */
   async refreshAll(): Promise<LtvRecomputeResult> {
-    const [row] = await query<{ result: RefreshResultDbRow }>(
-      `SELECT refresh_player_ltv() AS result`,
-      [],
-    )
+    // A full ranking is a background job, not a ten-second interactive query.
+    const client = await getLongRunningClient()
+    try {
+      await client.query("SET statement_timeout = '20min'")
+      const { rows: [row] } = await client.query<{ result: RefreshResultDbRow }>(
+        `SELECT refresh_player_ltv() AS result`,
+        [],
+      )
 
-    const result = row?.result
-    if (!result || !Number.isFinite(Number(result.rows_processed))
-      || !Number.isFinite(Number(result.duration_ms)) || !Number.isFinite(Date.parse(result.calculated_at))) {
-      throw new Error('Respuesta de recálculo LTV inválida')
-    }
+      const result = row?.result
+      if (!result || !Number.isFinite(Number(result.rows_processed))
+        || !Number.isFinite(Number(result.duration_ms)) || !Number.isFinite(Date.parse(result.calculated_at))) {
+        throw new Error('Respuesta de recálculo LTV inválida')
+      }
 
-    await query(
-      `REFRESH MATERIALIZED VIEW CONCURRENTLY mv_player_ltv`,
-      [],
-    )
+      await client.query(
+        `REFRESH MATERIALIZED VIEW CONCURRENTLY mv_player_ltv`,
+        [],
+      )
 
-    return {
-      rowsProcessed: result.rows_processed,
-      durationMs:    Math.round(Number(result.duration_ms)),
-      calculatedAt:  new Date(result.calculated_at),
+      return {
+        rowsProcessed: result.rows_processed,
+        durationMs:    Math.round(Number(result.duration_ms)),
+        calculatedAt:  new Date(result.calculated_at),
+      }
+    } finally {
+      await client.end()
     }
   }
 

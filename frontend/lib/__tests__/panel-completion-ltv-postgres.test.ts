@@ -2,8 +2,8 @@
 import { beforeAll,afterAll,it,expect,describe,vi } from 'vitest'
 import { Client } from 'pg'
 import { readFileSync } from 'node:fs'
-const mocks=vi.hoisted(()=>({query:vi.fn()}))
-vi.mock('@/lib/db',()=>({query:mocks.query}))
+const mocks=vi.hoisted(()=>({query:vi.fn(),connect:vi.fn()}))
+vi.mock('@/lib/db',()=>({query:mocks.query,getLongRunningClient:mocks.connect}))
 import { LtvRepository } from '@/lib/ltv/LtvRepository'
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`
 describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('LTV installed schema and real SQL',()=>{
@@ -24,6 +24,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('LTV installed schema a
   const sql=readFileSync('../db/migrations/133_restore_ltv_storage.sql','utf8').replace('SET search_path = public, pg_catalog',`SET search_path = ${schema}, pg_catalog`)
   await db.query(sql);await db.query(sql)
   mocks.query.mockImplementation(async(sql,params)=>(await db.query(sql,params)).rows)
+  mocks.connect.mockResolvedValue({query:(sql:string,params:unknown[])=>db.query(sql,params),end:async()=>undefined})
  })
  afterAll(async()=>{if(db){await db.query(`DROP SCHEMA ${schema} CASCADE`);await db.end()}})
  it('installs idempotently and returns valid JSONB metrics through repository',async()=>{

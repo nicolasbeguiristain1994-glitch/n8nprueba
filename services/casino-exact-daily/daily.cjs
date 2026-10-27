@@ -83,16 +83,18 @@ async function main(){
    log({event:'platform_finished',platform,runId,...counters});
   }
   assertConnection();
+  let priorities={skipped:true,reason:'incomplete_sync'};
   try {
    if(apply)for(const runId of runIds)await store.setSegmentationStatus(runId,'running');
    const segmentation=await segmentContacts(c,{apply,failedAgents:failures});
+   priorities=await recomputePriorities({apply,failedAgents:failures,db:c});
+   if(priorities.reason==='already_running')throw Error('PRIORITIES_BUSY');
    if(apply)for(const runId of runIds)await store.setSegmentationStatus(runId,failures?'skipped':'success');
    log({event:'segmentation_finished',...segmentation});
   } catch(e) {
    for(const runId of runIds)await store.setSegmentationStatus(runId,'failed').catch(()=>{});
    throw e;
   }
-  const priorities=await recomputePriorities({apply,failedAgents:failures});
   log({event:'priorities_finished',...priorities});
   log({event:'daily_finished',mode,failedAgents:failures,through:until});
  }finally{await c.end();clearTimeout(deadline);}
