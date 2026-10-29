@@ -1,5 +1,7 @@
 'use client'
 
+import { displayAgentName } from '@/lib/casino-agents'
+
 import { UserPlus } from 'lucide-react'
 import type { CasinoAgente } from '@/app/api/dashboard/casino/route'
 import { describeDateRange } from '@/lib/dashboard-date-range'
@@ -42,7 +44,7 @@ export function NewUsersByAgent({ agentes, loading, dateRange, platform, agent }
             {rows.map(row => {
               const share = total > 0 ? row.nuevos_mes / total * 100 : 0
               return <div key={row.agente ?? 'sin-agente'} className="min-w-0 rounded-lg border bg-muted/15 p-3">
-                <dt className="truncate text-sm font-medium capitalize" title={row.agente || 'Sin agente'}>{row.agente || 'Sin agente'}</dt>
+                <dt className="truncate text-sm font-medium capitalize" title={displayAgentName(row.agente || 'Sin agente')}>{displayAgentName(row.agente || 'Sin agente')}</dt>
                 <dd className="mt-2 flex items-baseline justify-between gap-2">
                   <span className="text-2xl font-semibold tabular-nums">{row.nuevos_mes.toLocaleString('es-AR')}</span>
                   <span className="text-xs text-muted-foreground tabular-nums">{share.toLocaleString('es-AR', { maximumFractionDigits: 1 })}% del total</span>

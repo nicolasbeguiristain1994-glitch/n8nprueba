@@ -1,5 +1,7 @@
 'use client'
 
+import { displayAgentName } from '@/lib/casino-agents'
+
 import { TrendingUp, TrendingDown, Minus, ChartNoAxesCombined } from 'lucide-react'
 import type { AgentSalesComparison, AgentSalesRow } from '@/lib/dashboard-casino'
 import { formatDay, queryDateRange } from '@/lib/dashboard-date-range'
@@ -63,7 +65,7 @@ export function SalesByAgent({ comparison, loading, dateRange, platform, agent }
         {rows.map(row => {
           const share = total > 0 ? Number(row.amount)/total*100 : 0
           return <div key={row.agente} className="min-w-0 rounded-lg border bg-muted/15 p-3">
-            <dt className="truncate text-sm font-medium capitalize" title={row.agente}>{row.agente}</dt>
+            <dt className="truncate text-sm font-medium capitalize" title={displayAgentName(row.agente)}>{displayAgentName(row.agente)}</dt>
             <dd className="mt-2">
               <p className="break-words text-xl font-semibold tabular-nums">{formatPesos(row.amount)}</p>
               <SalesChange row={row} />

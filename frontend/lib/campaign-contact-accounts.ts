@@ -10,7 +10,7 @@ export const canonicalAccountAgentSql = (value: string) => `CASE lower(trim(${va
   WHEN 'adminbtc' THEN 'betcoin' WHEN 'adminzeus' THEN 'ofizeus' WHEN 'admbigwin' THEN 'bigwin'
   WHEN 'adminbigwin' THEN 'bigwin' WHEN 'adminimperio' THEN 'imperio'
   WHEN 'btcuno' THEN 'betcoin' WHEN 'btcdos' THEN 'farabet' WHEN 'zeus' THEN 'ofizeus'
-  WHEN 'facuadmin1' THEN 'elduende' WHEN 'duendeverde' THEN 'elduende'
+  WHEN 'admin99' THEN '247' WHEN 'facuadmin1' THEN 'elduende' WHEN 'duendeverde' THEN 'elduende'
   WHEN 'zeusroyal' THEN 'royal' ELSE NULLIF(lower(trim(${value})),'') END`
 
 export function contactAccountLinksSql(useMovementHistory = false, financials = false, compoundAccounts = false) {

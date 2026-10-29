@@ -1,5 +1,7 @@
 'use client'
 
+import { displayAgentName } from '@/lib/casino-agents'
+
 import { memo, useEffect, useState } from 'react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
@@ -126,7 +128,7 @@ function AgentSelector({ value, platform, onChange }: AgentSelectorProps) {
         <SelectContent align="end">
           <SelectItem value="_all" className="text-xs">Todos</SelectItem>
           {agents.map(a => (
-            <SelectItem key={a} value={a} className="text-xs capitalize">{a}</SelectItem>
+            <SelectItem key={a} value={a} className="text-xs capitalize">{displayAgentName(a)}</SelectItem>
           ))}
         </SelectContent>
       </Select>

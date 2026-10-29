@@ -11,9 +11,9 @@ export function isDashboardAgentVisible(agent: string): boolean {
 // Equivalences are scoped by the movement's explicit platform, never inferred
 // from an agent name shared by two platforms.
 const ALIASES: Record<SyncPlatform, Record<string, string>> = {
-  zeus: { facuadmin1: 'elduende' },
-  bet30: { btcuno: 'betcoin', btcdos: 'farabet', zeus: 'ofizeus', zeusroyal: 'royal', duendeverde: 'elduende' },
-  ganamos: { adminbtc: 'betcoin', adminzeus: 'ofizeus', adminroyal: 'royal', admbigwin: 'bigwin', adminfara: 'farabet', amdfarabet: 'farabet', admfarabet: 'farabet', adminimperio: 'imperio', duendeverde: 'elduende' },
+  zeus: { admin99: '247', facuadmin1: 'elduende' },
+  bet30: { admin99: '247', btcuno: 'betcoin', btcdos: 'farabet', zeus: 'ofizeus', zeusroyal: 'royal', duendeverde: 'elduende' },
+  ganamos: { admin99: '247', adminbtc: 'betcoin', adminzeus: 'ofizeus', adminroyal: 'royal', admbigwin: 'bigwin', adminfara: 'farabet', amdfarabet: 'farabet', admfarabet: 'farabet', adminimperio: 'imperio', duendeverde: 'elduende' },
   argenbet: { adminbtc: 'betcoin', adminzeus: 'ofizeus', adminroyal: 'royal', duendeverde: 'elduende' },
 }
 
