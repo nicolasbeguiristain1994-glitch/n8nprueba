@@ -1,4 +1,5 @@
 'use client'
+import { ModuleGate } from './ModuleGate'
 
 // Shared workspace frame. Preferences remain in localStorage; the hydration
 // snapshot keeps server and client markup consistent before applying them.
@@ -65,7 +66,7 @@ export function AppShell({ children }: AppShellProps) {
 
           {/* pb-16 md:pb-0 → reserva espacio para MobileNav en mobile */}
           <main id="main-content" tabIndex={-1} className="flex-1 min-h-0 min-w-0 overflow-y-auto pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0 flex flex-col outline-none">
-            <div className={`flex-1 min-w-0 ${isConversations ? styles.content : ''}`}>{children}</div>
+            <div className={`flex-1 min-w-0 ${isConversations ? styles.content : ''}`}><ModuleGate>{children}</ModuleGate></div>
             {!isConversations && <Footer />}
           </main>
         </div>

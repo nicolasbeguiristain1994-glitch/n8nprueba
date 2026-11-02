@@ -20,12 +20,12 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('Campaign creation with
    media_url text,media_type text,list_id uuid,prospect_list_id uuid,type text NOT NULL,status text,scheduled_at timestamptz,
    total_targets integer NOT NULL,antiblock_delay_min integer NOT NULL,antiblock_delay_max integer NOT NULL,
    personalize_name boolean NOT NULL,use_multi_line boolean NOT NULL,owned_by uuid,updated_by uuid,
-   message_type text NOT NULL,template_id uuid,template_params jsonb)`)
+   message_type text NOT NULL,template_id uuid,template_params jsonb,agent_key text)`)
   mocks.query.mockImplementation(async(sql:string,args:unknown[])=>{
    if(sql.includes('INSERT INTO campaigns'))return (await db.query(sql,args)).rows
    if(sql.includes('FROM whatsapp_templates'))return [{name:'campa_prueba',status:'APROBADA',waba_id:'123',components:[{type:'BODY',text:'Hola {{1}}'},{type:'BUTTONS',buttons:[{type:'QUICK_REPLY',text:'Mas información'}]}]}]
    if(sql.includes('FROM cloud_numbers'))return [{id:template}]
-   if(sql.includes('COUNT(*)'))return [{count:1}]
+   if(sql.includes('COUNT('))return [{count:1}]
    return [{id:list,owned_by:null}]
   })
  })

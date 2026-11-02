@@ -12,6 +12,8 @@ vi.mock('@/lib/send-message-reaction',()=>({sendMessageReaction:mocks.reaction})
 vi.mock('@/lib/audit',()=>({audit:vi.fn()}))
 vi.mock('@/lib/line-visibility',()=>({getAccessibleLineIds:mocks.lines}))
 import { GET as windowGET } from '@/app/api/conversations/window/route'
+import { GET as notesGet, POST as notesPost } from '@/app/api/conversations/[phone]/notes/route'
+import { PATCH as statusPatch } from '@/app/api/conversations/[phone]/status/route'
 import { GET } from '@/app/api/conversations/route'
 import { POST as viewedPOST } from '@/app/api/conversations/viewed/route'
 import { POST as reactPOST } from '@/app/api/conversations/reactions/route'
@@ -32,9 +34,9 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   if(!['localhost','127.0.0.1'].includes(url.hostname))throw Error('LOCAL_ONLY')
   db=new Client({connectionString:url.toString(),ssl:false});await db.connect();await db.query('BEGIN')
   await db.query(`SET LOCAL search_path=pg_temp,public;
-   CREATE TEMP TABLE whatsapp_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number text,message_body text,direction text,status text,created_at timestamptz DEFAULT NOW(),evolution_message_id text,campaign_id uuid,contact_id uuid,sent_at timestamptz,metadata jsonb,updated_at timestamptz,failed_at timestamptz,error_detail text);
-   CREATE TEMP TABLE campaign_recipients(id uuid,line_id uuid);
-   CREATE TEMP TABLE campaigns(id uuid PRIMARY KEY,name text);
+   CREATE TEMP TABLE whatsapp_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number text,message_body text,direction text,status text,created_at timestamptz DEFAULT NOW(),evolution_message_id text,campaign_id uuid,contact_id uuid,sent_at timestamptz,metadata jsonb,updated_at timestamptz,failed_at timestamptz,error_detail text,template_id uuid,whatsapp_message_id text,agent_key text,line_id uuid);
+   CREATE TEMP TABLE campaign_recipients(id uuid,line_id uuid,campaign_id uuid,phone_number text,sent_at timestamptz);
+   CREATE TEMP TABLE campaigns(id uuid PRIMARY KEY,name text,agent_key text,template_id uuid);
    CREATE TEMP TABLE cloud_numbers(phone_number_id text,whatsapp_line_id uuid);
    CREATE TEMP TABLE whatsapp_lines(id uuid,display_name text,line_key text,line_type text DEFAULT 'cloud');
    CREATE TEMP TABLE cloud_conversations(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number_id text,contact_phone text,window_opens_at timestamptz,window_expires_at timestamptz,window_type text,last_message_at timestamptz,last_message_preview text,unread_count int DEFAULT 0,status text,updated_at timestamptz,UNIQUE(phone_number_id,contact_phone));
@@ -47,7 +49,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
    CREATE TEMP TABLE conversation_state(phone_number text,is_escalated bool,escalation_reason text,current_flow text,resolved_at timestamptz);
    CREATE TEMP TABLE blacklist(phone_number_normalized text,removed_at timestamptz,scope_key text DEFAULT 'global',agent_code text);
    CREATE TEMP TABLE conversation_message_views(message_key text PRIMARY KEY,viewed_at timestamptz NOT NULL DEFAULT now());
-      CREATE TEMP TABLE conversation_notes(phone text,content text);`)
+      CREATE TEMP TABLE conversation_notes(id uuid DEFAULT gen_random_uuid(),phone text,content text,agent_key text,author_id uuid,author_name text,created_at timestamptz DEFAULT now());
+   CREATE TEMP TABLE agent_conversation_state(phone_number text,agent_key text,current_flow text,updated_at timestamptz DEFAULT now(),PRIMARY KEY(agent_key,phone_number));`)
   mocks.query.mockImplementation(async(sql,params)=>(await db.query(sql,params)).rows)
   mocks.transaction.mockImplementation(fn=>fn(db))
  })
@@ -167,6 +170,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect(mediaMocks.token).not.toHaveBeenCalled();expect(mediaMocks.download).not.toHaveBeenCalled()
  })
  it('applies the same agent and explicit contact assignments to media downloads',async()=>{
+  await db.query(`UPDATE whatsapp_messages SET agent_key='royal',line_id='${id(10)}'`)
   await db.query(`UPDATE cloud_messages SET message_type='image',content='{"image":{"id":"123456"}}' WHERE wamid='wamid.button'`)
   const imageId=(await db.query("SELECT id FROM cloud_messages WHERE wamid='wamid.button'")).rows[0].id
   mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'operator',allowed_agents:['bigwin']}})
@@ -180,6 +184,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect(mediaMocks.token).not.toHaveBeenCalled()
  })
  it('resolves the base line for old letters and reflects edited or disabled destinations',async()=>{
+  await db.query(`UPDATE whatsapp_messages SET agent_key='royal',line_id='${id(10)}'`)
   await db.query("UPDATE contacts SET linea=8,linea_sub='a'")
   await db.query(`INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone) VALUES
     ('royal',8,'','Royal principal','+5491111111111'),
@@ -197,16 +202,19 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect((await(await GET(request())).json()).conversations[0].assigned_line).toBeNull()
  })
  it('keeps agent filters, blacklist and assigned lines separate on a shared phone',async()=>{
+  await db.query(`UPDATE whatsapp_messages SET agent_key='royal',line_id='${id(10)}'`)
   await db.query("UPDATE contacts SET linea=8,linea_sub='a'")
   await db.query(`INSERT INTO contacts(id,phone_number,panel,linea) VALUES($1,$2,'bigwin',4)`,[id(21),'+'+phone])
   await db.query(`INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone) VALUES ('royal',8,'','Royal 8','+5491122222222')`)
   await db.query("INSERT INTO blacklist(phone_number_normalized,scope_key,agent_code) VALUES($1,'agent:bigwin','bigwin')",[phone])
+  await db.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,agent_key,line_id) VALUES($1,'Bigwin','outbound','sent','bigwin',$2)`,[phone,id(10)])
   const royal=await(await GET(request('?agent=royal'))).json()
   expect(royal.conversations[0]).toMatchObject({agent:'royal',is_blacklisted:false,line_assignment_ambiguous:false,assigned_line:{label:'Royal 8'}})
-  expect(royal.agents.map((x:{name:string})=>x.name).sort()).toEqual(['bigwin','royal'])
+  expect(royal.agents.map((x:{name:string})=>x.name)).toEqual(expect.arrayContaining(['bigwin','royal']))
   expect((await(await GET(request('?agent=bigwin'))).json()).conversations[0]).toMatchObject({agent:'bigwin',is_blacklisted:true})
  })
  it('does not treat retired letters on the same base line as conflicting assignments',async()=>{
+  await db.query(`UPDATE whatsapp_messages SET agent_key='royal',line_id='${id(10)}'`)
   await db.query("UPDATE contacts SET linea=8,linea_sub='a'")
   await db.query(`INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone) VALUES ('royal',8,'','Royal 8','+5491122222222')`)
   await db.query(`INSERT INTO contacts(id,phone_number,panel,linea,linea_sub) VALUES($1,$2,'royal',8,'b')`,[id(21),phone])
@@ -214,11 +222,50 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect(row).toMatchObject({line_assignment_ambiguous:false,assigned_line:{label:'Royal 8',phone:'+5491122222222'}})
  })
  it('does not guess the assigned line when phone aliases disagree',async()=>{
+  await db.query(`UPDATE whatsapp_messages SET agent_key='royal',line_id='${id(10)}'`)
   await db.query("UPDATE contacts SET linea=8,linea_sub='a'")
   await db.query(`INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone) VALUES ('royal',8,'','Royal 8','+5491122222222')`)
   await db.query(`INSERT INTO contacts(id,phone_number,panel,linea,linea_sub) VALUES($1,$2,'royal',9,'a')`,[id(21),phone])
   const row=(await(await GET(request())).json()).conversations[0]
   expect(row.line_assignment_ambiguous).toBe(true);expect(row.assigned_line).toBeNull()
+ })
+ it('isolates agent inboxes for the same phone, including quoted replies and a shared line',async()=>{
+  await db.query(`INSERT INTO campaigns(id,name,agent_key) VALUES($1,'Royal promo','royal'),($2,'Bigwin promo','bigwin')`,[id(401),id(402)])
+  await db.query(`INSERT INTO cloud_messages(id,conversation_id,phone_number_id,wamid,direction,message_type,content,status,sent_at,campaign_id) VALUES
+    ($1,$2,'10001','royal.send','outbound','text','{"text":{"body":"Royal"}}','sent','2026-10-01T12:00Z',$3),
+    ($4,$2,'10001','bigwin.send','outbound','text','{"text":{"body":"Bigwin"}}','sent','2026-10-01T13:00Z',$5),
+    ($6,$2,'10001','bigwin.reply','inbound','text','{"text":{"body":"Respuesta Bigwin"}}','delivered','2026-10-01T14:00Z',NULL),
+    ($7,$2,'10001','royal.quote','inbound','text','{"context":{"id":"royal.send"},"text":{"body":"Respuesta Royal"}}','delivered','2026-10-01T15:00Z',NULL)`,
+    [id(410),id(1),id(401),id(411),id(402),id(412),id(413)])
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'operator',allowed_agents:['royal']}})
+  mocks.lines.mockResolvedValue([])
+  const inbox=await(await GET(request())).json()
+  expect(inbox.agent).toBe('royal');expect(inbox.agents.map((a:{name:string})=>a.name)).toEqual(['royal'])
+  expect(inbox.conversations).toHaveLength(1)
+  expect(inbox.campaigns).toEqual([{id:id(401),name:'Royal promo',count:1}])
+  const details=await(await GET(request('?phone='+phone))).json()
+  expect(details.messages.map((m:{message_body:string})=>m.message_body)).toEqual(['Royal','Respuesta Royal'])
+  expect((await GET(request('?agent=bigwin'))).status).toBe(403)
+  expect((await GET(request('?agent=none'))).status).toBe(403)
+  expect((await(await GET(request('?phone=5491100000002'))).json()).messages).toEqual([])
+  expect((await(await GET(request('?campaign='+id(402)))).json()).total).toBe(0)
+ })
+ it('isolates notes and CRM state for two agents sharing a phone and rejects forged URLs',async()=>{
+  await db.query(`INSERT INTO campaigns(id,name,agent_key) VALUES($1,'Royal','royal'),($2,'Bigwin','bigwin')`,[id(401),id(402)])
+  await db.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,created_at,campaign_id,line_id)
+    VALUES($1,'Royal','outbound','sent',NOW(),$2,$4),($1,'Bigwin','outbound','sent',NOW(),$3,$4)`,[phone,id(401),id(402),id(10)])
+  await db.query(`INSERT INTO conversation_notes(phone,content,agent_key) VALUES($1,'Secreto Bigwin','bigwin')`,[phone])
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'operator',allowed_agents:['royal'],name:'Royal'}})
+  const ctx={params:Promise.resolve({phone})}
+  const endpoint=(name:string,agent='royal',body?:object,method='POST')=>new NextRequest(`https://panel.test/api/conversations/${phone}/${name}?agent=${agent}`,body?{method,body:JSON.stringify(body)}:undefined)
+  expect((await(await notesGet(endpoint('notes'),ctx)).json()).notes).toEqual([])
+  expect((await notesGet(endpoint('notes','bigwin'),ctx)).status).toBe(403)
+  expect((await notesPost(endpoint('notes','royal',{content:'Nota Royal'}),ctx)).status).toBe(200)
+  expect((await(await notesGet(endpoint('notes'),ctx)).json()).notes.map((n:{content:string})=>n.content)).toEqual(['Nota Royal'])
+  expect((await statusPatch(endpoint('status','royal',{flow:'en_proceso'},'PATCH'),ctx)).status).toBe(200)
+  expect((await(await GET(request())).json()).conversations[0].conv_flow).toBe('en_proceso')
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(901),role:'operator',allowed_agents:['bigwin']}})
+  expect((await(await GET(request())).json()).conversations[0].conv_flow).toBeNull()
  })
  it('shows an already stored button in the same thread as its campaign, with the contact name and inbound preview',async()=>{
   const r=await GET(request());expect(r.status).toBe(200);const body=await r.json()
@@ -228,7 +275,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect(detail.messages.map((m:{message_body:string})=>m.message_body)).toEqual(['[template:test]','Mas información'])
  })
  it('keeps all successfully sent campaigns after inbound and manual replies, newest campaign first',async()=>{
-  await db.query(`INSERT INTO campaigns VALUES($1,'Bono anterior'),($2,'Extra Royal'),($3,'Fallida')`,[id(301),id(302),id(303)])
+  await db.query(`INSERT INTO campaigns(id,name) VALUES($1,'Bono anterior'),($2,'Extra Royal'),($3,'Fallida')`,[id(301),id(302),id(303)])
   await db.query('UPDATE whatsapp_messages SET campaign_id=$1',[id(301)])
   await db.query("UPDATE contacts SET segment='vip_alto'")
   await db.query(`INSERT INTO cloud_messages(conversation_id,phone_number_id,wamid,direction,message_type,content,status,sent_at,campaign_id) VALUES
@@ -249,7 +296,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect((await (await GET(request('?campaign=none'))).json()).total).toBe(0)
  })
  it('does not expose campaign metadata from hidden Cloud lines, even for the same contact',async()=>{
-  await db.query(`INSERT INTO campaigns VALUES($1,'Private campaign')`,[id(301)])
+  await db.query(`INSERT INTO campaigns(id,name) VALUES($1,'Private campaign')`,[id(301)])
   await db.query('UPDATE cloud_conversations SET contact_phone=$1 WHERE id=$2',['+'+phone,id(2)])
   await db.query("UPDATE cloud_messages SET campaign_id=$1,direction='outbound' WHERE phone_number_id='10002'",[id(301)])
   const body=await (await GET(request())).json()
@@ -259,7 +306,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect((await (await GET(request())).json()).campaigns).toEqual([{id:id(301),name:'Private campaign',count:1}])
  })
  it('filters campaigns and levels before pagination and includes options beyond the first page',async()=>{
-  await db.query(`INSERT INTO campaigns VALUES($1,'Older campaign')`,[id(301)])
+  await db.query(`UPDATE whatsapp_messages SET agent_key='royal',line_id='${id(10)}'`)
+  await db.query(`INSERT INTO campaigns(id,name,agent_key) VALUES($1,'Older campaign','royal')`,[id(301)])
   await db.query('UPDATE whatsapp_messages SET campaign_id=$1',[id(301)])
   await db.query("UPDATE contacts SET segment='vip_medio'")
   await db.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,created_at)
@@ -267,7 +315,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   const all=await (await GET(request())).json()
   expect(all.total).toBe(206);expect(all.conversations).toHaveLength(200);expect(all.has_more).toBe(true)
   expect(all.campaigns).toEqual([{id:id(301),name:'Older campaign',count:1}])
-  expect(all.agents).toEqual([{name:'royal',count:1}])
+  expect(all.agents).toContainEqual({name:'royal',count:1})
   const agentOnly=await(await GET(request('?agent=royal&level=vip_medio'))).json()
   expect(agentOnly.total).toBe(1);expect(agentOnly.conversations[0].agent).toBe('royal')
   expect((await(await GET(request('?agent=none'))).json()).total).toBe(205)

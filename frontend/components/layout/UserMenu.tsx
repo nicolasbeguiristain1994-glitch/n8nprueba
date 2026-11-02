@@ -173,7 +173,7 @@ export function UserMenu() {
   const closeDropdown = useCallback(() => setDropdownOpen(false), [])
   useMenuKeyboard(dropdownOpen, wrapperRef, closeDropdown)
 
-  const { user } = useCurrentUser()
+  const { user,permissions } = useCurrentUser()
   const { resolvedTheme, setTheme } = useTheme()
   const router = useRouter()
 
@@ -292,11 +292,11 @@ export function UserMenu() {
 
             {/* Acciones principales */}
             <div className="py-1">
-              <MenuItem
+              {permissions?.settings?.includes('read') && <MenuItem
                 onClick={handleProfileClick}
                 icon={User}
                 label="Mi perfil"
-              />
+              />}
               <MenuItem
                 onClick={handleThemeToggle}
                 icon={isDark ? Sun : Moon}

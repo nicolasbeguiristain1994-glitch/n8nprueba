@@ -1,3 +1,5 @@
+import { canonicalAgent } from './agent-scope'
+import { AgentCodeSchema } from './agent-directory'
 import { CAMPAIGN_SELECTION_LIMIT } from './campaign-selection'
 /**
  * Centralised input validation.
@@ -72,7 +74,7 @@ export async function handleValidationError(
 export const ROLES   = ['admin', 'operator', 'viewer']   as const
 export const SECTORS = [
   'dashboard', 'contacts', 'campaigns', 'conversations', 'lines',
-  'warmup', 'tasks', 'estadisticas', 'automations', 'blacklist',
+  'warmup', 'tasks', 'calendar', 'estadisticas', 'automations', 'blacklist',
   'templates', 'tickets', 'users', 'settings', 'lists', 'send',
 ] as const
 
@@ -88,7 +90,7 @@ export const CreateUserSchema = z.object({
   role:     RoleEnum,
   sectors:  SectorsArray,
   can_download_contacts: z.boolean().optional().default(true),
-  allowed_agents:        z.array(z.string().max(64)).optional().default([]),
+  allowed_agents:        z.array(AgentCodeSchema.transform(canonicalAgent)).optional().default([]),
 })
 export type CreateUserInput = z.infer<typeof CreateUserSchema>
 
@@ -99,7 +101,7 @@ export const UpdateUserSchema = z.object({
   is_active: z.boolean().optional(),
   password: z.string().min(10, 'Password must be at least 10 characters').max(128).optional(),
   can_download_contacts: z.boolean().optional(),
-  allowed_agents: z.array(z.string().max(64)).optional(),
+  allowed_agents: z.array(AgentCodeSchema.transform(canonicalAgent)).optional(),
 }).strict() // reject unknown keys to prevent mass-assignment
 export type UpdateUserInput = z.infer<typeof UpdateUserSchema>
 
@@ -129,6 +131,7 @@ export type UpdateContactInput = z.infer<typeof UpdateContactSchema>
 // ── Send schemas ──────────────────────────────────────────────────────────────
 
 export const SendSchema = z.object({
+  conversation_agent: AgentCodeSchema.optional(),
   sticker_data: z.string().max(700000).optional(),
   sticker_token: z.string().max(4096).optional(),
   phones:      z.array(z.string().min(1))
@@ -175,6 +178,7 @@ export const CampaignRoutingPreviewSchema = z.object({
   'Revisá la plantilla seleccionada')
 
 export const CreateCampaignSchema = z.object({
+  agent_key: AgentCodeSchema.nullable().optional(),
   contact_ids: CampaignContactSelectionSchema.shape.contact_ids.optional(),
   name:                 z.string().min(1, 'El nombre de la campaña es requerido').max(255),
   message:              z.string().max(4096).optional(),

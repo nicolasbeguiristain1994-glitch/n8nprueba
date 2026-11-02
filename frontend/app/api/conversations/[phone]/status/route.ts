@@ -1,4 +1,4 @@
-import { canReadConversation, conversationPhone } from '@/lib/conversation-access'
+import { requireConversation, conversationPhone } from '@/lib/conversation-access'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
@@ -20,17 +20,17 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   try {
     // UPSERT: si existe conversación activa la actualiza, sino la crea
-    if (!await canReadConversation(auth.user, phone)) return NextResponse.json({error: 'Forbidden'}, {status: 403})
+    const {agent}=await requireConversation(auth.user,phone,req.nextUrl.searchParams.get('agent'))
     await query(
-      `INSERT INTO conversation_state (phone_number, current_flow, last_activity_at)
-       VALUES ($1, $2, NOW())
-       ON CONFLICT (phone_number) WHERE resolved_at IS NULL
-       DO UPDATE SET current_flow = $2, last_activity_at = NOW(), updated_at = NOW()`,
-      [phone, flow]
+      `INSERT INTO agent_conversation_state (phone_number,current_flow,agent_key)
+       VALUES ($1,$2,$3) ON CONFLICT (agent_key,phone_number)
+       DO UPDATE SET current_flow=$2,updated_at=NOW()`,
+      [phone, flow, agent]
     )
     emitUpdate(phone, 'status')
     return NextResponse.json({ ok: true })
   } catch (e) {
+    if(e instanceof Response) return e
     console.error('[PATCH /api/conversations/[phone]/status]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

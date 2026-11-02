@@ -1,3 +1,5 @@
+import { agentScope } from '@/lib/agent-scope'
+import { requireConversation } from '@/lib/conversation-access'
 import { NextRequest, NextResponse } from 'next/server'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { getAccessibleLineIds } from '@/lib/line-visibility'
@@ -11,10 +13,12 @@ export async function GET(req: NextRequest) {
   const phone=(req.nextUrl.searchParams.get('phone') || '').replace(/^\+/,'')
   if (!/^\d{7,15}$/.test(phone)) return NextResponse.json({error:'Teléfono inválido'},{status:400})
   try {
+    const scoped=agentScope(auth.user)!==null || !!req.nextUrl.searchParams.get('agent')
+    const conversation=scoped ? await requireConversation(auth.user,phone,req.nextUrl.searchParams.get('agent')) : null
     const scope=contactPhoneScope(auth.user,'destination.phone',1,true)
     const [allowed]=await query(`SELECT 1 FROM (SELECT $1::text AS phone) destination WHERE ${scope.sql}`,[phone,...scope.params])
-    if (!allowed) return NextResponse.json({error:'Fuera de tu alcance'},{status:403})
-    const lineIds=await getAccessibleLineIds(auth.user)
+    if (!allowed && !conversation) return NextResponse.json({error:'Fuera de tu alcance'},{status:403})
+    const lineIds=conversation ? (conversation.lineId ? [conversation.lineId] : []) : await getAccessibleLineIds(auth.user)
     let origin=await findConversationReplyOrigin(phone,lineIds)
     if (!origin) {
       // Outbound-only Cloud threads have no customer window yet.
@@ -25,5 +29,5 @@ export async function GET(req: NextRequest) {
       origin=outbound ?? null
     }
     return NextResponse.json({window:origin ? {lineName:origin.display_name,expiresAt:origin.window_expires_at} : null,serverNow:new Date().toISOString()},{headers:{'Cache-Control':'private, no-store'}})
-  } catch { return NextResponse.json({error:'No se pudo consultar la ventana Cloud.'},{status:500}) }
+  } catch(e) { if(e instanceof Response)return e; return NextResponse.json({error:'No se pudo consultar la ventana Cloud.'},{status:500}) }
 }

@@ -10,7 +10,7 @@ interface Note {
   created_at:  string
 }
 
-interface Props { phone: string }
+interface Props { phone: string; agent?: string }
 
 function fmtNote(dateStr: string): string {
   const d = new Date(dateStr)
@@ -18,7 +18,7 @@ function fmtNote(dateStr: string): string {
     ' ' + d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })
 }
 
-export function InternalNotes({ phone }: Props) {
+export function InternalNotes({ phone, agent='none' }: Props) {
   const {permissions} = useCurrentUser()
   const canUpdate = permissions.conversations?.includes('update') ?? false
   const [notes,   setNotes]   = useState<Note[]>([])
@@ -27,11 +27,11 @@ export function InternalNotes({ phone }: Props) {
   const [saving,  setSaving]  = useState(false)
 
   const load = useCallback(() => {
-    fetch(`/api/conversations/${encodeURIComponent(phone)}/notes`)
+    fetch(`/api/conversations/${encodeURIComponent(phone)}/notes?agent=${encodeURIComponent(agent)}`)
       .then(r => r.ok ? r.json() : { notes: [] })
       .then(d => setNotes(d.notes || []))
       .catch(() => {})
-  }, [phone])
+  }, [phone,agent])
 
   useEffect(() => { setLoading(true); load(); setLoading(false) }, [load])
 
@@ -40,7 +40,7 @@ export function InternalNotes({ phone }: Props) {
     if (!canUpdate || !content || saving) return
     setSaving(true)
     try {
-      const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/notes`, {
+      const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/notes?agent=${encodeURIComponent(agent)}`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ content }),

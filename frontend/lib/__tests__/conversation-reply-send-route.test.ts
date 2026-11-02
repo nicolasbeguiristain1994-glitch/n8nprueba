@@ -154,3 +154,33 @@ it('preserves the internally resolved agent in manual legacy history',async()=>{
  const insert=mocks.query.mock.calls.find(([sql])=>sql.includes('INSERT INTO whatsapp_messages'))!
  expect(JSON.parse(insert[1][0])[0].metadata.agent_code).toBe('royal')
 })
+
+describe('agent inbox replies', () => {
+  const reply = (agent='royal', extra={}) => new NextRequest('https://panel.test/api/send', { method:'POST', body:JSON.stringify({ phones:['5491100000001'], message:'Respuesta Royal', conversation_agent:agent, ...extra }) })
+  beforeEach(() => {
+    mocks.auth.mockResolvedValue({ok:true,user:{user_id:'00000000-0000-4000-8000-000000000099',role:'operator',allowed_agents:['royal']}})
+    mocks.query.mockImplementation(async (sql:string) => sql.includes('attributed_agent_messages') ? [{line_id:'a'}] : [])
+  })
+  it('replies through the authorized thread with only the conversations module',async()=>{
+    const response=await POST(reply())
+    expect(response.status).toBe(200)
+    expect(mocks.auth).toHaveBeenCalledWith(expect.anything(),'conversations','send')
+    expect(mocks.cloud.mock.calls[0][0]).toEqual(lineA)
+    const log=mocks.query.mock.calls.find(([sql])=>sql.includes('INSERT INTO whatsapp_messages'))
+    expect(JSON.parse(log![1][0])[0]).toMatchObject({metadata:{line_id:'a',workspace_agent:'royal'}})
+  })
+  it('denies cross-agent, bulk, unknown-thread and unscoped sends before provider calls',async()=>{
+    expect((await POST(reply('bigwin'))).status).toBe(403)
+    expect((await POST(reply('royal',{phones:['5491100000001','5491100000002']}))).status).toBe(400)
+    mocks.query.mockResolvedValue([])
+    expect((await POST(reply())).status).toBe(404)
+    expect((await POST(request())).status).toBe(403)
+    expect(mocks.cloud).not.toHaveBeenCalled()
+  })
+  it('never rotates an unavailable agent reply line',async()=>{
+    mocks.eligible.mockResolvedValue([lineB]);mocks.replyEligible.mockResolvedValue([lineB])
+    const body=await(await POST(reply())).json()
+    expect(body.results[0].status).toBe('error')
+    expect(mocks.cloud).not.toHaveBeenCalled()
+  })
+})

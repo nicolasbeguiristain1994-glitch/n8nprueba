@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({auth: vi.fn(), canRead: vi.fn(), lines: vi.fn()
 vi.mock('@/lib/permissions', () => ({checkPermissionWithUser: mocks.auth}))
 vi.mock('@/lib/db', () => ({query: mocks.query}))
 vi.mock('@/lib/line-visibility', () => ({getAccessibleLineIds: mocks.lines}))
-vi.mock('@/lib/conversation-access', () => ({canReadConversation: mocks.canRead, conversationPhone: (p:string) => p.replace(/^\+/, '')}))
+vi.mock('@/lib/conversation-access', () => ({canReadConversation: mocks.canRead, requestedConversationAgent:()=> 'royal', conversationLineIds:async()=>null, conversationPhone: (p:string) => p.replace(/^\+/, '')}))
 vi.mock('@/lib/sse-events', () => ({sseEmitter: new EventEmitter()}))
 import { sseEmitter } from '@/lib/sse-events'
 import { GET } from '@/app/api/conversations/stream/route'
@@ -35,7 +35,7 @@ it('does not broadcast global events and polls only scoped messages', async () =
   const reader=await connect();sseEmitter.emit('update',{source:'message'})
   await vi.advanceTimersByTimeAsync(3000)
   expect(mocks.query.mock.calls[0][0]).toContain('operator_contact_visibility')
-  expect(mocks.query.mock.calls[0][1]).toEqual([['line'],expect.any(String),'operator',['royal']])
+  expect(mocks.query.mock.calls[0][1]).toEqual([null,expect.any(String),['royal'],'royal','operator'])
   expect(mocks.canRead).not.toHaveBeenCalled()
   await reader.cancel();expect(sseEmitter.listenerCount('update')).toBe(0)
 })

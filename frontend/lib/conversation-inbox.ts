@@ -21,12 +21,12 @@ export const conversationInboxCte = (messages = CONVERSATION_MESSAGES_CTE, agent
       REPLACE(phone_number, '+', '') AS phone_number,
       id AS last_message_id, COALESCE(NULLIF(evolution_message_id,''),id::text) AS last_message_key,
       message_body AS last_message, direction AS last_direction,
-      status AS last_status, created_at AS last_at
+      status AS last_status, created_at AS last_at${agentParam ? ', agent_key' : ''}
     FROM conversation_messages
     ORDER BY REPLACE(phone_number, '+', ''), created_at DESC, id DESC
   ), inbox AS (
     SELECT DISTINCT ON (lm.phone_number) lm.*, c.id AS contact_id, c.first_name, c.last_name,
-      c.segment::text AS segment, NULLIF(lower(trim(c.panel)), '') AS agent,
+      c.segment::text AS segment, ${agentParam ? 'lm.agent_key' : "NULLIF(lower(trim(c.panel)), '')"} AS agent,
       c.linea, c.linea_sub, COALESCE(ch.campaigns, '[]'::jsonb) AS campaigns
     FROM latest_messages lm
     LEFT JOIN LATERAL (SELECT m.contact_id FROM whatsapp_messages m
@@ -34,7 +34,7 @@ export const conversationInboxCte = (messages = CONVERSATION_MESSAGES_CTE, agent
         AND m.status IN ('sent','delivered','read') AND m.contact_id IS NOT NULL
       ORDER BY m.created_at DESC,m.id DESC LIMIT 1) last_account ON true
     LEFT JOIN contacts c ON REPLACE(c.phone_number, '+', '') = lm.phone_number AND c.deleted_at IS NULL
-      ${agentParam ? `AND ($${agentParam}::text IN ('all','none') OR c.panel=$${agentParam})` : ''}
+      ${agentParam ? `AND (lm.agent_key IS NULL OR c.panel=lm.agent_key)` : ''}
     LEFT JOIN campaign_history ch ON ch.phone_number = lm.phone_number
     ORDER BY lm.phone_number, (c.id=last_account.contact_id) DESC NULLS LAST, (c.phone_number = '+' || lm.phone_number) DESC, c.id
   ), filtered_inbox AS (

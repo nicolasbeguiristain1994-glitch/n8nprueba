@@ -1,3 +1,4 @@
+import { agentScope, campaignScopeSql } from '@/lib/agent-scope'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
@@ -15,6 +16,7 @@ export async function GET(req: NextRequest) {
   const id=req.nextUrl.searchParams.get('id') || ''
   if (!range || (id && !isUUID(id))) return NextResponse.json({error:'Período o ID inválido'},{status:400})
   const owner=auth.user.role==='admin'?null:auth.user.user_id
+  const agents=agentScope(auth.user)
   const startedAt = Date.now()
   try {
     if (id) {
@@ -24,7 +26,7 @@ export async function GET(req: NextRequest) {
         round(100.0*s.delivered/NULLIF(s.sent+s.failed,0),1) AS tasa_entrega,
         round(100.0*s.read/NULLIF(s.sent,0),1) AS tasa_lectura
         FROM campaigns c CROSS JOIN LATERAL (${CAMPAIGN_STATS_SQL}) s
-        WHERE c.id=$1 AND ($2::uuid IS NULL OR c.owned_by=$2)`,[id,owner])
+        WHERE c.id=$1 AND ${agents === null ? '($2::uuid IS NULL OR c.owned_by=$2)' : campaignScopeSql('c','$2','$3')}`,[id,owner,...(agents === null ? [] : [agents])])
       if (!rows.length) return NextResponse.json({error:'Campaña no encontrada'},{status:404})
       // Daily series uses the same recipient outcome rule as the campaign totals.
       const series=await query(`WITH outbound_days AS (
@@ -52,7 +54,7 @@ export async function GET(req: NextRequest) {
       const respuestas_detalle=(await campaignResponseBreakdowns([id])).get(id)
       return NextResponse.json({kpis:{...rows[0],...effectivenessKpis},efectivos:efectivos_detalle,respuestas_detalle,series,timezone:STATS_TIMEZONE,metricScope:'campaign_recipients'})
     }
-    const campaigns=await campaignStatistics(range.from,range.to,owner,req.nextUrl.searchParams.get('status')||'',req.nextUrl.searchParams.get('q')||'',true,'created_at')
+    const campaigns=await campaignStatistics(range.from,range.to,owner,req.nextUrl.searchParams.get('status')||'',req.nextUrl.searchParams.get('q')||'',true,'created_at',agents)
     return NextResponse.json({campaigns,timezone:STATS_TIMEZONE,metricScope:'campaign_recipients'})
   } catch (error) {
     // Keep diagnostics useful without logging contact data or SQL parameters.

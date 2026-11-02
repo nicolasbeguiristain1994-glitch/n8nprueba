@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Send, Plus, Loader2, Eye, Play, BarChart2, Shield, Clock, Pause, XCircle, CheckCheck, Truck, AlertTriangle, HelpCircle, Trash2, Shuffle, UserCheck, UserX, Zap, GitBranch, RefreshCw, Ban, ImageIcon, X, Upload, ListPlus } from 'lucide-react'
 import { fetchJson } from '@/lib/fetchJson'
+import { AGENT_KEYS, agentScope } from '@/lib/agent-scope'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 import { CloudReadiness } from '@/components/campaigns/CloudReadiness'
 import { CampaignTestSend } from '@/components/campaigns/CampaignTestSend'
@@ -37,6 +38,7 @@ interface CampaignContact {
   failed_at: string | null; error_detail: string | null
 }
 interface Campaign {
+  agent_key?: string | null
   id: string; name: string; message: string; messages: string[]; status: string
   scheduled_at: string; completed_at: string; started_at: string | null; owned_by: string | null
   total_targets: number; total_sent: number; total_delivered: number
@@ -195,7 +197,7 @@ export default function Campaigns() {
   const campaignsReqRef = useRef(0)
 
   const FORM_DEFAULT = {
-    name: '', list_id: '', prospect_list_id: '', audience_type: 'contacts' as 'contacts' | 'prospects',
+    agent_key: '', name: '', list_id: '', prospect_list_id: '', audience_type: 'contacts' as 'contacts' | 'prospects',
     scheduled_at: '',
     media_url: '', antiblock_delay_min: 3, antiblock_delay_max: 8,
     type: 'promotion', personalize_name: true, use_multi_line: true,
@@ -371,6 +373,7 @@ export default function Campaigns() {
     try {
       const base: Record<string, unknown> = {
         ...form,
+        agent_key: form.agent_key || null,
         scheduled_at: scheduledAt,
         antiblock_delay_min: delayMin,
         antiblock_delay_max: delayMax,
@@ -787,6 +790,11 @@ export default function Campaigns() {
                         )}
                       </div>
                       <h3 className="break-words text-base font-semibold leading-snug">{c.name}</h3>
+                      {user?.role==='admin' ? <select aria-label={`Agente de ${c.name}`} value={c.agent_key || ''}
+                        className="max-w-full rounded border bg-background p-2 text-sm"
+                        onChange={async e=>{const agent_key=e.target.value || null; const response=await fetch(`/api/campaigns/${c.id}/agent`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent_key})});if(response.ok)loadCampaigns();else alert('No se pudo asignar el agente')}}>
+                        <option value="">Sin agente</option>{AGENT_KEYS.map(a=><option key={a} value={a}>{a}</option>)}
+                      </select> : <span className="text-xs">{c.agent_key || 'Sin agente'}</span>}
                       <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
                         {c.message_type === 'template'
                           ? <p className="min-w-0 break-words text-sm text-muted-foreground">Plantilla de WhatsApp{c.template_name ? `: ${c.template_name}` : ''}</p>
@@ -1038,6 +1046,11 @@ export default function Campaigns() {
             <section tabIndex={-1} hidden={createStep!==0} aria-label="Audiencia de la campaña" className="campaign-step space-y-4">
             {/* Nombre de campaña */}
             <div className="col-span-2">
+              <label htmlFor="campaign-agent" className="text-sm">Bandeja del agente</label>
+              <select id="campaign-agent" value={form.agent_key} onChange={e=>setForm(f=>({...f,agent_key:e.target.value}))} className="mb-3 w-full rounded border bg-background p-2 text-sm">
+                <option value="">{user && agentScope(user)?.length===1 ? agentScope(user)![0] : 'Sin agente'}</option>
+                {(user ? agentScope(user) ?? AGENT_KEYS : []).map(a=><option key={a} value={a}>{a}</option>)}
+              </select>
               <label htmlFor="campaign-name" className="text-xs font-medium text-muted-foreground mb-1 block">Nombre de campaña</label>
               <Input
                 id="campaign-name" placeholder="Ej: Retención VIP Mayo, Promo Slots Junio…"

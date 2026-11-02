@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 export type RealtimeStatus = 'connecting' | 'connected' | 'disconnected'
 export type SseEvent = { type: string; source?: string; phone?: string }
 
-export function useRealTime(onUpdate: (event: SseEvent) => void): RealtimeStatus {
+export function useRealTime(onUpdate: (event: SseEvent) => void, agent?: string): RealtimeStatus {
   const [status, setStatus]   = useState<RealtimeStatus>('connecting')
   const onUpdateRef           = useRef(onUpdate)
   onUpdateRef.current         = onUpdate
@@ -16,7 +16,7 @@ export function useRealTime(onUpdate: (event: SseEvent) => void): RealtimeStatus
 
     const connect = () => {
       if (!alive) return
-      es = new EventSource('/api/conversations/stream')
+      es = new EventSource('/api/conversations/stream'+(agent ? '?agent='+encodeURIComponent(agent) : ''))
 
       es.onopen    = () => { if (alive) setStatus('connected') }
       es.onmessage = (e) => {
@@ -40,7 +40,7 @@ export function useRealTime(onUpdate: (event: SseEvent) => void): RealtimeStatus
       clearTimeout(retryTimer)
       es?.close()
     }
-  }, [])
+  }, [agent])
 
   return status
 }

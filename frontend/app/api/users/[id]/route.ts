@@ -74,7 +74,7 @@ async function buildUpdateSetClause(
   const sectorsChanged  = body.sectors  !== undefined && JSON.stringify(body.sectors) !== JSON.stringify(current.sectors)
   const activeChanged   = body.is_active !== undefined && body.is_active !== current.is_active
   const passwordChanged = body.password  !== undefined && body.password !== ''
-  const bumpSession     = roleChanged || sectorsChanged || activeChanged || passwordChanged
+  const bumpSession     = roleChanged || sectorsChanged || activeChanged || passwordChanged || body.allowed_agents !== undefined
 
   const setClauses:  string[]  = ['updated_at = NOW()']
   const queryParams: unknown[] = []

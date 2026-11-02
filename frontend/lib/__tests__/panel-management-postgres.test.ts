@@ -30,6 +30,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('task and calendar wo
       CREATE TABLE users(id uuid PRIMARY KEY, name text,email text);
       INSERT INTO users VALUES('${id(1)}','Admin','admin@example.invalid'),('${id(2)}','Operator','operator@example.invalid'),('${id(3)}','Other','other@example.invalid')`)
     for (const name of ['045_tasks.sql','046_tasks_soft_delete.sql','marketing_calendar.sql']) await db.query(readFileSync('../db/migrations/' + name, 'utf8'))
+    await db.query('ALTER TABLE marketing_calendar ADD agent_key text')
     mocks.query.mockImplementation(async (sql, params) => (await db.query(sql, params)).rows)
     mocks.transaction.mockImplementation(async fn => {
       await db.query('SAVEPOINT route_tx')
@@ -79,6 +80,19 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('task and calendar wo
     expect((await (await calendar(req('marketing-calendar?start=2026-09-30&end=2026-09-30'))).json()).entries).toHaveLength(0)
     mocks.auth.mockResolvedValue({ok:true,user:user()})
     expect((await deleteEntry(req('marketing-calendar'),ctx(entryId))).status).toBe(200)
+  })
+  it('keeps Royal calendar entries isolated from Bigwin and defaults new entries to Royal', async () => {
+    const royal = await createEntry(req('marketing-calendar',{title:'Royal agenda',date:'2026-09-30',agent_key:'royal'}))
+    const bigwin = await createEntry(req('marketing-calendar',{title:'Bigwin agenda',date:'2026-09-30',agent_key:'bigwin'}))
+    const bigwinId = (await bigwin.json()).entry.id
+    expect(royal.status).toBe(201)
+    mocks.auth.mockResolvedValue({ok:true,user:{...user(2,'operator'),allowed_agents:['royal']}})
+    const entries = (await(await calendar(req('marketing-calendar?start=2026-09-30&end=2026-09-30'))).json()).entries
+    expect(entries.map((e:{title:string})=>e.title)).toEqual(['Royal agenda'])
+    expect((await updateEntry(req('marketing-calendar',{title:'No',date:'2026-09-30',agent_key:'royal'},'PUT'),ctx(bigwinId))).status).toBe(404)
+    expect((await createEntry(req('marketing-calendar',{title:'No',date:'2026-09-30',agent_key:'bigwin'}))).status).toBe(403)
+    const own = await createEntry(req('marketing-calendar',{title:'Own',date:'2026-09-30'}))
+    expect(own.status).toBe(201);expect((await own.json()).entry.agent_key).toBe('royal')
   })
   it('keeps calendar mutations unavailable to viewers', async () => {
     mocks.session.mockReturnValue(user(3,'viewer')); mocks.auth.mockResolvedValue({ok:false,response:Response.json({error:'Forbidden'},{status:403})})

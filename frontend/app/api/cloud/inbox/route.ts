@@ -1,3 +1,4 @@
+import { agentScope } from '@/lib/agent-scope'
 import { NextRequest, NextResponse } from 'next/server'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { cloudNumberAccess } from '@/lib/cloud-api/access'
@@ -6,6 +7,7 @@ import { cloudMessageTextSql } from '@/lib/cloud-api/message-content'
 export async function GET(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'conversations', 'read')
   if (!auth.ok) return auth.response
+  if(agentScope(auth.user)!==null) return Response.json({error:'Usá tu bandeja de conversaciones'},{status:403})
   const phoneNumberId = req.nextUrl.searchParams.get('phoneNumberId') || ''
   if (!/^\d{5,30}$/.test(phoneNumberId)) return NextResponse.json({ error: 'Seleccioná un número válido' }, { status: 400 })
   const denied = await cloudNumberAccess(auth.user, phoneNumberId)

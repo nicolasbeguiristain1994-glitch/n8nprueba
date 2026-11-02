@@ -13,6 +13,7 @@ import { VirtualizedConvList }    from '@/components/conversations/VirtualizedCo
 import { ConversationFilters }    from '@/components/conversations/ConversationFilters'
 import { ConversationHeader }     from '@/components/conversations/ConversationHeader'
 import { MessageBubble }          from '@/components/conversations/MessageBubble'
+import { useCurrentUser } from '@/lib/useCurrentUser'
 import { ConversationSidebar }    from '@/components/conversations/ConversationSidebar'
 import { RemoveFromBlacklistButton } from '@/components/conversations/RemoveFromBlacklistButton'
 import { AssignedLineActions } from '@/components/conversations/AssignedLineActions'
@@ -21,6 +22,8 @@ import { StickerPicker } from '@/components/conversations/StickerPicker'
 import { EmojiPicker }            from '@/components/conversations/EmojiPicker'
 
 export default function Conversations() {
+  const {permissions}=useCurrentUser()
+  const canReply=permissions.conversations?.includes('send') ?? false
   const {
     loading, loadError, messagesLoading, messagesError, viewError, refreshConversations, refreshMessages,
     convs, visible, selected, selectedConv, messages, messagesEndRef,
@@ -141,7 +144,7 @@ export default function Conversations() {
             ) : (
               <>
                 <ConversationHeader phone={selected} conv={selectedConv} selectedCampaign={campaign} />
-                <CloudWindowIndicator key={selected} phone={selected} />
+                <CloudWindowIndicator key={`${agent}:${selected}`} agent={agent==='all' ? selectedConv?.agent || 'none' : agent} phone={selected} />
 
                 {/* Área de mensajes */}
                 <div role="region" aria-label="Mensajes de la conversación" tabIndex={0} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 md:p-4 space-y-2 bg-background">
@@ -170,14 +173,14 @@ export default function Conversations() {
                 </div>}
                 {/* Input area */}
                 <div className="border-t border-border p-2 md:p-3 bg-card shrink-0">
-                  <AssignedLineActions key={selected} conv={selectedConv} disabled={sending || !!selectedConv?.is_blacklisted} onInsert={text=>{
+                  <AssignedLineActions key={selected} conv={selectedConv} disabled={!canReply || sending || !!selectedConv?.is_blacklisted} onInsert={text=>{
                     setReply(previous=>previous.trim() ? previous + '\n' + text : text)
                     textareaRef.current?.focus()
                   }}/>
                   {reply.trim() && <p className="sr-only md:not-sr-only md:mb-2 text-xs text-muted-foreground" role="status">Borrador de este contacto · se conserva al cambiar de chat durante esta sesión</p>}
                   <div className="flex flex-wrap gap-2 items-end">
                     <div className="relative flex w-full items-center gap-1 md:w-auto">
-                    <StickerPicker key={selected} disabled={sending || !!selectedConv?.is_blacklisted} onSend={sendSticker} />
+                    <StickerPicker key={selected} disabled={!canReply || sending || !!selectedConv?.is_blacklisted} onSend={sendSticker} />
 
                     {/* Emoji picker */}
                     <div className="md:relative">
@@ -215,7 +218,7 @@ export default function Conversations() {
                     <Button
                       onClick={sendReply}
                       aria-label="Enviar respuesta"
-                      disabled={sending || !!selectedConv?.is_blacklisted || !reply.trim()}
+                      disabled={!canReply || sending || !!selectedConv?.is_blacklisted || !reply.trim()}
                       size="icon"
                       className="bg-primary hover:bg-primary/90 shrink-0 h-11 w-11 md:h-9 md:w-9"
                     >
@@ -233,6 +236,7 @@ export default function Conversations() {
           <Card className={cn("min-h-0 overflow-y-auto flex-col gap-0 py-0", mobilePanel === 'details' ? 'flex' : 'hidden xl:flex')}>
             <div className="border-b p-2"><Button size="sm" variant="ghost" onClick={() => { setMobilePanel('chat'); setDetailsOpen(false) }}><ArrowLeft size={14} /> Volver al chat</Button></div>
             <ConversationSidebar
+              key={`${agent}:${selected}`}
               phone={selected}
               conv={selectedConv}
               onRefresh={() => { refreshConversations(); openConv(selected) }}

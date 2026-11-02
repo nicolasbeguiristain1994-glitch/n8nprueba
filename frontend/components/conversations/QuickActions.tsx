@@ -57,7 +57,7 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
   })
 
   const markProcess = () => run('process', async () => {
-    const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/status`, {
+    const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/status?agent=${encodeURIComponent(conv?.agent || 'none')}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ flow: 'en_proceso' }),
     })
@@ -65,7 +65,7 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
   })
 
   const resolveProcess = () => run('resolve', async () => {
-    const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/status`, {
+    const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/status?agent=${encodeURIComponent(conv?.agent || 'none')}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ flow: null }),
     })
@@ -76,7 +76,7 @@ export function QuickActions({ phone, conv, onRefresh }: Props) {
     if (!fuDate) return
     const label = new Date(fuDate + 'T00:00').toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: 'numeric' })
     const content = `📅 Seguimiento programado: ${label}${fuNote.trim() ? ` — ${fuNote.trim()}` : ''}`
-    const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/notes`, {
+    const res = await fetch(`/api/conversations/${encodeURIComponent(phone)}/notes?agent=${encodeURIComponent(conv?.agent || 'none')}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ content }),
     })

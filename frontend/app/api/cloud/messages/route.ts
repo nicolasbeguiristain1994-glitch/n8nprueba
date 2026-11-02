@@ -1,3 +1,4 @@
+import { agentScope } from '@/lib/agent-scope'
 import { randomUUID } from 'node:crypto'
 import { query } from '@/lib/db'
 import { reserveLineSendBudget,finishLineSendBudget,LineSendBudgetError } from '@/lib/line-send-budget'
@@ -24,6 +25,7 @@ import {
 export async function POST(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'send', 'send')
   if (!auth.ok) return auth.response
+  if(agentScope(auth.user)!==null) return Response.json({error:'Usá tu bandeja de conversaciones'},{status:403})
 
   let body: Partial<SendMessageRequest> & { enqueue?: boolean }
   try { body = await req.json() } catch {

@@ -1,3 +1,5 @@
+import { AGENT_MESSAGES_CTE } from './agent-messages'
+import { agentScope } from './agent-scope'
 import { contactPhoneScope, type ContactAccessUser } from '@/lib/contact-visibility'
 import { cloudMessageTextSql } from '@/lib/cloud-api/message-content'
 
@@ -30,7 +32,20 @@ function messagesCte(legacyScope = 'TRUE', cloudScope = 'TRUE') { return `WITH c
       WHERE cm.wamid IS NOT NULL AND legacy.evolution_message_id=cm.wamid)
 )` }
 export const CONVERSATION_MESSAGES_CTE = messagesCte()
-export function scopedConversationMessages(user: ContactAccessUser, paramBase: number) {
+export function scopedConversationMessages(user: ContactAccessUser, paramBase: number, requested?: string) {
+  const agents = agentScope(user)
+  if (agents !== null || requested) {
+    const contact=agents===null ? contactPhoneScope(user,'m.phone_number',paramBase+2,user.role==='admin') : {sql:`(NOT EXISTS(SELECT 1 FROM operator_contact_visibility v WHERE v.operator_id=$${paramBase+3}::uuid)
+      OR EXISTS(SELECT 1 FROM contacts scoped_contact JOIN operator_contact_visibility v ON v.contact_id=scoped_contact.id
+        WHERE v.operator_id=$${paramBase+3}::uuid AND scoped_contact.deleted_at IS NULL AND scoped_contact.panel=m.agent_key
+          AND REPLACE(scoped_contact.phone_number,'+','')=m.phone_number))`,params:[user.user_id]}
+    return {sql: `${AGENT_MESSAGES_CTE}, conversation_messages AS (
+      SELECT * FROM attributed_agent_messages m
+      WHERE ${contact.sql} AND ($${paramBase+1}::text[] IS NULL OR m.agent_key=ANY($${paramBase+1}::text[]))
+        AND ($${paramBase+2}::text='all' OR COALESCE(m.agent_key,'none')=$${paramBase+2})
+        AND ($${paramBase+1}::text[] IS NOT NULL OR $1::uuid[] IS NULL OR m.line_id=ANY($1::uuid[]) OR m.line_id IS NULL)
+    )`,params:[agents,requested || 'all',...contact.params]}
+  }
   const legacy = contactPhoneScope(user, 'wm.phone_number', paramBase, user.role === 'admin')
   const cloud = contactPhoneScope(user, 'cc.contact_phone', paramBase, true)
   return { sql: messagesCte(legacy.sql, cloud.sql), params: legacy.params }

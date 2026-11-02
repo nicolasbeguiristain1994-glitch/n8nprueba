@@ -101,7 +101,7 @@ export function ConversationSidebar({ phone, conv, onRefresh }: Props) {
       <QuickActions phone={phone} conv={conv} onRefresh={onRefresh} />
 
       {/* Notes */}
-      <InternalNotes phone={phone} />
+      <InternalNotes key={`${phone}:${conv?.agent}`} phone={phone} agent={conv?.agent || 'none'} />
     </div>
   )
 }

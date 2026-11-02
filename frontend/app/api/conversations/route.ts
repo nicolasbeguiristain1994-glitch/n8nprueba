@@ -1,3 +1,6 @@
+import { conversationLineIds } from '@/lib/conversation-access'
+import { requestedConversationAgent } from '@/lib/conversation-access'
+import { agentScope, AGENT_KEYS } from '@/lib/agent-scope'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { canAccess, checkPermissionWithUser } from '@/lib/permissions'
@@ -20,10 +23,11 @@ export async function GET(req: NextRequest) {
   const phoneRaw = req.nextUrl.searchParams.get('phone')
 
   try {
-    const lineIds = await getAccessibleLineIds(auth.user)
+    const selectedAgent = requestedConversationAgent(auth.user,req.nextUrl.searchParams.get('agent'))
+    const lineIds = await conversationLineIds(auth.user)
     if (phoneRaw) {
       const phone = normalize(phoneRaw)
-      const scope = scopedConversationMessages(auth.user, 2)
+      const scope = scopedConversationMessages(auth.user, 2, selectedAgent)
       const messages = await query<ConversationMediaRow & ReactionTarget & {message_body:string;evolution_message_id:string;metadata:Record<string,unknown>;reactions:MessageReaction[];reaction_error:string|null}> (`
         ${scope.sql}
         SELECT recent.*, COALESCE(to_jsonb(wm)->'metadata','{}'::jsonb) AS metadata,
@@ -41,7 +45,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ messages:messages.map(({metadata,media_id,media_type,line_id,phone_number_id,target_wamid,line_type,message_type,...m})=>({
         ...m,view_key:m.evolution_message_id || m.id,media_type:media_type ?? metadata?.media_type,
         media_url:conversationMediaUrl(m.id,media_id),sticker_preview:metadata?.sticker_preview,
-        can_react:canAccess(auth.user,'send','send') && !reactionUnavailable({...m,line_id,target_wamid,line_type,message_type}),
+        can_react:canAccess(auth.user,'conversations','send') && !reactionUnavailable({...m,line_id,target_wamid,line_type,message_type}),
         reaction_unavailable:reactionUnavailable({...m,line_id,target_wamid,line_type,message_type}),
       })) },{headers:{'Cache-Control':'private, no-store'}})
     }
@@ -57,9 +61,9 @@ export async function GET(req: NextRequest) {
     if (!['all', 'none', ...LEVEL_DEFS.map(item => item.key)].includes(level)) {
       return NextResponse.json({ error: 'Nivel inválido' }, { status: 400 })
     }
-    const agent = (req.nextUrl.searchParams.get('agent') || 'all').trim().toLowerCase()
+    const agent = selectedAgent
     if (agent.length > 100) return NextResponse.json({error:'Agente inválido'}, {status:400})
-    const scope = scopedConversationMessages(auth.user, 6)
+    const scope = scopedConversationMessages(auth.user, 6, selectedAgent)
     const params = [lineIds, campaign.toLowerCase(), level]
 
     // Count, campaign options and page share one snapshot and one inbox scan.
@@ -87,6 +91,7 @@ export async function GET(req: NextRequest) {
           EXISTS (
             SELECT 1 FROM conversation_notes cn
             WHERE cn.phone = page.phone_number
+            AND COALESCE(cn.agent_key,'none')=COALESCE(page.agent,'none')
             AND   cn.content LIKE '%Seguimiento programado%'
           )                                        AS has_follow_up,
           (SELECT REPLACE(tag, 'casino:actividad:', '')
@@ -110,15 +115,15 @@ export async function GET(req: NextRequest) {
           AND directory.linea=page.linea AND directory.variant=''
           AND directory.is_active=true
         LEFT JOIN LATERAL (
-          SELECT is_escalated, escalation_reason, current_flow FROM conversation_state
-          WHERE phone_number = page.phone_number AND resolved_at IS NULL LIMIT 1
+          SELECT false AS is_escalated, NULL::text AS escalation_reason, current_flow FROM agent_conversation_state
+          WHERE phone_number=page.phone_number AND agent_key=COALESCE(page.agent,'none') LIMIT 1
         ) cs ON true
       )
       SELECT (SELECT COUNT(*)::text FROM filtered_inbox) AS total,
         COALESCE((SELECT jsonb_agg(options ORDER BY options.name, options.id) FROM (
           SELECT id, name, COUNT(*)::int AS count FROM campaign_threads GROUP BY id, name
         ) options), '[]'::jsonb) AS campaigns,
-        COALESCE((SELECT jsonb_agg(options ORDER BY options.name) FROM (SELECT lower(trim(c.panel)) AS name,COUNT(DISTINCT lm.phone_number)::int AS count FROM latest_messages lm JOIN contacts c ON REPLACE(c.phone_number,'+','')=lm.phone_number WHERE c.deleted_at IS NULL AND NULLIF(trim(c.panel),'') IS NOT NULL GROUP BY lower(trim(c.panel))) options), '[]'::jsonb) AS agents,
+        COALESCE((SELECT jsonb_agg(options ORDER BY options.name) FROM (SELECT agent_key AS name,count(DISTINCT phone_number)::int AS count FROM conversation_messages WHERE agent_key IS NOT NULL GROUP BY agent_key) options), '[]'::jsonb) AS agents,
         COALESCE((SELECT jsonb_agg(p ORDER BY p.last_at DESC, p.phone_number)
           FROM enriched_page p), '[]'::jsonb) AS conversations
     `, [...params, PAGE_SIZE, offset, agent, ...scope.params])
@@ -128,11 +133,12 @@ export async function GET(req: NextRequest) {
       conversations: conversations.map(row => ({ ...row,
         last_at: row.last_at == null ? null : new Date(String(row.last_at)).toISOString(),
       })),
-      campaigns, agents,
+      campaigns, agent:selectedAgent, agents: [...new Set([...(agentScope(auth.user) ?? AGENT_KEYS), ...agents.map(a=>a.name)])].map(name=>({name,count:agents.find(a=>a.name===name)?.count ?? 0})),
       total:    totalCount,
       has_more: offset + PAGE_SIZE < totalCount,
     }, { headers: { 'Cache-Control': 'private, no-store' } })
   } catch (e) {
+    if (e instanceof Response) return e
     console.error('[/api/conversations GET]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

@@ -9,7 +9,7 @@ const validSlot = (slot: number) => Number.isInteger(slot) && slot >= 1 && slot 
 const json = (value: unknown, status = 200) => NextResponse.json(value, {status, headers:{'Cache-Control':'private, no-store'}})
 
 export async function GET(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'send', 'send')
+  const auth = await checkPermissionWithUser(req, 'conversations', 'send')
   if (!auth.ok) return auth.response
   try {
     if (req.nextUrl.searchParams.has('slot')) {
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req,'send','send')
+  const auth = await checkPermissionWithUser(req,'conversations','send')
   if (!auth.ok) return auth.response
   const body = await req.json().catch(()=>null)
   if (!body || typeof body.url !== 'string' || body.url.length>700000 || !body.url.startsWith('data:image/webp;base64,') || !verifyStickerToken(body.token,body.url,auth.user.user_id)) return json({error:'Volvé a cargar el sticker antes de guardarlo.'},400)
@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req,'send','send')
+  const auth = await checkPermissionWithUser(req,'conversations','send')
   if (!auth.ok) return auth.response
   const slot=slotOf(req)
   if (!validSlot(slot)) return json({error:'Favorito inválido.'},400)

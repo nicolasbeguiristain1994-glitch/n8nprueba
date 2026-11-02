@@ -1,3 +1,4 @@
+import { conversationLineIds } from '@/lib/conversation-access'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { query } from '@/lib/db'
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
       INSERT INTO conversation_message_views(message_key)
       SELECT message_key FROM target ON CONFLICT(message_key) DO NOTHING RETURNING message_key
     ) SELECT target.*, EXISTS(SELECT 1 FROM saved) AS inserted FROM target`,
-    [await getAccessibleLineIds(auth.user), parsed.data.messageId, ...scope.params])
+    [await conversationLineIds(auth.user), parsed.data.messageId, ...scope.params])
     if (!result) return NextResponse.json({ error: 'Mensaje no disponible.' }, { status: 404 })
     if (result.inserted) sseEmitter.emit('update', { source: 'viewed', phone: result.phone })
     return NextResponse.json({ ok: true, message_key: result.message_key }, { headers: { 'Cache-Control': 'private, no-store' } })

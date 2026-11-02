@@ -27,6 +27,7 @@ export function useConversations() {
   const [filter, setFilter]             = useState<Filter>('all')
   const [campaign, setCampaign]         = useState('all')
   const [agent, setAgent] = useState('all')
+  const agentRef=useRef(agent);agentRef.current=agent
   const [agents, setAgents] = useState<{name:string;count:number}[]>([])
   const [level, setLevel]               = useState<LevelFilter>('all')
   const [campaigns, setCampaigns]       = useState<CampaignOption[]>([])
@@ -102,7 +103,7 @@ export function useConversations() {
     // Poll every loaded page, so refreshing does not discard paginated results.
     const pages = Math.max(1, Math.ceil(loadedCountRef.current / 200))
     void Promise.all(Array.from({ length: pages }, (_, i) =>
-      fetchJson<{ conversations: Conv[]; total: number; campaigns?: CampaignOption[]; agents?: {name:string;count:number}[] }>(listUrl(i * 200), { signal: pending.controller.signal })
+      fetchJson<{ conversations: Conv[]; total: number; campaigns?: CampaignOption[]; agents?: {name:string;count:number}[]; agent?: string }>(listUrl(i * 200), { signal: pending.controller.signal })
     ))
       .then(results => {
         if (!isCurrent()) return
@@ -114,6 +115,7 @@ export function useConversations() {
         setTotalConvs(d.total || 0)
         setCampaigns(d.campaigns || [])
         setAgents(d.agents || [])
+        if(agent==='all' && d.agent && d.agent!=='all')setAgent(d.agent)
       })
       .catch(() => { if (isCurrent()) setLoadError('No se pudieron cargar las conversaciones.') })
       .finally(() => {
@@ -170,7 +172,7 @@ export function useConversations() {
     messagesInFlight.current = pending
     const isCurrent = () => messagesInFlight.current === pending && selectedRef.current === phone
     const timeout = setTimeout(() => pending.controller.abort(), 20_000)
-    fetchJson<{ messages: Message[] }>(`/api/conversations?phone=${phone}`, { signal: pending.controller.signal })
+    fetchJson<{ messages: Message[] }>(`/api/conversations?phone=${phone}&agent=${encodeURIComponent(agent)}`, { signal: pending.controller.signal })
       .then(d => {
         if (!isCurrent()) return
         setMessagesError(null)
@@ -199,7 +201,7 @@ export function useConversations() {
         setMessagesLoading(false)
         if (pending.queued && !document.hidden) refreshMessages(phone, pending.queuedScroll)
       })
-  }, [recordActivity])
+  }, [recordActivity,agent])
 
   // Acknowledge only after the loaded message is rendered in the visible chat.
   // The stable provider key also survives a Cloud message being mirrored into
@@ -229,6 +231,13 @@ export function useConversations() {
         message: 'No se pudo marcar la conversación como vista. Se reintentará automáticamente.' })
     }).finally(() => { clearTimeout(timeout); viewRequests.current.delete(key) })
   }, [messages, selected, messagesLoading, messagesError, applyViewed])
+
+  useEffect(()=>{
+    messagesInFlight.current?.controller.abort();messagesInFlight.current=null
+    selectedRef.current=null;setSelected(null);setSelectedSnapshot(undefined)
+    setMessages([]);setReplyValue('');setSendError(null);setMessagesError(null);setMessagesLoading(false)
+    drafts.current={};activities.current.clear();setCampaign('all')
+  },[agent])
 
   // Initial load
   useEffect(() => {
@@ -292,7 +301,7 @@ export function useConversations() {
     }, 150)
   }, [loadConvs, loadMessages, notify])
 
-  const realtimeStatus: RealtimeStatus = useRealTime(onRealTimeUpdate)
+  const realtimeStatus: RealtimeStatus = useRealTime(onRealTimeUpdate,agent)
 
   const openConv = useCallback((phone: string) => {
     if (selectedRef.current !== phone) { setMessages([]); setSendError(null); setReplyValue(drafts.current[phone] ?? '') }
@@ -305,13 +314,15 @@ export function useConversations() {
 
   const sendingRef=useRef(false)
   const sendSticker = async (url:string, token:string):Promise<boolean> => {
+    const sendAgent=agent
     const phone=selectedRef.current
     if(!phone || sendingRef.current || selectedConv?.is_blacklisted)return false
     sendingRef.current=true;setSending(true);setSendError(null)
     try {
-      const response=await fetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phones:[phone],message:'[Sticker]',media_type:'sticker',sticker_data:url,sticker_token:token})})
+      const response=await fetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({conversation_agent:agent==='all' ? selectedConv?.agent || 'none' : agent,phones:[phone],message:'[Sticker]',media_type:'sticker',sticker_data:url,sticker_token:token})})
       const data=await response.json()
       if(!response.ok || data.results?.[0]?.status!=='sent')throw new Error(data.error || data.results?.[0]?.error || 'No se pudo confirmar el envío del sticker.')
+      if(agentRef.current!==sendAgent)return true
       recordActivity(phone, {
         last_message: '[Sticker]', last_direction: 'outbound', last_status: 'sent',
         last_at: data.results[0].sent_at || new Date().toISOString(),
@@ -319,30 +330,32 @@ export function useConversations() {
       })
       if(selectedRef.current===phone)loadMessages(phone,true)
       loadConvs();return true
-    }catch(e){if(selectedRef.current===phone)setSendError(e instanceof Error?e.message:'Error al enviar');return false}
+    }catch(e){if(selectedRef.current===phone && agentRef.current===sendAgent)setSendError(e instanceof Error?e.message:'Error al enviar');return false}
     finally{sendingRef.current=false;setSending(false)}
   }
   const sendReply = async () => {
     if (!selected || !reply.trim() || sendingRef.current || selectedConv?.is_blacklisted) return
     sendingRef.current=true
     setSending(true); setSendError(null)
+    const sendAgent=agent
     const msgText = reply
     let res: Response
     try {
       res = await fetch('/api/send', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ phones: [selected], message: msgText }),
+        body:    JSON.stringify({ conversation_agent:agent==='all' ? selectedConv?.agent || 'none' : agent, phones: [selected], message: msgText }),
       })
     } catch {
       sendingRef.current=false;setSending(false)
-      if (selectedRef.current === selected) setSendError('Error de red al enviar')
+      if (selectedRef.current === selected && agentRef.current===sendAgent) setSendError('Error de red al enviar')
       return
     }
     sendingRef.current=false;setSending(false)
     const data = await res.json().catch(() => ({}))
     // A reply may finish after the operator opens another chat. Keep that chat
     // and its draft intact, including when the previous reply fails.
+    if(agentRef.current!==sendAgent)return
     const result = data.results?.[0]
     const accepted = res.ok && result?.status === 'sent'
     if (accepted && drafts.current[selected] === msgText) delete drafts.current[selected]

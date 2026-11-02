@@ -1,3 +1,5 @@
+import { agentScope } from '@/lib/agent-scope'
+import { activityCte, statisticsArgs } from '@/lib/statistics'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
@@ -12,6 +14,24 @@ export async function GET(req: NextRequest) {
   if (!range) return NextResponse.json({ error: 'Período inválido' }, { status: 400 })
 
   try {
+    const agents = agentScope(auth.user)
+    if (agents !== null) {
+      const range = statisticsRange(req.nextUrl.searchParams)
+      if (!range) return NextResponse.json({ error: 'Período inválido' }, { status: 400 })
+      const rows = await query(`${activityCte(agents)} SELECT wl.id,wl.line_key,wl.display_name,wl.phone_number,wl.status,wl.is_connected,
+        NULL::int AS msgs_sent_today,NULL::int AS msg_per_day,
+        count(*) FILTER (WHERE m.direction='outbound' AND m.status IN ('sent','delivered','read'))::int AS total_sent,
+        count(*) FILTER (WHERE m.direction='outbound' AND m.status='failed')::int AS total_failed,
+        count(*) FILTER (WHERE m.direction='outbound' AND m.status IN ('delivered','read'))::int AS total_delivered,
+        round(100.0*count(*) FILTER (WHERE m.direction='outbound' AND m.status IN ('delivered','read'))/
+          NULLIF(count(*) FILTER (WHERE m.direction='outbound' AND m.status IN ('sent','delivered','read')),0),1) AS tasa_entrega,
+        round(100.0*count(*) FILTER (WHERE m.direction='outbound' AND m.status='failed')/
+          NULLIF(count(*) FILTER (WHERE m.direction='outbound'),0),1) AS tasa_error
+        FROM activity m JOIN whatsapp_lines wl ON wl.id=m.line_id GROUP BY wl.id,wl.line_key,wl.display_name,wl.phone_number,wl.status,wl.is_connected`,
+        statisticsArgs(range.from,range.to,auth.user.user_id,agents))
+      return NextResponse.json({ lines: rows })
+    }
+
     const ids = await getAccessibleLineIds(auth.user)
     const { clause, params } = lineVisibilityClause(ids, 'wl', 3)
 

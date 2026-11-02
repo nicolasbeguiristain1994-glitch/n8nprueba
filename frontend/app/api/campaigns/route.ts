@@ -1,3 +1,4 @@
+import { agentScope, canAccessAgent } from '@/lib/agent-scope'
 import { NextRequest, NextResponse } from 'next/server'
 import { query, withTransaction } from '@/lib/db'
 import { randomUUID } from 'node:crypto'
@@ -25,7 +26,7 @@ export async function GET(req: NextRequest) {
     const params      = isAdmin ? [] : [session.user_id]
 
     const campaignSql = (includePauseReason: boolean, includeProspectList: boolean) => `
-      SELECT c.id, c.name, c.message, c.messages, c.status, c.scheduled_at,
+      SELECT c.id, c.agent_key, c.name, c.message, c.messages, c.status, c.scheduled_at,
              c.started_at, c.completed_at,
              c.total_targets, c.personalize_name,
              c.antiblock_delay_min, c.antiblock_delay_max,
@@ -98,6 +99,9 @@ export async function POST(req: NextRequest) {
   const parsed  = parseBody(CreateCampaignSchema, rawBody)
   if (!parsed.ok) return handleValidationError(req, parsed.error, 'campaigns')
 
+  const agents=agentScope(session)
+  const assignedAgent=parsed.data.agent_key ?? (agents?.length===1 ? agents[0] : null)
+  if(!canAccessAgent(session,assignedAgent))return NextResponse.json({error:'Seleccioná un agente permitido'},{status:403})
   const { name, message, messages, media_url, media_type, list_id, prospect_list_id, contact_ids, scheduled_at,
           antiblock_delay_min, antiblock_delay_max, type: campaignType,
           personalize_name,
@@ -231,8 +235,8 @@ export async function POST(req: NextRequest) {
             type, status, scheduled_at,
             total_targets, antiblock_delay_min, antiblock_delay_max, personalize_name,
             use_multi_line,
-            owned_by, updated_by, message_type, template_id, template_params)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17,$18,$19::jsonb)
+            owned_by, updated_by, message_type, template_id, template_params, agent_key)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17,$18,$19::jsonb,$20)
          RETURNING id`,
         [nameStr, msgArray[0], JSON.stringify(msgArray), media_url || null, media_type || null,
          resolvedListId || null, prospect_list_id || null,
@@ -242,7 +246,7 @@ export async function POST(req: NextRequest) {
          delayMin, delayMax,
          personalize_name !== false,
          true,
-         session.user_id, messageType, template_id ?? null, template_params ? JSON.stringify(template_params) : null]
+         session.user_id, messageType, template_id ?? null, template_params ? JSON.stringify(template_params) : null,assignedAgent]
       )
 
       return campaign

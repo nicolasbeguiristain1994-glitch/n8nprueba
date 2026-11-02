@@ -1,3 +1,4 @@
+import { conversationLineIds } from '@/lib/conversation-access'
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { query, withTransaction } from '@/lib/db'
@@ -18,14 +19,14 @@ const uncertain = 'No se pudo confirmar la reacción. Revisá WhatsApp antes de 
 export async function POST(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'conversations', 'read')
   if (!auth.ok) return auth.response
-  if (!canAccess(auth.user, 'send', 'send')) return NextResponse.json({ error: 'Sin permiso para enviar reacciones.' }, { status: 403 })
+  if (!canAccess(auth.user, 'conversations', 'send')) return NextResponse.json({ error: 'Sin permiso para enviar reacciones.' }, { status: 403 })
   const parsed = schema.safeParse(await req.json().catch(() => null))
   if (!parsed.success) return NextResponse.json({ error: 'Elegí un emoji válido para este mensaje.' }, { status: 400 })
   const { messageId, requestId, emoji } = parsed.data
   let claimed = false
   let accepted = false
   try {
-    const lines = await getAccessibleLineIds(auth.user)
+    const lines = await conversationLineIds(auth.user)
     const scope = scopedConversationMessages(auth.user, 2)
     const [target] = await query<ReactionTarget>(`${scope.sql}
       SELECT recent.*,reaction_target.* FROM conversation_messages recent

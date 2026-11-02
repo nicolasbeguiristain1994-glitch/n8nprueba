@@ -15,6 +15,7 @@ import {
 import { argentinaToday, shiftDate, validDateRange } from '@/lib/dashboard-format'
 import { fetchJson }      from '@/lib/fetchJson'
 import { PageHeader }     from '@/components/layout/PageHeader'
+import { AGENT_KEYS, agentScope } from '@/lib/agent-scope'
 import { useCurrentUser } from '@/lib/useCurrentUser'
 import {
   TASK_TYPES, TASK_PRIORITIES,
@@ -49,6 +50,7 @@ interface Operator {
 }
 
 interface MarketingEntry {
+  agent_key?: string | null
   id: string
   date: string          // YYYY-MM-DD
   hour: number | null   // 0-23, null = todo el día
@@ -61,6 +63,7 @@ interface MarketingEntry {
 }
 
 interface MarketingForm {
+  agent_key?: string
   date: string
   hour: string          // '' = todo el día, '0'..'23' = hora
   title: string
@@ -135,9 +138,10 @@ function isOverdue(due: string | null, status: string): boolean {
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function CalendarioPage() {
-  const { user: currentUser }   = useCurrentUser()
+  const { user: currentUser, permissions }   = useCurrentUser()
   const isAdmin                 = currentUser?.role === 'admin'
-  const canEditMarketing        = currentUser?.role === 'admin' || currentUser?.role === 'operator'
+  const canEditMarketing = permissions?.calendar?.includes('create') ?? false
+  const canReadTasks = permissions?.tasks?.includes('read') ?? false
   const fileRef                 = useRef<HTMLInputElement>(null)
 
   // ── View mode ──────────────────────────────────────────────────────────────
@@ -205,6 +209,7 @@ export default function CalendarioPage() {
   // ── Fetch tasks ───────────────────────────────────────────────────────────
 
   const fetchTasks = useCallback(async () => {
+    if (!canReadTasks) { setTasks([]); setLoading(false); return }
     setLoading(true)
     try {
       const params = new URLSearchParams({ start: startISO, end: endISO })
@@ -215,9 +220,10 @@ export default function CalendarioPage() {
       setTasks(data.tasks ?? [])
     } catch { setTasks([]) }
     finally  { setLoading(false) }
-  }, [startISO, endISO, filterType, filterPriority, filterOperator])
+  }, [startISO, endISO, filterType, filterPriority, filterOperator, canReadTasks])
 
   const fetchUnscheduled = useCallback(async () => {
+    if (!canReadTasks) { setUnscheduled([]); setLoadingUn(false); return }
     setLoadingUn(true)
     try {
       const params = new URLSearchParams()
@@ -228,7 +234,7 @@ export default function CalendarioPage() {
       setUnscheduled(data.tasks ?? [])
     } catch { setUnscheduled([]) }
     finally  { setLoadingUn(false) }
-  }, [filterType, filterPriority, filterOperator])
+  }, [filterType, filterPriority, filterOperator, canReadTasks])
 
   // ── Fetch marketing ───────────────────────────────────────────────────────
   // Carga el rango del mes visible (aplica a ambas vistas)
@@ -332,6 +338,7 @@ export default function CalendarioPage() {
   function openEditMarketing(entry: MarketingEntry) {
     setEditingMkt(entry)
     setMktForm({
+      agent_key: entry.agent_key || '',
       date:         entry.date,
       hour:         entry.hour !== null ? String(entry.hour) : '',
       title:        entry.title,
@@ -353,6 +360,7 @@ export default function CalendarioPage() {
     try {
       const imageUrl = mktForm.imageMode === 'url' ? mktForm.imageUrl.trim() : mktForm.imagePreview
       const body = {
+        agent_key: mktForm.agent_key || null,
         date:      mktForm.date,
         hour:      mktForm.hour !== '' ? parseInt(mktForm.hour) : null,
         title:     mktForm.title.trim(),
@@ -788,6 +796,13 @@ export default function CalendarioPage() {
       {/* ── Add/Edit marketing modal ─────────────────────────────────────── */}
       <Dialog open={showMktModal} onOpenChange={open => { if (!open) { setShowMktModal(false); setEditingMkt(null) } }}>
         <DialogContent className="max-w-md">
+          <div className="space-y-1">
+            <label htmlFor="calendar-agent" className="text-sm">Agente</label>
+            <select id="calendar-agent" value={mktForm.agent_key || ''} onChange={e => setMktForm(f => ({ ...f, agent_key: e.target.value }))} className="w-full rounded border bg-background p-2 text-sm">
+              <option value="">{currentUser && agentScope(currentUser)?.length === 1 ? agentScope(currentUser)![0] : 'Sin agente'}</option>
+              {(currentUser ? agentScope(currentUser) ?? AGENT_KEYS : []).map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+          </div>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Megaphone size={16} className="text-purple-600" />

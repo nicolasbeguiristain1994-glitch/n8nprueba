@@ -1,6 +1,7 @@
 // @vitest-environment node
 import {afterAll,beforeAll,describe,it,expect,vi} from 'vitest'
 import {Client} from 'pg'
+import { GET as lineStats } from '@/app/api/stats/lines/route'
 import {NextRequest} from 'next/server'
 const m=vi.hoisted(()=>({query:vi.fn(),auth:vi.fn(),lineIds:vi.fn()}))
 vi.mock('@/lib/db',()=>({query:m.query}))
@@ -64,6 +65,9 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
    ALTER TABLE whatsapp_messages ADD message_body text;
    CREATE TABLE whatsapp_lines(id uuid,line_key text,display_name text,phone_number text,status text,is_connected boolean,msgs_sent_today int,msg_per_day int,total_sent int,total_failed int,total_delivered int,last_seen_at timestamptz,priority int);
    INSERT INTO whatsapp_lines VALUES('${id(60)}','line','Visible',NULL,'active',true,9,50,999,0,0,NULL,1),('${id(61)}','other','Hidden',NULL,'active',true,0,50,999,0,0,NULL,2);`)
+  await db.query(`ALTER TABLE campaigns ADD agent_key text;
+   ALTER TABLE whatsapp_messages ADD line_id uuid,ADD agent_key text;
+   UPDATE cloud_messages SET message_type='text';`)
   m.query.mockImplementation(async(sql,params)=>(await db.query(sql,params)).rows)
   m.auth.mockResolvedValue({ok:true,user:{role:'operator',user_id:id(10)}})
   m.lineIds.mockResolvedValue([id(60)])
@@ -118,6 +122,29 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
    const list=await(await campaigns(req('campaigns'))).json();expect(list.campaigns[0].respuestas_detalle).toEqual(detail.respuestas_detalle)
    const csv=await(await exportCsv(req('export?type=campaigns'))).text();expect(csv).toContain('BAJA: 2 personas / 2 mensajes; EXTRA: 1 personas / 2 mensajes')
   } finally {await db.query('ROLLBACK TO SAVEPOINT response_options')}
+ })
+ it('shows centrally created Royal campaigns and scopes details, CSV, templates and activity by agent',async()=>{
+  await db.query('SAVEPOINT agent_scope')
+  try {
+   await db.query(`UPDATE campaigns SET agent_key=CASE WHEN id=$1 THEN 'royal' ELSE 'bigwin' END`,[id(1)])
+   m.auth.mockResolvedValue({ok:true,user:{role:'operator',user_id:id(99),allowed_agents:['royal']}})
+   const list=await(await campaigns(req('campaigns'))).json()
+   expect(list.campaigns).toHaveLength(1);expect(list.campaigns[0].id).toBe(id(1))
+   expect((await campaigns(req('campaigns?id='+id(1)))).status).toBe(200)
+   expect((await campaigns(req('campaigns?id='+id(2)))).status).toBe(404)
+   const summary=await(await overview(req('overview'))).json()
+   expect(summary.campaignCount.total).toBe(1);expect(summary.kpis.enviados).toBe(2)
+   const csv=await(await exportCsv(req('export?type=campaigns'))).text()
+   expect(csv).toContain('Own');expect(csv).not.toContain('Secret other')
+   const lines=await(await lineStats(req('lines'))).json()
+   expect(lines.lines).toHaveLength(1);expect(lines.lines[0].total_sent).toBe(2)
+   expect(lines.lines[0].msg_per_day).toBeNull()
+   const templateRows=await(await templates(req('templates'))).json()
+   expect(templateRows.templates[0].usage_count).toBe(1)
+  } finally {
+   m.auth.mockResolvedValue({ok:true,user:{role:'operator',user_id:id(10)}})
+   await db.query('ROLLBACK TO SAVEPOINT agent_scope')
+  }
  })
  it('counts latest retries once, reads as delivered, manual Cloud and Argentina midnight',async()=>{
   const r=await overview(req('overview'));expect(r.status).toBe(200)

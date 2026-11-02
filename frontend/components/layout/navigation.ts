@@ -16,7 +16,7 @@ export const BASE_NAV: NavItem[] = [
   { href: '/conversations',  label: 'Conversaciones',   icon: MessageSquare,   sector: 'conversations' },
   { href: '/lines',          label: 'Líneas',           icon: Activity,        sector: 'lines' },
   { href: '/mis-tareas',     label: 'Mis Tareas',       icon: CheckSquare,     sector: 'tasks' },
-  { href: '/calendario',     label: 'Calendario',       icon: CalendarDays,    sector: 'tasks' },
+  { href: '/calendario',     label: 'Calendario',       icon: CalendarDays,    sector: 'calendar' },
   { href: '/estadisticas',   label: 'Estadísticas',     icon: BarChart2,       sector: 'estadisticas' },
   { href: '/automatizaciones',label: 'Automatizaciones',icon: Bot,             sector: 'automations' },
   { href: '/blacklist',      label: 'Blacklist',        icon: ShieldOff,       sector: 'blacklist' },

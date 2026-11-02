@@ -33,7 +33,7 @@ it('pauses hidden-tab polling but keeps notifications and refreshes the active c
   expect(mocks.notify).toHaveBeenCalledOnce()
   hidden.mockReturnValue(false)
   await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
-  expect(mocks.fetch.mock.calls.map(([url]) => url)).toEqual(['/api/conversations', '/api/conversations?phone=test-phone'])
+  expect(mocks.fetch.mock.calls.map(([url]) => url)).toEqual(['/api/conversations', '/api/conversations?phone=test-phone&agent=all'])
 })
 
 it('keeps at most one slow inbox read and one follow-up, including events arriving during the read', async () => {
@@ -87,4 +87,20 @@ it('coalesces message polls, aborts obsolete reads, and rejects a late response 
   act(() => result.current.openConv('c'))
   unmount()
   expect(reads[3].signal.aborted).toBe(true)
+})
+
+it('clears the selected chat and draft when switching agent inboxes for the same phone', async () => {
+  mocks.fetch.mockImplementation((url: string) => Promise.resolve(url.includes('phone=')
+    ? { messages:[{id:'royal-message'}] }
+    : { conversations:[{phone_number:'5491100000001',last_message:'Hola',last_at:'2026-10-01'}],total:1,agent:url.includes('bigwin')?'bigwin':'royal',agents:[{name:'royal',count:1},{name:'bigwin',count:1}] }))
+  const { result } = renderHook(useConversations)
+  await act(async () => {})
+  await act(async () => result.current.openConv('5491100000001'))
+  act(() => result.current.setReply('Draft Royal'))
+  expect(result.current.messages).toHaveLength(1)
+  await act(async () => result.current.setAgent('bigwin'))
+  expect(result.current.selected).toBeNull()
+  expect(result.current.messages).toEqual([])
+  expect(result.current.reply).toBe('')
+  expect(result.current.agent).toBe('bigwin')
 })

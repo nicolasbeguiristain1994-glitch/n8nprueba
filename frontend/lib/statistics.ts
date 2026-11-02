@@ -1,3 +1,5 @@
+import { AGENT_MESSAGES_CTE } from './agent-messages'
+import { campaignScopeSql } from './agent-scope'
 import { query } from '@/lib/db'
 import { argentinaToday, shiftDate, validDateRange } from '@/lib/dashboard-format'
 import { CAMPAIGN_STATS_SQL, CAMPAIGN_OUTCOME_SQL } from '@/lib/campaign-stats'
@@ -16,7 +18,7 @@ export const STATS_FROM = "($1::date::timestamp AT TIME ZONE 'America/Argentina/
 export const STATS_TO = "(($2::date + 1)::timestamp AT TIME ZONE 'America/Argentina/Buenos_Aires')"
 export const STATS_DAY = "(wm.created_at AT TIME ZONE 'America/Argentina/Buenos_Aires')::date"
 
-export async function campaignStatistics(from: string, to: string, owner: string | null, status = '', search = '', includeEffectiveness = false, sortBy: 'sent' | 'created_at' = 'sent'): Promise<Record<string, unknown>[]> {
+export async function campaignStatistics(from: string, to: string, owner: string | null, status = '', search = '', includeEffectiveness = false, sortBy: 'sent' | 'created_at' = 'sent', agents: string[] | null = null): Promise<Record<string, unknown>[]> {
   const orderBy = sortBy === 'created_at' ? 'c.created_at DESC,c.id DESC' : 'stats.sent DESC,c.created_at DESC,c.id DESC'
   const rows = await query<Record<string, unknown>>(`
     SELECT c.id,c.name,c.type,c.status,c.created_at,c.completed_at,
@@ -27,9 +29,9 @@ export async function campaignStatistics(from: string, to: string, owner: string
       round(100.0*stats.read/NULLIF(stats.sent,0),1) AS tasa_lectura
     FROM campaigns c CROSS JOIN LATERAL (${CAMPAIGN_STATS_SQL}) stats
     WHERE c.created_at >= ${STATS_FROM} AND c.created_at < ${STATS_TO}
-      AND ($3::uuid IS NULL OR c.owned_by=$3)
+      AND ${agents === null ? '($3::uuid IS NULL OR c.owned_by=$3)' : campaignScopeSql('c','$3','$7')}
       AND ($4::text='' OR c.status::text=$4) AND ($5::text='' OR c.name ILIKE $6)
-    ORDER BY ${orderBy} LIMIT 100`, [from,to,owner,status,search,`%${search}%`])
+    ORDER BY ${orderBy} LIMIT 100`, [from,to,owner,status,search,`%${search}%`,...(agents === null ? [] : [agents])])
   if (!includeEffectiveness) return rows
   const ids = rows.map(row => row.id as string)
   const [effectiveness, responses] = await Promise.all([campaignEffectiveness(ids), campaignResponseBreakdowns(ids)])
@@ -75,12 +77,30 @@ export const ACTIVITY_METRICS = `
   COUNT(*) FILTER (WHERE direction='outbound' AND status='read')::int AS leidos,
   COUNT(*) FILTER (WHERE direction='outbound' AND status='failed')::int AS fallidos,
   COUNT(*) FILTER (WHERE direction='inbound')::int AS respuestas`
-export async function statisticsSeries(from: string, to: string, owner: string | null) {
-  return query<Record<string, unknown>>(`${ACTIVITY_CTE} SELECT ${STATS_DAY}::text AS dia,${ACTIVITY_METRICS}
-    FROM activity wm GROUP BY ${STATS_DAY} ORDER BY dia`,[from,to,owner])
+export async function statisticsSeries(from: string, to: string, owner: string | null, agents: string[] | null = null) {
+  return query<Record<string, unknown>>(`${activityCte(agents)} SELECT ${STATS_DAY}::text AS dia,${ACTIVITY_METRICS}
+    FROM activity wm GROUP BY ${STATS_DAY} ORDER BY dia`,statisticsArgs(from,to,owner,agents))
 }
 export function csvCell(value: unknown): string {
   let text=String(value ?? '')
   if (/^[\s]*[=+@-]/.test(text)) text="'"+text
   return '"'+text.replace(/"/g,'""')+'"'
+}
+
+// Legacy unrestricted accounts retain their ownership rules. Agent profiles
+// see their campaigns even when created centrally by an administrator.
+const AGENT_ACTIVITY_CTE = `${AGENT_MESSAGES_CTE}, ranked_messages AS (
+  SELECT wm.*,row_number() OVER (
+    PARTITION BY CASE WHEN direction='outbound' AND campaign_id IS NOT NULL
+      THEN campaign_id::text || ':' || phone_number ELSE id::text END
+    ORDER BY created_at DESC,id DESC) AS attempt_rank
+  FROM attributed_agent_messages wm
+  WHERE created_at < ${STATS_TO} AND agent_key=ANY($4::text[])
+    AND ($3::uuid IS NULL OR $3::uuid IS NOT NULL)
+), activity AS (
+  SELECT * FROM ranked_messages WHERE attempt_rank=1 AND created_at >= ${STATS_FROM}
+)`
+export function activityCte(agents: string[] | null) { return agents === null ? ACTIVITY_CTE : AGENT_ACTIVITY_CTE }
+export function statisticsArgs(from: string, to: string, owner: string | null, agents: string[] | null) {
+  return [from,to,owner,...(agents === null ? [] : [agents])]
 }

@@ -1,4 +1,4 @@
-import { canReadConversation, conversationPhone } from '@/lib/conversation-access'
+import { requireConversation, conversationPhone } from '@/lib/conversation-access'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
@@ -14,17 +14,18 @@ export async function GET(req: NextRequest, { params }: Params) {
   const { phone: rawPhone } = await params
   const phone = conversationPhone(rawPhone)
   try {
-    if (!await canReadConversation(auth.user, phone)) return NextResponse.json({error: 'Forbidden'}, {status: 403})
+    const {agent}=await requireConversation(auth.user,phone,req.nextUrl.searchParams.get('agent'))
     const notes = await query(
       `SELECT id, content, author_name, created_at
        FROM conversation_notes
-       WHERE phone = $1
+       WHERE phone = $1 AND COALESCE(agent_key,'none')=$2
        ORDER BY created_at DESC
        LIMIT 50`,
-      [phone]
+      [phone,agent]
     )
     return NextResponse.json({ notes })
   } catch (e) {
+    if(e instanceof Response) return e
     console.error('[GET /api/conversations/[phone]/notes]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
@@ -46,15 +47,16 @@ export async function POST(req: NextRequest, { params }: Params) {
   const authorName = auth.user.name || auth.user.email
 
   try {
-    if (!await canReadConversation(auth.user, phone)) return NextResponse.json({error: 'Forbidden'}, {status: 403})
+    const {agent}=await requireConversation(auth.user,phone,req.nextUrl.searchParams.get('agent'))
     await query(
-      `INSERT INTO conversation_notes (phone, content, author_id, author_name)
-       VALUES ($1, $2, $3, $4)`,
-      [phone, content, auth.user.user_id, authorName]
+      `INSERT INTO conversation_notes (phone, content, author_id, author_name, agent_key)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [phone, content, auth.user.user_id, authorName,agent]
     )
     emitUpdate(phone, 'note')
     return NextResponse.json({ ok: true })
   } catch (e) {
+    if(e instanceof Response) return e
     console.error('[POST /api/conversations/[phone]/notes]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

@@ -1,3 +1,5 @@
+import { agentScope } from '@/lib/agent-scope'
+import { requireConversation } from '@/lib/conversation-access'
 import { LineSendBudgetError } from '@/lib/line-send-budget'
 import { recordHumanAutomationIntervention } from '@/lib/automation-safety'
 import { CampaignRiskError, assertCampaignRiskClear, evaluateCampaignRisk } from '@/lib/campaign-risk'
@@ -58,15 +60,20 @@ async function getOrAssignLine(
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'send', 'send')
+  const rawBody = await req.json().catch(() => null)
+  const auth = await checkPermissionWithUser(req, rawBody?.conversation_agent ? 'conversations' : 'send', 'send')
   if (!auth.ok) return auth.response
   const session = auth.user
 
-  const rawBody = await req.json().catch(() => null)
   const parsed  = parseBody(SendSchema, rawBody)
   if (!parsed.ok) return handleValidationError(req, parsed.error, 'send')
-  const { phones: rawPhones, message: messageStr, campaign_id, media_url, media_type, sticker_token, sticker_data } = parsed.data
+  const { phones: rawPhones, message: messageStr, campaign_id, media_url, media_type, sticker_token, sticker_data, conversation_agent } = parsed.data
 
+  let conversation:Awaited<ReturnType<typeof requireConversation>>|null=null
+  if(conversation_agent) {
+    if(rawPhones.length!==1 || campaign_id) return NextResponse.json({error:'La respuesta requiere una única conversación'},{status:400})
+    try { conversation=await requireConversation(session,rawPhones[0],conversation_agent) } catch(e) {if(e instanceof Response)return e;throw e}
+  } else if(agentScope(session)!==null) return NextResponse.json({error:'Respondé desde tu bandeja de conversaciones'},{status:403})
   const sticker = media_type === 'sticker'
   if (sticker && (rawPhones.length !== 1 || campaign_id || !sticker_data || !sticker_data.startsWith('data:image/webp;base64,') || !verifyStickerToken(sticker_token, sticker_data, session.user_id))) {
     return NextResponse.json({error:'Volvé a cargar el sticker antes de enviarlo.'}, {status:400})
@@ -85,7 +92,7 @@ export async function POST(req: NextRequest) {
   }
   const uniquePhones = [...new Set(normalizedPhones)]
 
-  if (session.role !== 'admin') {
+  if (session.role !== 'admin' && !conversation) {
     const scope = contactPhoneScope(session, 'destination.phone', 1, true)
     const denied = await query(`SELECT 1 FROM unnest($1::text[]) destination(phone) WHERE NOT ${scope.sql} LIMIT 1`, [uniquePhones, ...scope.params])
     if (denied.length) return NextResponse.json({error: 'Destinatario fuera de tu alcance'}, {status: 403})
@@ -114,7 +121,7 @@ export async function POST(req: NextRequest) {
   const isManualReply = !campaign_id && uniquePhones.length === 1
   const [eligibleLines, manualReplyLines, accessibleLineIds] = await Promise.all([
     getEligibleLines(session.is_super_admin ? undefined : session.user_id,{includeBudgetWaiting:!!campaign_id}),
-    isManualReply ? getEligibleReplyLines(session.is_super_admin ? undefined : session.user_id) : Promise.resolve([]),
+    isManualReply ? getEligibleReplyLines(conversation || session.is_super_admin ? undefined : session.user_id) : Promise.resolve([]),
     getAccessibleLineIds(session),
   ])
   if (eligibleLines.length === 0 && manualReplyLines.length === 0) {
@@ -128,7 +135,12 @@ export async function POST(req: NextRequest) {
   // Send sequentially (antiblock) — collect results in memory
   for (const phone of uniquePhones) {
     try {
-      const replyLine = await findConversationReplyLine(phone, accessibleLineIds, isManualReply ? manualReplyLines : eligibleLines)
+      if(conversation) {
+        const [blocked]=await query(`SELECT 1 FROM blacklist WHERE phone_number_normalized=$1 AND removed_at IS NULL AND (scope_key='global' OR agent_code=$2) LIMIT 1`,[phone.replace(/\D/g,''),conversation.agent])
+        if(blocked)throw new Error('El contacto está bloqueado para este agente')
+      }
+      const replyLine = conversation ? manualReplyLines.find(l=>l.id===conversation.lineId) : await findConversationReplyLine(phone, accessibleLineIds, isManualReply ? manualReplyLines : eligibleLines)
+      if(conversation && !replyLine)throw new Error('La línea original de esta conversación no está disponible')
       if (!replyLine && eligibleLines.length === 0) throw new Error('No hay líneas de WhatsApp disponibles para iniciar esta conversación.')
       const line = replyLine ?? await getOrAssignLine(phone, eligibleLines)
       const manualAgent=isManualReply?await recordHumanAutomationIntervention(phone,{provider:line.line_type==='cloud'?'cloud':'evolution',
@@ -136,7 +148,7 @@ export async function POST(req: NextRequest) {
       const payload = sticker
         ? { kind: 'sticker' as const, data: sticker_data! }
         : { kind: 'text' as const, body: messageStr, mediaUrl: media_url || null }
-      const { messageId } = await (isManualReply && replyLine
+      const { messageId } = await (isManualReply && replyLine && line.line_type==='cloud'
         ? sendViaCloud(line, phone, payload, undefined, { purpose: 'conversation_reply', reserveCapacity: true })
         : line.line_type === 'cloud'
           ? sendViaCloud(line, phone, payload, campaign_id ?? undefined)
@@ -147,7 +159,7 @@ export async function POST(req: NextRequest) {
         created_at: sentAt,
         phone_number:         phone,
         message_body:         sticker ? '[Sticker]' : messageStr,
-        metadata: {media_type:sticker?'sticker':media_url?'image':'text',sticker_preview:preview,line_id:line.id,agent_code:manualAgent},
+        metadata: {media_type:sticker?'sticker':media_url?'image':'text',sticker_preview:preview,line_id:line.id,agent_code:conversation?.agent ?? manualAgent,workspace_agent:conversation?.agent},
         status:               'sent',
         evolution_message_id: messageId ?? '',
         campaign_id:          campaign_id ?? '',
@@ -163,6 +175,7 @@ export async function POST(req: NextRequest) {
         created_at: new Date().toISOString(),
         phone_number:         phone,
         message_body:         messageStr,
+        metadata: conversation ? {workspace_agent:conversation.agent,line_id:conversation.lineId} : undefined,
         status:               'failed',
         evolution_message_id: '',
         campaign_id:          campaign_id ?? '',
@@ -180,7 +193,7 @@ export async function POST(req: NextRequest) {
       await query(
         `INSERT INTO whatsapp_messages
            (phone_number, message_body, direction, status, evolution_message_id,
-            campaign_id, sent_at, failed_at, error_detail, created_at, updated_at, metadata)
+            campaign_id, sent_at, failed_at, error_detail, created_at, updated_at, metadata,agent_key,line_id)
          SELECT
            x.phone_number,
            x.message_body,
@@ -191,7 +204,7 @@ export async function POST(req: NextRequest) {
            CASE WHEN x.status = 'sent'   THEN x.created_at ELSE NULL END,
            CASE WHEN x.status = 'failed' THEN x.created_at ELSE NULL END,
            NULLIF(x.error_detail, ''),
-           x.created_at, NOW(), COALESCE(x.metadata,'{}'::jsonb)
+           x.created_at, NOW(), COALESCE(x.metadata,'{}'::jsonb),x.metadata->>'workspace_agent',(x.metadata->>'line_id')::uuid
          FROM jsonb_to_recordset($1::jsonb)
               AS x(phone_number text, message_body text, status text,
                    evolution_message_id text, campaign_id text, error_detail text, metadata jsonb, created_at timestamptz)`,

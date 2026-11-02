@@ -3,7 +3,7 @@ import { checkPermissionWithUser } from '@/lib/permissions'
 import { prepareSticker, signStickerToken } from '@/lib/conversation-stickers'
 
 export async function POST(req:NextRequest) {
-  const auth=await checkPermissionWithUser(req,'send','send')
+  const auth=await checkPermissionWithUser(req,'conversations','send')
   if(!auth.ok) return auth.response
   if(Number(req.headers.get('content-length'))>6*1024*1024) return NextResponse.json({error:'La imagen supera 5 MB.'},{status:413})
   let image:Buffer

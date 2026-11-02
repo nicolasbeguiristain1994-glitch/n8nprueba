@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { afterEach, it, expect, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ fetch: vi.fn() }))
 vi.mock('@/lib/fetchJson', () => ({ fetchJson: mocks.fetch }))
-vi.mock('@/lib/useCurrentUser', () => ({ useCurrentUser: () => ({ user: null }) }))
+vi.mock('@/lib/useCurrentUser', () => ({ useCurrentUser: () => ({ user: null,permissions:{tasks:['read'],calendar:['read','create']} }) }))
 import CalendarioPage from '@/app/(protected)/calendario/page'
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks() })

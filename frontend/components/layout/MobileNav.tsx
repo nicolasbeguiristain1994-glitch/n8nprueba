@@ -70,10 +70,11 @@ interface MobileNavProps {
 export function MobileNav({ items = DEFAULT_ITEMS }: MobileNavProps) {
   const pathname = usePathname()
   const { user } = useCurrentUser()
-  const visibleItems = items.filter(item => {
+  const candidates=items===DEFAULT_ITEMS ? [...items,...BASE_NAV.filter(n=>!items.some(i=>i.href===n.href))] : items
+  const visibleItems = candidates.filter(item => {
     const nav = [...BASE_NAV, ...ADMIN_NAV].find(link => link.href === item.href)
     return user?.role === 'admin' || (nav && user?.sectors?.includes(nav.sector))
-  })
+  }).slice(0,5)
 
   return (
     <nav

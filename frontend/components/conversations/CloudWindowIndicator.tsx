@@ -10,7 +10,7 @@ export function windowLabel(expiresAt: string|null, now:number) {
   return {text:`Atención Cloud · quedan ${Math.floor(minutes/60)} h ${minutes%60} min`,urgent:ms<=3600_000,closed:false}
 }
 
-export function CloudWindowIndicator({phone}:{phone:string}) {
+export function CloudWindowIndicator({phone,agent}:{phone:string;agent?:string}) {
   const [info,setInfo]=useState<WindowInfo|null>(null)
   const [error,setError]=useState(false)
   const [clock,setClock]=useState({now:Date.now(),offset:0})
@@ -21,7 +21,7 @@ export function CloudWindowIndicator({phone}:{phone:string}) {
       inFlight=true;controller=new AbortController()
       const timeout=setTimeout(()=>controller?.abort(),15_000)
       try {
-        const response=await fetch(`/api/conversations/window?phone=${encodeURIComponent(phone)}`,{signal:controller.signal,cache:'no-store'})
+        const response=await fetch(`/api/conversations/window?phone=${encodeURIComponent(phone)}${agent ? '&agent='+encodeURIComponent(agent) : ''}`,{signal:controller.signal,cache:'no-store'})
         if(!response.ok)throw new Error('window')
         const data=await response.json()
         if(alive){setInfo(data.window);setError(false);setClock({now:Date.now(),offset:Date.parse(data.serverNow)-Date.now()})}
@@ -34,7 +34,7 @@ export function CloudWindowIndicator({phone}:{phone:string}) {
     document.addEventListener('visibilitychange',visible)
     window.addEventListener('focus',visible)
     return ()=>{alive=false;controller?.abort();clearInterval(timer);document.removeEventListener('visibilitychange',visible);window.removeEventListener('focus',visible)}
-  },[phone])
+  },[phone,agent])
   if(error)return <p className="shrink-0 border-b px-3 py-1 md:py-2 text-xs text-muted-foreground">No se pudo actualizar la ventana Cloud. Reintentando…</p>
   if(!info)return null
   const label=windowLabel(info.expiresAt,clock.now+clock.offset)

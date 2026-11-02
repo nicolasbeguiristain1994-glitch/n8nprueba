@@ -1,3 +1,4 @@
+import { conversationLineIds } from '@/lib/conversation-access'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
@@ -18,7 +19,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Mensaje inválido' }, { status: 400, headers: privateHeaders })
   }
   try {
-    const lineIds = await getAccessibleLineIds(auth.user)
+    const lineIds = await conversationLineIds(auth.user)
     const scope = scopedConversationMessages(auth.user, 2)
     const [media] = await query<ConversationMediaRow>(`
       ${scope.sql}

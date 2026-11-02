@@ -1,16 +1,19 @@
+import { conversationLineIds } from '@/lib/conversation-access'
 import { NextRequest } from 'next/server'
 import { checkPermissionWithUser } from '@/lib/permissions'
 import { sseEmitter } from '@/lib/sse-events'
 import { query } from '@/lib/db'
 import { getAccessibleLineIds } from '@/lib/line-visibility'
 import { scopedConversationMessages } from '@/lib/conversation-messages'
-import { canReadConversation, conversationPhone } from '@/lib/conversation-access'
+import { canReadConversation, conversationPhone, requestedConversationAgent } from '@/lib/conversation-access'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   const initial = await checkPermissionWithUser(req, 'conversations', 'read')
   if (!initial.ok) return initial.response
+  let agent:string
+  try { agent=requestedConversationAgent(initial.user,req.nextUrl.searchParams.get('agent')) } catch(e) { if(e instanceof Response)return e;throw e }
   const encoder = new TextEncoder()
   let lastCheck = new Date()
   let stop = () => {}
@@ -36,7 +39,7 @@ export async function GET(req: NextRequest) {
             const [phone, source] = phones.entries().next().value!
             phones.delete(phone)
             const user = await fresh()
-            if (user && await canReadConversation(user, phone)) send({type: 'update', source, phone})
+            if (user && await canReadConversation(user, phone, agent)) send({type: 'update', source, phone})
           }
         } catch { stop() } finally { draining = false }
       }
@@ -53,10 +56,10 @@ export async function GET(req: NextRequest) {
         try {
           const user = await fresh()
           if (!user) return
-          const scope = scopedConversationMessages(user, 2)
+          const scope = scopedConversationMessages(user, 2, agent)
           const rows = await query<{has_new: boolean}>(`${scope.sql}
             SELECT EXISTS (SELECT 1 FROM conversation_messages WHERE created_at > $2) AS has_new`,
-            [await getAccessibleLineIds(user), lastCheck.toISOString(), ...scope.params])
+            [await conversationLineIds(user), lastCheck.toISOString(), ...scope.params])
           lastCheck = watermark
           if (rows[0]?.has_new) send({type: 'update', source: 'message'})
         } catch { stop() } finally { polling = false }

@@ -1,5 +1,6 @@
 'use client'
 
+import { AGENT_KEYS, AGENT_PROFILE_SECTORS } from '@/lib/agent-scope'
 import { PageHeader } from '@/components/layout/PageHeader'
 
 import { useState, useEffect, useCallback } from 'react'
@@ -45,11 +46,11 @@ type User = {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const ALL_AGENTS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas'] as const
+const ALL_AGENTS = AGENT_KEYS
 
 const ALL_SECTORS = [
   'dashboard', 'contacts', 'campaigns', 'conversations', 'lines',
-  'tasks', 'estadisticas', 'automations', 'blacklist', 'templates',
+  'tasks', 'calendar', 'estadisticas', 'automations', 'blacklist', 'templates',
   'users', 'settings', 'lists', 'send',
 ] as const
 
@@ -60,6 +61,7 @@ const SECTOR_LABELS: Record<string, string> = {
   conversations: 'Conversaciones',
   lines:         'Líneas',
   tasks:         'Tareas',
+  calendar:      'Calendario',
   estadisticas:  'Estadísticas',
   automations:   'Automatizaciones',
   blacklist:     'Blacklist',
@@ -200,11 +202,20 @@ function UserFormModal({
 
   return (
     <Dialog open={open} onOpenChange={v => { if (!v) onClose() }}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{mode === 'create' ? 'Crear usuario' : 'Editar usuario'}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 pt-1">
+          <div className="rounded-lg border p-3 space-y-2">
+            <label htmlFor="agent-profile" className="text-sm font-medium">Aplicar perfil de agente</label>
+            <select id="agent-profile" className="w-full rounded border bg-background p-2 text-sm" value=""
+              onChange={e => { if (e.target.value) setForm(f => ({ ...f, role: 'operator', sectors: [...AGENT_PROFILE_SECTORS], allowed_agents: [e.target.value], can_download_contacts: false })) }}>
+              <option value="">Seleccionar agente…</option>
+              {ALL_AGENTS.map(a => <option key={a} value={a}>{a}</option>)}
+            </select>
+            <p className="text-xs text-muted-foreground">Habilita sus conversaciones, estadísticas de campañas y calendario. Podés ajustar los módulos debajo.</p>
+          </div>
           {mode === 'create' && (
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Email *</label>
@@ -292,6 +303,7 @@ function UserFormModal({
             </label>
           </div>
 
+          {form.role === 'admin' && <p className="text-xs text-muted-foreground">Los administradores tienen acceso a todos los módulos y agentes. Usá Operador o Viewer para restringir el acceso.</p>}
           {/* Agentes permitidos */}
           <div className="mt-2">
             <label className="text-xs font-medium text-muted-foreground mb-1 block">Agentes permitidos (vacío = todos)</label>

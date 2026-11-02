@@ -22,6 +22,7 @@ export type Resource =
   | 'tickets'
   | 'blacklist'
   | 'tasks'
+  | 'calendar'
   | 'estadisticas'
   | 'automations'
   | 'templates'
@@ -94,7 +95,7 @@ export function effectivePermissions(
 ): EffectivePermissions {
   const resources: Resource[] = [
     'dashboard', 'contacts', 'campaigns', 'conversations',
-    'lines', 'users', 'agents', 'lists', 'send', 'audit', 'settings', 'blacklist', 'tasks',
+    'lines', 'users', 'agents', 'lists', 'send', 'audit', 'settings', 'blacklist', 'tasks', 'calendar',
     'estadisticas', 'automations', 'templates',
   ]
   const actions: Action[] = ['read', 'create', 'update', 'delete', 'manage', 'send']
