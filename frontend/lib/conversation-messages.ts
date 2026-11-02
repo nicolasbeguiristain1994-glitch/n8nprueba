@@ -35,7 +35,9 @@ export const CONVERSATION_MESSAGES_CTE = messagesCte()
 export function scopedConversationMessages(user: ContactAccessUser, paramBase: number, requested?: string) {
   const agents = agentScope(user)
   if (agents !== null || requested) {
-    const contact=agents===null ? contactPhoneScope(user,'m.phone_number',paramBase+2,user.role==='admin') : {sql:`(NOT EXISTS(SELECT 1 FROM operator_contact_visibility v WHERE v.operator_id=$${paramBase+3}::uuid)
+    const contact=agents===null ? contactPhoneScope(user,'m.phone_number',paramBase+2,user.role==='admin') : {sql:`NOT EXISTS(SELECT 1 FROM contacts deleted_contact WHERE deleted_contact.deleted_at IS NOT NULL
+      AND REPLACE(deleted_contact.phone_number,'+','')=m.phone_number)
+      AND (NOT EXISTS(SELECT 1 FROM operator_contact_visibility v WHERE v.operator_id=$${paramBase+3}::uuid)
       OR EXISTS(SELECT 1 FROM contacts scoped_contact JOIN operator_contact_visibility v ON v.contact_id=scoped_contact.id
         WHERE v.operator_id=$${paramBase+3}::uuid AND scoped_contact.deleted_at IS NULL AND scoped_contact.panel=m.agent_key
           AND REPLACE(scoped_contact.phone_number,'+','')=m.phone_number))`,params:[user.user_id]}

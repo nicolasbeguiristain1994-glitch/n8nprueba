@@ -57,7 +57,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
         can_download_contacts bool DEFAULT true,allowed_agents text[],is_super_admin bool DEFAULT false);
       CREATE TABLE contact_lists(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name text,description text,filters jsonb,owned_by uuid,updated_by uuid,source text,created_at timestamptz DEFAULT now());
       CREATE TABLE contact_list_members(list_id uuid,contact_id uuid,PRIMARY KEY(list_id,contact_id));
-      CREATE TABLE campaigns(id uuid PRIMARY KEY,name text,owned_by uuid,list_id uuid,prospect_list_id uuid);
+      CREATE TABLE campaigns(id uuid PRIMARY KEY,name text,owned_by uuid,list_id uuid,prospect_list_id uuid,agent_key text,template_id uuid);
       CREATE TABLE campaign_recipients(campaign_id uuid,contact_id uuid,prospect_id uuid,phone_number text,status text,failed_at timestamptz,error_detail text,sent_at timestamptz);
       CREATE TABLE prospects(id uuid,phone_number text,first_name text,last_name text);
       CREATE TABLE prospect_list_members(prospect_list_id uuid,prospect_id uuid);
@@ -66,7 +66,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
       CREATE TABLE cloud_conversations(id uuid,contact_phone text);
       CREATE TABLE cloud_messages(id uuid DEFAULT gen_random_uuid(),conversation_id uuid,phone_number_id text,wamid text,direction text,message_type text,content jsonb,status text,sent_at timestamptz,created_at timestamptz DEFAULT now(),campaign_id uuid);
       CREATE TABLE conversation_message_views(message_key text PRIMARY KEY,viewed_at timestamptz NOT NULL DEFAULT now());
-      CREATE TABLE conversation_notes(id uuid DEFAULT gen_random_uuid(),phone text,content text,author_id uuid,author_name text,created_at timestamptz DEFAULT now());
+      CREATE TABLE conversation_notes(id uuid DEFAULT gen_random_uuid(),phone text,agent_key text,content text,author_id uuid,author_name text,created_at timestamptz DEFAULT now());
       CREATE TABLE conversation_state(phone_number text,current_flow text,last_activity_at timestamptz,updated_at timestamptz,resolved_at timestamptz,is_escalated bool,escalation_reason text);
       CREATE UNIQUE INDEX ON conversation_state(phone_number) WHERE resolved_at IS NULL;
       CREATE TABLE blacklist(phone_number_normalized text,removed_at timestamptz,scope_key text DEFAULT 'global',agent_code text);
@@ -79,7 +79,8 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
     `)
     await db.query("CREATE TABLE casino_transactions(id bigint,platform text,username text,agente text,fecha date,fecha_hora_utc timestamptz,tipo text,monto numeric,raw_detalles text,source_id text)")
     await db.query('CREATE TABLE casino_players(id uuid,username_lower text,platform text,agente text)')
-    await db.query(`ALTER TABLE whatsapp_messages ADD COLUMN metadata jsonb,ADD COLUMN contact_id uuid;
+    await db.query(`ALTER TABLE whatsapp_messages ADD COLUMN metadata jsonb,ADD COLUMN contact_id uuid,ADD COLUMN agent_key text,ADD COLUMN line_id uuid,ADD COLUMN template_id uuid,ADD COLUMN whatsapp_message_id text;
+      CREATE TABLE agent_conversation_state(phone_number text,agent_key text,current_flow text,updated_at timestamptz DEFAULT now(),PRIMARY KEY(agent_key,phone_number));
       ALTER TABLE cloud_conversations ADD COLUMN phone_number_id text;
       ALTER TABLE campaign_recipients ADD COLUMN id uuid, ADD COLUMN line_id uuid;
       CREATE TABLE whatsapp_lines(id uuid,line_type text);`)
@@ -96,6 +97,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
     `, [id(900)])
     await db.query(`INSERT INTO contacts(id,phone_number,first_name,panel) VALUES($1,$4,'visible','royal'),($2,$5,'hidden','farabet'),($3,$6,'second','royal')`, [id(1),id(2),id(3),'+'+phone(1),'+'+phone(2),'+'+phone(3)])
     await db.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status) VALUES($1,'visible','inbound','received'),($2,'hidden','inbound','received'),($3,'second','inbound','received')`, [phone(1),phone(2),phone(3)])
+    await db.query(`UPDATE whatsapp_messages SET agent_key=CASE WHEN phone_number=$1 THEN 'farabet' ELSE 'royal' END,line_id=$2`,[phone(2),id(80)])
     await db.query("UPDATE contacts SET account_username=lower(first_name),identity_key=jsonb_build_array(panel,lower(first_name))::text")
     mocks.lines.mockResolvedValue([id(80)])
     // Fresh/TRUNCATEd tables have no useful planner statistics. PostgreSQL's
@@ -121,7 +123,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
     expect(await listed()).toEqual([id(1)])
     expect((await tags(req('contacts/id/tags',{tags:['private']},'PUT'),contact(3))).status).toBe(403)
     expect((await tags(req('contacts/id/tags',{tags:['visible']},'PUT'),contact(1))).status).toBe(200)
-    expect((await notes(req('conversations/phone/notes'),conv(3))).status).toBe(403)
+    expect((await notes(req('conversations/phone/notes'),conv(3))).status).toBe(404)
     expect((await note(req('conversations/phone/notes',{content:'allowed'}),conv(1))).status).toBe(200)
   })
   it('intersects a multi-line union with agent access, deletion and explicit assignments on every contact read', async () => {
@@ -231,14 +233,14 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
     await db.query('INSERT INTO cloud_numbers VALUES($1,$2)', ['hidden',id(81)])
     await db.query('INSERT INTO cloud_conversations VALUES($1,$2)',[id(82),phone(1)])
     await db.query("INSERT INTO cloud_messages(conversation_id,phone_number_id,wamid,direction,content,message_type,status) VALUES($1,'hidden','duplicated','inbound','{}','text','received')",[id(82)])
-    await db.query("UPDATE whatsapp_messages SET evolution_message_id='duplicated' WHERE phone_number=$1",[phone(1)])
+    await db.query("UPDATE whatsapp_messages SET agent_key=NULL,evolution_message_id='duplicated' WHERE phone_number=$1",[phone(1)])
     expect(await canReadConversation(mocks.session!,phone(1))).toBe(false)
   })
   it('hides notifications on delivery and on later reads when visibility is revoked', async () => {
-    for (const n of [1,2]) await notify({userId:id(900),type:'mensaje_nuevo',title:'message',body:'private body',relatedType:'conversation',relatedId:phone(n)})
+    for (const n of [1,2]) await notify({userId:id(900),type:'mensaje_nuevo',title:'message',body:'private body',relatedType:'conversation',relatedId:phone(n),metadata:{agent_key:n===1?'royal':'farabet'}})
     expect((await db.query('SELECT count(*) FROM notifications')).rows[0].count).toBe('1')
     expect((await (await notifications(req('notifications'))).json()).total).toBe(1)
-    await db.query("UPDATE contacts SET panel='farabet' WHERE id=$1",[id(1)])
+    await db.query("UPDATE users SET allowed_agents=ARRAY['farabet']")
     expect((await (await notifications(req('notifications'))).json())).toMatchObject({notifications:[],total:0,unread:0})
     expect((await markRead(req('notifications/mark-all-read',{}))).status).toBe(200)
     expect((await db.query('SELECT is_read FROM notifications')).rows[0].is_read).toBe(false)
@@ -274,18 +276,18 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
     expect((await edit(req('contacts/id',{segment:'bajo',segment_mode:'automatic'},'PATCH'),contact(1))).status).toBe(200)
     expect((await db.query('SELECT segment,segment_is_manual FROM contacts WHERE id=$1',[id(1)])).rows[0]).toEqual({segment:'vip',segment_is_manual:false})
   })
-  it('denies NULL agents and mixed aliases rather than treating NULL as visible', async () => {
+  it('does not reassign attributed messages when CRM panel aliases change', async () => {
     await db.query('UPDATE contacts SET panel=NULL WHERE id=$1',[id(1)])
-    expect(await canReadConversation(mocks.session!,phone(1))).toBe(false)
+    expect(await canReadConversation(mocks.session!,phone(1))).toBe(true)
     await db.query('INSERT INTO contacts(phone_number,panel) VALUES($1,$2)',[phone(3),'farabet'])
-    expect(await canReadConversation(mocks.session!,phone(3))).toBe(false)
+    expect(await canReadConversation(mocks.session!,phone(3))).toBe(true)
   })
-  it('permits unknown Cloud inbound phones only on visible lines; known contacts still require agent access', async () => {
+  it('denies unattributed Cloud inbound phones even when their line is visible', async () => {
     await db.query("INSERT INTO cloud_numbers VALUES('visible',$1),('hidden',$2)",[id(80),id(81)])
     await db.query('INSERT INTO cloud_conversations VALUES($1,$3),($2,$4)',[id(82),id(83),phone(4),phone(2)])
     await db.query(`INSERT INTO cloud_messages(conversation_id,phone_number_id,wamid,direction,content,message_type,status)
       VALUES($1,'visible','new1','inbound','{}','text','received'),($2,'visible','new2','inbound','{}','text','received')`,[id(82),id(83)])
-    expect(await canReadConversation(mocks.session!,phone(4))).toBe(true)
+    expect(await canReadConversation(mocks.session!,phone(4))).toBe(false)
     expect(await canReadConversation(mocks.session!,phone(2))).toBe(false)
     mocks.lines.mockResolvedValue([])
     expect(await canReadConversation(mocks.session!,phone(4))).toBe(false)

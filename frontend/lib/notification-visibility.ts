@@ -1,3 +1,4 @@
+import { agentScope } from '@/lib/agent-scope'
 import type { SessionUser } from '@/lib/auth'
 import { canAccess } from '@/lib/permissions'
 import { getAccessibleLineIds } from '@/lib/line-visibility'
@@ -12,13 +13,16 @@ export async function notificationScope(user: SessionUser) {
   const params: unknown[] = [await getAccessibleLineIds(user), user.user_id, ...messages.params]
   const contacts = contactScope(user, params.length, 'notification_contact')
   params.push(...contacts.params)
+  const agents=agentScope(user)
+  const notificationAgentParam=params.length+1
+  if(agents!==null)params.push(agents)
   const yes = (resource: Parameters<typeof canAccess>[1]) => canAccess(user, resource, 'read') ? 'TRUE' : 'FALSE'
   const admin = user.role === 'admin' ? 'TRUE' : 'FALSE'
   return {
     cte: messages.sql,
     params,
     sql: `(CASE notifications.related_type
-      WHEN 'conversation' THEN ${yes('conversations')} AND EXISTS (
+      WHEN 'conversation' THEN ${yes('conversations')} ${agents===null ? '' : `AND notifications.metadata->>'agent_key'=ANY($${notificationAgentParam}::text[])`} AND EXISTS (
         SELECT 1 FROM conversation_messages m WHERE REPLACE(m.phone_number,'+','')=REPLACE(notifications.related_id,'+',''))
       WHEN 'contact' THEN ${yes('contacts')} AND EXISTS (
         SELECT 1 FROM contacts notification_contact WHERE notification_contact.id::text=notifications.related_id AND ${contacts.sql})

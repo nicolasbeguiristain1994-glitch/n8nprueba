@@ -71,7 +71,7 @@ export async function notify(payload: NotifyPayload): Promise<void> {
     await pool.query(`${scope.cte}
       INSERT INTO notifications (user_id,type,title,body,link,related_type,related_id,metadata)
       SELECT ${p(1)}::uuid,${p(2)},${p(3)},${p(4)},${p(5)},related_type,related_id,${p(8)}::jsonb
-      FROM (SELECT ${p(6)}::text AS related_type, ${p(7)}::text AS related_id) notifications
+      FROM (SELECT ${p(6)}::text AS related_type, ${p(7)}::text AS related_id, ${p(8)}::jsonb AS metadata) notifications
       WHERE ${scope.sql}`, [...scope.params, ...values])
 
   } catch (e) {
