@@ -4,6 +4,8 @@ import { PriorityExplanationDialog, priorityMoney } from '@/components/prioritie
 import { isFreshCalculation, type PriorityExplanation } from '@/lib/user-prioritization/priority-details'
 import { PriorityBroadcastComposer, broadcastRequest, type BroadcastContact } from '@/components/priorities/PriorityBroadcastComposer'
 import { PriorityBroadcastProgress } from '@/components/priorities/PriorityBroadcastProgress'
+import { DailyBroadcastPlanner } from '@/components/campaigns/DailyBroadcastPlanner'
+import type { ValueTier } from '@/lib/user-prioritization/config'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import {
@@ -155,6 +157,8 @@ export default function PrioridadesPage() {
   const agentOptions = visibleAgentOptions(user, AGENTS)
   const isAdmin  = user?.role === 'admin'
 
+  const [showPlan, setShowPlan] = useState(false)
+  const canPlan = isAdmin || (!!permissions.priorities?.includes('read') && !!permissions.campaigns?.includes('create') && !!permissions.lines?.includes('read'))
   const canSend = isAdmin || (!!permissions.priorities?.includes('read') && !!permissions.campaigns?.includes('create') && !!permissions.send?.includes('send'))
   const canReadCampaigns = isAdmin || !!permissions.campaigns?.includes('read')
   const canManageCampaigns = isAdmin || !!permissions.campaigns?.includes('update')
@@ -284,12 +288,14 @@ export default function PrioridadesPage() {
 
       {compose&&canSend&&<PriorityBroadcastComposer contacts={compose} onClose={()=>{setCompose(null);setBroadcastVersion(v=>v+1)}} onPrepared={id=>void startBroadcast(id)} />}
       <PriorityExplanationDialog contact={detail ? {name:contactName(detail),level:TIER_LABEL[detail.valueTier]??detail.valueTier,score:detail.priorityScore,daysInactive:detail.daysInactive,explanation:detail.explanation} : null} onClose={()=>setDetail(null)} />
+      {showPlan && canPlan && <DailyBroadcastPlanner filters={{ platform:platform==='todas'?undefined:platform, agent:agent==='todos'?undefined:agent, valueTier:tier==='todos'?undefined:tier as ValueTier, reactivationSegment:segment==='todos'?undefined:segment }} onClose={()=>setShowPlan(false)} />}
       <ScoringHelpModal open={showHelp} onClose={() => setShowHelp(false)} />
 
       {/* Header */}
       <div>
         <PageHeader title="Prioridades" className="mb-0" count={result?.total}
           description={`Contactos ordenados por score de reactivación · ${tab === 'pending' ? 'A difundir' : 'Difundidos'}`}>
+          {canPlan && <Button size="sm" onClick={()=>setShowPlan(true)}>Preparar difusión de hoy</Button>}
           <Button variant="outline" size="sm" onClick={() => setShowHelp(true)} className="gap-2">
             <HelpCircle size={16} /> Cómo funciona
           </Button>
