@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/dialog'
 import { fetchJson } from '@/lib/fetchJson'
 import { useCurrentUser } from '@/lib/useCurrentUser'
+import { visibleAgentOptions, visibleAgentSelection } from '@/lib/agent-options'
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -151,6 +152,7 @@ function formatDate(iso: string | null) {
 export default function PrioridadesPage() {
   const [detail, setDetail] = useState<PrioritizedContact | null>(null)
   const { user, permissions } = useCurrentUser()
+  const agentOptions = visibleAgentOptions(user, AGENTS)
   const isAdmin  = user?.role === 'admin'
 
   const canSend = isAdmin || (!!permissions.priorities?.includes('read') && !!permissions.campaigns?.includes('create') && !!permissions.send?.includes('send'))
@@ -175,7 +177,8 @@ export default function PrioridadesPage() {
   const [page, setPage]                   = useState(1)
   const [segment, setSegment]             = useState('todos')
   const [tier, setTier]                   = useState('todos')
-  const [agent, setAgent]                 = useState('todos')
+  const [agentSelection, setAgent] = useState('todos')
+  const agent = visibleAgentSelection(user, agentSelection, 'todos')
   const [showHelp, setShowHelp]           = useState(false)
 
   const load = useCallback(async (
@@ -398,12 +401,12 @@ export default function PrioridadesPage() {
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-muted-foreground shrink-0">Agente:</span>
           <Select value={agent} onValueChange={v => handleFilter(segment, tier, v ?? 'todos')}>
-            <SelectTrigger className="w-32 h-8 text-sm">
+            <SelectTrigger aria-label="Filtrar prioridades por agente" className="w-32 h-8 text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="todos">Todos</SelectItem>
-              {AGENTS.map(a => (
+              {agentOptions.map(a => (
                 <SelectItem key={a} value={a}>{a}</SelectItem>
               ))}
             </SelectContent>

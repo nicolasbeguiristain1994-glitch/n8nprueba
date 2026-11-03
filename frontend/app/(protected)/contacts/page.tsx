@@ -23,6 +23,7 @@ import { fetchJson } from '@/lib/fetchJson'
 import type { ContactHistory } from '@/lib/contact-history'
 import { deleteContacts } from '@/lib/delete-contacts'
 import { useCurrentUser } from '@/lib/useCurrentUser'
+import { visibleAgentOptions, visibleAgentSelection } from '@/lib/agent-options'
 import { BroadcastFilter } from '@/components/contacts/BroadcastFilter'
 import { EMPTY_BROADCAST, broadcastParams, broadcastLabel } from '@/lib/broadcast-range'
 import { MovementRangeFilters } from '@/components/contacts/InactivityRangeFilter'
@@ -180,6 +181,8 @@ function detectClientPlatforms(first: string | null, last: string | null): strin
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function Contacts() {
+  const { user: currentUser, permissions } = useCurrentUser()
+  const panelOptions = useMemo(() => visibleAgentOptions(currentUser, PANEL_OPTIONS), [currentUser])
   // ── Tab activo ────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'contacts' | 'prospects' | 'prospect-lists' | 'missing-phone'>('contacts')
 
@@ -212,7 +215,8 @@ export default function Contacts() {
   const [segmentDropdownOpen, setSegmentDropdownOpen] = useState(false)
   const segmentDropdownRef = useRef<HTMLDivElement>(null)
   const [filterGaming, setFilterGaming]       = useState('')
-  const [filterPanel, setFilterPanel]         = useState('')
+  const [filterPanelSelection, setFilterPanel] = useState('')
+  const filterPanel = visibleAgentSelection(currentUser, filterPanelSelection)
   const [filterLinea, setFilterLinea]         = useState<string[]>([])
   const [inactivity, setInactivity] = useState<InactivityRange>(EMPTY_INACTIVITY)
   const [filterActividad, setFilterActividad]   = useState<string[]>([])
@@ -249,8 +253,10 @@ export default function Contacts() {
   // ── Import modal ─────────────────────────────────────────────────────────
   const [showImport, setShowImport]     = useState(false)
   const [importRows, setImportRows]     = useState<ImportRow[]>([])
-  const [importPanel, setImportPanel]   = useState('')
-  const [importPanel2, setImportPanel2] = useState('')
+  const [importPanelSelection, setImportPanel] = useState('')
+  const importPanel = visibleAgentSelection(currentUser, importPanelSelection)
+  const [importPanel2Selection, setImportPanel2] = useState('')
+  const importPanel2 = visibleAgentSelection(currentUser, importPanel2Selection)
   const [importLinea, setImportLinea]   = useState('')
   const [importing, setImporting]       = useState(false)
   const [importProgress, setImportProgress] = useState(0)
@@ -265,7 +271,8 @@ export default function Contacts() {
   const [showAdd, setShowAdd]       = useState(false)
   const [newPhone, setNewPhone]     = useState('')
   const [newName, setNewName]       = useState('')
-  const [newPanel, setNewPanel]     = useState('')
+  const [newPanelSelection, setNewPanel] = useState('')
+  const newPanel = visibleAgentSelection(currentUser, newPanelSelection)
   const [newGaming, setNewGaming]   = useState('')
   const [newSegment, setNewSegment] = useState('')
   const [newLinea, setNewLinea]     = useState('')
@@ -278,7 +285,8 @@ export default function Contacts() {
   const [newListName, setNewListName]         = useState('')
   const [savingList, setSavingList]           = useState(false)
   const [listError, setListError]             = useState<string | null>(null)
-  const [criteriaPanel, setCriteriaPanel]     = useState('')
+  const [criteriaPanelSelection, setCriteriaPanel] = useState('')
+  const criteriaPanel = visibleAgentSelection(currentUser, criteriaPanelSelection)
   const [criteriaGaming, setCriteriaGaming]   = useState('')
   const [criteriaSegment, setCriteriaSegment] = useState('')
   const [criteriaActividad, setCriteriaActividad]   = useState('')
@@ -321,7 +329,8 @@ export default function Contacts() {
   const [editContact, setEditContact]   = useState<Contact | null>(null)
   const [editFirstName, setEditFirstName] = useState('')
   const [editLastName, setEditLastName]   = useState('')
-  const [editPanel, setEditPanel]         = useState('')
+  const [editPanelSelection, setEditPanel] = useState('')
+  const editPanel = visibleAgentSelection(currentUser, editPanelSelection)
   const [editLinea, setEditLinea]         = useState('')
   const [editSegment, setEditSegment]     = useState('')
   const [editGaming, setEditGaming]       = useState('')
@@ -369,7 +378,6 @@ export default function Contacts() {
   const [repopulateResult, setRepopulateResult] = useState<{ total_lists: number; lists: Array<{ nombre: string; members: number; created: boolean }> } | null>(null)
   const [repopulateError, setRepopulateError]   = useState<string | null>(null)
 
-  const { user: currentUser, permissions } = useCurrentUser()
   const canCreateCampaign = currentUser?.role === 'admin' || (permissions.campaigns?.includes('create') ?? false)
   const [campaignSelectionError, setCampaignSelectionError] = useState<string | null>(null)
   const [preparingCampaign, setPreparingCampaign] = useState(false)
@@ -1133,7 +1141,7 @@ export default function Contacts() {
       cell: ({ row }) => (
         <EditableCell
           value={row.original.panel || ''}
-          options={PANEL_OPTIONS.map(p => ({ value: p, label: p }))}
+          options={panelOptions.map(p => ({ value: p, label: p }))}
           activeClass="bg-accent text-primary"
           placeholder="— sin agente"
           ariaLabel={`Editar Agente de ${row.original.first_name || row.original.phone_number}`}
@@ -1321,7 +1329,7 @@ export default function Contacts() {
         </DataTableRowActions>
       ),
     },
-  ], [updateField, deleteContact])
+  ], [updateField, deleteContact, panelOptions])
 
   // ── JSX ───────────────────────────────────────────────────────────────────
 
@@ -1576,10 +1584,10 @@ export default function Contacts() {
       <div id="contact-filters" role="region" aria-label="Filtros de contactos" className="space-y-3 rounded-xl border bg-card p-3">
       <div className="flex flex-wrap gap-2">
         <Select value={filterPanel} onValueChange={v => { setFilterPanel(v ?? ''); resetPage() }}>
-          <SelectTrigger className="w-40"><SelectValue placeholder="Agente" /></SelectTrigger>
+          <SelectTrigger aria-label="Filtrar contactos por agente" className="w-40"><SelectValue placeholder="Agente" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="">Todos los agentes</SelectItem>
-            {PANEL_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+            {panelOptions.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
           </SelectContent>
         </Select>
         <ContactLineFilter value={filterLinea} onChange={lines => { setFilterLinea(lines); setRowSelection({}); resetPage() }} />
@@ -2004,7 +2012,7 @@ export default function Contacts() {
                     <SelectTrigger><SelectValue placeholder="Sin asignar" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Sin asignar</SelectItem>
-                      {PANEL_OPTIONS.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                      {panelOptions.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
@@ -2014,7 +2022,7 @@ export default function Contacts() {
                     <SelectTrigger><SelectValue placeholder="Sin asignar" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Sin asignar</SelectItem>
-                      {PANEL_OPTIONS.filter(p => p !== importPanel).map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                      {panelOptions.filter(p => p !== importPanel).map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
@@ -2126,7 +2134,7 @@ export default function Contacts() {
                 <p className="text-xs text-muted-foreground">Se incluirán todos los contactos que cumplan los criterios elegidos.</p>
                 <div className="grid grid-cols-1 gap-2">
                   {[
-                    { label: 'Agente', value: criteriaPanel, set: setCriteriaPanel, key: 'all-agent', items: PANEL_OPTIONS.map(p => ({ v: p, l: p })) },
+                    { label: 'Agente', value: criteriaPanel, set: setCriteriaPanel, key: 'all-agent', items: panelOptions.map(p => ({ v: p, l: p })) },
                     { label: 'Juego', value: criteriaGaming, set: setCriteriaGaming, key: 'all-game', items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }] },
                     { label: 'Nivel', value: criteriaSegment, set: setCriteriaSegment, key: 'all-seg', items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip_alto', l: 'Vip Alto' }, { v: 'vip_medio', l: 'Vip Medio' }, { v: 'vip', l: 'Vip Bajo' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }] },
                   ].map(({ label, value, set, key, items }) => (
@@ -2204,7 +2212,7 @@ export default function Contacts() {
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[
-                { label: 'Panel', value: newPanel, set: setNewPanel, items: PANEL_OPTIONS.map(p => ({ v: p, l: p })), ph: 'Panel' },
+                { label: 'Panel', value: newPanel, set: setNewPanel, items: panelOptions.map(p => ({ v: p, l: p })), ph: 'Panel' },
                 { label: 'Línea', value: newLinea, set: setNewLinea, items: Array.from({ length: 100 }, (_, i) => ({ v: String(i + 1), l: `Línea ${i + 1}` })), ph: 'Línea' },
                 { label: 'Juego', value: newGaming, set: setNewGaming, items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }], ph: 'Juego' },
                 { label: 'Nivel', value: newSegment, set: setNewSegment, items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip_alto', l: 'Vip Alto' }, { v: 'vip_medio', l: 'Vip Medio' }, { v: 'vip', l: 'Vip Bajo' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }], ph: 'Nivel' },
@@ -2369,7 +2377,7 @@ export default function Contacts() {
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[
-                { label: 'Panel',  value: editPanel,   set: setEditPanel,   items: PANEL_OPTIONS.map(p => ({ v: p, l: p })),                                                                                          ph: 'Panel'  },
+                { label: 'Panel',  value: editPanel,   set: setEditPanel,   items: panelOptions.map(p => ({ v: p, l: p })),                                                                                          ph: 'Panel'  },
                 { label: 'Línea',  value: editLinea,   set: setEditLinea,   items: Array.from({ length: 100 }, (_, i) => ({ v: String(i + 1), l: `Línea ${i + 1}` })),                                               ph: 'Línea'  },
                 { label: 'Juego',  value: editGaming,  set: setEditGaming,  items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }],                         ph: 'Juego'  },
                 { label: 'Nivel',  value: editSegment, set: setEditSegment, items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip_alto', l: 'Vip Alto' }, { v: 'vip_medio', l: 'Vip Medio' }, { v: 'vip', l: 'Vip Bajo' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }], ph: 'Nivel' },

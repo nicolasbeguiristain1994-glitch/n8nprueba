@@ -1,6 +1,7 @@
 import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
-const state=vi.hoisted(()=>({user:{role:'admin',id:'owner'},permissions:{} as Record<string,string[]>}))
+const state=vi.hoisted(()=>({user:{role:'admin',id:'owner',allowed_agents:[] as string[]},permissions:{} as Record<string,string[]>}))
 vi.mock('@/lib/useCurrentUser',()=>({useCurrentUser:()=>state}))
 vi.mock('@/components/ui/dialog',async()=>{
   const {createElement:h}=await import('react')
@@ -15,7 +16,7 @@ const template={id:'00000000-0000-4000-8000-000000000002',name:'reactivar',statu
 const response=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status})
 let fetchMock:ReturnType<typeof vi.fn>
 beforeEach(()=>{
-  state.user.role='admin';state.permissions={}
+  state.user.role='admin';state.user.allowed_agents=[];state.permissions={}
   fetchMock=vi.fn(async(input:string)=>{
     if(input.startsWith('/api/contacts/prioritized?'))return response({data:[contact,{...contact,id:'busy',firstName:'Luz',broadcastBusy:true,broadcastState:'pending'}],total:2,totalPages:1,page:1,pageSize:50})
     if(input==='/api/contacts/prioritized/broadcasts')return response({broadcasts:[]})
@@ -65,3 +66,22 @@ describe('Priority broadcast interface',()=>{
     expect(payloads[0]).toEqual(payloads[1])
   })
 })
+
+it('shows only authorized priority agents and drops a revoked selection', async () => {
+  state.user.role = 'operator'
+  state.user.allowed_agents = ['royal', 'bigwin']
+  const view = render(<Page />)
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('combobox', { name: 'Filtrar prioridades por agente' }))
+  expect(screen.getAllByRole('option').map(o => o.textContent)).toEqual(['Todos', 'royal', 'bigwin'])
+  await user.click(screen.getByRole('option', { name: 'bigwin' }))
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('agent=bigwin'), undefined))
+  state.user.allowed_agents = ['royal']
+  view.rerender(<Page />)
+  await user.click(screen.getByRole('combobox', { name: 'Filtrar prioridades por agente' }))
+  expect(screen.getAllByRole('option').map(o => o.textContent)).toEqual(['Todos', 'royal'])
+  await waitFor(() => {
+    const urls = fetchMock.mock.calls.map(([url]) => String(url)).filter(url => url.startsWith('/api/contacts/prioritized?'))
+    expect(urls.at(-1)).not.toContain('agent=')
+  })
+}, 15000)
