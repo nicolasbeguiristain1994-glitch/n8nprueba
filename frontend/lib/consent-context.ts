@@ -1,10 +1,11 @@
 import { query } from './db'
 import { canonicalContactAgent } from './contact-account-identity'
+import { campaignTestReplyIdentity } from './campaign-test-reply'
 
 type Reader = {query: (sql:string,params:unknown[])=>Promise<{rows:Record<string,unknown>[]}>}
 export type ConsentContext = {agentCode?:string|null;contactId?:string|null;campaignId?:string|null;
   provider?:'cloud'|'evolution';sourceId?:string|null;contextWamid?:string;messageId?:string}
-export type ConsentIdentity = {agent:string|null;campaignId:string|null;sourceKey:string|null}
+export type ConsentIdentity = {agent:string|null;campaignId:string|null;sourceKey:string|null;isCampaignTest?:boolean}
 export async function resolveConsentIdentity(phone:string,context:ConsentContext={},db?:Reader):Promise<ConsentIdentity> {
   const read = async(sql:string,params:unknown[])=>db?(await db.query(sql,params)).rows:query<Record<string,unknown>>(sql,params)
   const sourceKey=context.sourceId?`${context.provider??'cloud'}:${context.sourceId}`:null
@@ -25,6 +26,10 @@ export async function resolveConsentIdentity(phone:string,context:ConsentContext
   // Legacy identifiers use varchar; Cloud identifiers use text. Bind parameters
   // explicitly so repeated placeholders have one type across the union.
   if(context.sourceId) {
+    if ((context.provider??'cloud')==='cloud' && context.contextWamid) {
+      const test = await campaignTestReplyIdentity(read,phone,context.sourceId,context.contextWamid,context.messageId)
+      if (test) return {...test,sourceKey}
+    }
     const rows=await read(`WITH source_line AS (
         SELECT wl.id FROM whatsapp_lines wl LEFT JOIN cloud_numbers cn ON cn.whatsapp_line_id=wl.id
         WHERE ($2::text='cloud' AND cn.phone_number_id=$3::text) OR ($2::text='evolution' AND wl.evolution_instance=$3::text)

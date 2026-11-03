@@ -56,7 +56,8 @@ export async function handleInboundMessage(
   }
 
 
-  await evaluateAutomations(msg.from, inboundText, msg.id, { provider: 'cloud', phoneNumberId, receivedAt:new Date(Number(msg.timestamp)*1000) })
+  await evaluateAutomations(msg.from, inboundText, msg.id, { provider: 'cloud', phoneNumberId,
+    ...(msg.context?.id ? {contextWamid:msg.context.id} : {}), receivedAt:new Date(Number(msg.timestamp)*1000) })
 
   cloudMetrics.messageReceived(phoneNumberId, msg.type)
   log.logInfo('processed', { wamid: msg.id, type: msg.type })

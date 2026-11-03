@@ -10,6 +10,12 @@ vi.mock('@/lib/automation-engine',()=>({evaluateAutomations:mocks.automation}))
 import { handleInboundMessage } from '../cloud-api/webhook-handlers/inbound-message.handler'
 const msg={id:'wamid.test',from:'5491100000001',timestamp:'1700000000',type:'button' as const,button:{text:'Mas información',payload:'info'}}
 beforeEach(()=>vi.resetAllMocks())
+it('keeps the quoted campaign test ID when evaluating its quick reply',async()=>{
+ const reply={...msg,button:{text:'Ver beneficio',payload:'Ver beneficio'},context:{id:'wamid.campaign-test',from:'5491199999999'}}
+ await handleInboundMessage('10001',reply,[],'test')
+ expect(mocks.automation).toHaveBeenCalledWith(msg.from,'Ver beneficio',msg.id,
+  {provider:'cloud',phoneNumberId:'10001',contextWamid:'wamid.campaign-test',receivedAt:new Date(1700000000000)})
+})
 it('notifies Conversations only after the inbound message is durably stored',async()=>{
  let done!:()=>void;mocks.receive.mockImplementation(()=>new Promise<void>(r=>{done=r}))
  const pending=handleInboundMessage('10001',msg,[],'test')

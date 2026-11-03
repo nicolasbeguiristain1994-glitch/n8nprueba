@@ -10,7 +10,7 @@ import { sseEmitter } from '@/lib/sse-events'
 import { reserveLineSendBudget, finishLineSendBudget, LineSendBudgetError, LineSendAlreadyReservedError } from '@/lib/line-send-budget'
 import { automationAdmission, automationDispatchStillAllowed, automationFingerprints, automationScope, lockAutomationConversation, recordAutomationDispatchFinished, setAutomationHandoff, withAutomationSafety } from '@/lib/automation-safety'
 
-export type AutomationSource = ({ provider: 'cloud'; phoneNumberId: string } | { provider: 'evolution'; instance: string }) & { receivedAt?: string|Date }
+export type AutomationSource = ({ provider: 'cloud'; phoneNumberId: string; contextWamid?: string } | { provider: 'evolution'; instance: string }) & { receivedAt?: string|Date }
 type Rule = { id: string; name: string; type: 'reply'|'flow'|'handoff'; trigger_type: string;
   trigger_config: { keywords?: string[]; once_per_chat?: boolean }; action_config: { contact_line_directory?: string; message?: string; steps?: { message: string; delay_sec?: number }[] } }
 type Job = { id: string; event_key: string; automation_id: string; automation_name: string; phone: string;
@@ -44,7 +44,8 @@ export async function evaluateAutomations(phone: string, messageText: string, me
   if(!Number.isFinite(receivedAt.getTime()) || receivedAt.getTime()<Date.now()-86_400_000) return
   const inboundAt=new Date(Math.min(receivedAt.getTime(),Date.now())).toISOString()
   const eventKey=`${provider}:${sourceId}:${messageId}`, number=digits(phone)
-  const identity=await resolveConsentIdentity(number,{provider,sourceId,messageId})
+  const identity=await resolveConsentIdentity(number,{provider,sourceId,messageId,
+    ...(source.provider==='cloud' && source.contextWamid ? {contextWamid:source.contextWamid} : {})})
   if(await isGloballyOptedOut(number,{provider,sourceId,agentCode:identity.agent})) return
   const safetyContext={phone:number,provider,source_id:sourceId,agent_code:identity.agent}
   await withTransaction(async db=>{
@@ -52,6 +53,11 @@ export async function evaluateAutomations(phone: string, messageText: string, me
     const claimed=await db.query(`INSERT INTO automation_inbound_receipts(event_key,phone,provider,source_id,created_at)
       VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING event_key`,[eventKey,number,provider,sourceId,inboundAt])
     if (!claimed.rows.length) return
+    if (identity.isCampaignTest && !identity.agent) {
+      await db.query(`INSERT INTO automation_logs(automation_name,conversation_phone,result,details)
+        VALUES('Respuesta de prueba',$1,'skipped','La campaña de prueba no identifica un único agente; no se eligió una cuenta al azar')`,[number])
+      return
+    }
     const human=await db.query(`SELECT 1 FROM automation_conversation_safety WHERE phone=$1 AND scope_key=$2
       AND last_human_at>clock_timestamp()-interval '24 hours'`,[number,automationScope(safetyContext)])
     if (human.rows.length) return
@@ -111,8 +117,12 @@ export async function evaluateAutomations(phone: string, messageText: string, me
       if (routed.message.length>4096) {
         await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details,agent_code) VALUES($1,$2,$3,'error','La respuesta con la línea supera 4096 caracteres',$4)`,[rule.id,rule.name,number,identity.agent]);return
       }
-      steps=[{message:routed.message,delay_sec:0}]
-      handoff=routed.handoff
+      const testMissingAccount = identity.isCampaignTest && routed.handoff
+      steps=[{message:testMissingAccount
+        ? `Prueba de ${agent}: se activó la respuesta automática, pero este número no tiene una cuenta con una línea de atención válida y única en ${agent}. Para recibir el mensaje completo con el asesor correcto, usá un número vinculado a una cuenta de ese agente.`
+        : routed.message,delay_sec:0}]
+      // A test recipient is not a new customer waiting for a real handoff.
+      handoff=routed.handoff && !testMissingAccount
     }
     if (handoff) {
       await setAutomationHandoff(db,safetyContext,eventKey)

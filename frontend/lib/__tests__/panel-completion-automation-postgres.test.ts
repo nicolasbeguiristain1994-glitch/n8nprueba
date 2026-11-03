@@ -3,13 +3,10 @@ import {afterAll,beforeAll,beforeEach,describe,it,expect,vi} from 'vitest'
 import {Pool} from 'pg'
 import {readFileSync} from 'node:fs'
 import {OFIZEUS_LINES} from '@/lib/contact-line-directory'
-const m=vi.hoisted(()=>({query:vi.fn(),tx:vi.fn(),send:vi.fn(),emit:vi.fn()}))
+const m=vi.hoisted(()=>({query:vi.fn(),tx:vi.fn(),send:vi.fn(),emit:vi.fn(),identity:vi.fn()}))
 vi.mock('@/lib/db',()=>({query:m.query,withTransaction:m.tx}))
 vi.mock('@/lib/cloud-api/use-cases/send-message.use-case',()=>({sendMessageUseCase:{execute:m.send}}))
-vi.mock('@/lib/consent-context',()=>({resolveConsentIdentity:async(phone:string)=>{
- const rows=await m.query('SELECT DISTINCT lower(panel) AS agent FROM contacts WHERE phone_number IN($1,$2) AND deleted_at IS NULL',[phone,'+'+phone]);
- return {agent:rows.length===1?rows[0].agent:null,campaignId:null,sourceKey:null}
-}}))
+vi.mock('@/lib/consent-context',()=>({resolveConsentIdentity:m.identity}))
 vi.mock('@/lib/sse-events',()=>({sseEmitter:{emit:m.emit}}))
 vi.mock('@/lib/line-send-budget',()=>({reserveLineSendBudget:vi.fn().mockResolvedValue({id:'synthetic-reservation'}),finishLineSendBudget:vi.fn(),LineSendBudgetError:class extends Error{},LineSendAlreadyReservedError:class extends Error{}}))
 import {evaluateAutomations,processAutomationJobs,automationMatches,automationSteps} from '@/lib/automation-engine'
@@ -48,6 +45,10 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   m.tx.mockImplementation(async fn=>{const db=await pool.connect();try{await db.query('BEGIN');const r=await fn(db);await db.query('COMMIT');return r}catch(e){await db.query('ROLLBACK');throw e}finally{db.release()}})
  })
  beforeEach(async()=>{
+  m.identity.mockReset().mockImplementation(async(phone:string)=>{
+   const rows=await m.query('SELECT DISTINCT lower(panel) AS agent FROM contacts WHERE phone_number IN($1,$2) AND deleted_at IS NULL',[phone,'+'+phone]);
+   return {agent:rows.length===1?rows[0].agent:null,campaignId:null,sourceKey:null}
+  })
   await pool.query(`UPDATE crm_agents SET delivery_mode='phone',phone_format='separated';UPDATE agent_contact_lines SET link_url=NULL;TRUNCATE automation_conversation_safety,automation_message_jobs,automation_inbound_receipts,automations,automation_logs,conversation_state,blacklist;DELETE FROM agent_contact_lines WHERE agent_code='royal';UPDATE contacts SET panel='Panel',linea=NULL,linea_sub=NULL,deleted_at=NULL;UPDATE users SET is_active=true,role='admin',sectors='[]',allowed_agents='{}';UPDATE whatsapp_lines SET sending_enabled=true;
    INSERT INTO automations VALUES('${id(3)}','Reply','reply','contains','{"keywords":["información"]}','{"message":"Hola {{nombre}}"}','${id(1)}',true,1,NOW())`)
   m.send.mockReset().mockResolvedValue({status:'sent',wamid:'fake'});m.emit.mockClear()
@@ -55,6 +56,37 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
     await pool.query("UPDATE agent_contact_lines SET label=$3,phone=$4,is_active=true WHERE agent_code='ofizeus' AND linea=$1 AND variant=$2",[linea,variant,label,'+'+number])
  })
  afterAll(async()=>{await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.end()})
+ it('explains a Royal test with a Betcoin tester without changing contacts or handing off the live chat',async()=>{
+  m.identity.mockResolvedValue({agent:'royal',campaignId:id(90),isCampaignTest:true})
+  await pool.query(`UPDATE contacts SET panel='betcoin',linea=1;
+   UPDATE automations SET trigger_type='keyword',trigger_config='{"keywords":["Ver beneficio"]}',
+    action_config='{"message":"Tu beneficio con tu asesor {{2}}","contact_line_directory":"royal"}'`)
+  await evaluateAutomations(phone,'Ver beneficio','test-button',{...source,contextWamid:'royal-test'})
+  expect(m.identity).toHaveBeenCalledWith(phone,expect.objectContaining({contextWamid:'royal-test',messageId:'test-button'}))
+  expect(m.send).toHaveBeenCalledOnce()
+  expect(m.send.mock.calls[0][0].request).toMatchObject({phoneNumberId:'phone-a',agentCode:'royal'})
+  expect(m.send.mock.calls[0][0].request.text.body).toContain('Prueba de royal: se activó la respuesta automática')
+  expect((await pool.query('SELECT count(*)::int n FROM conversation_state')).rows[0].n).toBe(0)
+  expect((await pool.query('SELECT panel,linea FROM contacts')).rows).toEqual([{panel:'betcoin',linea:1}])
+  await evaluateAutomations(phone,'Ver beneficio','test-button',{...source,contextWamid:'royal-test'})
+  expect(m.send).toHaveBeenCalledOnce()
+ })
+ it('sends the real configured benefit when the test recipient has a valid matching account',async()=>{
+  m.identity.mockResolvedValue({agent:'royal',campaignId:id(90),isCampaignTest:true})
+  await pool.query(`UPDATE contacts SET panel='royal',linea=1;
+   INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone) VALUES('royal',1,'','Royal 1','+5491199999999');
+   UPDATE automations SET trigger_type='keyword',trigger_config='{"keywords":["Ver beneficio"]}',
+    action_config='{"message":"Beneficio: escribile a {{2}}","contact_line_directory":"royal"}'`)
+  await evaluateAutomations(phone,'Ver beneficio','test-known',{...source,contextWamid:'royal-test'})
+  expect(m.send.mock.calls[0][0].request.text.body).toBe('Beneficio: escribile a 549 | 1199 | 999999')
+ })
+ it('logs an ambiguous campaign test without choosing an unrelated automation',async()=>{
+  m.identity.mockResolvedValue({agent:null,campaignId:id(90),isCampaignTest:true})
+  await evaluateAutomations(phone,'informacion','ambiguous-test',{...source,contextWamid:'mixed-test'})
+  expect(m.send).not.toHaveBeenCalled()
+  expect((await pool.query('SELECT result,details FROM automation_logs')).rows).toEqual([
+   {result:'skipped',details:'La campaña de prueba no identifica un único agente; no se eligió una cuenta al azar'}])
+ })
  it('runs only an authorized operator reply and stops delayed sends when its agent grant is revoked',async()=>{
   await pool.query(`UPDATE users SET role='operator',sectors='["automations"]',allowed_agents='{ofizeus}';
     UPDATE contacts SET panel='ofizeus',linea=3;

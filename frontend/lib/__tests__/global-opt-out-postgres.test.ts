@@ -38,7 +38,9 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
   pool=new Pool({connectionString:url.toString(),ssl:false,max:6,options:`-c search_path=${schema}`})
   await pool.query(`CREATE SCHEMA ${schema};
    CREATE TABLE users(id uuid PRIMARY KEY,allowed_agents text[] DEFAULT '{}');
-   CREATE TABLE campaigns(id uuid PRIMARY KEY,status text DEFAULT 'running');
+   CREATE TABLE campaigns(id uuid PRIMARY KEY,status text DEFAULT 'running',agent_key text,list_id uuid);
+   CREATE TABLE campaign_test_sends(id uuid PRIMARY KEY,campaign_id uuid,phone_number_id text,provider_message_id text,
+    phone_number text,status text,created_at timestamptz DEFAULT now());
    CREATE TABLE contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),external_id text UNIQUE,phone_number varchar(20),
     first_name text,last_name text,panel text,panels_assigned text[] DEFAULT '{}',casino_accounts jsonb DEFAULT '[]',
     status text DEFAULT 'active',opt_in_marketing bool DEFAULT true,opt_in_sms bool DEFAULT true,do_not_contact bool DEFAULT false,
@@ -72,7 +74,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
  })
  beforeEach(async()=>{
   m.post.mockReset();m.post.mockResolvedValue({messages:[{id:'confirmation-id'}]});m.token.mockResolvedValue('test-only');m.limit.mockResolvedValue(undefined)
-  await pool.query(`TRUNCATE automation_conversation_safety,contacts,blacklist,cloud_opt_outs,cloud_consent_log,whatsapp_messages,campaign_recipients,automation_message_jobs,cloud_messages,cloud_conversations,users,campaigns,whatsapp_lines,cloud_numbers CASCADE;
+  await pool.query(`TRUNCATE campaign_test_sends,contact_list_members,contact_lists,automation_conversation_safety,contacts,blacklist,cloud_opt_outs,cloud_consent_log,whatsapp_messages,campaign_recipients,automation_message_jobs,cloud_messages,cloud_conversations,users,campaigns,whatsapp_lines,cloud_numbers CASCADE;
    INSERT INTO users(id) VALUES('${id(1)}'); INSERT INTO campaigns(id) VALUES('${id(20)}'),('${id(21)}');
    INSERT INTO contacts(id,phone_number,first_name,panel,casino_accounts,account_username,identity_key) VALUES
     ('${id(2)}','+${phone}','juan24z','bigwin','[{"panel":"bigwin","username":"juan24z"}]','juan24z','["bigwin", "juan24z"]'),
@@ -175,6 +177,42 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
  it('uses the quoted campaign even when another agent sent more recently',async()=>{
   expect(await resolveConsentIdentity(phone,{provider:'cloud',sourceId:'line-1',contextWamid:'bigwin-send'})).toMatchObject({agent:'bigwin',campaignId:id(20)})
   expect(await resolveConsentIdentity(phone,{provider:'cloud',sourceId:'line-2'})).toMatchObject({agent:'royal'})
+ })
+ const testSource={provider:'cloud' as const,sourceId:'line-1',contextWamid:'royal-test',messageId:'baja-1'}
+ async function quotedTest() {
+  await pool.query(`INSERT INTO campaign_test_sends(id,campaign_id,phone_number_id,provider_message_id,phone_number,status,created_at)
+   VALUES($1,$2,'line-1','royal-test',$3,'delivered',now()-interval '1 minute')`,[id(80),id(21),'+'+phone])
+ }
+ it('attributes a quoted test to Royal without changing the tester or campaign delivery counts',async()=>{
+  await quotedTest()
+  expect(await resolveConsentIdentity(phone,testSource)).toMatchObject({agent:'royal',campaignId:id(21),isCampaignTest:true})
+  expect(await resolveConsentIdentity(phone,{provider:'cloud',sourceId:'line-1'})).toMatchObject({agent:'bigwin'})
+  expect((await pool.query('SELECT count(*)::int AS n FROM campaign_recipients')).rows[0].n).toBe(2)
+  expect((await pool.query('SELECT panel FROM contacts WHERE id=$1',[id(2)])).rows[0].panel).toBe('bigwin')
+ })
+ it('resolves a scheduled campaign test from its saved selection before recipients are materialized',async()=>{
+  await quotedTest()
+  await pool.query('DELETE FROM campaign_recipients WHERE campaign_id=$1',[id(21)])
+  await pool.query('UPDATE campaigns SET list_id=$1 WHERE id=$2',[id(90),id(21)])
+  await pool.query('INSERT INTO contact_lists(id) VALUES($1)',[id(90)])
+  await pool.query('INSERT INTO contact_list_members VALUES($1,$2)',[id(90),id(3)])
+  expect(await resolveConsentIdentity(phone,testSource)).toMatchObject({agent:'royal',isCampaignTest:true})
+ })
+ it('does not borrow an old agent for a mixed or missing test audience',async()=>{
+  await quotedTest()
+  await pool.query('UPDATE campaign_recipients SET phone_number=$1 WHERE campaign_id=$2',['+5491100000002',id(20)])
+  await pool.query('UPDATE campaign_recipients SET campaign_id=$1',[id(21)])
+  expect(await resolveConsentIdentity(phone,testSource)).toMatchObject({agent:null,isCampaignTest:true})
+  await pool.query('DELETE FROM campaign_recipients')
+  expect(await resolveConsentIdentity(phone,testSource)).toMatchObject({agent:null,isCampaignTest:true})
+ })
+ it.each(['wrong-phone','wrong-line','failed','future'])('rejects a quoted test with %s',async(kind)=>{
+  await quotedTest()
+  if(kind==='wrong-phone')await pool.query("UPDATE campaign_test_sends SET phone_number='+5491100000002'")
+  if(kind==='wrong-line')await pool.query("UPDATE campaign_test_sends SET phone_number_id='line-2'")
+  if(kind==='failed')await pool.query("UPDATE campaign_test_sends SET status='failed'")
+  if(kind==='future')await pool.query("UPDATE campaign_test_sends SET created_at=now()+interval '1 hour'")
+  expect(await resolveConsentIdentity(phone,testSource)).toMatchObject({agent:null,campaignId:null})
  })
  it('does not guess another agent when a quoted message cannot be attributed',async()=>{
   await recordGlobalOptOut({...request,metadata:{context_wamid:'missing'}})
