@@ -35,6 +35,13 @@ describe('CRM navigation', () => {
     expect(screen.queryByRole('link', { name: 'Monitoreo' })).not.toBeInTheDocument()
   })
 
+  it('offers the agent directory on mobile when it is the only granted module',()=>{
+    mocks.user.sectors=['agents']
+    render(<MobileNav />)
+    expect(screen.getByRole('link',{name:'Agentes'})).toHaveAttribute('href','/agentes')
+    expect(screen.queryByRole('link',{name:'Contactos'})).not.toBeInTheDocument()
+  })
+
   it('keeps icon-only destinations and the collapse control accessible', () => {
     const toggle = vi.fn()
     render(<SidebarContext.Provider value={{ collapsed: true, toggle, mobileOpen: false, setMobileOpen: vi.fn() }}><Sidebar /></SidebarContext.Provider>)

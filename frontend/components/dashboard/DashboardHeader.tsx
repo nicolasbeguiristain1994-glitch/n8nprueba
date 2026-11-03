@@ -159,6 +159,7 @@ export interface DashboardHeaderProps {
   onAutoRefreshToggle: () => void
   onPlatformChange: (p: Platform) => void
   onAgentChange: (a: string) => void
+  canSync?: boolean
   onSyncCasino: () => void
 }
 
@@ -178,6 +179,7 @@ export const DashboardHeader = memo(function DashboardHeader({
   onPlatformChange,
   onAgentChange,
   onSyncCasino,
+  canSync = false,
 }: DashboardHeaderProps) {
   const minutesAgo = useMinutesAgo(lastUpdated)
   const [detailsOpen, setDetailsOpen] = useState(false)
@@ -188,7 +190,7 @@ export const DashboardHeader = memo(function DashboardHeader({
         actions={<>
           <Button variant="outline" size="sm" onClick={onCustomize} aria-label="Personalizar dashboard"><SlidersHorizontal size={14} /> Personalizar</Button>
           <Button variant="outline" size="sm" onClick={onRefresh} disabled={loading} aria-label="Refrescar vista"><RefreshCw size={14} className={cn((loading || softLoading) && 'animate-spin')} /> Actualizar</Button>
-          <Button size="sm" onClick={onSyncCasino} disabled={syncStatus === 'loading'} title={platform === 'consolidado' ? 'Sincronizar Zeus y Bet30' : `Sincronizar casino (${platform})`}><CloudDownload size={14} className={cn(syncStatus === 'loading' && 'animate-pulse')} />{syncStatus === 'loading' ? 'Sincronizando…' : 'Sincronizar casino'}</Button>
+          {canSync && <Button size="sm" onClick={onSyncCasino} disabled={syncStatus === 'loading'} title={platform === 'consolidado' ? 'Sincronizar Zeus y Bet30' : `Sincronizar casino (${platform})`}><CloudDownload size={14} className={cn(syncStatus === 'loading' && 'animate-pulse')} />{syncStatus === 'loading' ? 'Sincronizando…' : 'Sincronizar casino'}</Button>}
         </>} />
       <div className="surface overflow-hidden">
         <div className="flex flex-wrap items-center gap-3 p-4">

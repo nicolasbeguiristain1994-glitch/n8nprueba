@@ -92,6 +92,7 @@ export function Dashboard() {
         platform={platform}
         agent={agent}
         syncStatus={syncStatus}
+        canSync={user?.role === 'admin'}
         onCustomize={() => setCustomizeOpen(true)}
         onRefresh={refresh}
         onDateRangeChange={setDateRange}
