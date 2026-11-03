@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildBroadcastPlan, planLineCapacity, todayEndsAt, type PlanningContact, type PlanningLine, type BroadcastPlanOptions } from '@/lib/broadcast-planner'
+import { buildBroadcastPlan, planLineCapacity, broadcastPlanWindow, broadcastPlanningDays, type PlanningContact, type PlanningLine, type BroadcastPlanOptions } from '@/lib/broadcast-planner'
 import { DEFAULT_GLOBAL_RULE } from '@/lib/contact-frequency/rules'
 import { INACTIVITY_WINDOWS, RECONTACT_COOLDOWN_DAYS, DEPOSIT_AMOUNT_TIERS } from '@/lib/user-prioritization/config'
 
@@ -50,7 +50,7 @@ describe('daily broadcast planning',()=>{
   it('respects active hours and a closing time which already passed',()=>{
     expect(build([], [line('a',{activeHours:[10,11],hourlyLimit:50})]).lines[0].capacity).toBe(50)
     expect(build([], [line('a')],{endTime:'08:30'}).lines[0].capacity).toBe(0)
-    expect(todayEndsAt(new Date('2026-11-04T01:00:00Z'),'23:00').toISOString()).toBe('2026-11-04T02:00:00.000Z')
+    expect(broadcastPlanWindow(new Date('2026-11-04T01:00:00Z'),{endTime:'23:00'}).endsAt.toISOString()).toBe('2026-11-04T02:00:00.000Z')
   })
   it('supports overnight schedules in line local time',()=>{
     const result=planLineCapacity(line('a',{activeHours:[19,3],hourlyLimit:50}),{...options,endTime:'23:00'},new Date('2026-11-04T00:00:00Z'),null)
@@ -85,6 +85,43 @@ describe('daily broadcast planning',()=>{
   it('preserves the current Priorities order when scores tie',()=>{
     const result=build([contact(9,{score:100}),contact(1,{score:100})],undefined,{maxContacts:1})
     expect(result.contacts[0]).toMatchObject({id:'0009',reason:null})
+  })
+
+  it('resolves dates in Argentina across midnight, month and year boundaries',()=>{
+    expect(broadcastPlanningDays(new Date('2027-01-01T01:00:00Z')).map(d=>d.date)).toEqual(['2026-12-31','2027-01-01','2027-01-02'])
+    expect(broadcastPlanningDays(new Date('2027-01-01T03:00:00Z'))[0].date).toBe('2027-01-01')
+    expect(broadcastPlanningDays(new Date('2028-02-28T12:00:00Z')).map(d=>d.date)).toEqual(['2028-02-28','2028-02-29','2028-03-01'])
+    const result=build([],undefined,{planDate:'2026-11-05',startTime:'10:00',endTime:'12:00'})
+    expect(result).toMatchObject({planDate:'2026-11-05',startsAt:'2026-11-05T13:00:00.000Z',endsAt:'2026-11-05T15:00:00.000Z'})
+    expect(result.lines[0].capacity).toBe(200)
+  })
+  it('uses renewed quotas and the current daily recommendation for future plans, without mutation',()=>{
+    const a=line('a',{sentToday:500,sentHour:100,dayResetAt:'2026-11-04T03:00:00Z',hourResetAt:'2026-11-03T13:00:00Z',recommendedRemaining:0,recommendedDaily:25,committed:5})
+    expect(build([], [a]).lines[0].capacity).toBe(0)
+    const tomorrow=build([], [a],{planDate:'2026-11-04'})
+    expect(tomorrow.lines[0]).toMatchObject({used:0,recommendedRemaining:25,capacity:20})
+    expect(tomorrow.warnings.some(w=>w.includes('Proyección'))).toBe(true)
+    expect(a.sentToday).toBe(500)
+    expect(build([], [{...a,volumeBlocked:true,recommendation:'Revisar calidad'}],{planDate:'2026-11-04'}).lines[0].capacity).toBe(0)
+  })
+  it('counts only the time after a known renewal within the future window',()=>{
+    const a=line('a',{sentToday:500,dayResetAt:'2026-11-04T15:00:00Z',hourlyLimit:50})
+    expect(build([], [a],{planDate:'2026-11-04',startTime:'09:00',endTime:'13:00'}).lines[0].capacity).toBe(50)
+    expect(build([], [{...a,dayResetAt:null}],{planDate:'2026-11-04'}).lines[0].capacity).toBe(0)
+    expect(build([], [a],{planDate:'2026-11-04',endTime:'11:00'}).lines[0].capacity).toBe(0)
+  })
+  it('projects contact cooldown at the chosen start and rechecks the inactivity window',()=>{
+    const c=contact(1,{lastSentAt:'2026-10-30T12:00:00Z'})
+    expect(build([c]).selected).toBe(0)
+    expect(build([c],undefined,{planDate:'2026-11-04'}).selected).toBe(1)
+    const endingWindow=contact(2,{lastDepositAt:new Date(now.getTime()-150*86_400_000).toISOString()})
+    expect(build([endingWindow]).selected).toBe(1)
+    expect(build([endingWindow],undefined,{planDate:'2026-11-05'}).selected).toBe(0)
+  })
+  it('excludes Cloud credentials that expire before the chosen future closing time',()=>{
+    const a=line('a',{type:'cloud',wabaId:'waba',cloudReady:true,tokenExpiresAt:'2026-11-04T15:00:00Z'})
+    expect(build([], [a],{messageType:'template'}).lines[0].capacity).toBeGreaterThan(0)
+    expect(build([], [a],{messageType:'template',planDate:'2026-11-04'}).lines[0]).toMatchObject({capacity:0,reason:'Las credenciales Cloud vencen antes del cierre elegido'})
   })
 
 })

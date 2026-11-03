@@ -17,15 +17,15 @@ it('requires priorities, campaign creation and line read permissions before load
   expect(checkPermissionWithUser).toHaveBeenNthCalledWith(2,expect.anything(),'campaigns','create')
 })
 it('rejects malformed limits, unknown fields and missing template before querying',async()=>{
-  for(const data of [{...body,reservePercent:-1},{...body,maxContacts:5001},{...body,endTime:'25:00'},{...body,ownerId:'another'},{...body,messageType:'template'},{...body,lineIds:[]}])
+  for(const data of [{...body,planDate:'mañana'},{...body,startTime:'25:00'},{...body,startTime:'21:00'},{...body,reservePercent:-1},{...body,maxContacts:5001},{...body,endTime:'25:00'},{...body,ownerId:'another'},{...body,messageType:'template'},{...body,lineIds:[]}])
     expect((await POST(req(data))).status).toBe(400)
   expect(prepareDailyBroadcast).not.toHaveBeenCalled()
 })
 it('uses the authenticated owner and returns an uncached preview',async()=>{
   vi.mocked(prepareDailyBroadcast).mockResolvedValue({selected:4} as never)
-  const response=await POST(req({...body,platform:'zeus',agent:'royal'}))
+  const response=await POST(req({...body,platform:'zeus',agent:'royal',planDate:'2026-11-04',startTime:'10:00'}))
   expect(response.status).toBe(200);expect(response.headers.get('cache-control')).toBe('no-store')
-  expect(prepareDailyBroadcast).toHaveBeenCalledWith({user_id:'actor'},expect.objectContaining({platform:'zeus',agent:'royal'}))
+  expect(prepareDailyBroadcast).toHaveBeenCalledWith({user_id:'actor'},expect.objectContaining({platform:'zeus',agent:'royal',planDate:'2026-11-04',startTime:'10:00'}))
 })
 it('reports domain failures and hides database error details',async()=>{
   vi.mocked(prepareDailyBroadcast).mockRejectedValueOnce(new BroadcastPlanError('Sin cálculo completo',409)).mockRejectedValueOnce(Error('private database detail'))

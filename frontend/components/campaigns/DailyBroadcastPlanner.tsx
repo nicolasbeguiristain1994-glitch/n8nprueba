@@ -17,7 +17,7 @@ const labels: Record<string,string> = {
 
 export function DailyBroadcastPlanner({ filters, onClose }: { filters: BroadcastPlanFilters; onClose: () => void }) {
   const [catalogue,setCatalogue] = useState<BroadcastPlanningOptions | null>(null)
-  const [form,setForm] = useState<BroadcastPlanOptions>({ ...filters,lineIds:[],messageType:'template',endTime:'20:00',reservePercent:10,maxContacts:500 })
+  const [form,setForm] = useState<BroadcastPlanOptions>({ ...filters,lineIds:[],messageType:'template',planDate:'',startTime:'09:00',endTime:'20:00',reservePercent:10,maxContacts:500 })
   const [plan,setPlan] = useState<BroadcastPlan | null>(null)
   const [error,setError] = useState<string | null>(null)
   const [loading,setLoading] = useState(true)
@@ -33,7 +33,7 @@ export function DailyBroadcastPlanner({ filters, onClose }: { filters: Broadcast
       const data = await fetchJson<BroadcastPlanningOptions>(endpoint,{cache:'no-store'})
       if (sequence.current !== request) return
       setCatalogue(data)
-      setForm(f => ({...f,lineIds:data.lines.map(l => l.id),
+      setForm(f => ({...f,lineIds:data.lines.map(l => l.id),planDate:data.days[0].date,
         messageType:data.templates.length ? 'template' : 'text',templateId:data.templates[0]?.id}))
     } catch (e) { if (sequence.current === request) setError(e instanceof Error ? e.message : 'No se pudieron cargar las líneas.') }
     finally { if (sequence.current === request) setLoading(false) }
@@ -63,7 +63,7 @@ export function DailyBroadcastPlanner({ filters, onClose }: { filters: Broadcast
   return <Dialog open onOpenChange={open => { if (!open) onClose() }}>
     <DialogContent className="sm:max-w-5xl">
       <DialogHeader>
-        <DialogTitle className="flex items-center gap-2"><CalendarCheck size={18}/>Preparar difusión de hoy</DialogTitle>
+        <DialogTitle className="flex items-center gap-2"><CalendarCheck size={18}/>Planificar difusión</DialogTitle>
         <DialogDescription>Calculá una propuesta con los contactos pendientes de tus filtros. Revisar este plan no envía mensajes.</DialogDescription>
       </DialogHeader>
       <p className="text-xs text-muted-foreground">Audiencia: {filterText || 'Todos los contactos pendientes accesibles'} · Incluye todas las páginas.</p>
@@ -73,14 +73,22 @@ export function DailyBroadcastPlanner({ filters, onClose }: { filters: Broadcast
       </div>}
       {catalogue && <>
         <fieldset disabled={calculating} className="space-y-4 disabled:opacity-70">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <label className="space-y-1 text-xs">Día de difusión · Argentina
+              <select aria-label="Día de difusión" className={fieldClass} value={form.planDate} onChange={e => update({planDate:e.target.value})}>
+                {catalogue.days.map(day => <option key={day.date} value={day.date}>{day.label} · {day.date.split('-').reverse().join('/')}</option>)}
+              </select>
+            </label>
+            <label className="space-y-1 text-xs">Hora de inicio · Argentina
+              <input aria-label="Hora de inicio" className={fieldClass} type="time" value={form.startTime} onChange={e => update({startTime:e.target.value})}/>
+            </label>
+            <label className="space-y-1 text-xs">Hora de cierre · Argentina
+              <input aria-label="Hora de cierre" className={fieldClass} type="time" value={form.endTime} onChange={e => update({endTime:e.target.value})}/>
+            </label>
             <label className="space-y-1 text-xs">Tipo de difusión
               <select aria-label="Tipo de difusión" className={fieldClass} value={form.messageType} onChange={e => update({messageType:e.target.value as 'template'|'text',templateId:e.target.value === 'text' ? undefined : catalogue.templates[0]?.id})}>
                 <option value="template">Plantilla · Cloud</option><option value="text">Texto · Evolution</option>
               </select>
-            </label>
-            <label className="space-y-1 text-xs">Hora de cierre · Argentina
-              <input aria-label="Hora de cierre" className={fieldClass} type="time" value={form.endTime} onChange={e => update({endTime:e.target.value})}/>
             </label>
             <label className="space-y-1 text-xs">Reserva para atención (%)
               <input aria-label="Reserva para atención" className={fieldClass} type="number" min={0} max={50} value={form.reservePercent} onChange={e => update({reservePercent:Number(e.target.value)})}/>
@@ -107,9 +115,11 @@ export function DailyBroadcastPlanner({ filters, onClose }: { filters: Broadcast
             </div>
           </div>
         </fieldset>
+        {!!form.startTime && !!form.endTime && form.startTime >= form.endTime && <p role="alert" className="text-sm text-destructive">La hora de cierre debe ser posterior a la hora de inicio.</p>}
+        <p className="text-xs text-muted-foreground">Para hoy, el cálculo comienza desde la hora actual si ya pasó el inicio elegido. Los planes futuros son proyecciones y no programan envíos.</p>
         <div className="flex items-center justify-between gap-3">
           <p className="text-xs text-muted-foreground">La reserva se calcula sobre el límite diario de cada línea. Se conserva el remitente habitual.</p>
-          <Button onClick={calculate} disabled={calculating || !form.lineIds.length || !form.endTime || form.maxContacts<1 || form.maxContacts>5000 || form.reservePercent<0 || form.reservePercent>50 || (form.messageType==='template' && !form.templateId)}>
+          <Button onClick={calculate} disabled={calculating || !form.lineIds.length || !form.planDate || !form.startTime || form.startTime >= form.endTime || !form.endTime || form.maxContacts<1 || form.maxContacts>5000 || form.reservePercent<0 || form.reservePercent>50 || (form.messageType==='template' && !form.templateId)}>
             {calculating && <Loader2 size={16} className="mr-2 animate-spin"/>}{calculating ? 'Calculando…' : plan ? 'Actualizar plan' : 'Calcular plan'}
           </Button>
         </div>
@@ -121,13 +131,14 @@ export function DailyBroadcastPlanner({ filters, onClose }: { filters: Broadcast
           </div>)}
         </div>
         <div className="space-y-1 text-xs text-muted-foreground">
-          <p>Plan calculado: {new Date(plan.generatedAt).toLocaleString('es-AR',{timeZone:'America/Argentina/Buenos_Aires',hour12:false})} · Cierre: {new Date(plan.endsAt).toLocaleTimeString('es-AR',{timeZone:'America/Argentina/Buenos_Aires',hour:'2-digit',minute:'2-digit',hour12:false})}</p>
+          <p className="font-medium text-foreground">Difusión prevista: {new Date(plan.startsAt).toLocaleDateString('es-AR',{timeZone:'America/Argentina/Buenos_Aires'})} · {new Date(plan.startsAt).toLocaleTimeString('es-AR',{timeZone:'America/Argentina/Buenos_Aires',hour:'2-digit',minute:'2-digit',hour12:false})} a {new Date(plan.endsAt).toLocaleTimeString('es-AR',{timeZone:'America/Argentina/Buenos_Aires',hour:'2-digit',minute:'2-digit',hour12:false})}</p>
+          <p>Plan calculado: {new Date(plan.generatedAt).toLocaleString('es-AR',{timeZone:'America/Argentina/Buenos_Aires',hour12:false})}</p>
           {plan.computedAt && <p>Prioridades actualizadas: {new Date(plan.computedAt).toLocaleString('es-AR',{timeZone:'America/Argentina/Buenos_Aires',hour12:false})}</p>}
         </div>
         <div className="overflow-x-auto rounded-lg border">
           <table className="w-full text-left text-xs">
             <caption className="sr-only">Capacidad y reparto por línea</caption>
-            <thead className="bg-muted"><tr>{['Línea','Límite diario','Consumidos','Recomendado restante','Pendientes con línea','Reserva','Cupo estimado','Seleccionados'].map(label => <th key={label} className="p-3 font-medium">{label}</th>)}</tr></thead>
+            <thead className="bg-muted"><tr>{['Línea','Límite diario','Consumo al inicio','Cupo recomendado','Pendientes hasta cierre','Reserva','Cupo estimado','Seleccionados'].map(label => <th key={label} className="p-3 font-medium">{label}</th>)}</tr></thead>
             <tbody>{plan.lines.map(line => <tr key={line.id} className="border-t">
               <td className="p-3"><span className="font-medium">{line.name}</span><p className="text-muted-foreground">{line.hourlyLimit}/hora</p>{line.recommendation && <p className="mt-1 max-w-64 text-muted-foreground">{line.recommendation}</p>}{line.reason && line.reason !== line.recommendation && <p className="mt-1 text-amber-700 dark:text-amber-400">{line.reason}</p>}</td>
               {[line.dailyLimit,line.used,line.recommendedRemaining ?? '—',line.committed,line.reserve,line.capacity,line.selected].map((value,index) => <td key={index} className="p-3 tabular-nums">{value}</td>)}

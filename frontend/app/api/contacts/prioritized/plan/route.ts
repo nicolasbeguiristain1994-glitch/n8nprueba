@@ -9,9 +9,11 @@ const schema = z.object({
   reactivationSegment:z.enum(['REACTIVACION_URGENTE','REACTIVACION_PRIORITARIA','REACTIVACION_ESTANDAR','REACTIVACION_FRIA_ALTO_VALOR','REACTIVACION_FRIA']).optional(),
   lineIds:z.array(z.string().uuid()).min(1).max(100).transform(ids => [...new Set(ids)]),
   messageType:z.enum(['template','text']),templateId:z.string().uuid().optional(),
+  planDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  startTime:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default('09:00'),
   endTime:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
   reservePercent:z.number().int().min(0).max(50),maxContacts:z.number().int().min(1).max(5000),
-}).strict().refine(v => v.messageType !== 'template' || !!v.templateId,{message:'Seleccioná una plantilla aprobada.'})
+}).strict().refine(v => v.messageType !== 'template' || !!v.templateId,{message:'Seleccioná una plantilla aprobada.'}).refine(v => v.startTime < v.endTime,{message:'La hora de cierre debe ser posterior a la hora de inicio.'})
 
 async function authorize(req: NextRequest) {
   const auth = await checkPermissionWithUser(req,'priorities','read')
@@ -26,7 +28,7 @@ async function authorize(req: NextRequest) {
 function errorResponse(error: unknown) {
   if (error instanceof BroadcastPlanError) return NextResponse.json({error:error.message},{status:error.status})
   console.error('[broadcast-plan]',error instanceof Error ? error.message : 'Unknown error')
-  return NextResponse.json({error:'No se pudo preparar la difusión. Intentá nuevamente.'},{status:500})
+  return NextResponse.json({error:'No se pudo planificar la difusión. Intentá nuevamente.'},{status:500})
 }
 
 export async function GET(req: NextRequest) {

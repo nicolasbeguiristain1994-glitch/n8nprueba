@@ -14,6 +14,8 @@ export interface BroadcastPlanOptions extends BroadcastPlanFilters {
   lineIds: string[]
   messageType: 'template' | 'text'
   templateId?: string
+  planDate?: string
+  startTime?: string
   endTime: string
   reservePercent: number
   maxContacts: number
@@ -37,10 +39,12 @@ export interface PlanningLine {
   committed: number
   wabaId: string | null
   cloudReady: boolean
+  tokenExpiresAt?: string | null
   activeHours: [number, number] | null
   timezoneOffset: number
   invalidSchedule: boolean
   recommendedRemaining?: number
+  recommendedDaily?: number
   recommendation?: string
   volumeBlocked?: boolean
 }
@@ -99,6 +103,8 @@ export interface PlannedLine {
 
 export interface BroadcastPlan {
   generatedAt: string
+  planDate: string
+  startsAt: string
   computedAt: string | null
   endsAt: string
   total: number
@@ -113,10 +119,22 @@ export interface BroadcastPlan {
 const HOUR = 3_600_000
 const stamp = (s: string | null) => s ? Date.parse(s) : NaN
 
-/** Operational day uses Argentina time, independently of the server timezone. */
-export function todayEndsAt(now: Date, endTime: string): Date {
-  const localDay = new Date(now.getTime() - 3 * HOUR).toISOString().slice(0, 10)
-  return new Date(`${localDay}T${endTime}:00-03:00`)
+/** Resolve calendar dates in Argentina, including month/year boundaries. */
+export function broadcastPlanningDays(now: Date) {
+  const local = now.getTime() - 3 * HOUR
+  return ['Hoy','Mañana','Pasado mañana'].map((label,index) => ({
+    label, date:new Date(local + index * 24 * HOUR).toISOString().slice(0,10),
+  }))
+}
+
+export function broadcastPlanWindow(now: Date, options: Pick<BroadcastPlanOptions,'planDate'|'startTime'|'endTime'>) {
+  const today = broadcastPlanningDays(now)[0].date
+  const date = options.planDate ?? today
+  return {
+    date, future:date > today,
+    startsAt:new Date(Math.max(now.getTime(),Date.parse(`${date}T${options.startTime ?? '09:00'}:00-03:00`))),
+    endsAt:new Date(`${date}T${options.endTime}:00-03:00`),
+  }
 }
 
 function inSchedule(line: PlanningLine, at: number) {
@@ -127,9 +145,11 @@ function inSchedule(line: PlanningLine, at: number) {
   return start < end ? hour >= start && hour < end : hour >= start || hour < end
 }
 
-/** Conservative estimate at an even hourly pace; never promises future daily resets. */
+/** Estimate only the chosen window; future renewals require a known reset time. */
 export function planLineCapacity(line: PlanningLine, options: BroadcastPlanOptions, now: Date, templateWaba: string | null): PlannedLine {
-  const start = now.getTime(), end = todayEndsAt(now, options.endTime).getTime()
+  const window = broadcastPlanWindow(now,options)
+  const start = window.startsAt.getTime(), end = window.endsAt.getTime()
+  const recommended = window.future ? line.recommendedDaily ?? line.recommendedRemaining : line.recommendedRemaining
   const used = stamp(line.dayResetAt) <= start ? 0 : line.sentToday
   const reserve = Math.ceil(line.dailyLimit * options.reservePercent / 100)
   let reason: string | null = null
@@ -139,34 +159,40 @@ export function planLineCapacity(line: PlanningLine, options: BroadcastPlanOptio
   else if (options.messageType === 'template' && (line.type !== 'cloud' || line.wabaId !== templateWaba)) reason = 'No compatible con la plantilla'
   else if (options.messageType === 'text' && line.type !== 'evolution') reason = 'Cloud requiere una plantilla para esta difusión'
   else if (line.type === 'cloud' && !line.cloudReady) reason = 'Revisar conexión o credenciales Cloud'
+  else if (line.type === 'cloud' && stamp(line.tokenExpiresAt ?? null) <= end) reason = 'Las credenciales Cloud vencen antes del cierre elegido'
   else if (line.invalidSchedule) reason = 'Revisar horario configurado'
   else if (line.volumeBlocked) reason = line.recommendation ?? 'Revisar la recomendación de volumen'
   else if (end <= start) reason = 'La hora de cierre ya pasó'
 
   let scheduledCapacity = 0
   if (!reason) {
+    let dayReset = window.future ? stamp(line.dayResetAt) : NaN
+    if (dayReset <= start) dayReset = start + 24 * HOUR
+    let dailyLeft = Math.max(0,line.dailyLimit - used - reserve)
     let reset = stamp(line.hourResetAt)
     let hourLeft = Math.max(0, line.hourlyLimit - line.sentHour)
     if (reset <= start) { hourLeft = line.hourlyLimit; reset = start + HOUR }
     if (!Number.isFinite(reset)) reset = start + HOUR
     // Minute slices respect fractional and overnight schedules, and short windows.
     for (let at = start; at < end;) {
+      if (at >= dayReset) { dailyLeft = Math.max(0,line.dailyLimit - reserve); dayReset = at + 24 * HOUR }
       if (at >= reset) { hourLeft = line.hourlyLimit; reset = at + HOUR }
-      const next = Math.min(end, reset, (Math.floor(at / 60_000) + 1) * 60_000)
+      const next = Math.min(end, reset, Number.isFinite(dayReset) ? dayReset : Infinity, (Math.floor(at / 60_000) + 1) * 60_000)
       if (inSchedule(line, at)) {
-        const amount = Math.min(hourLeft, line.hourlyLimit * (next - at) / HOUR)
+        const amount = Math.min(hourLeft, dailyLeft, line.hourlyLimit * (next - at) / HOUR)
         scheduledCapacity += amount
         hourLeft -= amount
+        dailyLeft -= amount
       }
       at = next
     }
   }
   const capacity = reason ? 0 : Math.max(0, Math.floor(Math.min(
-    line.dailyLimit - used - reserve, scheduledCapacity + 1e-8, line.recommendedRemaining ?? Infinity,
+    line.dailyLimit - reserve, scheduledCapacity + 1e-8, recommended ?? Infinity,
   ) - line.committed))
   if (!reason && !capacity) reason = 'Sin cupo disponible en el horario elegido'
   return { id: line.id, name: line.name, type: line.type, dailyLimit: line.dailyLimit,
-    recommendedRemaining:line.recommendedRemaining,recommendation:line.recommendation,
+    recommendedRemaining:recommended,recommendation:line.recommendation,
     hourlyLimit: line.hourlyLimit, used, committed: line.committed, reserve, capacity, selected: 0, reason }
 }
 
@@ -177,6 +203,7 @@ export function buildBroadcastPlan(input: {
   warnings?: string[]
 }): BroadcastPlan {
   const { options, now } = input
+  const window = broadcastPlanWindow(now,options)
   const selectedLines = input.lines.filter(l => options.lineIds.includes(l.id))
   const lines = selectedLines.map(l => planLineCapacity(l, options, now, input.templateWaba))
   const byId = new Map(lines.map(l => [l.id, l]))
@@ -201,11 +228,11 @@ export function buildBroadcastPlan(input: {
     else if (seen.has(phone)) reason = 'duplicate'
     if (!reason) {
       seen.add(phone)
-      const sinceLast = c.lastSentAt ? Math.max(0, (now.getTime() - stamp(c.lastSentAt)) / HOUR) : null
+      const sinceLast = c.lastSentAt ? Math.max(0, (window.startsAt.getTime() - stamp(c.lastSentAt)) / HOUR) : null
       const eligible = checkEligibility({ status: c.status, doNotContact: false, optInMarketing: true,
         deletedAt: null, lastDepositAt: c.lastDepositAt ? new Date(c.lastDepositAt) : null,
         segment: c.tier, ltvTier: c.tier, totalDepositAmount: null,
-        daysInactive: c.lastDepositAt ? Math.floor((now.getTime() - stamp(c.lastDepositAt)) / (24 * HOUR)) : null,
+        daysInactive: c.lastDepositAt ? Math.floor((window.startsAt.getTime() - stamp(c.lastDepositAt)) / (24 * HOUR)) : null,
         daysSinceLastMessage: sinceLast === null ? null : Math.floor(sinceLast / 24),
       }, input.eligibilityConfig)
       if (!eligible.eligible) reason = 'no_longer_eligible'
@@ -235,10 +262,11 @@ export function buildBroadcastPlan(input: {
       tier: c.tier, agent: c.agent, lineId: reason ? null : line!.id, reason })
   }
   const warnings = [...(input.warnings ?? [])]
+  if (window.future) warnings.push('Proyección basada en la lista actual de Prioridades y la recomendación de volumen actual, sin anticipar nuevos depósitos ni envíos. Volvé a calcular el plan en la fecha elegida.', 'Se incluyen pendientes anteriores al cierre, aunque estén programados para días previos. Las renovaciones de cupo se estiman sólo cuando se conoce su horario.')
   if (input.computedAt && now.getTime() - stamp(input.computedAt) > 36 * HOUR)
     warnings.push('El cálculo de prioridades tiene más de 36 horas. Actualizalo antes de crear campañas.')
-  return { generatedAt: now.toISOString(), computedAt: input.computedAt,
-    endsAt: todayEndsAt(now, options.endTime).toISOString(), total: contacts.length, selected,
+  return { generatedAt: now.toISOString(), planDate:window.date, startsAt:window.startsAt.toISOString(), computedAt: input.computedAt,
+    endsAt: window.endsAt.toISOString(), total: contacts.length, selected,
     pending: contacts.length - selected, contacts, lines, warnings,
     reasons: [...counts].map(([code,count]) => ({ code, count, label: PLAN_REASON_LABELS[code] })) }
 }

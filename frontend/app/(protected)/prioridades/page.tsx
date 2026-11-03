@@ -295,7 +295,7 @@ export default function PrioridadesPage() {
       <div>
         <PageHeader title="Prioridades" className="mb-0" count={result?.total}
           description={`Contactos ordenados por score de reactivación · ${tab === 'pending' ? 'A difundir' : 'Difundidos'}`}>
-          {canPlan && <Button size="sm" onClick={()=>setShowPlan(true)}>Preparar difusión de hoy</Button>}
+          {canPlan && <Button size="sm" onClick={()=>setShowPlan(true)}>Planificar difusión</Button>}
           <Button variant="outline" size="sm" onClick={() => setShowHelp(true)} className="gap-2">
             <HelpCircle size={16} /> Cómo funciona
           </Button>

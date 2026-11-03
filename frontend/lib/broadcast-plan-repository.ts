@@ -14,19 +14,20 @@ import { resolveApplicableRule } from './contact-frequency/rules'
 import { getAll as getScoringConfig } from './scoring-config-service'
 import { getAllTiers } from './segmentation-config-service'
 import { INACTIVITY_WINDOWS, RECONTACT_COOLDOWN_DAYS, DEPOSIT_AMOUNT_TIERS } from './user-prioritization/config'
-import { buildBroadcastPlan, todayEndsAt, type PlanningContact, type PlanningLine, type BroadcastPlanOptions } from './broadcast-planner'
+import { buildBroadcastPlan, broadcastPlanWindow, broadcastPlanningDays, type PlanningContact, type PlanningLine, type BroadcastPlanOptions } from './broadcast-planner'
 
 export class BroadcastPlanError extends Error {
   constructor(message: string, public status = 400) { super(message) }
 }
 export interface PlanningTemplate { id: string; name: string; wabaId: string }
 export interface BroadcastPlanningOptions {
+  days: {date:string;label:string}[]
   lines: { id: string; name: string; type: string }[]
   templates: PlanningTemplate[]
 }
 const iso = (value: Date | string | null) => value ? new Date(value).toISOString() : null
 
-async function readLines(client: PoolClient, user: SessionUser, now: Date): Promise<PlanningLine[]> {
+async function readLines(client: PoolClient, user: SessionUser, endsAt: Date): Promise<PlanningLine[]> {
   // Use dispatch visibility: recommendations must be usable by this campaign owner.
   const scope = distributorVisibilityClause(user.user_id, 1, 'wl')
   const { rows } = await client.query(`SELECT wl.id, COALESCE(wl.display_name,wl.line_key) AS name,
@@ -35,7 +36,7 @@ async function readLines(client: PoolClient, user: SessionUser, now: Date): Prom
     wl.msg_per_day AS "dailyLimit",wl.msg_per_hour AS "hourlyLimit",
     wl.msgs_sent_today AS "sentToday",wl.msgs_sent_hour AS "sentHour",
     wl.day_reset_at AS "dayResetAt",wl.hour_reset_at AS "hourResetAt",wl.priority,
-    cn.waba_id AS "wabaId",wl.personality_config,
+    cn.waba_id AS "wabaId",cn.token_expires_at AS "tokenExpiresAt",wl.personality_config,
     (cn.id IS NOT NULL AND (COALESCE(octet_length(cn.access_token_enc),0)>0 OR NULLIF(trim(cn.access_token),'') IS NOT NULL)
       AND (cn.token_expires_at IS NULL OR cn.token_expires_at>NOW())) AS "cloudReady"
     FROM whatsapp_lines wl LEFT JOIN cloud_numbers cn ON cn.whatsapp_line_id=wl.id AND cn.status='active'
@@ -49,14 +50,14 @@ async function readLines(client: PoolClient, user: SessionUser, now: Date): Prom
     WHERE cr.status IN ('pending','sending') AND c.status IN ('draft','scheduled','running','paused')
       AND (c.scheduled_at IS NULL OR c.scheduled_at<$2)
       AND COALESCE(cr.line_id,a.line_id)=ANY($1::uuid[])
-    GROUP BY COALESCE(cr.line_id,a.line_id)`, [ids, todayEndsAt(now,'23:59')])
+    GROUP BY COALESCE(cr.line_id,a.line_id)`, [ids, endsAt])
   const committed = new Map(commitments.map(r => [r.line_id, Number(r.n)]))
   return rows.map(row => {
     const config = row.personality_config
     const hours = config?.activeHours
     const valid = Array.isArray(hours) && hours.length === 2 && hours.every(n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n < 24) && hours[0] !== hours[1]
     return { ...row, committed: committed.get(row.id) ?? 0,
-      dayResetAt: iso(row.dayResetAt), hourResetAt: iso(row.hourResetAt),
+      tokenExpiresAt:iso(row.tokenExpiresAt), dayResetAt: iso(row.dayResetAt), hourResetAt: iso(row.hourResetAt),
       activeHours: valid ? hours : null, timezoneOffset: Number(config?.timezoneOffsetHours ?? -3),
       invalidSchedule: row.type === 'evolution' && config != null && (!valid || !Number.isFinite(Number(config.timezoneOffsetHours ?? -3))),
     } as PlanningLine
@@ -73,9 +74,10 @@ async function readTemplates(client: PoolClient, lines: PlanningLine[]): Promise
 export async function getBroadcastPlanningOptions(user: SessionUser): Promise<BroadcastPlanningOptions> {
   return withTransaction(async client => {
     await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
-    const lines = await readLines(client,user,new Date())
+    const now = new Date()
+    const lines = await readLines(client,user,broadcastPlanWindow(now,{endTime:'23:59'}).endsAt)
     const templates = await readTemplates(client,lines)
-    return { lines: lines.map(({id,name,type}) => ({id,name,type})), templates }
+    return { days:broadcastPlanningDays(now), lines: lines.map(({id,name,type}) => ({id,name,type})), templates }
   })
 }
 
@@ -86,13 +88,19 @@ export async function prepareDailyBroadcast(user: SessionUser, options: Broadcas
     await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
     const { rows: [clock] } = await client.query<{ now: Date }>('SELECT NOW() AS now')
     const now = new Date(clock.now)
-    const lines = await readLines(client,user,now)
+    const window = broadcastPlanWindow(now,options)
+    if (!broadcastPlanningDays(now).some(day => day.date === window.date))
+      throw new BroadcastPlanError('Elegí hoy, mañana o pasado mañana. Si cambió el día, cerrá y volvé a abrir el planificador.')
+    if ((options.startTime ?? '09:00') >= options.endTime)
+      throw new BroadcastPlanError('La hora de cierre debe ser posterior a la hora de inicio.')
+    const lines = await readLines(client,user,window.endsAt)
     if (options.lineIds.some(id => !lines.some(l => l.id === id)))
       throw new BroadcastPlanError('Una de las líneas seleccionadas ya no está disponible para tu usuario.',403)
     const volumeInputs = await getLineVolumeInputs(lines.map(l => l.id),now,async <T>(sql: string,params?: unknown[]) => (await client.query(sql,params)).rows as T[])
     const volumes = new Map(volumeInputs.map(input => [input.id,recommendLineVolume(input)]))
     for (const line of lines) {
       const recommendation = volumes.get(line.id)
+      line.recommendedDaily = recommendation?.suggestedToday ?? 0
       line.recommendedRemaining = recommendation?.remainingToday ?? 0
       line.recommendation = recommendation?.reason ?? 'No se pudo verificar la recomendación de volumen de esta línea.'
       line.volumeBlocked = !recommendation || ['stop','unavailable'].includes(recommendation.status)
@@ -129,10 +137,10 @@ export async function prepareDailyBroadcast(user: SessionUser, options: Broadcas
     const phones = [...new Set(candidates.map(c => (c.phone ?? '').replace(/\D/g,'')))]
     // Batch-load live contact pressure. Released/confirmed failures match the send engine.
     const { rows: history } = await client.query(`SELECT h.contact_id,
-      COUNT(*) FILTER(WHERE sent_at>=NOW()-interval '24 hours')::int AS today,
-      COUNT(*) FILTER(WHERE sent_at>=NOW()-interval '7 days')::int AS week,MAX(sent_at) AS last_sent_at
+      COUNT(*) FILTER(WHERE sent_at>=$2::timestamptz-interval '24 hours')::int AS today,
+      COUNT(*) FILTER(WHERE sent_at>=$2::timestamptz-interval '7 days')::int AS week,MAX(sent_at) AS last_sent_at
       FROM contact_send_history h WHERE h.contact_id=ANY($1::uuid[])
-        AND h.frequency_released_at IS NULL AND NOT (${FAILED_RESERVATION_SQL}) GROUP BY h.contact_id`,[ids])
+        AND h.frequency_released_at IS NULL AND NOT (${FAILED_RESERVATION_SQL}) GROUP BY h.contact_id`,[ids,window.startsAt])
     const { rows: queued } = await client.query(`SELECT DISTINCT regexp_replace(cr.phone_number,'[^0-9]','','g') AS phone
       FROM campaign_recipients cr JOIN campaigns c ON c.id=cr.campaign_id
       WHERE cr.status IN ('pending','sending') AND c.status IN ('draft','scheduled','running','paused')
@@ -169,7 +177,7 @@ export async function prepareDailyBroadcast(user: SessionUser, options: Broadcas
       eligibilityConfig:{inactivityWindows,recontactCooldownDays,depositAmountTiers:DEPOSIT_AMOUNT_TIERS,enabledTiers:tiers.map(t => t.tier)},
       warnings:[...(job.is_running ? ['Prioridades se está actualizando; este plan usa el último cálculo completo.'] : []),
         'Vista previa: no reserva cupos ni crea campañas. La disponibilidad se debe volver a verificar al enviar.',
-        'Se descuentan pendientes con línea asignada. Campañas todavía sin asignación pueden reducir la capacidad disponible.',
+        'Se descuentan pendientes con línea asignada anteriores al cierre elegido. Campañas todavía sin asignación pueden reducir la capacidad disponible.',
         'El cupo también respeta el volumen recomendado según historial y calidad de cada línea.',
         'La capacidad es una estimación por horario y límites locales; no verifica cuotas del proveedor en tiempo real.'],
     })

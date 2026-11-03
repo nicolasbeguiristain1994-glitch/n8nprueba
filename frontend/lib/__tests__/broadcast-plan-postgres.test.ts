@@ -1,6 +1,7 @@
 /** @vitest-environment node */
 import { beforeAll,afterAll,beforeEach,describe,it,expect,vi } from 'vitest'
 import { Pool } from 'pg'
+import { broadcastPlanningDays } from '@/lib/broadcast-planner'
 import { getLineVolumeInputs } from '@/lib/line-volume-data'
 import { withTransaction } from '@/lib/db'
 import { getBroadcastPlanningOptions,prepareDailyBroadcast } from '@/lib/broadcast-plan-repository'
@@ -130,6 +131,29 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('daily broadcast previe
     const result=await prepareDailyBroadcast(user,options)
     expect(result.lines[0]).toMatchObject({dailyLimit:100,recommendedRemaining:25,capacity:25})
     expect(getLineVolumeInputs).toHaveBeenLastCalledWith([a,b],expect.any(Date),expect.any(Function))
+  })
+
+  it('uses exact planning dates, excludes commitments after the chosen close and never mutates counters',async()=>{
+    const days=broadcastPlanningDays(new Date())
+    const target=days[1].date
+    await pool.query('INSERT INTO campaigns(id,owned_by,scheduled_at) VALUES($1,$2,$3),($4,$2,$5),($6,$2,$7)',[campaign,other,`${target}T08:00:00-03:00`,id(71),`${target}T12:00:00-03:00`,id(72),`${days[2].date}T08:00:00-03:00`])
+    await pool.query("INSERT INTO campaign_recipients(campaign_id,phone_number,line_id) VALUES($1,'5491199999991',$4),($2,'5491199999992',$4),($3,'5491199999993',$4)",[campaign,id(71),id(72),a])
+    await pool.query('UPDATE whatsapp_lines SET msgs_sent_today=100,day_reset_at=$1,hour_reset_at=$1',[`${target}T00:00:00-03:00`])
+    const result=await prepareDailyBroadcast(user,{...options,planDate:target,startTime:'09:00',endTime:'10:00'})
+    expect(result).toMatchObject({planDate:target,startsAt:`${target}T12:00:00.000Z`,endsAt:`${target}T13:00:00.000Z`})
+    expect(result.lines[0]).toMatchObject({committed:1,used:0,capacity:24})
+    expect((await pool.query('SELECT msgs_sent_today FROM whatsapp_lines WHERE id=$1',[a])).rows[0].msgs_sent_today).toBe(100)
+    for (const invalid of ['2000-01-01','2099-01-01','2026-99-99'])
+      await expect(prepareDailyBroadcast(user,{...options,planDate:invalid})).rejects.toMatchObject({status:400})
+  })
+  it('evaluates rolling history at the selected date without releasing frequency records',async()=>{
+    const target=broadcastPlanningDays(new Date())[1].date
+    await pool.query('INSERT INTO contact_send_history(contact_id,sent_at) VALUES($1,$2)',[id(21),`${target}T09:00:00-03:00`])
+    await pool.query("UPDATE contact_send_history SET sent_at=sent_at-interval '8 days'")
+    await pool.query("INSERT INTO contact_send_history SELECT contact_id,sent_at+interval '12 hours',NULL,NULL FROM contact_send_history")
+    const result=await prepareDailyBroadcast(user,{...options,planDate:target})
+    expect(result.contacts.find(c=>c.id===id(21))?.reason).toBeNull()
+    expect((await pool.query('SELECT count(*)::int n FROM contact_send_history WHERE frequency_released_at IS NULL')).rows[0].n).toBe(2)
   })
 
 })

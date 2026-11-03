@@ -9,8 +9,8 @@ import Page from '@/app/(protected)/prioridades/page'
 import { DailyBroadcastPlanner } from '@/components/campaigns/DailyBroadcastPlanner'
 import type { BroadcastPlan } from '@/lib/broadcast-planner'
 
-const catalogue={lines:[{id:'a',name:'Difusión A',type:'evolution'}],templates:[]}
-const plan:BroadcastPlan={generatedAt:'2026-11-03T12:00:00Z',computedAt:'2026-11-03T10:00:00Z',endsAt:'2026-11-03T23:00:00Z',total:2,selected:1,pending:1,
+const catalogue={days:[{date:'2026-11-03',label:'Hoy'},{date:'2026-11-04',label:'Mañana'},{date:'2026-11-05',label:'Pasado mañana'}],lines:[{id:'a',name:'Difusión A',type:'evolution'}],templates:[]}
+const plan:BroadcastPlan={planDate:'2026-11-03',startsAt:'2026-11-03T12:00:00Z',generatedAt:'2026-11-03T12:00:00Z',computedAt:'2026-11-03T10:00:00Z',endsAt:'2026-11-03T23:00:00Z',total:2,selected:1,pending:1,
   lines:[{id:'a',name:'Difusión A',type:'evolution',dailyLimit:500,hourlyLimit:50,used:200,committed:50,reserve:50,capacity:200,selected:1,reason:null}],
   contacts:[{id:'1',name:'Ana',phone:'5491111111111',score:98,segment:'REACTIVACION_PRIORITARIA',tier:'vip',agent:'royal',lineId:'a',reason:null},
     {id:'2',name:'Juan',phone:'5491122222222',score:90,segment:'REACTIVACION_PRIORITARIA',tier:'vip',agent:'royal',lineId:null,reason:'assigned_line_unavailable'}],
@@ -24,7 +24,7 @@ it('opens from Priorities with active filters and plans all pages, then shows co
     return {data:[],total:130,page:1,pageSize:50,totalPages:3}
   })
   render(<Page/>);fireEvent.click(screen.getByRole('button',{name:'Zeus'}))
-  fireEvent.click(screen.getByRole('button',{name:'Preparar difusión de hoy'}))
+  fireEvent.click(screen.getByRole('button',{name:'Planificar difusión'}))
   const dialog=await screen.findByRole('dialog')
   expect(within(dialog).getByText(/Incluye todas las páginas/)).toHaveTextContent('zeus')
   fireEvent.click(await within(dialog).findByRole('button',{name:'Calcular plan'}))
@@ -61,7 +61,7 @@ it('keeps errors visible and permits retry, without treating them as an empty au
 it('does not expose the button to users lacking campaign creation or line access',async()=>{
   state.role='viewer';vi.mocked(fetchJson).mockResolvedValue({data:[],total:0,page:1,pageSize:50,totalPages:0})
   render(<Page/>);await screen.findByText('No hay contactos a difundir')
-  expect(screen.queryByRole('button',{name:'Preparar difusión de hoy'})).not.toBeInTheDocument()
+  expect(screen.queryByRole('button',{name:'Planificar difusión'})).not.toBeInTheDocument()
 })
 
 it('ignores a late response after closing the dialog',async()=>{
@@ -72,4 +72,21 @@ it('ignores a late response after closing the dialog',async()=>{
   await waitFor(()=>expect(screen.getByRole('button',{name:'Calculando…'})).toBeDisabled())
   unmount();await act(async()=>finish(plan))
   expect(screen.queryByText('Ana')).not.toBeInTheDocument()
+})
+
+it('selects tomorrow or the day after, invalidates the old plan and submits the exact date and hours',async()=>{
+  vi.mocked(fetchJson).mockResolvedValueOnce(catalogue).mockResolvedValue({...plan,planDate:'2026-11-04',startsAt:'2026-11-04T13:00:00Z',endsAt:'2026-11-04T23:00:00Z'})
+  render(<DailyBroadcastPlanner filters={{}} onClose={()=>{}}/>)
+  const day=await screen.findByLabelText('Día de difusión')
+  expect(within(day).getAllByRole('option')).toHaveLength(3)
+  fireEvent.change(day,{target:{value:'2026-11-04'}})
+  fireEvent.change(screen.getByLabelText('Hora de inicio'),{target:{value:'10:00'}})
+  fireEvent.click(screen.getByRole('button',{name:'Calcular plan'}))
+  expect(await screen.findByText(/Difusión prevista: 4\/11\/2026/)).toBeInTheDocument()
+  const post=vi.mocked(fetchJson).mock.calls.find(([,init])=>init?.method==='POST')!
+  expect(JSON.parse(post[1]!.body as string)).toMatchObject({planDate:'2026-11-04',startTime:'10:00',endTime:'20:00'})
+  fireEvent.change(day,{target:{value:'2026-11-05'}})
+  expect(screen.queryByLabelText('Resultado del plan')).not.toBeInTheDocument()
+  fireEvent.change(screen.getByLabelText('Hora de cierre'),{target:{value:'09:00'}})
+  expect(screen.getByRole('button',{name:'Calcular plan'})).toBeDisabled()
 })
