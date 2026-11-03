@@ -1,3 +1,4 @@
+import { agentScope } from '@/lib/agent-scope'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
@@ -10,7 +11,7 @@ export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await checkPermissionWithUser(req, 'automations' as never, 'manage')
+  const auth = await checkPermissionWithUser(req, 'automations', 'update')
   if (!auth.ok) return auth.response
 
   const { id } = await params
@@ -20,9 +21,9 @@ export async function POST(
     const rows = await query<{ id: string; is_active: boolean; name: string }>(
       `UPDATE automations
        SET is_active = NOT is_active, updated_at = NOW()
-       WHERE id = $1
+       WHERE id = $1 AND ($2::text[] IS NULL OR (type='reply' AND action_config->>'contact_line_directory'=ANY($2)))
        RETURNING id, is_active, name`,
-      [id],
+      [id, auth.user.role === 'admin' ? null : agentScope(auth.user) ?? []],
     )
     if (!rows[0]) return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
 

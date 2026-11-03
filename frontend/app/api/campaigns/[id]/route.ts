@@ -22,11 +22,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const { status } = parsed.data
 
   try {
-    const [row] = await query<{ owned_by: string | null; status: string; pause_reason?: string | null; is_priority_broadcast?: boolean }>(
-      'SELECT owned_by, status, pause_reason, is_priority_broadcast FROM campaigns WHERE id = $1', [id]
+    const [row] = await query<{ agent_key: string | null; owned_by: string | null; status: string; pause_reason?: string | null; is_priority_broadcast?: boolean }>(
+      'SELECT agent_key, owned_by, status, pause_reason, is_priority_broadcast FROM campaigns WHERE id = $1', [id]
     )
     if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    if (!isCampaignOwnerOrAdmin(session, row.owned_by))
+    if (!isCampaignOwnerOrAdmin(session, row.owned_by, row.agent_key))
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     const allowedFrom = {
       paused: ['scheduled', 'running', 'paused'],
@@ -47,9 +47,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
            updated_at   = NOW(),
            updated_by   = $3
        WHERE id = $2 AND status = $4::campaign_status
-         AND owned_by IS NOT DISTINCT FROM $5::uuid
+         AND owned_by IS NOT DISTINCT FROM $5::uuid AND agent_key IS NOT DISTINCT FROM $6::text
        RETURNING id`,
-      [status, id, session.user_id, row.status, row.owned_by]
+      [status, id, session.user_id, row.status, row.owned_by, row.agent_key ?? null]
     )
     if (!updated[0]) return NextResponse.json({ error: 'La campaña cambió; actualizá antes de volver a intentar' }, { status: 409 })
 

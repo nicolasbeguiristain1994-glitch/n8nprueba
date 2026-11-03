@@ -36,7 +36,7 @@ describe.skipIf(!localUrl)('rescheduling against the real PostgreSQL scheduler',
     await db.connect(); await scheduler.connect()
     await db.query(`CREATE SCHEMA ${schema}`)
     await db.query(`SET search_path TO ${schema}`); await scheduler.query(`SET search_path TO ${schema}`)
-    await db.query(`CREATE TABLE campaigns (
+    await db.query(`CREATE TABLE campaigns (agent_key text,
       id uuid PRIMARY KEY, owned_by uuid, status text, scheduled_at timestamptz, started_at timestamptz,
       processor_locked_at timestamptz, processor_lock_token uuid, updated_at timestamptz, updated_by uuid,
       pause_reason text, budget_resume_at timestamptz, list_id uuid, prospect_list_id uuid, template_id uuid,

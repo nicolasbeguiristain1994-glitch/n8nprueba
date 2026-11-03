@@ -59,7 +59,7 @@ export async function POST(
 
   if (!campaign) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
 
-  if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by)) {
+  if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by, campaign.agent_key)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
   try {

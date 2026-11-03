@@ -92,7 +92,7 @@ describe('Agents management',()=>{
   })
   it('does not fetch the directory or offer changes to operators',()=>{
     mocks.role='operator';render(<AgentsPage/>)
-    expect(screen.getByRole('alert')).toHaveTextContent('Solo los administradores')
+    expect(screen.getByRole('alert')).toHaveTextContent('No tenés acceso al módulo de agentes.')
     expect(fetcher).not.toHaveBeenCalled()
     expect(screen.queryByRole('button',{name:'Nuevo agente'})).not.toBeInTheDocument()
   })

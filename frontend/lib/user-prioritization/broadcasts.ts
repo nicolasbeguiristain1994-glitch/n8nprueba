@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import { z } from 'zod'
 import { query, withTransaction } from '@/lib/db'
+import { agentScope } from '@/lib/agent-scope'
 import { contactScope } from '@/lib/contact-visibility'
 import { canAccess } from '@/lib/permissions'
 import { CampaignTemplateParamsSchema, validateCampaignTemplate } from '@/lib/campaign-template'
@@ -46,7 +47,7 @@ export async function preparePriorityBroadcast(user: SessionUser, data: z.infer<
       return {campaign_id:data.request_id,reused:true}
     }
     const scope=contactScope(user,1,'c')
-    const {rows}=await client.query<{id:string;phone_number:string}>(`SELECT c.id,c.phone_number FROM contacts c JOIN contact_priority_scores cps ON cps.contact_id=c.id
+    const {rows}=await client.query<{id:string;phone_number:string;agent_key:string|null}>(`SELECT c.id,c.phone_number,contact_agent_key(c.panel) AS agent_key FROM contacts c JOIN contact_priority_scores cps ON cps.contact_id=c.id
       WHERE c.id=ANY($1::uuid[]) AND ${scope.sql} AND cps.is_eligible=true AND cps.is_broadcasted=false
         AND (cps.run_id=(SELECT last_complete_run_id FROM system_jobs WHERE job_name='prioritization_recompute')
           OR (SELECT last_complete_run_id FROM system_jobs WHERE job_name='prioritization_recompute') IS NULL)
@@ -54,6 +55,9 @@ export async function preparePriorityBroadcast(user: SessionUser, data: z.infer<
         AND NOT EXISTS(SELECT 1 FROM blacklist b WHERE b.removed_at IS NULL AND b.phone_number_normalized IN (c.phone_number,regexp_replace(c.phone_number,'[^0-9]','','g')) AND (b.scope_key='global' OR b.agent_code=contact_agent_key(c.panel)))
       ORDER BY c.id FOR UPDATE OF cps`,[ids,...scope.params])
     if(rows.length!==ids.length) throw new PriorityBroadcastError('La selección cambió o incluye contactos no disponibles. Actualizá Prioridades y revisala.')
+    const agents=[...new Set(rows.map(row=>row.agent_key))]
+    const assignedAgent=agents.length===1 ? agents[0] : null
+    if (agentScope(user)!==null && !assignedAgent) throw new PriorityBroadcastError('Seleccioná contactos de un único agente',400)
     const phones=new Set<string>()
     ids=rows.filter(row=>{const phone=row.phone_number.replace(/\D/g,'');if(phones.has(phone))return false;phones.add(phone);return true}).map(row=>row.id)
     const {rows:busy}=await client.query(`SELECT 1 FROM priority_broadcasts pb ${PRIORITY_BATCH_JOINS}
@@ -73,9 +77,9 @@ export async function preparePriorityBroadcast(user: SessionUser, data: z.infer<
     await client.query(`INSERT INTO contact_list_members(list_id,contact_id) SELECT $1,unnest($2::uuid[])`,[list.id,ids])
     await client.query(`INSERT INTO campaigns(id,name,message,messages,list_id,type,status,total_targets,
       antiblock_delay_min,antiblock_delay_max,personalize_name,use_multi_line,owned_by,updated_by,message_type,
-      template_id,template_params,audience_snapshot_at,is_priority_broadcast)
-      VALUES($1,$2,$3,$4::jsonb,$5,'promotion','draft',$6,3,8,true,true,$7,$7,'template',$8,$9::jsonb,NOW(),true)`,
-      [data.request_id,name,`[plantilla:${template.name}]`,JSON.stringify([`[plantilla:${template.name}]`]),list.id,ids.length,user.user_id,data.template_id,JSON.stringify(data.template_params)])
+      template_id,template_params,audience_snapshot_at,is_priority_broadcast,agent_key)
+      VALUES($1,$2,$3,$4::jsonb,$5,'promotion','draft',$6,3,8,true,true,$7,$7,'template',$8,$9::jsonb,NOW(),true,$10)`,
+      [data.request_id,name,`[plantilla:${template.name}]`,JSON.stringify([`[plantilla:${template.name}]`]),list.id,ids.length,user.user_id,data.template_id,JSON.stringify(data.template_params),assignedAgent])
     await client.query(`INSERT INTO campaign_audience_members(campaign_id,contact_id) SELECT $1,unnest($2::uuid[])`,[data.request_id,ids])
     await client.query(`INSERT INTO campaign_recipients(campaign_id,contact_id,phone_number,agent_code) SELECT DISTINCT ON(phone_number) $1,id,phone_number,contact_agent_key(panel) FROM contacts WHERE id=ANY($2::uuid[]) ORDER BY phone_number,id`,[data.request_id,ids])
     await client.query('INSERT INTO priority_broadcasts(campaign_id,request_hash,actor_name) VALUES($1,$2,$3)',[data.request_id,hash,user.name||user.email||'Operador'])
@@ -87,7 +91,7 @@ export async function preparePriorityBroadcast(user: SessionUser, data: z.infer<
 export async function priorityRecipientAllowed(campaignId:string,contactId:string,phone:string) {
   const [user]=await query<SessionUser & {is_active:boolean}>(`SELECT u.*,u.id AS user_id FROM users u
     JOIN campaigns bc ON bc.owned_by=u.id WHERE bc.id=$1`,[campaignId])
-  if(!user?.is_active || !canAccess(user,'contacts','read') || !canAccess(user,'send','send')) return false
+  if(!user?.is_active || !canAccess(user,'priorities','read') || !canAccess(user,'send','send')) return false
   const scope=contactScope(user,3,'c')
   const allowed=await query(`SELECT 1 FROM contacts c
     JOIN campaign_audience_members ba ON ba.contact_id=c.id AND ba.campaign_id=$1

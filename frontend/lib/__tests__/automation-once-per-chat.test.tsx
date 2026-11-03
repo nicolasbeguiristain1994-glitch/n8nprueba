@@ -1,3 +1,4 @@
+vi.mock('@/lib/useCurrentUser',()=>({useCurrentUser:()=>({user:{role:'admin'},permissions:{automations:['read','create','update','manage']}})}))
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -25,7 +26,7 @@ const rule = {
 }
 beforeEach(() => {
   vi.resetAllMocks()
-  mocks.fetch.mockImplementation(async (url, init) => init?.method ? { ok: true } : url === '/api/agents' ? { agents: [{ code:'royal', name:'Royal' },{ code:'ofizeus', name:'Ofizeus' }] } : { automations: [rule] })
+  mocks.fetch.mockImplementation(async (url, init) => init?.method ? { ok: true } : url === '/api/agents?purpose=automations' ? { agents: [{ code:'royal', name:'Royal' },{ code:'ofizeus', name:'Ofizeus' }] } : { automations: [rule] })
 })
 afterEach(cleanup)
 
@@ -113,7 +114,7 @@ describe('once-per-chat automation setting', () => {
     expect(saved.action_config).toEqual({message:'Lines designada: {{2}}',contact_line_directory:'royal'})
   })
   it('preserves Royal when editing its message', async()=>{
-    mocks.fetch.mockImplementation(async (url,init)=>init?.method?{ok:true}:url==='/api/agents'?{agents:[{code:'royal',name:'Royal'}]}:{automations:[{...rule,action_config:{message:'Tu línea: {{2}}',contact_line_directory:'royal'}}]})
+    mocks.fetch.mockImplementation(async (url,init)=>init?.method?{ok:true}:url==='/api/agents?purpose=automations'?{agents:[{code:'royal',name:'Royal'}]}:{automations:[{...rule,action_config:{message:'Tu línea: {{2}}',contact_line_directory:'royal'}}]})
     render(<Page/>);await screen.findByText('Bono EXTRA');fireEvent.click(screen.getByTitle('Editar'))
     expect(screen.getByLabelText('Agente de la línea asignada')).toHaveValue('royal')
     fireEvent.change(screen.getByPlaceholderText(/Hola \{\{nombre\}\}/),{target:{value:'Contactá a {{2}}'}})

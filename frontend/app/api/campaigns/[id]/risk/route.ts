@@ -18,9 +18,9 @@ async function authorize(req: Request, context: Context, review: boolean) {
   }
   const { id } = await context.params
   if (!isUUID(id)) return { response: NextResponse.json({ error: 'Identificador inválido' }, { status: 400 }) }
-  const [campaign] = await query<{ owned_by: string | null }>('SELECT owned_by FROM campaigns WHERE id=$1', [id])
+  const [campaign] = await query<{ agent_key: string | null; owned_by: string | null }>('SELECT agent_key, owned_by FROM campaigns WHERE id=$1', [id])
   if (!campaign) return { response: NextResponse.json({ error: 'Campaña no encontrada' }, { status: 404 }) }
-  if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by))
+  if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by, campaign.agent_key))
     return { response: NextResponse.json({ error: 'No tenés acceso a esta campaña' }, { status: 403 }) }
   return { id, user: auth.user }
 }

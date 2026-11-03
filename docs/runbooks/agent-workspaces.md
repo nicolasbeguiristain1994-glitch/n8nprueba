@@ -13,3 +13,16 @@ La fuente parte del commit productivo `731579bfd927c834b72fba8bcb7767c9c8a11578`
 La migración `162_agent_workspaces.sql` agrega columnas nullable, índices y estado por agente. El ejecutor controla la transacción. Conserva el acceso al calendario para usuarios que ya tenían Tareas. No reasigna campañas históricas ni modifica el estado del bot. La tabla nueva habilita RLS y revoca acceso a roles públicos. La aplicación anterior puede funcionar mientras se aplica.
 
 Validar con `node scripts/ops/release.mjs validate`, incluyendo pruebas PostgreSQL de bandejas, medios, notas, estadísticas, calendario y migración repetible. El ejecutor exige CI del mismo commit, ascendencia respecto de producción y ausencia de migraciones pendientes. Comprobar `/release.json`, módulos afectados y permisos tras obtener SUCCESS. Recuperación de aplicación mediante un commit inverso validado; conservar la migración aditiva y los datos.
+
+## Módulos autorizados por agente
+
+En Usuarios, usar Operador o Viewer, seleccionar los agentes permitidos y marcar los módulos. El perfil rápido conserva Conversaciones, Estadísticas y Calendario; se puede ampliar con Dashboard, Contactos y segmentación, Prioridades, Campañas, Agentes y sus líneas, Líneas de WhatsApp, Tareas, Automatizaciones y Plantillas. Envío habilita las campañas masivas por separado. Admin conserva acceso general; la lista de agentes vacía conserva el perfil histórico sin restricción de agente.
+
+- Dashboard exige un agente autorizado antes de consultar datos o cachés. Con varios agentes, se elige uno en el selector; sin selección usa el primero permitido. Los alias de cada plataforma corresponden al mismo agente.
+- Campañas y estadísticas usan `campaigns.agent_key`, aunque las haya creado un administrador. Las campañas históricas sin agente deben asignarse desde administración. Las audiencias nuevas y dinámicas se limitan al agente de la campaña.
+- Agentes y sus líneas permite al operador editar los destinos de su directorio. Líneas de WhatsApp conserva sus permisos explícitos de propiedad y asignación; no se deduce la propiedad a partir del nombre. Los controles generales de infraestructura siguen siendo administrativos.
+- Prioridades tiene un permiso independiente; la migración 164 conserva este acceso para quienes ya tenían Contactos. Las difusiones de un perfil restringido deben tener un único agente y guardan su asignación.
+- Automatizaciones permite crear y editar respuestas del agente seleccionado; las reglas globales, BAJA y flujos generales siguen en administración. El envío vuelve a comprobar el rol, el módulo y el agente del creador. Los registros guardan su agente al ocurrir; los históricos sin atribución se mantienen solo para administración.
+- Plantillas consulta las cuentas de WhatsApp asignadas; oculta borradores sin cuenta ajenos y contadores globales. Usuarios y ajustes generales siguen siendo administrativos. Viewer solo consulta.
+
+La migración 164 es compatible con la aplicación previa, conserva las políticas RLS existentes y no reenvía mensajes ni reasigna campañas. También elimina el acceso de superadministrador de usuarios que ya fueron cambiados a otro rol.

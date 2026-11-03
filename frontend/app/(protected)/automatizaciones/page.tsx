@@ -1,5 +1,7 @@
 'use client'
 
+import { useCurrentUser } from '@/lib/useCurrentUser'
+
 import { assignedLineDestination, type AgentDirectoryEntry } from '@/lib/agent-line-types'
 import { PageHeader } from '@/components/layout/PageHeader'
 
@@ -109,6 +111,9 @@ const BLANK_FORM = {
 // ── Página principal ──────────────────────────────────────────────────────────
 
 export default function AutomatizacionesPage() {
+  const {user,permissions}=useCurrentUser()
+  const canEdit=!!permissions.automations?.includes('update')
+  const isAdmin=user?.role==='admin'
   const [items, setItems]   = useState<Automation[]>([])
   const [logs, setLogs]     = useState<AutomationLog[]>([])
   const [logTotal, setLogTotal] = useState(0)
@@ -137,7 +142,7 @@ export default function AutomatizacionesPage() {
     if (!showEditor) return
     let cancelled=false
     setDirectoryError(false)
-    void fetchJson<{agents:{code:string;name:string}[]}>('/api/agents')
+    void fetchJson<{agents:{code:string;name:string}[]}>('/api/agents?purpose=automations')
       .then(data=>{if(!cancelled)setDirectoryAgents(data.agents??[])})
       .catch(()=>{if(!cancelled)setDirectoryError(true)})
     return ()=>{cancelled=true}
@@ -267,7 +272,7 @@ export default function AutomatizacionesPage() {
     let action_config: ActionConfig
     if (form.type === 'reply') {
       if (!form.message.trim()) { setSaveError('El mensaje de respuesta es requerido'); return }
-      if (hasAssignedLineVariable(form.message) && !form.contact_line_directory) { setSaveError('Elegí el agente de la línea asignada para usar {{2}}'); return }
+      if ((!isAdmin || hasAssignedLineVariable(form.message)) && !form.contact_line_directory) { setSaveError('Elegí el agente de la línea asignada para usar {{2}}'); return }
       action_config = { message: form.message.trim(), ...(form.contact_line_directory ? { contact_line_directory: form.contact_line_directory } : {}) }
     } else if (form.type === 'flow') {
       const steps = form.flow_steps.split('\n').map(l => l.trim()).filter(Boolean)
@@ -347,7 +352,7 @@ export default function AutomatizacionesPage() {
     <div className="space-y-5">
       {/* Header */}
       <PageHeader title="Automatizaciones" description="Bots y respuestas automáticas para conversaciones" className="mb-0">
-        <Button size="sm" onClick={openCreate} className="gap-2">
+        <Button size="sm" disabled={!canEdit} onClick={openCreate} className="gap-2">
           <Plus size={14} /> Nueva automatización
         </Button>
       </PageHeader>
@@ -418,7 +423,7 @@ export default function AutomatizacionesPage() {
                   <Bot size={32} className="mx-auto text-muted-foreground/60 mb-3" />
                   <p className="text-sm font-medium text-muted-foreground">Sin automatizaciones configuradas</p>
                   <p className="text-xs text-muted-foreground mt-1">Creá tu primera automatización para responder mensajes automáticamente.</p>
-                  <Button size="sm" className="mt-4 bg-violet-600 hover:bg-violet-700 text-white" onClick={openCreate}>
+                  <Button size="sm" className="mt-4 bg-violet-600 hover:bg-violet-700 text-white" disabled={!canEdit} onClick={openCreate}>
                     <Plus size={13} className="mr-1" /> Crear automatización
                   </Button>
                 </div>
@@ -478,18 +483,18 @@ export default function AutomatizacionesPage() {
                                 <Button variant="outline" size="sm" onClick={() => openSystemEditor(item)}><Pencil size={13} className="mr-1.5" />Editar mensaje</Button>
                               ) : <div className="flex items-center gap-1">
                                 <button
-                                  onClick={() => handleToggle(item)}
+                                  disabled={!canEdit} onClick={() => handleToggle(item)}
                                   className={`p-1.5 rounded transition-colors ${item.is_active ? 'text-success hover:bg-success/10' : 'text-muted-foreground hover:bg-muted'}`}
                                   title={item.is_active ? 'Pausar' : 'Activar'}
                                 >
                                   <Power size={14} />
                                 </button>
-                                <button onClick={() => openEdit(item)}
+                                <button disabled={!canEdit} onClick={() => openEdit(item)}
                                   className="p-1.5 rounded hover:bg-blue-50 text-muted-foreground hover:text-blue-600 transition-colors"
                                   title="Editar">
                                   <Pencil size={14} />
                                 </button>
-                                <button onClick={() => setDeleteTarget(item)}
+                                <button disabled={!isAdmin} onClick={() => setDeleteTarget(item)}
                                   className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
                                   title="Eliminar">
                                   <Trash2 size={14} />
@@ -635,7 +640,7 @@ export default function AutomatizacionesPage() {
             <div>
               <label className="block text-sm font-medium text-foreground mb-1.5">Tipo de automatización *</label>
               <div className="grid grid-cols-3 gap-2">
-                {(['reply', 'flow', 'handoff'] as AutomationType[]).map(t => (
+                {((isAdmin ? ['reply', 'flow', 'handoff'] : ['reply']) as AutomationType[]).map(t => (
                   <button
                     key={t}
                     onClick={() => setForm(f => ({ ...f, type: t }))}

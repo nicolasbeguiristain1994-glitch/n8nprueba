@@ -1,3 +1,4 @@
+import { agentScope, canonicalAgent } from '@/lib/agent-scope'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { isUUID } from '@/lib/validate'
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const rows = await withContactMovementRead(async client => (await client.query<{
       platform: string | null; monto_cargas_mes: string; monto_retiros_mes: string
       last_deposit_at: string | null; mes_referencia: string | null; fuente: 'transactions' | 'historico'
-    }>(CONTACT_CASINO_STATS_SQL, [id, AGENTS])).rows)
+    }>(CONTACT_CASINO_STATS_SQL, [id, AGENTS.filter(agent => agentScope(auth.user) === null || agentScope(auth.user)!.includes(canonicalAgent(agent)))])).rows)
     const platforms = rows.map(r => ({ ...r, monto_cargas_mes: Number(r.monto_cargas_mes ?? 0), monto_retiros_mes: Number(r.monto_retiros_mes ?? 0) }))
     // Retain the old shape for consumers while the contact view renders every platform.
     const primary = platforms.find(p => p.platform === 'zeus') ?? platforms[0]

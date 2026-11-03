@@ -38,7 +38,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('Priority broadcasts: r
       CREATE TABLE contact_lists(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name varchar(255),description text,contact_count int,owned_by uuid,
         source varchar(50),is_dynamic boolean DEFAULT false,filters jsonb DEFAULT '{}');
       CREATE TABLE contact_list_members(list_id uuid,contact_id uuid);
-      CREATE TABLE campaigns(id uuid PRIMARY KEY,name text,message text,messages jsonb,list_id uuid,type text,status text,total_targets int,
+      CREATE TABLE campaigns(agent_key text,id uuid PRIMARY KEY,name text,message text,messages jsonb,list_id uuid,type text,status text,total_targets int,
         antiblock_delay_min int,antiblock_delay_max int,personalize_name boolean,use_multi_line boolean,owned_by uuid,updated_by uuid,
         message_type text,template_id uuid,template_params jsonb,audience_snapshot_at timestamptz,processor_locked_at timestamptz,
         created_at timestamptz DEFAULT now());

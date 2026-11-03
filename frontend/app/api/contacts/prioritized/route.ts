@@ -39,7 +39,7 @@ const FilterSchema = z.object({
 )
 
 export async function GET(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'contacts', 'read')
+  const auth = await checkPermissionWithUser(req, 'priorities', 'read')
   if (!auth.ok) return auth.response
 
   const params = Object.fromEntries(req.nextUrl.searchParams)

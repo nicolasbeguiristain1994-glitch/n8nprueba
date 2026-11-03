@@ -69,7 +69,7 @@ describe('campaign schedule authorization and validation', () => {
     const response = await run({ ...body, scheduled_at: '2035-10-03T17:30' })
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ ok: true, scheduled_at: '2035-10-03T20:30:00.000Z' })
-    expect(mocks.query.mock.calls[1][1]).toEqual([id, '2035-10-03T20:30:00.000Z', user.user_id, user.user_id, '2035-10-02T20:30:00.000Z'])
+    expect(mocks.query.mock.calls[1][1]).toEqual([id, '2035-10-03T20:30:00.000Z', user.user_id, user.user_id, '2035-10-02T20:30:00.000Z', null])
     expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ resource_id: id,
       metadata: { previous_scheduled_at: '2035-10-02T20:30:00.000Z', scheduled_at: '2035-10-03T20:30:00.000Z' } }))
   })

@@ -81,7 +81,7 @@ async function buildUpdateSetClause(
   let   paramIdx = 1
 
   if (body.name               !== undefined) { setClauses.push(`name = $${paramIdx++}`);                queryParams.push(body.name?.trim() || null) }
-  if (body.role               !== undefined) { setClauses.push(`role = $${paramIdx++}::user_role`);     queryParams.push(body.role) }
+  if (body.role               !== undefined) { setClauses.push(`role = $${paramIdx++}::user_role`); if (body.role !== 'admin') setClauses.push('is_super_admin = false');     queryParams.push(body.role) }
   if (body.sectors            !== undefined) { setClauses.push(`sectors = $${paramIdx++}::jsonb`);      queryParams.push(JSON.stringify(body.sectors)) }
   if (body.is_active          !== undefined) { setClauses.push(`is_active = $${paramIdx++}`);           queryParams.push(body.is_active) }
   if (body.can_download_contacts !== undefined) { setClauses.push(`can_download_contacts = $${paramIdx++}`); queryParams.push(body.can_download_contacts) }

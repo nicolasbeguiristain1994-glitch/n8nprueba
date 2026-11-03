@@ -1,3 +1,4 @@
+import { agentScope } from '@/lib/agent-scope'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
@@ -42,6 +43,10 @@ export async function GET(req: NextRequest) {
     params.push(result)
   }
 
+  if (auth.user.role !== 'admin') {
+    conditions.push(`l.agent_code=ANY($${++p}::text[])`)
+    params.push(agentScope(auth.user) ?? [])
+  }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
 
   try {

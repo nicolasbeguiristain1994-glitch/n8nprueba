@@ -19,3 +19,17 @@ it('creates a Royal operator with only conversations, statistics and calendar', 
   const call = fetch.mock.calls.find(call => call[0] === '/api/users')!
   expect(JSON.parse(call[1]!.body as string)).toMatchObject({role:'operator',allowed_agents:['royal'],sectors:['conversations','estadisticas','calendar'],can_download_contacts:false})
 })
+
+it('allows an admin to extend Royal with selected business modules while retaining its agent restriction',async()=>{
+  const fetch=vi.fn(async()=>Response.json({users:[],pagination:{pages:1}}));vi.stubGlobal('fetch',fetch)
+  render(<UsersPage/>);await screen.findByText('No hay usuarios')
+  fireEvent.click(screen.getByRole('button',{name:'Nuevo usuario'}))
+  fireEvent.change(screen.getByLabelText('Aplicar perfil de agente'),{target:{value:'royal'}})
+  for(const name of ['Dashboard','Contactos y segmentación','Prioridades','Campañas','Agentes y sus líneas']) fireEvent.click(screen.getByRole('button',{name}))
+  fireEvent.change(screen.getByPlaceholderText('usuario@empresa.com'),{target:{value:'royal@example.com'}})
+  fireEvent.change(screen.getByPlaceholderText('••••••••••'),{target:{value:'test-password'}})
+  fireEvent.click(screen.getByRole('button',{name:'Guardar'}))
+  await waitFor(()=>expect(fetch).toHaveBeenCalledWith('/api/users',expect.anything()))
+  const call=(fetch.mock.calls as unknown as [string,RequestInit][]).find(([url])=>url==='/api/users')!
+  expect(JSON.parse(call[1].body as string)).toMatchObject({allowed_agents:['royal'],role:'operator',sectors:expect.arrayContaining(['dashboard','contacts','priorities','campaigns','agents'])})
+})

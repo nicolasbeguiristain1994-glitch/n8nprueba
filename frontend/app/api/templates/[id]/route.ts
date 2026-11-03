@@ -1,3 +1,4 @@
+import { agentScope } from '@/lib/agent-scope'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
@@ -16,7 +17,7 @@ type TemplateRow = {
 }
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await checkPermissionWithUser(req, 'campaigns', 'read')
+  const auth = await checkPermissionWithUser(req, 'campaigns', 'read', 'templates')
   if (!auth.ok) return auth.response
   const { id } = await params
   if (!isUUID(id)) return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
@@ -29,8 +30,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
              AND cn.whatsapp_line_id=ANY($2::uuid[]) AND cn.status='active'))`,
       [id, lineIds]
     )
-    if (!row) return NextResponse.json({ error: 'Plantilla no encontrada' }, { status: 404 })
-    return NextResponse.json({ template: row })
+    if (!row || (agentScope(auth.user) !== null && !row.waba_id && row.created_by !== auth.user.user_id)) return NextResponse.json({ error: 'Plantilla no encontrada' }, { status: 404 })
+    return NextResponse.json({ template: agentScope(auth.user) !== null ? {...row,usage_count:null,last_used_at:null} : row })
   } catch (e) {
     console.error('[GET /api/templates/[id]]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

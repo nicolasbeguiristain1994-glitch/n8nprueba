@@ -11,7 +11,7 @@ export interface NavItem {
 export const BASE_NAV: NavItem[] = [
   { href: '/',               label: 'Dashboard',       icon: LayoutDashboard, sector: 'dashboard' },
   { href: '/contacts',       label: 'Contactos',        icon: Users,           sector: 'contacts' },
-  { href: '/prioridades',    label: 'Prioridades',      icon: TrendingUp,      sector: 'contacts' },
+  { href: '/prioridades',    label: 'Prioridades',      icon: TrendingUp,      sector: 'priorities' },
   { href: '/campaigns',      label: 'Campañas',         icon: Megaphone,       sector: 'campaigns' },
   { href: '/conversations',  label: 'Conversaciones',   icon: MessageSquare,   sector: 'conversations' },
   { href: '/lines',          label: 'Líneas',           icon: Activity,        sector: 'lines' },

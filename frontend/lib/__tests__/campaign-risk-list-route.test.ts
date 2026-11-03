@@ -20,8 +20,8 @@ beforeEach(() => {
 it('loads protection once for only the authorized campaign list', async () => {
   const response = await GET(new NextRequest('http://localhost/api/campaigns'))
   expect(response.status).toBe(200)
-  expect(mocks.query.mock.calls[0][0]).toContain('WHERE c.owned_by = $1')
-  expect(mocks.query.mock.calls[0][1]).toEqual(['owner'])
+  expect(mocks.query.mock.calls[0][0]).toContain('c.owned_by=$1')
+  expect(mocks.query.mock.calls[0][1]).toEqual(['owner',null])
   expect(mocks.states).toHaveBeenCalledExactlyOnceWith(['first', 'second'])
   expect((await response.json()).campaigns).toEqual([
     { id: 'first', name: 'Primera', risk: { blocked: true, incidents: [{ id: 'incident' }] } },

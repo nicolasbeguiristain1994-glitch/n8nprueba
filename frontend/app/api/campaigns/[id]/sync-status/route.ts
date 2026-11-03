@@ -17,10 +17,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params
   if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
   try {
-    const [campaign] = await query<{ owned_by: string | null }>(
-      'SELECT owned_by FROM campaigns WHERE id = $1', [id])
+    const [campaign] = await query<{ agent_key: string | null; owned_by: string | null }>(
+      'SELECT agent_key, owned_by FROM campaigns WHERE id = $1', [id])
     if (!campaign) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
-    if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by))
+    if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by, campaign.agent_key))
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
     const apiKey = process.env.EVOLUTION_GLOBAL_API_KEY || process.env.EVOLUTION_API_KEY

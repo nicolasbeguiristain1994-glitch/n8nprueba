@@ -60,6 +60,7 @@ export async function GET(req: Request) {
       // Permissions derived from fresh DB role/sectors — not from stale session token
       permissions: effectivePermissions({
         role:    u.role,
+        allowed_agents: Array.isArray(u.allowed_agents) ? u.allowed_agents : [],
         sectors: Array.isArray(u.sectors) ? u.sectors : [],
       }),
     })

@@ -31,7 +31,7 @@ export default function AgentsPage() {
     catch(e) { setError((e as Error).message) }
     finally { setLoading(false) }
   },[])
-  useEffect(()=>{if(user?.role==='admin') void load()},[user?.role,load])
+  useEffect(()=>{if(user?.sectors?.includes('agents') || user?.role==='admin') void load()},[user?.role,load])
   const open = (next:Editor) => {
     setFormError('');setNotice('');setEditor(next)
     setFields(next.kind==='agent' ? {...empty,code:next.agent?.code||'',name:next.agent?.name||''}
@@ -65,12 +65,14 @@ export default function AgentsPage() {
     finally {setModeSaving(null)}
   }
   if(authLoading)return <p role="status">Cargando…</p>
-  if(user?.role!=='admin')return <p role="alert">Solo los administradores pueden gestionar los agentes y sus líneas.</p>
+  if(!user)return null
+  if(user.role!=='admin' && !user.sectors?.includes('agents'))return <p role="alert">No tenés acceso al módulo de agentes.</p>
+  const canEdit = user.role !== 'viewer'
   const term=search.trim().toLowerCase()
   const shown=agents.filter(a=>(!selected||a.code===selected) && (!term || [a.code,a.name,...a.lines.flatMap(l=>[l.label,l.phone||'',l.link_url||'',formatAgentLinePhone(l.phone),contactLineLabel(l.linea,l.variant)])].some(v=>v.toLowerCase().includes(term))))
   return <div className="space-y-5">
     <PageHeader title="Agentes" description="Guardá teléfonos y links de las líneas designadas y elegí qué compartir con cada agente."
-      actions={<Button onClick={()=>open({kind:'agent'})}><Plus size={16}/>Nuevo agente</Button>}/>
+      actions={user.role==='admin' ? <Button onClick={()=>open({kind:'agent'})}><Plus size={16}/>Nuevo agente</Button> : undefined}/>
     <div className="flex flex-wrap gap-3 rounded-xl border bg-card p-4">
       <div className="relative min-w-56 flex-1"><Search className="absolute left-3 top-3 text-muted-foreground" size={15}/><Input aria-label="Buscar agente o línea" className="pl-9" placeholder="Buscar agente, línea, teléfono o link…" value={search} onChange={e=>setSearch(e.target.value)}/></div>
       <select aria-label="Elegir agente" className="h-10 rounded-lg border border-input bg-card px-3 text-sm" value={selected} onChange={e=>setSelected(e.target.value)}>
@@ -84,21 +86,21 @@ export default function AgentsPage() {
     {loading&&!agents.length?<p role="status">Cargando agentes…</p>:shown.map(agent=><section key={agent.code} className="overflow-hidden rounded-xl border bg-card">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b p-4">
         <div><h2 className="flex items-center gap-2 text-lg font-semibold"><Users size={18}/>{agent.name}</h2><p className="text-xs text-muted-foreground">{agent.code} · {agent.lines.length} líneas · {agent.lines.filter(l=>l.is_active).length} activas</p></div>
-        <div className="flex gap-2"><Button variant="ghost" size="sm" aria-label={`Editar agente ${agent.name}`} onClick={()=>open({kind:'agent',agent})}><Pencil size={14}/>Editar agente</Button>
-          <Button variant="outline" size="sm" onClick={()=>open({kind:'line',agent})} aria-label={`Agregar línea a ${agent.name}`}><Plus size={14}/>Agregar línea</Button></div>
+        <div className="flex gap-2"><Button disabled={!canEdit} variant="ghost" size="sm" aria-label={`Editar agente ${agent.name}`} onClick={()=>open({kind:'agent',agent})}><Pencil size={14}/>Editar agente</Button>
+          <Button disabled={!canEdit} variant="outline" size="sm" onClick={()=>open({kind:'line',agent})} aria-label={`Agregar línea a ${agent.name}`}><Plus size={14}/>Agregar línea</Button></div>
       </div>
       <div className="flex flex-wrap items-center gap-3 border-b bg-muted/20 px-4 py-3">
         <span className="text-sm font-medium">Compartir con los contactos</span>
         <div role="group" aria-label={`Modo de envío de ${agent.name}`} className="flex flex-wrap gap-1">
-          <Button size="sm" variant={(agent.delivery_mode||'phone')==='phone'?'default':'outline'} aria-pressed={(agent.delivery_mode||'phone')==='phone'} disabled={modeSaving!==null} onClick={()=>void changeDelivery(agent,'phone')}><Phone size={14}/>Enviar número</Button>
-          <Button size="sm" variant={agent.delivery_mode==='link'?'default':'outline'} aria-pressed={agent.delivery_mode==='link'} disabled={modeSaving!==null} onClick={()=>void changeDelivery(agent,'link')}><LinkIcon size={14}/>Enviar link</Button>
+          <Button size="sm" variant={(agent.delivery_mode||'phone')==='phone'?'default':'outline'} aria-pressed={(agent.delivery_mode||'phone')==='phone'} disabled={!canEdit || modeSaving!==null} onClick={()=>void changeDelivery(agent,'phone')}><Phone size={14}/>Enviar número</Button>
+          <Button size="sm" variant={agent.delivery_mode==='link'?'default':'outline'} aria-pressed={agent.delivery_mode==='link'} disabled={!canEdit || modeSaving!==null} onClick={()=>void changeDelivery(agent,'link')}><LinkIcon size={14}/>Enviar link</Button>
         </div>
         {(agent.delivery_mode||'phone')==='phone'&&<div className="basis-full flex flex-wrap items-center gap-3">
           <span className="text-sm">Formato del número</span>
           <div role="group" aria-label={`Formato del número de ${agent.name}`} className="flex gap-1">
             {(['separated','plain'] as const).map(format=><Button key={format} size="sm"
               variant={(agent.phone_format||'separated')===format?'default':'outline'}
-              aria-pressed={(agent.phone_format||'separated')===format} disabled={modeSaving!==null}
+              aria-pressed={(agent.phone_format||'separated')===format} disabled={!canEdit || modeSaving!==null}
               onClick={()=>void changeDelivery(agent,'phone',format)}>{format==='plain'?'Sin |':'Con |'}</Button>)}
           </div>
           <span aria-label={`Vista previa del número de ${agent.name}`} className="font-mono text-sm text-muted-foreground">
@@ -111,7 +113,7 @@ export default function AgentsPage() {
       </div>
       {!agent.lines.length?<div className="flex items-center gap-2 p-5 text-sm text-muted-foreground"><Phone size={16}/>Todavía no hay líneas cargadas para este agente.</div>:
       <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-muted/50 text-xs text-muted-foreground"><tr><th className="px-4 py-3">Asignación</th><th className="px-4 py-3">Nombre de la línea</th><th className="px-4 py-3">Teléfono</th><th className="px-4 py-3">Link</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3 text-right">Acciones</th></tr></thead>
-        <tbody>{agent.lines.map(line=><tr key={line.id} className="border-t"><td className="whitespace-nowrap px-4 py-3 font-medium">{contactLineLabel(line.linea,line.variant)}</td><td className="px-4 py-3">{line.label}</td><td className="select-text whitespace-nowrap px-4 py-3 font-mono">{formatAgentLinePhone(line.phone,agent.phone_format)||'Sin número'}</td><td className="max-w-72 select-text break-all px-4 py-3 text-xs">{line.link_url||<span className="text-muted-foreground">Sin link</span>}</td><td className="px-4 py-3"><span className={line.is_active?'text-success':'text-muted-foreground'}>{line.is_active?'Activa':'Inactiva'}</span></td><td className="px-4 py-3 text-right"><Button variant="ghost" size="sm" aria-label={`Editar ${agent.name} ${contactLineLabel(line.linea,line.variant)}`} onClick={()=>open({kind:'line',agent,line})}><Pencil size={14}/>Editar</Button></td></tr>)}</tbody></table></div>}
+        <tbody>{agent.lines.map(line=><tr key={line.id} className="border-t"><td className="whitespace-nowrap px-4 py-3 font-medium">{contactLineLabel(line.linea,line.variant)}</td><td className="px-4 py-3">{line.label}</td><td className="select-text whitespace-nowrap px-4 py-3 font-mono">{formatAgentLinePhone(line.phone,agent.phone_format)||'Sin número'}</td><td className="max-w-72 select-text break-all px-4 py-3 text-xs">{line.link_url||<span className="text-muted-foreground">Sin link</span>}</td><td className="px-4 py-3"><span className={line.is_active?'text-success':'text-muted-foreground'}>{line.is_active?'Activa':'Inactiva'}</span></td><td className="px-4 py-3 text-right"><Button disabled={!canEdit} variant="ghost" size="sm" aria-label={`Editar ${agent.name} ${contactLineLabel(line.linea,line.variant)}`} onClick={()=>open({kind:'line',agent,line})}><Pencil size={14}/>Editar</Button></td></tr>)}</tbody></table></div>}
     </section>)}
     {!loading&&!error&&!shown.length&&<p className="p-5 text-center text-muted-foreground">No se encontraron agentes o líneas.</p>}
     <Dialog open={!!editor} onOpenChange={value=>{if(!value&&!saving)setEditor(null)}}>

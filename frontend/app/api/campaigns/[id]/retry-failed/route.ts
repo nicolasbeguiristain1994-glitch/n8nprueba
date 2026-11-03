@@ -16,12 +16,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try {
     const result = await withTransaction(async client => {
       const { rows: [campaign] } = await client.query<{
-        owned_by: string | null; status: string; has_lock: boolean; risk_clear: boolean
-      }>(`SELECT owned_by, status, ${CAMPAIGN_RISK_CLEAR_SQL} AS risk_clear,
+        agent_key: string | null; owned_by: string | null; status: string; has_lock: boolean; risk_clear: boolean
+      }>(`SELECT agent_key, owned_by, status, ${CAMPAIGN_RISK_CLEAR_SQL} AS risk_clear,
             (processor_locked_at IS NOT NULL OR processor_lock_token IS NOT NULL) AS has_lock
           FROM campaigns c WHERE id = $1 FOR UPDATE`, [id])
       if (!campaign) return { status: 404, body: { error: 'Campaign not found' } }
-      if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by))
+      if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by, campaign.agent_key))
         return { status: 403, body: { error: 'Forbidden' } }
       if (!campaign.risk_clear) return { status: 409, body: { error: 'Revisá y resolvé la alerta de riesgo antes de reiniciar destinatarios.', code: 'CAMPAIGN_RISK_BLOCKED' } }
       if (!['completed', 'paused'].includes(campaign.status) || campaign.has_lock)

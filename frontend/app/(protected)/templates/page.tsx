@@ -50,7 +50,7 @@ interface Template {
   components: TemplateComponent[]
   whatsapp_template_id: string | null
   rejection_reason: string | null
-  usage_count: number
+  usage_count: number | null
   last_used_at: string | null
   created_at: string
   updated_at: string
@@ -592,7 +592,7 @@ export default function TemplatesPage() {
                       {STATUS_LABEL[t.status as TemplateStatus]}
                     </Badge>
                   </td>
-                  <td className="px-4 py-3 text-muted-foreground">{t.usage_count}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{t.usage_count ?? '—'}</td>
                   <td className="px-4 py-3 text-muted-foreground text-xs">{fmtDate(t.updated_at)}</td>
                   {isAdmin && (
                     <td className="px-4 py-3">

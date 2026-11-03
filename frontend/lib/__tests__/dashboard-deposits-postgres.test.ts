@@ -2,7 +2,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { Client } from 'pg'
 vi.mock('@/lib/db', () => ({ query: vi.fn() }))
-vi.mock('@/lib/permissions', () => ({ checkPermission: vi.fn().mockResolvedValue(undefined) }))
+vi.mock('@/lib/permissions', () => ({ checkPermissionWithUser: vi.fn().mockResolvedValue({ok:true,user:{role:'admin'}}) }))
 import { query } from '@/lib/db'
 import { GET as deposits } from '@/app/api/dashboard/casino/deposits/route'
 import { GET as overview } from '@/app/api/dashboard/casino/overview/route'

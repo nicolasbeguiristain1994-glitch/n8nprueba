@@ -29,6 +29,7 @@ export type CampaignRow = {
   id: string; name: string; message: string; messages: string[] | null
   media_url: string; list_id: string | null; prospect_list_id: string | null
   antiblock_delay_min: number; antiblock_delay_max: number
+  agent_key?: string | null
   personalize_name: boolean; status: string; owned_by: string | null
   message_type?: 'text' | 'template'
   template_id?: string | null; template_name?: string | null

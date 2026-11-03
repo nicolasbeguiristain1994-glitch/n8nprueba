@@ -1,5 +1,8 @@
 'use client'
 
+import { useCurrentUser } from '@/lib/useCurrentUser'
+import { agentScope } from '@/lib/agent-scope'
+import { accessibleDashboardAgents } from '@/lib/dashboard-access'
 import { displayAgentName } from '@/lib/casino-agents'
 
 import { memo, useEffect, useState } from 'react'
@@ -20,7 +23,7 @@ import { PLATFORMS, type Platform } from '@/lib/casino-agents'
 import { describeDateRange } from '@/lib/dashboard-date-range'
 
 import { DashboardDateRangePicker } from './DashboardDateRangePicker'
-import { dashboardAgents, agentScopeLabel } from '@/lib/dashboard-scope'
+import { agentScopeLabel } from '@/lib/dashboard-scope'
 
 // ── "X min ago" ticker ────────────────────────────────────────────────────────
 
@@ -89,6 +92,7 @@ interface PlatformSelectorProps {
 }
 
 function PlatformSelector({ value, onChange }: PlatformSelectorProps) {
+  const { user } = useCurrentUser()
   return (
     <div className="flex items-center gap-2">
       <Select value={value} onValueChange={v => onChange(v as Platform)}>
@@ -97,7 +101,7 @@ function PlatformSelector({ value, onChange }: PlatformSelectorProps) {
           <SelectValue>{PLATFORM_LABELS[value]}</SelectValue>
         </SelectTrigger>
         <SelectContent align="end">
-          {PLATFORMS.map(p => (
+          {PLATFORMS.filter(p => !user || accessibleDashboardAgents(user,p).length > 0).map(p => (
             <SelectItem key={p} value={p} className="text-xs">
               {PLATFORM_LABELS[p]}
             </SelectItem>
@@ -117,7 +121,9 @@ interface AgentSelectorProps {
 }
 
 function AgentSelector({ value, platform, onChange }: AgentSelectorProps) {
-  const agents = dashboardAgents(platform)
+  const { user } = useCurrentUser()
+  const restricted = !!user && agentScope(user) !== null
+  const agents = user ? accessibleDashboardAgents(user, platform) : []
   return (
     <div className="flex items-center gap-2">
       <Select value={value || '_all'} onValueChange={(v: string | null) => onChange(!v || v === '_all' ? '' : v)}>
@@ -126,7 +132,7 @@ function AgentSelector({ value, platform, onChange }: AgentSelectorProps) {
           <SelectValue>{value || 'Todos los agentes'}</SelectValue>
         </SelectTrigger>
         <SelectContent align="end">
-          <SelectItem value="_all" className="text-xs">Todos</SelectItem>
+          {!restricted && <SelectItem value="_all" className="text-xs">Todos</SelectItem>}
           {agents.map(a => (
             <SelectItem key={a} value={a} className="text-xs capitalize">{displayAgentName(a)}</SelectItem>
           ))}

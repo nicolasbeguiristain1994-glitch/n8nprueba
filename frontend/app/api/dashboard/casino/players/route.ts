@@ -1,7 +1,9 @@
+import { dashboardAgentSql } from '@/lib/dashboard-scope'
+import { authorizedDashboardAgent } from '@/lib/dashboard-access'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermission } from '@/lib/permissions'
-import { getAgentsSqlArray, isValidPlatform } from '@/lib/casino-agents'
+import { checkPermissionWithUser } from '@/lib/permissions'
+import { getPlatformFilterSql, isValidPlatform } from '@/lib/casino-agents'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -245,8 +247,8 @@ function orClause(values: string[], map: Record<string, string>): string {
 //     (LEFT JOIN returns NULL for cp.* columns, conditions never match).
 
 export async function GET(req: Request) {
-  const err = await checkPermission(req, 'dashboard', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'dashboard', 'read')
+  if (!auth.ok) return auth.response
 
   const url = new URL(req.url)
 
@@ -258,10 +260,11 @@ export async function GET(req: Request) {
       { status: 400 },
     )
   }
-  const agentsSql = getAgentsSqlArray(platformParam)
+  const scope = authorizedDashboardAgent(auth.user, platformParam, url.searchParams.get('agente'))
+  if (!scope.ok) return NextResponse.json({ error: 'Agente no permitido' }, { status: 403 })
+  const agenteParam = scope.agent
 
   // ── Existing filters ────────────────────────────────────────────────────────
-  const agenteParam     = url.searchParams.get('agente')?.trim()      || null
   const usernameParam   = url.searchParams.get('username')?.trim()    || null
   const nivelParam      = url.searchParams.get('seg_monto')?.trim()   || null
   const fechaDesdeParam = url.searchParams.get('fecha_desde')?.trim() || null
@@ -419,15 +422,16 @@ export async function GET(req: Request) {
         WITH periodo AS (
           SELECT
             ct.username,
+            ct.platform,
             ct.agente,
             SUM(ct.monto) FILTER (WHERE ct.tipo = 'carga')::bigint   AS total_cargas,
             COUNT(*)      FILTER (WHERE ct.tipo = 'carga')::int       AS cant_cargas,
             SUM(ct.monto) FILTER (WHERE ct.tipo = 'retiro')::bigint  AS total_retiros,
             COUNT(*)      FILTER (WHERE ct.tipo = 'retiro')::int      AS cant_retiros
           FROM casino_transactions ct
-          WHERE ct.agente = ANY(${agentsSql})
+          WHERE ${getPlatformFilterSql(platformParam,'ct')}
             AND ct.username != ct.agente          -- excluye Carga/Retiro indirecto
-            AND ($1::text IS NULL OR ct.agente   = $1)
+            AND ${dashboardAgentSql(platformParam,1,'ct')}
             AND ($4::text IS NULL OR ct.username ILIKE '%' || $4 || '%')
             -- Lower bound: precise TS for rows that have it, date fallback for old rows
             AND (
@@ -441,7 +445,7 @@ export async function GET(req: Request) {
               OR (ct.fecha_hora_utc IS NOT NULL AND ct.fecha_hora_utc <  $10::timestamptz)
               OR (ct.fecha_hora_utc IS NULL     AND ct.fecha            < $3::date)
             )
-          GROUP BY ct.username, ct.agente
+          GROUP BY ct.username, ct.platform, ct.agente
           HAVING
             SUM(ct.monto) FILTER (WHERE ct.tipo = 'carga')  > 0
             OR SUM(ct.monto) FILTER (WHERE ct.tipo = 'retiro') > 0
@@ -451,7 +455,7 @@ export async function GET(req: Request) {
       const joinAndWhere = `
         FROM periodo p
         LEFT JOIN casino_players cp
-          ON LOWER(cp.username) = LOWER(p.username)
+          ON LOWER(cp.username) = LOWER(p.username) AND cp.platform IS NOT DISTINCT FROM p.platform AND lower(cp.agente)=lower(p.agente)
         WHERE ($5::text IS NULL OR cp.seg_monto     = $5)
           AND ($6::text IS NULL OR cp.seg_actividad = $6)
           AND ($7::int  IS NULL OR (cp.fecha_ultima IS NOT NULL
@@ -537,8 +541,8 @@ export async function GET(req: Request) {
       ]
 
       const histWhere = `
-        WHERE agente = ANY(${agentsSql})
-          AND ($1::text IS NULL OR agente        = $1)
+        WHERE ${getPlatformFilterSql(platformParam)}
+          AND ${dashboardAgentSql(platformParam,1)}
           AND ($2::text IS NULL OR username      ILIKE '%' || $2 || '%')
           AND ($3::text IS NULL OR seg_monto     = $3)
           AND ($4::text IS NULL OR seg_actividad = $4)

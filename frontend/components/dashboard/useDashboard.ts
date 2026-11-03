@@ -83,7 +83,7 @@ interface UseDashboardReturn extends DashboardFilters {
   refresh:            () => void
 }
 
-export function useDashboard(userId?: string): UseDashboardReturn {
+export function useDashboard(userId?: string, user?: import('@/lib/useCurrentUser').CurrentUser | null): UseDashboardReturn {
   const [layout, setLayout] = useLocalStorage<DashboardLayout>('dashboard:layout', DEFAULT_LAYOUT)
   const [savedDateRange, setDateRangeStored] = useLocalStorage<DateRange>('dashboard:dateRange', DEFAULT_DATE_RANGE)
   const today = argentinaToday()
@@ -95,7 +95,7 @@ export function useDashboard(userId?: string): UseDashboardReturn {
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useLocalStorage<boolean>('dashboard:autoRefresh', true)
 
   // Platform + agent managed by focused sub-hook
-  const { platform, agent, setPlatform, setAgent } = useDashboardFilters()
+  const { platform, agent, setPlatform, setAgent } = useDashboardFilters(user)
 
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)

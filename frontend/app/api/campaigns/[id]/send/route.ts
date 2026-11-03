@@ -36,7 +36,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   if (!campaign) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
 
-  if (!isCampaignOwnerOrAdmin(session, campaign.owned_by)) {
+  if (!isCampaignOwnerOrAdmin(session, campaign.owned_by, campaign.agent_key)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

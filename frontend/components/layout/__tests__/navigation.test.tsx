@@ -1,3 +1,4 @@
+import { effectivePermissions } from '@/lib/permissions'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { MobileNav } from '../MobileNav'
@@ -7,7 +8,7 @@ import { SidebarContext } from '../sidebar-context'
 const mocks = vi.hoisted(() => ({ user: { role: 'operator', sectors: ['contacts'], name: 'Operador', email: 'operator@example.test' } }))
 vi.mock('next/navigation', () => ({ usePathname: () => '/contacts', useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('next/link', () => ({ default: ({ children, ...props }: React.ComponentProps<'a'>) => <a {...props}>{children}</a> }))
-vi.mock('@/lib/useCurrentUser', () => ({ useCurrentUser: () => ({ user: mocks.user }) }))
+vi.mock('@/lib/useCurrentUser', () => ({ useCurrentUser: () => ({ user: mocks.user, permissions: effectivePermissions(mocks.user as never) }) }))
 afterEach(() => { cleanup(); mocks.user.role = 'operator'; mocks.user.sectors = ['contacts'] })
 
 describe('CRM navigation', () => {

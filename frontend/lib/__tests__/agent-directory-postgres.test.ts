@@ -86,7 +86,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('agent directory on PostgreS
     agents=(await(await GET(req())).json()).agents
     expect(agents.find((a:any)=>a.code==='royal')).toMatchObject({phone_format:'plain',delivery_mode:'phone'})
     expect((await changeDelivery(req('PATCH',{delivery_mode:'phone',phone_format:'invalid'}),params('royal'))).status).toBe(400)
-    expect((await changeDelivery(req('PATCH',{delivery_mode:'phone',phone_format:'plain'},2),params('royal'))).status).toBe(403)
+    expect((await changeDelivery(req('PATCH',{delivery_mode:'phone',phone_format:'plain'},2),params('royal'))).status).toBe(200)
     await expect(pool.query("UPDATE crm_agents SET phone_format='invalid' WHERE code='royal'")).rejects.toMatchObject({code:'23514'})
   })
   it('preserves a link when an older client edits only the number, and allows explicit removal',async()=>{
@@ -103,16 +103,26 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('agent directory on PostgreS
     expect((await addLine(req('POST',{...line,phone:'',link_url:''}),params('royal'))).status).toBe(400)
     await expect(pool.query("INSERT INTO agent_contact_lines(agent_code,linea,label,phone) VALUES('royal',1,'Empty',NULL)")).rejects.toMatchObject({code:'23514'})
   })
-  it('rejects unauthenticated users, operators and viewers even if their cookie claims admin',async()=>{
+  it('uses fresh roles and grants for scoped reads, writes and viewer restrictions',async()=>{
     expect((await GET(new Request('http://localhost/api/agents'))).status).toBe(401)
-    for(const user of [2,3]){
-      expect((await GET(req('GET',undefined,user))).status).toBe(403)
-      expect((await POST(req('POST',{code:'test-agent',name:'Test'},user))).status).toBe(403)
-      expect((await rename(req('PATCH',{name:'Hacked'},user),params('royal'))).status).toBe(403)
-      expect((await changeDelivery(req('PATCH',{delivery_mode:'link'},user),params('royal'))).status).toBe(403)
-      expect((await addLine(req('POST',line,user),params('royal'))).status).toBe(403)
-      expect((await editLine(req('PATCH',line,user),params('royal'))).status).toBe(403)
-    }
+    const visible=await (await GET(req('GET',undefined,2))).json()
+    expect(visible.agents.map((a:any)=>a.code)).toEqual(['royal'])
+    expect((await GET(req('GET',undefined,3))).status).toBe(200)
+    for(const user of [2,3]) expect((await POST(req('POST',{code:'test-agent',name:'Test'},user))).status).toBe(403)
+    expect((await rename(req('PATCH',{name:'Royal editado'},2),params('royal'))).status).toBe(200)
+    expect((await rename(req('PATCH',{name:'Ajeno'},2),params('bigwin'))).status).toBe(403)
+    expect((await changeDelivery(req('PATCH',{delivery_mode:'link'},2),params('bigwin'))).status).toBe(403)
+    expect((await addLine(req('POST',line,2),params('bigwin'))).status).toBe(403)
+    const result=await addLine(req('POST',line,2),params('royal'));expect(result.status).toBe(201)
+    const created=(await result.json()).id
+    expect((await editLine(req('PATCH',{label:'Royal',phone:'+5491112345678',is_active:true},2),params('royal',created))).status).toBe(200)
+    expect((await editLine(req('PATCH',{label:'Intruso',phone:'+5491112345678',is_active:true},2),params('bigwin',created))).status).toBe(403)
+    expect((await rename(req('PATCH',{name:'Viewer'},3),params('royal'))).status).toBe(403)
+    expect((await changeDelivery(req('PATCH',{delivery_mode:'link'},3),params('royal'))).status).toBe(403)
+    expect((await addLine(req('POST',line,3),params('royal'))).status).toBe(403)
+    await pool.query("UPDATE users SET sectors='{}' WHERE id=$1",[id(2)])
+    expect((await GET(req('GET',undefined,2))).status).toBe(403)
+    await pool.query("UPDATE users SET sectors='{agents,conversations}' WHERE id=$1",[id(2)])
   })
   it('rejects invalid numbers, variants, unknown agents and attempts to change the assignment key',async()=>{
     for(const invalid of [{...line,phone:'1123456789'},{...line,phone:'https://evil.test'},{...line,linea:0},{...line,variant:'a'},{...line,variant:'b'},{...line,variant:'c'},{...line,variant:'d'}])

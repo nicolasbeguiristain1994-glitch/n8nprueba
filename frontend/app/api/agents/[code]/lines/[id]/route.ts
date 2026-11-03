@@ -1,13 +1,15 @@
+import { canAccessAgent } from '@/lib/agent-scope'
 import { query } from '@/lib/db'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { isUUID } from '@/lib/validate'
 import { AgentLineDetailsSchema, directoryBody, directoryError, requireAgentCode } from '@/lib/agent-directory'
 export async function PATCH(req: Request, {params}: {params: Promise<{code:string;id:string}>}) {
-  const denied = await checkPermission(req, 'agents', 'manage')
-  if (denied) return denied
+  const auth = await checkPermissionWithUser(req, 'agents', 'update')
+  if (!auth.ok) return auth.response
   try {
     const values = await params, code = requireAgentCode(values.code)
+    if (!canAccessAgent(auth.user, code)) return Response.json({error:'Agente no permitido'}, {status:403})
     if (!isUUID(values.id)) return Response.json({error:'Línea inválida'},{status:400})
     const data = await directoryBody(req, AgentLineDetailsSchema)
     const rows = await query(`UPDATE agent_contact_lines SET label=$3,phone=$4,is_active=$5,link_url=CASE WHEN $7::boolean THEN $6 ELSE link_url END,updated_at=NOW()

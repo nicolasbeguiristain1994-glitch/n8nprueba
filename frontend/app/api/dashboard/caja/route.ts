@@ -1,8 +1,9 @@
+import { authorizedDashboardAgent } from '@/lib/dashboard-access'
 import { financialLedgerSql } from '@/lib/dashboard-financial-ledger'
-import { dashboardAgent, dashboardAgentSql, movementPeriodSql } from '@/lib/dashboard-scope'
+import { dashboardAgentSql, movementPeriodSql } from '@/lib/dashboard-scope'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser } from '@/lib/permissions'
 import { getPlatformFilterSql, isValidPlatform } from '@/lib/casino-agents'
 import { argentinaToday, validDateRange } from '@/lib/dashboard-format'
 
@@ -39,8 +40,8 @@ export interface CajaResponse {
 // ── GET /api/dashboard/caja ───────────────────────────────────────────────────
 
 export async function GET(req: Request) {
-  const err = await checkPermission(req, 'dashboard', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'dashboard', 'read')
+  if (!auth.ok) return auth.response
 
   const url      = new URL(req.url)
   const requestedPlatform = url.searchParams.get('platform')?.trim() || 'consolidado'
@@ -57,7 +58,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: 'Plataforma, fechas o paginación inválidas' }, { status: 400 })
   }
   const baseParams: (string | number | null)[] = [from, to]
-  const agent = dashboardAgent(platform, url.searchParams.get('agent') || '')
+  const scopeAccess = authorizedDashboardAgent(auth.user, platform, url.searchParams.get('agent'))
+  if (!scopeAccess.ok) return NextResponse.json({ error: 'Agente no permitido' }, { status: 403 })
+  const agent = scopeAccess.agent
   const agentIndex = baseParams.push(agent || null)
   const searchIndex = search ? baseParams.push(`%${search.toLowerCase()}%`) : 0
   const scope = (alias: string) => `${movementPeriodSql(alias)} AND ${getPlatformFilterSql(platform, alias)}

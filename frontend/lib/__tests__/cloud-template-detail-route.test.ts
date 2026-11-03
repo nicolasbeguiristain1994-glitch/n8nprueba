@@ -33,7 +33,7 @@ describe('Cloud template detail visibility', () => {
   it('checks campaigns:read before querying line visibility or a template', async () => {
     mocks.permission.mockResolvedValue({ ok: false, response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) })
     expect((await GET(request(), context())).status).toBe(403)
-    expect(mocks.permission).toHaveBeenCalledWith(expect.any(NextRequest), 'campaigns', 'read')
+    expect(mocks.permission).toHaveBeenCalledWith(expect.any(NextRequest), 'campaigns', 'read', 'templates')
     expect(mocks.access).not.toHaveBeenCalled()
     expect(mocks.query).not.toHaveBeenCalled()
   })

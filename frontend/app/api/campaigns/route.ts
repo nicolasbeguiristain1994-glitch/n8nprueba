@@ -1,4 +1,5 @@
-import { agentScope, canAccessAgent } from '@/lib/agent-scope'
+import { contactScope } from '@/lib/contact-visibility'
+import { agentScope, canAccessAgent, campaignScopeSql } from '@/lib/agent-scope'
 import { NextRequest, NextResponse } from 'next/server'
 import { query, withTransaction } from '@/lib/db'
 import { randomUUID } from 'node:crypto'
@@ -19,11 +20,9 @@ export async function GET(req: NextRequest) {
   const isAdmin = session.role === 'admin'
 
   try {
-    // Admin sees everything (including historical rows where owned_by IS NULL).
-    // Operator/viewer see only their own campaigns; NULL-owned historical rows
-    // are admin-only and never appear in non-admin lists.
-    const ownerClause = isAdmin ? '' : 'WHERE c.owned_by = $1'
-    const params      = isAdmin ? [] : [session.user_id]
+    // Agent assignment governs scoped profiles; legacy profiles retain creator ownership.
+    const ownerClause = `WHERE ${campaignScopeSql('c', '$1', '$2')}`
+    const params = [isAdmin ? null : session.user_id, agentScope(session)]
 
     const campaignSql = (includePauseReason: boolean, includeProspectList: boolean) => `
       SELECT c.id, c.agent_key, c.name, c.message, c.messages, c.status, c.scheduled_at,
@@ -196,11 +195,18 @@ export async function POST(req: NextRequest) {
       const contacts = await checkPermissionWithUser(req, 'contacts', 'read')
       if (!contacts.ok) return contacts.response
     }
+    if (list_id && agents !== null) {
+      const scope = contactScope({...session, allowed_agents: assignedAgent ? [assignedAgent] : []}, 1, 'c')
+      const hidden = await query(`SELECT 1 FROM contact_list_members m JOIN contacts c ON c.id=m.contact_id
+        WHERE m.list_id=$1 AND (${scope.sql}) IS NOT TRUE LIMIT 1`,[list_id,...scope.params])
+      if (hidden.length) return NextResponse.json({error:'La lista contiene contactos de otro agente'}, {status:403})
+    }
+    if (prospect_list_id && agents !== null) return NextResponse.json({error:'Para este perfil seleccioná contactos del agente'}, {status:403})
     const persist = async (run: typeof query) => {
       let resolvedListId = list_id
       let total_targets = 0
       if (contact_ids) {
-        const selection = await resolveCampaignSelection(contact_ids, session, run)
+        const selection = await resolveCampaignSelection(contact_ids, assignedAgent && agents !== null ? {...session, allowed_agents:[assignedAgent]} : session, run)
         if (!selection.summary.eligible) throw NextResponse.json({ error: 'No hay contactos habilitados en esta selección. Revisá las exclusiones antes de crear la campaña.' }, { status: 422 })
         const [audience] = await run<{id: string}>(`
           INSERT INTO contact_lists (name, description, source, filters, owned_by, updated_by, is_dynamic, refreshed_at)

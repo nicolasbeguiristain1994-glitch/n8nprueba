@@ -1,3 +1,4 @@
+import { AUTOMATION_CREATOR_SQL } from './automation-access'
 import { CampaignRiskError } from '@/lib/campaign-risk'
 import type { AgentDeliveryMode, AgentPhoneFormat } from './agent-line-types'
 import { resolveConsentIdentity } from '@/lib/consent-context'
@@ -59,7 +60,8 @@ export async function evaluateAutomations(phone: string, messageText: string, me
     if (blocked.rows.length) return
     const rules=await db.query<Rule>(`SELECT a.id,a.name,a.type,a.trigger_type,a.trigger_config,a.action_config
       FROM automations a JOIN users u ON u.id=a.created_by
-      WHERE a.is_active=true AND u.is_active=true AND u.role='admin' ORDER BY a.priority,CASE WHEN NULLIF(a.action_config->>'contact_line_directory','') IS NOT NULL THEN 0 ELSE 1 END,a.created_at,a.id`)
+      WHERE a.is_active=true AND u.is_active=true AND ${AUTOMATION_CREATOR_SQL}
+        AND (u.role='admin' OR a.action_config->>'contact_line_directory'=$1) ORDER BY a.priority,CASE WHEN NULLIF(a.action_config->>'contact_line_directory','') IS NOT NULL THEN 0 ELSE 1 END,a.created_at,a.id`,[identity.agent])
     const matches=rules.rows.filter(r=>automationMatches(r,messageText))
     // Only the directory mode reads assignment fields; generic rules keep their
     // existing behavior. Two matching phone records are ambiguous, never guessed.
@@ -71,7 +73,7 @@ export async function evaluateAutomations(phone: string, messageText: string, me
     const rule=matches.find(r=>{
       if (!r.action_config.contact_line_directory) return true
       const agent=directoryAgentCode(r.action_config.contact_line_directory)
-      return agent && (!routingContacts.length || routingContacts.some(c=>belongsToDirectory(c,agent)))
+      return agent && (!identity.agent || identity.agent===agent) && (!routingContacts.length || routingContacts.some(c=>belongsToDirectory(c,agent)))
     })
     if (!rule) return
     if (rule.type==='reply' && rule.trigger_config.once_per_chat===true) {
@@ -81,8 +83,8 @@ export async function evaluateAutomations(phone: string, messageText: string, me
       const prior=await db.query(`SELECT 1 FROM automation_message_jobs
         WHERE automation_id=$1 AND phone=$2 AND agent_code IS NOT DISTINCT FROM $3 AND status IN ('queued','processing','sent','uncertain') LIMIT 1`,[rule.id,number,identity.agent])
       if (prior.rows.length) {
-        await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details)
-          VALUES($1,$2,$3,'skipped','Respuesta única por chat: ya enviada o pendiente de confirmación')`,[rule.id,rule.name,number])
+        await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details,agent_code)
+          VALUES($1,$2,$3,'skipped','Respuesta única por chat: ya enviada o pendiente de confirmación',$4)`,[rule.id,rule.name,number,identity.agent])
         return
       }
     }
@@ -96,7 +98,7 @@ export async function evaluateAutomations(phone: string, messageText: string, me
       .replace(/\{\{fecha\}\}/gi,new Date().toLocaleDateString('es-AR',{timeZone:'America/Argentina/Buenos_Aires'}))
     let steps: ReturnType<typeof automationSteps>
     try { steps=automationSteps(rule) } catch {
-      await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details) VALUES($1,$2,$3,'error','Configuración de pasos inválida')`,[rule.id,rule.name,number]);return
+      await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details,agent_code) VALUES($1,$2,$3,'error','Configuración de pasos inválida',$4)`,[rule.id,rule.name,number,identity.agent]);return
     }
     let handoff=rule.type==='handoff'
     if (rule.action_config.contact_line_directory) {
@@ -107,7 +109,7 @@ export async function evaluateAutomations(phone: string, messageText: string, me
       const routed=agentLineReply(routingContacts,agent,rule.action_config.message??'Esta es tu línea asignada:',
         directory.rows.map(line=>[line.linea,line.variant,line.label,line.phone,line.link_url] as const),directory.rows[0]?.delivery_mode || 'phone',directory.rows[0]?.phone_format || 'separated')
       if (routed.message.length>4096) {
-        await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details) VALUES($1,$2,$3,'error','La respuesta con la línea supera 4096 caracteres')`,[rule.id,rule.name,number]);return
+        await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details,agent_code) VALUES($1,$2,$3,'error','La respuesta con la línea supera 4096 caracteres',$4)`,[rule.id,rule.name,number,identity.agent]);return
       }
       steps=[{message:routed.message,delay_sec:0}]
       handoff=routed.handoff
@@ -117,15 +119,15 @@ export async function evaluateAutomations(phone: string, messageText: string, me
       await db.query(`INSERT INTO conversation_state(phone_number,is_escalated,escalated_at,escalation_reason)
         VALUES($1,true,NOW(),$2) ON CONFLICT(phone_number) WHERE resolved_at IS NULL
         DO UPDATE SET is_escalated=true,escalated_at=NOW(),escalation_reason=EXCLUDED.escalation_reason,updated_at=NOW()`,[number,`Automatización: ${rule.name}`])
-      await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details) VALUES($1,$2,$3,'executed','Conversación derivada a un operador')`,[rule.id,rule.name,number])
+      await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details,agent_code) VALUES($1,$2,$3,'executed','Conversación derivada a un operador',$4)`,[rule.id,rule.name,number,identity.agent])
     }
     let delay=0
     for (let i=0;i<steps.length;i++) {
       const body=resolve(steps[i].message)
       const denied=await automationAdmission(db,safetyContext,body)
       if (denied) {
-        await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details)
-          VALUES($1,$2,$3,'skipped',$4)`,[rule.id,rule.name,number,denied]);break
+        await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details,agent_code)
+          VALUES($1,$2,$3,'skipped',$4,$5)`,[rule.id,rule.name,number,denied,identity.agent]);break
       }
       const fingerprint=automationFingerprints(body)
       delay+=steps[i].delay_sec
@@ -145,8 +147,8 @@ async function complete(job:Job,status:'sent'|'failed'|'skipped'|'uncertain',det
     if(status!=='skipped') await recordAutomationDispatchFinished(db,job)
     if(status!=='sent') await db.query(`UPDATE automation_message_jobs SET status='skipped',finished_at=NOW(),
       details='Un paso anterior no se completó' WHERE event_key=$1 AND step>$2 AND status='queued'`,[job.event_key,job.step])
-    await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,message_id,result,details)
-      VALUES($1,$2,$3,$4,$5,$6)`,[job.automation_id,job.automation_name,job.phone,job.legacy_message_id,status==='sent'?'executed':status==='skipped'?'skipped':'error',`Paso ${job.step+1}: ${details}`])
+    await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,message_id,result,details,agent_code)
+      VALUES($1,$2,$3,$4,$5,$6,$7)`,[job.automation_id,job.automation_name,job.phone,job.legacy_message_id,status==='sent'?'executed':status==='skipped'?'skipped':'error',`Paso ${job.step+1}: ${details}`,job.agent_code])
   })
 }
 
@@ -160,7 +162,7 @@ async function sendJob(job:Job):Promise<void> {
   }
   // Recheck operator handoff, opt-out and active rule/creator at send time,
   // including delayed flow steps. Each reply stays on its inbound line.
-  const active=await query<Pick<Rule,'type'|'trigger_config'>>(`SELECT a.type,a.trigger_config FROM automations a JOIN users u ON u.id=a.created_by WHERE a.id=$1 AND a.is_active=true AND u.is_active=true AND u.role='admin'`,[job.automation_id])
+  const active=await query<Pick<Rule,'type'|'trigger_config'>>(`SELECT a.type,a.trigger_config FROM automations a JOIN users u ON u.id=a.created_by WHERE a.id=$1 AND a.is_active=true AND u.is_active=true AND ${AUTOMATION_CREATOR_SQL} AND (u.role='admin' OR a.action_config->>'contact_line_directory'=$2)`,[job.automation_id,job.agent_code])
   const blocked=await query(`SELECT 1 FROM blacklist WHERE phone_number_normalized=$1 AND removed_at IS NULL
     AND (scope_key='global' OR agent_code=$2) LIMIT 1`,[job.phone,job.agent_code])
   if (!active.length||blocked.length) { await complete(job,'skipped','Regla pausada, baja solicitada o conversación atendida por un operador');return }
@@ -258,8 +260,8 @@ export async function processAutomationJobs(eventKey:string|null=null):Promise<n
   await query(`WITH stale AS (
     UPDATE automation_message_jobs SET status='uncertain',finished_at=NOW(),details='Procesamiento interrumpido; revisar antes de reintentar'
     WHERE status='processing' AND started_at<NOW()-interval '5 minutes' RETURNING *)
-    INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details)
-    SELECT automation_id,automation_name,phone,'error',details FROM stale`)
+    INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details,agent_code)
+    SELECT automation_id,automation_name,phone,'error',details,agent_code FROM stale`)
   let count=0
   for(let i=0;i<20;i++) {
     const [job]=await query<Job>(`WITH next AS (

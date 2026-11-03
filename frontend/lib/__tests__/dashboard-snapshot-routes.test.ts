@@ -3,23 +3,23 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { NextResponse } from 'next/server'
 vi.mock('@/lib/db', () => ({ query: vi.fn() }))
 vi.mock('@/lib/dashboard-snapshot-query', () => ({ dashboardSnapshotQuery: (sql: string, params?: unknown[]) => query(sql, params) }))
-vi.mock('@/lib/permissions', () => ({ checkPermission: vi.fn() }))
+vi.mock('@/lib/permissions', () => ({ checkPermissionWithUser: vi.fn() }))
 import { query } from '@/lib/db'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser } from '@/lib/permissions'
 import { dashboardSnapshot } from '../dashboard-snapshot'
 import { GET as agents } from '@/app/api/dashboard/casino/agents/route'
 import { GET as casino } from '@/app/api/dashboard/casino/route'
 import { GET as overview } from '@/app/api/dashboard/casino/overview/route'
 import { GET as deposits } from '@/app/api/dashboard/casino/deposits/route'
-beforeEach(() => { vi.resetAllMocks(); dashboardSnapshot.reset(); vi.stubEnv('NODE_ENV', 'production') })
+beforeEach(() => { vi.resetAllMocks(); vi.mocked(checkPermissionWithUser).mockResolvedValue({ok:true,user:{role:'admin'} as never}); dashboardSnapshot.reset(); vi.stubEnv('NODE_ENV', 'production') })
 afterEach(() => { dashboardSnapshot.reset(); vi.unstubAllEnvs(); vi.useRealTimers() })
 const request = (params = '') => new Request('http://localhost/?platform=consolidado&from=2026-10-02&to=2026-10-08' + params)
 it.each([casino, overview, deposits, agents])('checks live permissions even when financial data is already warm', async GET => {
   vi.mocked(query).mockResolvedValue([{ dashboard: { agentes: [] } }])
   expect((await GET(request())).status).toBe(200)
   expect((await GET(request())).status).toBe(200); expect(query).toHaveBeenCalledOnce()
-  vi.mocked(checkPermission).mockResolvedValue(new NextResponse(null, { status: 403 }))
-  expect((await GET(request())).status).toBe(403); expect(checkPermission).toHaveBeenCalledTimes(3); expect(query).toHaveBeenCalledOnce()
+  vi.mocked(checkPermissionWithUser).mockResolvedValue({ok:false,response:new NextResponse(null, { status: 403 })})
+  expect((await GET(request())).status).toBe(403); expect(checkPermissionWithUser).toHaveBeenCalledTimes(3); expect(query).toHaveBeenCalledOnce()
 })
 it('separates dates, platforms and normalized agents and bypasses cache on manual refresh', async () => {
   vi.mocked(query).mockResolvedValue([{ dashboard: { agentes: [{ total: 7 }] } }])
@@ -43,4 +43,18 @@ it('keeps fast agent cards and account details in separate caches with explicit 
   await agents(request('&refresh=1')); expect(query).toHaveBeenCalledTimes(4)
   await agents(request('&agent=royal')); expect(query).toHaveBeenCalledTimes(5)
   await agents(new Request('http://localhost/?platform=invalid')); expect(query).toHaveBeenCalledTimes(5)
+})
+
+it.each([casino,overview,deposits,agents])('isolates an agent from warm global snapshots and rejects forged selections',async GET=>{
+  vi.mocked(query).mockResolvedValue([{dashboard:{agentes:[]}}])
+  await GET(request())
+  vi.mocked(checkPermissionWithUser).mockResolvedValue({ok:true,user:{role:'operator',allowed_agents:['royal']} as never})
+  expect((await GET(request())).status).toBe(200)
+  expect(query).toHaveBeenCalledTimes(2)
+  expect(vi.mocked(query).mock.calls[1][1]).toContain('royal')
+  expect((await GET(request('&agent=bigwin'))).status).toBe(403)
+  expect(query).toHaveBeenCalledTimes(2)
+  vi.mocked(checkPermissionWithUser).mockResolvedValue({ok:true,user:{role:'operator',allowed_agents:['bigwin']} as never})
+  await GET(request());expect(query).toHaveBeenCalledTimes(3)
+  expect(vi.mocked(query).mock.calls[2][1]).toContain('bigwin')
 })

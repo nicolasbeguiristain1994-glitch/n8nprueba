@@ -125,6 +125,7 @@ export type CampaignForDispatch = {
   antiblock_delay_max: number
   personalize_name:    boolean
   status:              string
+  agent_key?:          string | null
   owned_by:            string | null
   // Template support (message_type = 'template' → Cloud API únicamente)
   message_type:      'text' | 'template'

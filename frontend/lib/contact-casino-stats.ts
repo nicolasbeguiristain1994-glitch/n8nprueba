@@ -8,12 +8,12 @@ export const CONTACT_CASINO_STATS_SQL = `
       accounts AS MATERIALIZED (
         SELECT p.*, GREATEST(p.fecha_ultima, cp.fecha_ultima) AS known_last
         FROM linked p LEFT JOIN casino_players cp ON cp.username_lower=p.username_lower
-          AND cp.platform IS NOT DISTINCT FROM p.platform
+          AND cp.platform IS NOT DISTINCT FROM p.platform AND lower(trim(cp.agente))=lower(trim(p.agente))
         WHERE lower(trim(p.agente))=ANY($2::text[])
       ), tx AS MATERIALIZED (
         SELECT a.platform,ct.fecha,ct.tipo,ct.monto FROM accounts a
         JOIN casino_transactions ct ON lower(ct.username)=a.username_lower
-          AND ct.platform IS NOT DISTINCT FROM a.platform
+          AND ct.platform IS NOT DISTINCT FROM a.platform AND lower(trim(ct.agente))=lower(trim(a.agente))
         WHERE ct.fecha<=CURRENT_DATE
       ), months AS (
         SELECT platform,date_trunc('month',MAX(fecha)) AS month FROM tx GROUP BY platform

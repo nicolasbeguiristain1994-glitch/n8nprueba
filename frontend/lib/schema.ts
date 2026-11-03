@@ -73,7 +73,7 @@ export async function handleValidationError(
 
 export const ROLES   = ['admin', 'operator', 'viewer']   as const
 export const SECTORS = [
-  'dashboard', 'contacts', 'campaigns', 'conversations', 'lines',
+  'dashboard', 'contacts', 'priorities', 'campaigns', 'conversations', 'lines', 'agents',
   'warmup', 'tasks', 'calendar', 'estadisticas', 'automations', 'blacklist',
   'templates', 'tickets', 'users', 'settings', 'lists', 'send',
 ] as const

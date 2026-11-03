@@ -67,7 +67,7 @@ export async function PATCH(req: NextRequest) {
 
   const { id, sending_enabled, respect_daily_recommendation, display_name, msg_per_day, msg_per_hour, priority } = parsed.data
   const session = auth.user
-  const isAdmin = session.role === 'admin' || session.is_super_admin
+  const isAdmin = session.role === 'admin'
 
   // Operators can only modify their own lines (not shared/granted lines)
   if (!isAdmin) {

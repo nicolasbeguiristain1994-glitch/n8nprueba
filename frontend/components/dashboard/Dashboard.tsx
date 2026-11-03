@@ -42,7 +42,7 @@ export function Dashboard() {
     setPlatform,
     setAgent,
     refresh,
-  } = useDashboard(user?.id)
+  } = useDashboard(user?.id, user)
 
   const includedDays = queryDateRange(dateRange)
   const { toast, showToast } = useToast()

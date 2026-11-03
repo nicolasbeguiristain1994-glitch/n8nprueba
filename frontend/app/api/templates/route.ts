@@ -1,3 +1,4 @@
+import { agentScope } from '@/lib/agent-scope'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
@@ -16,6 +17,7 @@ type TemplateRow = {
   components: unknown
   whatsapp_template_id: string | null
   rejection_reason: string | null
+  waba_id: string | null
   usage_count: number
   last_used_at: string | null
   created_by: string | null
@@ -24,7 +26,7 @@ type TemplateRow = {
 }
 
 export async function GET(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'campaigns', 'read')
+  const auth = await checkPermissionWithUser(req, 'campaigns', 'read', 'templates')
   if (!auth.ok) return auth.response
 
   const status   = req.nextUrl.searchParams.get('status')   || ''
@@ -50,7 +52,7 @@ export async function GET(req: NextRequest) {
       ORDER BY created_at DESC
     `, [status, category, q ? `%${q}%` : '', lineIds, wabaId])
     const accounts = await listTemplateAccounts(auth.user)
-    return NextResponse.json({ templates: rows, accounts })
+    return NextResponse.json({ templates: agentScope(auth.user) === null ? rows : rows.filter(row=>row.waba_id || row.created_by===auth.user.user_id).map(row=>({...row,usage_count:null,last_used_at:null})), accounts })
   } catch (e) {
     console.error('[/api/templates GET]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

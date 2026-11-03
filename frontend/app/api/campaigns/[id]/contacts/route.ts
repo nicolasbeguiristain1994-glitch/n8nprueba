@@ -13,11 +13,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   if (session.role !== 'admin') {
-    const [row] = await query<{ owned_by: string | null }>(
-      'SELECT owned_by FROM campaigns WHERE id = $1', [id]
+    const [row] = await query<{ agent_key: string | null; owned_by: string | null }>(
+      'SELECT agent_key, owned_by FROM campaigns WHERE id = $1', [id]
     )
     if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    if (!isCampaignOwnerOrAdmin(session, row.owned_by))
+    if (!isCampaignOwnerOrAdmin(session, row.owned_by, row.agent_key))
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

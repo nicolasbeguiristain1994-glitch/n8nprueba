@@ -36,13 +36,13 @@ export async function GET(
   if (!isUUID(id)) return NextResponse.json({ error: 'Invalid id' }, { status: 400 })
 
   try {
-    const [campaign] = await query<{ id: string; status: string; owned_by: string | null }>(
-      'SELECT id, status, owned_by FROM campaigns WHERE id = $1',
+    const [campaign] = await query<{ id: string; status: string; agent_key: string | null; owned_by: string | null }>(
+      'SELECT id, status, agent_key, owned_by FROM campaigns WHERE id = $1',
       [id]
     )
     if (!campaign) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
 
-    if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by)) {
+    if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by, campaign.agent_key)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
 
@@ -98,7 +98,7 @@ export async function POST(
 
   if (!campaign) return NextResponse.json({ error: 'Campaign not found' }, { status: 404 })
 
-  if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by)) {
+  if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by, campaign.agent_key)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
   try {

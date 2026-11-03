@@ -18,7 +18,7 @@ const request = (method = 'GET', body?: unknown, search = '') => new NextRequest
 })
 beforeEach(() => {
   vi.resetAllMocks()
-  m.auth.mockResolvedValue({ ok: true, user: { user_id: userId } })
+  m.auth.mockResolvedValue({ ok: true, user: { role:'admin', user_id: userId } })
   m.query.mockResolvedValue([])
 })
 
@@ -26,7 +26,7 @@ it('saves only the message with manage permission, preserving the always-active 
   m.query.mockResolvedValue([{ value: 'Perdón por las molestias. Registramos tu baja.', updated_at: '2026-10-13T20:00:00Z' }])
   const response = await PATCH(request('PATCH', { action_config: { message: '  Perdón por las molestias. Registramos tu baja.  ' } }), params)
   expect(response.status).toBe(200)
-  expect(m.auth).toHaveBeenCalledWith(expect.anything(), 'automations', 'manage')
+  expect(m.auth).toHaveBeenCalledWith(expect.anything(), 'automations', 'update')
   expect(m.query).toHaveBeenCalledWith(expect.stringContaining('ON CONFLICT(key)'), [OPT_OUT_MESSAGE_SETTING, JSON.stringify('Perdón por las molestias. Registramos tu baja.'), userId])
   expect((await response.json()).automation).toMatchObject({ is_active: true, trigger_config: { keywords: ['BAJA'] }, action_config: { message: 'Perdón por las molestias. Registramos tu baja.' } })
   expect(m.audit).toHaveBeenCalledWith(expect.objectContaining({ action: 'update', metadata: { system_automation_id: OPT_OUT_AUTOMATION.id, fields: ['action_config.message'] } }))
@@ -45,7 +45,7 @@ it('requires permissions before reading or writing and never deletes the system 
   expect((await PATCH(request('PATCH', { action_config: { message: 'Baja' } }), params)).status).toBe(403)
   expect((await GET(request(), params)).status).toBe(403)
   expect(m.query).not.toHaveBeenCalled()
-  m.auth.mockResolvedValue({ ok: true, user: { user_id: userId } })
+  m.auth.mockResolvedValue({ ok: true, user: { role:'admin', user_id: userId } })
   expect((await DELETE(request('DELETE'), params)).status).toBe(400)
   expect(m.query).not.toHaveBeenCalled()
 })

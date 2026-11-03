@@ -31,7 +31,7 @@ export type VisibilityActor = Pick<SessionUser, 'user_id' | 'role' | 'is_super_a
 export async function getAccessibleLineIds(
   user: VisibilityActor,
 ): Promise<string[] | null> {
-  if (user.is_super_admin) return null
+  if (user.role === 'admin' && user.is_super_admin) return null
 
   const rows = await query<{ id: string }>(
     `SELECT id FROM get_accessible_line_ids($1) AS t(id)`,

@@ -21,10 +21,10 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
  beforeAll(async()=>{
   const url=new URL(process.env.OPS_TEST_DATABASE_URL || process.env.TEST_DATABASE_URL!);if(!['127.0.0.1','localhost'].includes(url.hostname))throw Error('LOCAL_ONLY')
   pool=new Pool({connectionString:url.toString(),ssl:false,max:5,options:`-c search_path=${schema}`})
-  await pool.query(`CREATE SCHEMA ${schema};CREATE TABLE users(id uuid PRIMARY KEY,is_active boolean,role text);
+  await pool.query(`CREATE SCHEMA ${schema};CREATE TABLE users(id uuid PRIMARY KEY,is_active boolean,role text,sectors jsonb DEFAULT '[]',allowed_agents text[] DEFAULT '{}');
    CREATE TABLE automations(id uuid PRIMARY KEY,name text,type text,trigger_type text,trigger_config jsonb,action_config jsonb,created_by uuid,is_active boolean,priority int,created_at timestamptz DEFAULT NOW());
    CREATE TABLE whatsapp_messages(id uuid PRIMARY KEY);
-   CREATE TABLE automation_logs(automation_id uuid,automation_name text,conversation_phone text,message_id uuid,result text,details text);
+   CREATE TABLE automation_logs(automation_id uuid,automation_name text,conversation_phone text,message_id uuid,result text,details text,agent_code text);
    CREATE TABLE conversation_state(phone_number text,is_escalated boolean,escalated_at timestamptz,escalation_reason text,resolved_at timestamptz,updated_at timestamptz);
    CREATE UNIQUE INDEX active_conversation ON conversation_state(phone_number) WHERE resolved_at IS NULL;
    CREATE TABLE blacklist(phone_number_normalized text,removed_at timestamptz,scope_key text DEFAULT 'global',agent_code text,source_key text);
@@ -35,7 +35,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
    CREATE TABLE crm_agents(code text PRIMARY KEY,delivery_mode text DEFAULT 'phone',phone_format text DEFAULT 'separated'); INSERT INTO crm_agents(code) VALUES('royal'),('ofizeus');
    CREATE TABLE cloud_numbers(phone_number_id text,whatsapp_line_id uuid,status text);
    CREATE TABLE whatsapp_lines(id uuid,status text,is_connected boolean,sending_enabled boolean);
-   INSERT INTO users VALUES('${id(1)}',true,'admin');INSERT INTO contacts(phone_number,first_name,panel) VALUES('${phone}','Ana','Panel');
+   INSERT INTO users(id,is_active,role) VALUES('${id(1)}',true,'admin');INSERT INTO contacts(phone_number,first_name,panel) VALUES('${phone}','Ana','Panel');
    INSERT INTO whatsapp_lines VALUES('${id(2)}','active',true,true);INSERT INTO cloud_numbers VALUES('phone-a','${id(2)}','active'),('phone-b','${id(2)}','active');`)
   await pool.query(readFileSync('../db/migrations/134_automation_delivery_jobs.sql','utf8'))
   await pool.query(`ALTER TABLE automation_message_jobs ADD COLUMN agent_code text,ADD COLUMN body_fingerprint text,
@@ -48,13 +48,25 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   m.tx.mockImplementation(async fn=>{const db=await pool.connect();try{await db.query('BEGIN');const r=await fn(db);await db.query('COMMIT');return r}catch(e){await db.query('ROLLBACK');throw e}finally{db.release()}})
  })
  beforeEach(async()=>{
-  await pool.query(`UPDATE crm_agents SET delivery_mode='phone',phone_format='separated';UPDATE agent_contact_lines SET link_url=NULL;TRUNCATE automation_conversation_safety,automation_message_jobs,automation_inbound_receipts,automations,automation_logs,conversation_state,blacklist;DELETE FROM agent_contact_lines WHERE agent_code='royal';UPDATE contacts SET panel='Panel',linea=NULL,linea_sub=NULL,deleted_at=NULL;UPDATE users SET is_active=true;UPDATE whatsapp_lines SET sending_enabled=true;
+  await pool.query(`UPDATE crm_agents SET delivery_mode='phone',phone_format='separated';UPDATE agent_contact_lines SET link_url=NULL;TRUNCATE automation_conversation_safety,automation_message_jobs,automation_inbound_receipts,automations,automation_logs,conversation_state,blacklist;DELETE FROM agent_contact_lines WHERE agent_code='royal';UPDATE contacts SET panel='Panel',linea=NULL,linea_sub=NULL,deleted_at=NULL;UPDATE users SET is_active=true,role='admin',sectors='[]',allowed_agents='{}';UPDATE whatsapp_lines SET sending_enabled=true;
    INSERT INTO automations VALUES('${id(3)}','Reply','reply','contains','{"keywords":["información"]}','{"message":"Hola {{nombre}}"}','${id(1)}',true,1,NOW())`)
   m.send.mockReset().mockResolvedValue({status:'sent',wamid:'fake'});m.emit.mockClear()
   for (const [linea,variant,label,number] of OFIZEUS_LINES)
     await pool.query("UPDATE agent_contact_lines SET label=$3,phone=$4,is_active=true WHERE agent_code='ofizeus' AND linea=$1 AND variant=$2",[linea,variant,label,'+'+number])
  })
  afterAll(async()=>{await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.end()})
+ it('runs only an authorized operator reply and stops delayed sends when its agent grant is revoked',async()=>{
+  await pool.query(`UPDATE users SET role='operator',sectors='["automations"]',allowed_agents='{ofizeus}';
+    UPDATE contacts SET panel='ofizeus',linea=3;
+    UPDATE automations SET action_config='{"message":"Tu línea {{2}}","contact_line_directory":"ofizeus"}'`)
+  await evaluateAutomations(phone,'informacion','agent-allowed',source)
+  expect(m.send).toHaveBeenCalledOnce()
+  expect((await pool.query('SELECT agent_code FROM automation_logs')).rows).toEqual([{agent_code:'ofizeus'}])
+  await pool.query("UPDATE users SET allowed_agents='{royal}'")
+  await evaluateAutomations(phone,'informacion','agent-revoked',source)
+  expect(m.send).toHaveBeenCalledOnce()
+  expect((await pool.query('SELECT count(*)::int AS n FROM automation_message_jobs')).rows[0].n).toBe(1)
+ })
  it.each([['plain','5491154726043'],['separated','549 | 1154 | 726043']])('uses the configured %s number format in automatic replies',async(format,expected)=>{
   await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3;UPDATE automations SET action_config='{"message":"Tu línea: {{2}}","contact_line_directory":"ofizeus"}'`)
   await pool.query("UPDATE crm_agents SET phone_format=$1 WHERE code='ofizeus'",[format])
@@ -102,7 +114,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
  })
  it('blocks disabled creators and conversations already assigned to an operator',async()=>{
   await pool.query('UPDATE users SET is_active=false');await evaluateAutomations(phone,'informacion','event-5',source)
-  await pool.query(`UPDATE users SET is_active=true;INSERT INTO conversation_state(phone_number,is_escalated) VALUES('${phone}',true)`)
+  await pool.query(`UPDATE users SET is_active=true,role='admin',sectors='[]',allowed_agents='{}';INSERT INTO conversation_state(phone_number,is_escalated) VALUES('${phone}',true)`)
   await evaluateAutomations(phone,'informacion','event-6',source);expect(m.send).not.toHaveBeenCalled()
  })
  it('marks handoff without requiring a message or provider request',async()=>{

@@ -1,3 +1,5 @@
+import { canAccessAutomation } from '@/lib/automation-access'
+import { agentScope } from '@/lib/agent-scope'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
@@ -20,6 +22,7 @@ export async function GET(
   if (!isUUID(id) && id !== OPT_OUT_AUTOMATION.id) return NextResponse.json({ error: 'ID inválido' }, { status: 400 })
 
   try {
+    if (id === OPT_OUT_AUTOMATION.id && auth.user.role !== 'admin') return NextResponse.json({error:'No encontrado'}, {status:404})
     if (id === OPT_OUT_AUTOMATION.id) return NextResponse.json({ automation: await getOptOutAutomation() })
     const rows = await query(
       `SELECT a.*, u.name AS created_by_name
@@ -28,7 +31,7 @@ export async function GET(
        WHERE a.id = $1`,
       [id],
     )
-    if (!rows[0]) return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
+    if (!rows[0] || !canAccessAutomation(auth.user, rows[0])) return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
     return NextResponse.json({ automation: rows[0] })
   } catch (e) {
     console.error('[/api/automations/[id] GET]', e instanceof Error ? e.message : e)
@@ -42,10 +45,11 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await checkPermissionWithUser(req, 'automations' as never, 'manage')
+  const auth = await checkPermissionWithUser(req, 'automations', 'update')
   if (!auth.ok) return auth.response
 
   const { id } = await params
+  if (id === OPT_OUT_AUTOMATION.id && auth.user.role !== 'admin') return NextResponse.json({error:'Forbidden'}, {status:403})
   if (id === OPT_OUT_AUTOMATION.id) {
     const parsed = parseBody(UpdateOptOutAutomationSchema, await req.json().catch(() => null))
     if (!parsed.ok) return handleValidationError(req, parsed.error, 'automations')
@@ -66,6 +70,10 @@ export async function PATCH(
 
   const { name, description, type, trigger_type, trigger_config, action_config, is_active, priority } = parsed.data
 
+  const [current] = await query<{type:string;action_config:unknown}>('SELECT type,action_config FROM automations WHERE id=$1',[id])
+  if (!current || !canAccessAutomation(auth.user,current)) return NextResponse.json({error:'No encontrado'}, {status:404})
+  if (!canAccessAutomation(auth.user,{type:type ?? current.type, action_config:action_config ?? current.action_config}))
+    return NextResponse.json({error:'La automatización debe permanecer en tu agente'}, {status:403})
   const setClauses: string[] = []
   const queryParams: unknown[] = []
   let p = 0
@@ -84,11 +92,11 @@ export async function PATCH(
   }
 
   setClauses.push(`updated_at = NOW()`)
-  queryParams.push(id)
+  queryParams.push(id, auth.user.role === 'admin' ? null : agentScope(auth.user) ?? [])
 
   try {
     const rows = await query<{ id: string }>(
-      `UPDATE automations SET ${setClauses.join(', ')} WHERE id = $${p + 1} RETURNING id`,
+      `UPDATE automations SET ${setClauses.join(', ')} WHERE id = $${p + 1} AND ($${p + 2}::text[] IS NULL OR (type='reply' AND action_config->>'contact_line_directory'=ANY($${p + 2}))) RETURNING id`,
       queryParams,
     )
     if (!rows[0]) return NextResponse.json({ error: 'No encontrado' }, { status: 404 })

@@ -300,7 +300,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
 
   it.each(['recipients','list','legacy'])('filters historical campaign contacts through the %s read path', async source => {
     await db.query("UPDATE users SET sectors=ARRAY['contacts','campaigns','conversations']")
-    await db.query('INSERT INTO campaigns(id,name,owned_by,list_id) VALUES($1,$2,$3,$4)',[id(50),'campaign',id(900),id(51)])
+    await db.query("INSERT INTO campaigns(id,name,owned_by,list_id,agent_key) VALUES($1,$2,$3,$4,'royal')",[id(50),'campaign',id(900),id(51)])
     if(source==='recipients') await db.query(`INSERT INTO campaign_recipients(campaign_id,contact_id,phone_number,status)
       VALUES($1,$2,$4,'sent'),($1,$3,$5,'sent')`,[id(50),id(1),id(2),phone(1),phone(2)])
     if(source==='list') await db.query('INSERT INTO contact_list_members VALUES($1,$2),($1,$3)',[id(51),id(1),id(2)])

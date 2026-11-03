@@ -29,8 +29,8 @@ function NavLink({ item, collapsed, onClick, onPrepare }: { item: NavItem; colla
 
 function SidebarContent({ collapsed, onClose }: { collapsed: boolean; onClose?: () => void }) {
   const router = useRouter()
-  const { user } = useCurrentUser()
-  const nav = [...BASE_NAV, ...ADMIN_NAV].filter(item => user?.role === 'admin' || user?.sectors?.includes(item.sector))
+  const { user, permissions } = useCurrentUser()
+  const nav = [...BASE_NAV, ...ADMIN_NAV].filter(item => permissions[item.sector as keyof typeof permissions]?.includes('read'))
   const canOpenDashboard = nav.some(item => item.href === '/')
   useEffect(() => {
     // Route prefetch alone does not evaluate the dashboard's client chunks.

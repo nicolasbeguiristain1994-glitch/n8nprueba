@@ -1,7 +1,9 @@
+import { dashboardAgentSql } from '@/lib/dashboard-scope'
+import { authorizedDashboardAgent } from '@/lib/dashboard-access'
 import { NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermission } from '@/lib/permissions'
-import { getAgentsSqlArray, isValidPlatform } from '@/lib/casino-agents'
+import { checkPermissionWithUser } from '@/lib/permissions'
+import { getPlatformFilterSql, isValidPlatform } from '@/lib/casino-agents'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -54,11 +56,10 @@ export interface VipRecuperable {
 //   3. VIP recuperables    — vip/alto players still in en_riesgo (not yet lost)
 
 export async function GET(req: Request) {
-  const err = await checkPermission(req, 'dashboard', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'dashboard', 'read')
+  if (!auth.ok) return auth.response
 
   const url           = new URL(req.url)
-  const agenteParam   = url.searchParams.get('agente')?.trim() || null
   const platformParam = url.searchParams.get('platform')?.trim() || 'zeus'
 
   if (!isValidPlatform(platformParam)) {
@@ -67,7 +68,9 @@ export async function GET(req: Request) {
       { status: 400 },
     )
   }
-  const agentsSql = getAgentsSqlArray(platformParam)
+  const scope = authorizedDashboardAgent(auth.user, platformParam, url.searchParams.get('agente'))
+  if (!scope.ok) return NextResponse.json({ error: 'Agente no permitido' }, { status: 403 })
+  const agenteParam = scope.agent
 
   try {
     const [summaryRows, extractores, deficit, recuperables] = await Promise.all([
@@ -80,28 +83,28 @@ export async function GET(req: Request) {
               AND total_cargas  > 0
               AND cant_retiros  > 0
               AND total_retiros::numeric / total_cargas > 0.6
-              AND ($1::text IS NULL OR agente = $1)
+              AND ${dashboardAgentSql(platformParam,1)}
           )::int AS nuevos_extractores,
 
           COUNT(*) FILTER (
             WHERE total_cargas  > 0
               AND total_retiros > total_cargas
-              AND ($1::text IS NULL OR agente = $1)
+              AND ${dashboardAgentSql(platformParam,1)}
           )::int AS jugadores_deficit,
 
           COALESCE(SUM(
-            CASE WHEN total_retiros > total_cargas AND ($1::text IS NULL OR agente = $1)
+            CASE WHEN total_retiros > total_cargas AND ${dashboardAgentSql(platformParam,1)}
               THEN total_retiros - total_cargas ELSE 0 END
           ), 0)::bigint AS perdida_bruta,
 
           COUNT(*) FILTER (
             WHERE seg_monto    IN ('super_vip','vip_alto','vip_medio','vip')
               AND seg_actividad = 'en_riesgo'
-              AND ($1::text IS NULL OR agente = $1)
+              AND ${dashboardAgentSql(platformParam,1)}
           )::int AS vip_recuperables
 
         FROM casino_players
-        WHERE agente = ANY(${agentsSql})
+        WHERE ${getPlatformFilterSql(platformParam)}
       `, [agenteParam]),
 
       // ── Nuevos extractores ────────────────────────────────────────────────
@@ -123,8 +126,8 @@ export async function GET(req: Request) {
           AND total_cargas  > 0
           AND cant_retiros  > 0
           AND total_retiros::numeric / total_cargas > 0.6
-          AND agente = ANY(${agentsSql})
-          AND ($1::text IS NULL OR agente = $1)
+          AND ${getPlatformFilterSql(platformParam)}
+          AND ${dashboardAgentSql(platformParam,1)}
         ORDER BY (total_retiros::numeric / total_cargas) DESC, total_retiros DESC
         LIMIT 100
       `, [agenteParam]),
@@ -144,8 +147,8 @@ export async function GET(req: Request) {
         FROM casino_players
         WHERE total_cargas  > 0
           AND total_retiros > total_cargas
-          AND agente = ANY(${agentsSql})
-          AND ($1::text IS NULL OR agente = $1)
+          AND ${getPlatformFilterSql(platformParam)}
+          AND ${dashboardAgentSql(platformParam,1)}
         ORDER BY (total_retiros - total_cargas) DESC
         LIMIT 100
       `, [agenteParam]),
@@ -166,8 +169,8 @@ export async function GET(req: Request) {
         WHERE seg_monto    IN ('super_vip','vip_alto','vip_medio','vip')
           AND seg_actividad = 'en_riesgo'
           AND fecha_ultima IS NOT NULL
-          AND agente = ANY(${agentsSql})
-          AND ($1::text IS NULL OR agente = $1)
+          AND ${getPlatformFilterSql(platformParam)}
+          AND ${dashboardAgentSql(platformParam,1)}
         ORDER BY (CURRENT_DATE - fecha_ultima) ASC, total_cargas DESC
         LIMIT 50
       `, [agenteParam]),

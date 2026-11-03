@@ -1,3 +1,5 @@
+import { agentScope } from '@/lib/agent-scope'
+import { canAccessAutomation } from '@/lib/automation-access'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
 import { checkPermissionWithUser } from '@/lib/permissions'
@@ -51,6 +53,10 @@ export async function GET(req: NextRequest) {
     conditions.push('a.is_active = false')
   }
 
+  if (auth.user.role !== 'admin') {
+    conditions.push(`a.type='reply' AND a.action_config->>'contact_line_directory'=ANY($${++p}::text[])`)
+    params.push(agentScope(auth.user) ?? [])
+  }
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
 
   try {
@@ -67,7 +73,7 @@ export async function GET(req: NextRequest) {
     )
     // BAJA runs before ordinary rules and is always enabled. Expose its real
     // configuration without inserting an ordinary rule that would never run.
-    const showOptOut = (!q || OPT_OUT_AUTOMATION.name.toLocaleLowerCase('es').includes(q.toLocaleLowerCase('es')))
+    const showOptOut = auth.user.role === 'admin' && (!q || OPT_OUT_AUTOMATION.name.toLocaleLowerCase('es').includes(q.toLocaleLowerCase('es')))
       && (!['reply', 'flow', 'handoff'].includes(type) || type === 'reply')
       && status !== 'paused'
     return NextResponse.json({ automations: showOptOut ? [await getOptOutAutomation(), ...rows] : rows })
@@ -80,7 +86,7 @@ export async function GET(req: NextRequest) {
 // ── POST /api/automations ─────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const auth = await checkPermissionWithUser(req, 'automations' as never, 'manage')
+  const auth = await checkPermissionWithUser(req, 'automations', 'create')
   if (!auth.ok) return auth.response
   const session = auth.user
 
@@ -91,6 +97,8 @@ export async function POST(req: NextRequest) {
   const { name, description, type, trigger_type: triggerType,
           trigger_config: triggerConfig, action_config: actionConfig,
           is_active, priority } = parsed.data
+
+  if (!canAccessAutomation(session, parsed.data)) return NextResponse.json({error:'Seleccioná una respuesta del agente autorizado'}, {status:403})
 
   try {
     const rows = await query<{ id: string }>(

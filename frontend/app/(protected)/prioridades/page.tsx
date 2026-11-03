@@ -153,7 +153,7 @@ export default function PrioridadesPage() {
   const { user, permissions } = useCurrentUser()
   const isAdmin  = user?.role === 'admin'
 
-  const canSend = isAdmin || (!!permissions.contacts?.includes('read') && !!permissions.campaigns?.includes('create') && !!permissions.send?.includes('send'))
+  const canSend = isAdmin || (!!permissions.priorities?.includes('read') && !!permissions.campaigns?.includes('create') && !!permissions.send?.includes('send'))
   const canReadCampaigns = isAdmin || !!permissions.campaigns?.includes('read')
   const canManageCampaigns = isAdmin || !!permissions.campaigns?.includes('update')
   const [selected, setSelected] = useState<Map<string,BroadcastContact>>(new Map())

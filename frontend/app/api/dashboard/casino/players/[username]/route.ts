@@ -1,14 +1,16 @@
+import { agentScope } from '@/lib/agent-scope'
+import { platformCanonicalAgentSql } from '@/lib/dashboard-scope'
 import { NextRequest, NextResponse } from 'next/server'
 import { query } from '@/lib/db'
-import { checkPermission } from '@/lib/permissions'
+import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { parseBody, handleValidationError, UpdateCasinoPlayerSchema } from '@/lib/schema'
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ username: string }> },
 ) {
-  const err = await checkPermission(req, 'dashboard', 'read')
-  if (err) return err
+  const auth = await checkPermissionWithUser(req, 'dashboard', 'update')
+  if (!auth.ok) return auth.response
 
   const { username } = await params
   const decoded = decodeURIComponent(username).trim()
@@ -25,8 +27,9 @@ export async function PATCH(
       `UPDATE casino_players
          SET labels = $1
        WHERE username_lower = LOWER($2)
+         AND ($3::text[] IS NULL OR (${platformCanonicalAgentSql()})=ANY($3))
        RETURNING labels`,
-      [labels, decoded],
+      [labels, decoded, agentScope(auth.user)],
     )
 
     if (!rows.length) {

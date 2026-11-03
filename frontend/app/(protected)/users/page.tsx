@@ -49,14 +49,15 @@ type User = {
 const ALL_AGENTS = AGENT_KEYS
 
 const ALL_SECTORS = [
-  'dashboard', 'contacts', 'campaigns', 'conversations', 'lines',
-  'tasks', 'calendar', 'estadisticas', 'automations', 'blacklist', 'templates',
-  'users', 'settings', 'lists', 'send',
+  'dashboard', 'contacts', 'priorities', 'campaigns', 'conversations', 'lines', 'agents',
+  'tasks', 'calendar', 'estadisticas', 'automations', 'templates', 'send',
 ] as const
 
 const SECTOR_LABELS: Record<string, string> = {
   dashboard:     'Dashboard',
-  contacts:      'Contactos',
+  contacts:      'Contactos y segmentación',
+  priorities:    'Prioridades',
+  agents:        'Agentes y sus líneas',
   campaigns:     'Campañas',
   conversations: 'Conversaciones',
   lines:         'Líneas',
@@ -270,7 +271,7 @@ function UserFormModal({
           </div>
 
           <div>
-            <label className="text-xs font-medium text-muted-foreground mb-2 block">Sectores</label>
+            <label className="text-xs font-medium text-muted-foreground mb-2 block">Módulos autorizados</label>
             <div className="flex flex-wrap gap-2">
               {ALL_SECTORS.map(s => (
                 <button
@@ -304,9 +305,10 @@ function UserFormModal({
           </div>
 
           {form.role === 'admin' && <p className="text-xs text-muted-foreground">Los administradores tienen acceso a todos los módulos y agentes. Usá Operador o Viewer para restringir el acceso.</p>}
+          <p className="text-xs text-muted-foreground">Operador puede crear y editar en los módulos habilitados; Viewer solo puede consultar. Los datos se limitan a los agentes seleccionados. Usuarios y ajustes generales se administran con el rol Admin.</p>
           {/* Agentes permitidos */}
           <div className="mt-2">
-            <label className="text-xs font-medium text-muted-foreground mb-1 block">Agentes permitidos (vacío = todos)</label>
+            <label className="text-xs font-medium text-muted-foreground mb-1 block">Agentes permitidos en todos los módulos (vacío = todos)</label>
             <div className="flex flex-wrap gap-2">
               {ALL_AGENTS.map(agent => (
                 <label key={agent} className="flex items-center gap-1.5 text-sm cursor-pointer">

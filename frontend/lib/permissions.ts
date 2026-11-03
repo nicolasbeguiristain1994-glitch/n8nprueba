@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSessionFromRequest } from '@/lib/auth'
 import type { SessionUser } from '@/lib/auth'
 import { query } from '@/lib/db'
+import { agentScope, canAccessAgent } from '@/lib/agent-scope'
 import { securityLog } from '@/lib/security-log'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -9,6 +10,7 @@ import { securityLog } from '@/lib/security-log'
 export type Resource =
   | 'dashboard'
   | 'contacts'
+  | 'priorities'
   | 'campaigns'
   | 'conversations'
   | 'lines'
@@ -53,7 +55,7 @@ export type PermissionResult =
  * on a resource.
  */
 export function canAccess(
-  user: Pick<SessionUser, 'role' | 'sectors'>,
+  user: Pick<SessionUser, 'role' | 'sectors'> & { allowed_agents?: string[] },
   resource: Resource,
   action: Action,
 ): boolean {
@@ -64,10 +66,12 @@ export function canAccess(
   // delete and manage are always admin-only
   if (action === 'delete' || action === 'manage') return false
 
+  if (resource === 'settings' && agentScope(user) !== null) return false
+
   const sectors: string[] = Array.isArray(user.sectors) ? user.sectors : []
 
   // users, audit and blacklist management are always admin-only
-  if (resource === 'users' || resource === 'agents' || resource === 'audit' || resource === 'blacklist') return false
+  if (resource === 'users' || resource === 'audit' || resource === 'blacklist') return false
 
   // sector check — operator/viewer must have the resource in their sectors
   // 'lists' is part of the contacts module: access is implied by contacts access
@@ -91,10 +95,10 @@ export function canAccess(
  * Used by /api/auth/me to expose permissions to the frontend.
  */
 export function effectivePermissions(
-  user: Pick<SessionUser, 'role' | 'sectors'>,
+  user: Pick<SessionUser, 'role' | 'sectors'> & { allowed_agents?: string[] },
 ): EffectivePermissions {
   const resources: Resource[] = [
-    'dashboard', 'contacts', 'campaigns', 'conversations',
+    'dashboard', 'contacts', 'priorities', 'campaigns', 'conversations',
     'lines', 'users', 'agents', 'lists', 'send', 'audit', 'settings', 'blacklist', 'tasks', 'calendar',
     'estadisticas', 'automations', 'templates',
   ]
@@ -140,6 +144,7 @@ export async function checkSessionWithUser(
   req: Request,
   resource?: Resource,
   action?: Action,
+  alternativeResource?: Resource,
 ): Promise<PermissionResult> {
   const session = getSessionFromRequest(req)
   const ip = req.headers.get('x-forwarded-for')?.split(',')[0].trim()
@@ -159,7 +164,7 @@ export async function checkSessionWithUser(
       securityLog('session_invalid', { ip, reason: 'bootstrap_expired', resource, action })
       return { ok: false, response: NextResponse.json({ error: 'Session expired' }, { status: 401 }) }
     }
-    if (resource && action && !canAccess(session, resource, action)) {
+    if (resource && action && !canAccess(session, resource, action) && !(alternativeResource && canAccess(session, alternativeResource, action))) {
       securityLog('access_denied', { ip, userId: null, resource, action, reason: 'bootstrap_forbidden' })
       return { ok: false, response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
     }
@@ -189,10 +194,10 @@ export async function checkSessionWithUser(
     sectors:               Array.isArray(dbUser.sectors) ? dbUser.sectors : [],
     can_download_contacts: dbUser.can_download_contacts,
     allowed_agents:        Array.isArray(dbUser.allowed_agents) ? dbUser.allowed_agents : [],
-    is_super_admin:        dbUser.is_super_admin ?? false,
+    is_super_admin:        dbUser.role === 'admin' && (dbUser.is_super_admin ?? false),
   }
 
-  if (resource && action && !canAccess(freshUser, resource, action)) {
+  if (resource && action && !canAccess(freshUser, resource, action) && !(alternativeResource && canAccess(freshUser, alternativeResource, action))) {
     securityLog('access_denied', { ip, userId: session.user_id, role: freshUser.role, resource, action })
     return { ok: false, response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
   }
@@ -256,11 +261,17 @@ export function isOwnerOrAdmin(
 }
 
 /**
- * Alias kept for backwards compatibility — campaign routes and existing tests
- * reference this name.
+ * Agent-scoped accounts follow the campaign assignment, including admin-created
+ * campaigns. Unrestricted legacy accounts retain creator ownership rules.
  */
-export const isCampaignOwnerOrAdmin = isOwnerOrAdmin
+export function isCampaignOwnerOrAdmin(
+  user: Pick<SessionUser, 'role' | 'user_id' | 'allowed_agents'>,
+  ownedBy: string | null,
+  agentKey: string | null = null,
+): boolean {
+  return agentScope(user) === null ? isOwnerOrAdmin(user, ownedBy) : canAccessAgent(user, agentKey)
+}
 
-export function checkPermissionWithUser(req: Request, resource: Resource, action: Action) {
-  return checkSessionWithUser(req, resource, action)
+export function checkPermissionWithUser(req: Request, resource: Resource, action: Action, alternativeResource?: Resource) {
+  return checkSessionWithUser(req, resource, action, alternativeResource)
 }

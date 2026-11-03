@@ -36,7 +36,7 @@ describe('campaign status controls', () => {
   it('allows closing completed priority batches without reviving or resetting recipients',async()=>{
     mocks.query.mockResolvedValueOnce([{status:'completed',owned_by:user.user_id,is_priority_broadcast:true}]).mockResolvedValueOnce([{id}])
     expect((await PATCH(req('',{status:'cancelled'}),params())).status).toBe(200)
-    expect(mocks.query.mock.calls[1][1]).toEqual(['cancelled',id,user.user_id,'completed',user.user_id])
+    expect(mocks.query.mock.calls[1][1]).toEqual(['cancelled',id,user.user_id,'completed',user.user_id,null])
     expect(mocks.fetch).not.toHaveBeenCalled()
   })
   it('preserves the completed status policy for ordinary campaigns',async()=>{
@@ -58,7 +58,7 @@ describe('campaign status controls', () => {
   it('returns conflict when state/owner changes before conditional PATCH', async () => {
     mocks.query.mockResolvedValueOnce([{ status: 'running', owned_by: user.user_id }]).mockResolvedValueOnce([])
     expect((await PATCH(req('', { status: 'paused' }), params())).status).toBe(409)
-    expect(mocks.query.mock.calls[1][1]).toEqual(['paused', id, user.user_id, 'running', user.user_id])
+    expect(mocks.query.mock.calls[1][1]).toEqual(['paused', id, user.user_id, 'running', user.user_id, null])
     expect(mocks.audit).not.toHaveBeenCalled()
   })
   it('returns scheduled campaigns to draft while clearing the schedule', async () => {

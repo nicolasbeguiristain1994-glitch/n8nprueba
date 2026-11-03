@@ -834,7 +834,7 @@ export default function Campaigns() {
                         <Eye size={13} /> Ver detalle
                       </Button>
 
-                      {c.status === 'scheduled' && c.scheduled_at && !c.started_at && !c.processor_locked_at && canEditSchedule && (isAdmin || c.owned_by === user?.id) && (
+                      {c.status === 'scheduled' && c.scheduled_at && !c.started_at && !c.processor_locked_at && canEditSchedule && (isAdmin || user?.allowed_agents?.includes(c.agent_key || '') || c.owned_by === user?.id) && (
                         <Button variant="outline" size="sm" aria-label={`Editar horario de ${c.name}`}
                           disabled={!!c.risk?.blocked || !schedulerEnabled || sending === c.id || actioning === c.id}
                           onClick={() => { setScheduleNotice(null); setScheduleToEdit(c) }}>
@@ -947,7 +947,7 @@ export default function Campaigns() {
                     pending={Math.max(0, c.total_targets - c.total_sent - c.total_failed - c.total_skipped)}
                     reviewAt={c.budget_resume_at ?? null} schedulerEnabled={schedulerEnabled}
                     busy={actioning === c.id}
-                    onKeepPaused={canPauseCampaign && (isAdmin || c.owned_by === user?.id) ? () => updateStatus(c.id, 'paused') : undefined} />}
+                    onKeepPaused={canPauseCampaign && (isAdmin || user?.allowed_agents?.includes(c.agent_key || '') || c.owned_by === user?.id) ? () => updateStatus(c.id, 'paused') : undefined} />}
                   {/* Aviso de pausa */}
                   {c.status === 'paused' && c.pause_reason !== 'line_budget' && !c.risk?.blocked && (
                     <div className="mt-2 flex items-start gap-1.5 text-xs text-orange-600">
@@ -1596,7 +1596,7 @@ export default function Campaigns() {
         }} />}
 
       {riskToReview && <CampaignRiskReview key={riskToReview.id} campaign={riskToReview}
-        canReview={canReviewRisk && (isAdmin || riskToReview.owned_by === user?.id)}
+        canReview={canReviewRisk && (isAdmin || user?.allowed_agents?.includes(riskToReview.agent_key || '') || riskToReview.owned_by === user?.id)}
         onClose={() => setRiskToReview(null)} onRefresh={loadCampaigns} />}
 
       {/* Modal detalle campaña */}
