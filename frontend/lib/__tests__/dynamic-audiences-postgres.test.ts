@@ -18,7 +18,7 @@ describe.skipIf(!url)('Dynamic audiences on local PostgreSQL',()=>{
   await db.query(`ALTER TABLE casino_transactions ADD platform text,ADD fecha_hora_utc timestamptz;
     CREATE TABLE contacts(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number text,first_name text,last_name text,segment text,panel text,linea smallint,linea_sub text,panels_assigned text[] DEFAULT '{}',deleted_at timestamptz,last_deposit_at timestamptz,platforms text[] DEFAULT '{}');
     CREATE TABLE contact_lists(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owned_by uuid,filters jsonb);
-    CREATE TABLE campaigns(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owned_by uuid,list_id uuid);
+    CREATE TABLE campaigns(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owned_by uuid,list_id uuid,agent_key text);
     CREATE TABLE contact_list_members(list_id uuid,contact_id uuid,UNIQUE(list_id,contact_id));
     CREATE TABLE campaign_recipients(campaign_id uuid,contact_id uuid);
     CREATE TABLE users(id uuid PRIMARY KEY,role text,allowed_agents text[],is_active bool);
@@ -48,6 +48,13 @@ describe.skipIf(!url)('Dynamic audiences on local PostgreSQL',()=>{
   expect(()=>savedAudienceParams({sql:'DELETE FROM contacts'})).toThrow()
   expect(()=>savedAudienceParams({list_id:admin})).toThrow()
   expect(()=>savedAudienceParams({segment:{operator:'all'}})).toThrow()
+ })
+ it('freezes an administrator-created campaign to its assigned agent',async()=>{
+  const royal=await person(500000,'royal');await person(500000,'bigwin')
+  const l=await list({segment:'vip'}),c=await campaign(l)
+  await db.query("UPDATE campaigns SET agent_key='royal' WHERE id=$1",[c])
+  await ensureCampaignAudienceSnapshot(c,l)
+  expect(await members(c,l)).toEqual([royal])
  })
  it('keeps the first campaign frozen while the next campaign resolves new matching contacts',async()=>{
   const a=await person(500000),b=await person(1000),l=await list({segment:'vip'}),first=await campaign(l)
