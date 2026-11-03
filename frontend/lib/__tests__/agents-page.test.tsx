@@ -72,7 +72,7 @@ describe('Agents management',()=>{
     expect(within(format).getByRole('button',{name:'Con |'})).toHaveAttribute('aria-pressed','true')
     fireEvent.click(within(format).getByRole('button',{name:'Sin |'}))
     await waitFor(()=>expect(fetcher).toHaveBeenCalledWith('/api/agents/royal/delivery',expect.objectContaining({body:JSON.stringify({delivery_mode:'phone',phone_format:'plain'})})))
-    await waitFor(()=>expect(screen.getByLabelText('Vista previa del número de Royal')).toHaveTextContent('5491112345678'))
+    await waitFor(()=>expect(screen.getByLabelText('Vista previa del número de Royal')).toHaveTextContent('Vista previa: +5491112345678'))
     fireEvent.click(screen.getByRole('button',{name:'Enviar link'}))
     await waitFor(()=>expect(screen.queryByRole('group',{name:'Formato del número de Royal'})).not.toBeInTheDocument())
     fireEvent.click(screen.getByRole('button',{name:'Enviar número'}))

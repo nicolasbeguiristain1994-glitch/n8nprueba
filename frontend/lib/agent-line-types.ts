@@ -10,7 +10,10 @@ export function contactLineLabel(linea?: number | null, _legacyVariant?: string 
   return linea == null ? 'Sin línea' : `Línea ${linea}`
 }
 export function formatAgentLinePhone(phone?: string | null, format: AgentPhoneFormat = 'separated'): string {
-  if (format === 'plain') return (phone || '').replace(/\D/g, '')
+  if (format === 'plain') {
+    const digits = (phone || '').replace(/\D/g, '')
+    return digits ? `+${digits}` : ''
+  }
   const digits = (phone || '').replace(/^\+/, '')
   return /^549\d{10}$/.test(digits)
     ? `${digits.slice(0,3)} | ${digits.slice(3,7)} | ${digits.slice(7)}`

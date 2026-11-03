@@ -116,7 +116,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   expect(m.send).toHaveBeenCalledOnce()
   expect((await pool.query('SELECT count(*)::int AS n FROM automation_message_jobs')).rows[0].n).toBe(1)
  })
- it.each([['plain','5491154726043'],['separated','549 | 1154 | 726043']])('uses the configured %s number format in automatic replies',async(format,expected)=>{
+ it.each([['plain','+5491154726043'],['separated','549 | 1154 | 726043']])('uses the configured %s number format in automatic replies',async(format,expected)=>{
   await pool.query(`UPDATE contacts SET panel='ofizeus',linea=3;UPDATE automations SET action_config='{"message":"Tu línea: {{2}}","contact_line_directory":"ofizeus"}'`)
   await pool.query("UPDATE crm_agents SET phone_format=$1 WHERE code='ofizeus'",[format])
   await evaluateAutomations(phone,'informacion','format-1',source)

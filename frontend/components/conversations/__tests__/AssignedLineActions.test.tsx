@@ -22,14 +22,14 @@ describe('assigned line in conversations',()=>{
     expect(insert).toHaveBeenCalledWith('Tu línea designada es Royal 8A: 549 | 1112 | 345678')
     expect(screen.queryByRole('button',{name:/Enviar/})).not.toBeInTheDocument()
   })
-  it('copies and inserts an uninterrupted number when the agent selects no separators',async()=>{
+  it('copies and inserts the full international number, including +, when the agent selects no separators',async()=>{
     const copy=vi.fn().mockResolvedValue(undefined),insert=vi.fn()
     Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:copy}})
     render(<AssignedLineActions conv={{...conv,assigned_line:{...conv.assigned_line!,phone_format:'plain'}}} onInsert={insert}/>)
     fireEvent.click(screen.getByRole('button',{name:'Copiar número de la línea'}))
-    await waitFor(()=>expect(copy).toHaveBeenCalledWith('5491112345678'))
+    await waitFor(()=>expect(copy).toHaveBeenCalledWith('+5491112345678'))
     fireEvent.click(screen.getByRole('button',{name:'Pegar en respuesta'}))
-    expect(insert).toHaveBeenCalledWith('Tu línea designada es Royal 8A: 5491112345678')
+    expect(insert).toHaveBeenCalledWith('Tu línea designada es Royal 8A: +5491112345678')
   })
   it('copies and inserts the configured link without substituting the number',async()=>{
     const copy=vi.fn().mockResolvedValue(undefined),insert=vi.fn()
