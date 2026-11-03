@@ -179,6 +179,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
   expect(await resolveConsentIdentity(phone,{provider:'cloud',sourceId:'line-2'})).toMatchObject({agent:'royal'})
  })
  const testSource={provider:'cloud' as const,sourceId:'line-1',contextWamid:'royal-test',messageId:'baja-1'}
+ const typedTestSource={provider:'cloud' as const,sourceId:'line-1',messageId:'baja-1'}
  async function quotedTest() {
   await pool.query(`INSERT INTO campaign_test_sends(id,campaign_id,phone_number_id,provider_message_id,phone_number,status,created_at)
    VALUES($1,$2,'line-1','royal-test',$3,'delivered',now()-interval '1 minute')`,[id(80),id(21),'+'+phone])
@@ -189,6 +190,66 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
   expect(await resolveConsentIdentity(phone,{provider:'cloud',sourceId:'line-1'})).toMatchObject({agent:'bigwin'})
   expect((await pool.query('SELECT count(*)::int AS n FROM campaign_recipients')).rows[0].n).toBe(2)
   expect((await pool.query('SELECT panel FROM contacts WHERE id=$1',[id(2)])).rows[0].panel).toBe('bigwin')
+ })
+ it('attributes a typed reply to the recent Royal test instead of the tester’s older Bigwin conversation',async()=>{
+  await quotedTest()
+  await pool.query('UPDATE contacts SET phone_number=$1 WHERE id=$2',['+5491100000002',id(3)])
+  expect(await resolveConsentIdentity(phone,typedTestSource)).toMatchObject({agent:'royal',campaignId:id(21),isCampaignTest:true})
+  expect((await pool.query('SELECT panel FROM contacts WHERE phone_number=$1',['+'+phone])).rows).toEqual([{panel:'bigwin'}])
+  expect((await pool.query('SELECT count(*)::int n FROM campaign_recipients')).rows[0].n).toBe(2)
+ })
+ it.each(['cloud','legacy','unclassified','same-time'])('lets a newer %s outbound take precedence over an unquoted test',async kind=>{
+  await quotedTest()
+  if(kind==='legacy') {
+   await pool.query(`INSERT INTO whatsapp_messages(phone_number,direction,status,evolution_message_id,created_at,metadata)
+    VALUES($1,'outbound','sent','new-real-send',now()-interval '30 seconds',$2)`,['+'+phone,JSON.stringify({line_id:id(8),agent_code:'bigwin'})])
+  } else {
+   await pool.query(`INSERT INTO cloud_messages(conversation_id,phone_number_id,direction,message_type,content,status,wamid,sent_at)
+    VALUES($1,'line-1','outbound','text',$2::jsonb,'sent','new-real-send',now()-interval '30 seconds')`,[id(40),JSON.stringify(kind==='unclassified'?{}:{agentCode:'bigwin'})])
+   if(kind==='same-time') await pool.query("UPDATE cloud_messages SET sent_at=(SELECT created_at FROM campaign_test_sends) WHERE wamid='new-real-send'")
+  }
+  const identity=await resolveConsentIdentity(phone,typedTestSource)
+  expect(identity.agent).toBe(kind==='unclassified'?null:'bigwin')
+  expect(identity.isCampaignTest).toBeUndefined()
+  // Explicitly quoting the earlier test still identifies that campaign.
+  expect(await resolveConsentIdentity(phone,testSource)).toMatchObject({agent:'royal',isCampaignTest:true})
+ })
+ it.each(['wrong-phone','wrong-line','failed','future','expired','no-provider-id'])('does not infer test context from an unquoted %s attempt',async kind=>{
+  await quotedTest()
+  if(kind==='wrong-phone')await pool.query("UPDATE campaign_test_sends SET phone_number='+5491100000002'")
+  if(kind==='wrong-line')await pool.query("UPDATE campaign_test_sends SET phone_number_id='line-2'")
+  if(kind==='failed')await pool.query("UPDATE campaign_test_sends SET status='failed'")
+  if(kind==='future')await pool.query("UPDATE campaign_test_sends SET created_at=now()+interval '1 hour'")
+  if(kind==='expired')await pool.query("UPDATE campaign_test_sends SET created_at=now()-interval '25 hours'")
+  if(kind==='no-provider-id')await pool.query('UPDATE campaign_test_sends SET provider_message_id=NULL')
+  const identity=await resolveConsentIdentity(phone,typedTestSource)
+  expect(identity.agent).toBe('bigwin')
+  expect(identity.isCampaignTest).toBeUndefined()
+ })
+ it.each(['missing','other-phone','other-line','outbound'])('requires a matching persisted inbound, not a %s message',async kind=>{
+  await quotedTest()
+  if(kind==='missing')await pool.query("DELETE FROM cloud_messages WHERE wamid='baja-1'")
+  if(kind==='other-phone')await pool.query('UPDATE cloud_conversations SET contact_phone=$1 WHERE id=$2',['+5491100000002',id(40)])
+  if(kind==='other-line')await pool.query("UPDATE cloud_messages SET phone_number_id='line-2' WHERE wamid='baja-1'")
+  if(kind==='outbound')await pool.query("UPDATE cloud_messages SET direction='outbound',status='failed' WHERE wamid='baja-1'")
+  expect((await resolveConsentIdentity(phone,typedTestSource)).isCampaignTest).toBeUndefined()
+ })
+ it('uses the latest successful test before the inbound and declines simultaneous conflicting tests',async()=>{
+  await quotedTest()
+  await pool.query(`INSERT INTO campaign_test_sends(id,campaign_id,phone_number_id,provider_message_id,phone_number,status,created_at)
+   VALUES($1,$2,'line-1','bigwin-test',$3,'sent',now()-interval '30 seconds')`,[id(81),id(20),'+'+phone])
+  expect(await resolveConsentIdentity(phone,typedTestSource)).toMatchObject({agent:'bigwin',campaignId:id(20),isCampaignTest:true})
+  await pool.query('UPDATE campaign_test_sends SET created_at=(SELECT created_at FROM campaign_test_sends WHERE id=$1) WHERE id=$2',[id(80),id(81)])
+  expect(await resolveConsentIdentity(phone,typedTestSource)).toMatchObject({agent:null,campaignId:null,isCampaignTest:true})
+  await pool.query("UPDATE campaign_test_sends SET created_at=now()+interval '1 hour' WHERE id=$1",[id(81)])
+  expect(await resolveConsentIdentity(phone,typedTestSource)).toMatchObject({agent:'royal',isCampaignTest:true})
+ })
+ it('honors a typed opt-out against the recent test’s agent without affecting the tester’s other account',async()=>{
+  await quotedTest()
+  await recordGlobalOptOut({...request,metadata:{input_type:'text'}})
+  expect((await pool.query('SELECT agent_code,scope_key FROM blacklist')).rows).toEqual([{agent_code:'royal',scope_key:'agent:royal'}])
+  expect(await isGloballyOptedOut(phone,{agentCode:'royal'})).toBe(true)
+  expect(await isGloballyOptedOut(phone,{agentCode:'bigwin'})).toBe(false)
  })
  it('resolves a scheduled campaign test from its saved selection before recipients are materialized',async()=>{
   await quotedTest()
