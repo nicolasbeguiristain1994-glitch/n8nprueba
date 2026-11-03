@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { EMPTY_INACTIVITY, inactivityError, normalizeContactInactivity, type InactivityRange } from '@/lib/inactivity-range'
 
 export interface ContactViewState {
+  sendingLine?: string; sendingMode?: 'assigned' | 'other'
   broadcast?: BroadcastRange
   quality?: string; recent?: string
   search: string; segments: string[]; gaming: string; panel: string; linea: string | string[]; lineaSub: string
@@ -15,18 +16,23 @@ export interface ContactViewState {
   sinMovimiento: boolean; tag: string; list: string; columns: Record<string, boolean>
 }
 export const CONTACT_COLUMNS = { gaming: false, casino: false, created_at: false, opt_in: false }
-export const DEFAULT_CONTACT_VIEW: ContactViewState = { broadcast:EMPTY_BROADCAST, quality:'', recent:'', search:'', segments:[], gaming:'', panel:'', linea:[], lineaSub:'', inactivity:EMPTY_INACTIVITY, actividad:[], antiguedad:[], plataforma:'', sinMovimiento:false, tag:'', list:'', columns:CONTACT_COLUMNS }
+export const DEFAULT_CONTACT_VIEW: ContactViewState = { sendingLine:'',sendingMode:'assigned',broadcast:EMPTY_BROADCAST, quality:'', recent:'', search:'', segments:[], gaming:'', panel:'', linea:[], lineaSub:'', inactivity:EMPTY_INACTIVITY, actividad:[], antiguedad:[], plataforma:'', sinMovimiento:false, tag:'', list:'', columns:CONTACT_COLUMNS }
 // Older browser views stored one line as a string. Normalize at the boundary
 // so applying and recognizing those views keeps the same audience.
 export function normalizeContactLines(value: string | string[]): string[] {
   return [...new Set((Array.isArray(value) ? value : value.split(',')).map(line => line.trim()).filter(Boolean))]
     .sort((a, b) => Number(a) - Number(b))
 }
-const normalizeView = (state: ContactViewState): ContactViewState => ({ ...state, linea: normalizeContactLines(state.linea), inactivity: normalizeContactInactivity(state.inactivity) })
+const normalizeView = (state: ContactViewState): ContactViewState => {
+  const {sendingLine,sendingMode,...rest}=state
+  return {sendingLine:sendingLine||'',sendingMode:sendingMode||'assigned',...rest,linea:normalizeContactLines(state.linea),inactivity:normalizeContactInactivity(state.inactivity)}
+}
 
 export function isContactView(value: unknown): value is ContactViewState {
   if (!value || typeof value !== 'object') return false
   const v = value as ContactViewState
+  if (v.sendingLine!==undefined && typeof v.sendingLine!=='string') return false
+  if (v.sendingMode!==undefined && !['assigned','other'].includes(v.sendingMode)) return false
   return (v.broadcast===undefined || (v.broadcast!==null && typeof v.broadcast==='object' && ['mode','period','days','from','to'].every(k=>typeof v.broadcast![k as keyof BroadcastRange]==='string') && !broadcastError(v.broadcast))) && (v.quality===undefined||typeof v.quality==='string') && (v.recent===undefined||typeof v.recent==='string') && ['search','gaming','panel','lineaSub','plataforma','tag','list'].every(k=>typeof v[k as keyof ContactViewState]==='string') &&
     (typeof v.linea==='string' || (Array.isArray(v.linea) && v.linea.every(line=>typeof line==='string'))) &&
     [v.segments,v.actividad,v.antiguedad].every(a=>Array.isArray(a)&&a.every(x=>typeof x==='string')) &&
@@ -49,7 +55,7 @@ export function SavedContactViews({userId,state,onApply}: {userId?:string; state
     <div className="flex flex-wrap items-center gap-2" aria-label="Vistas de contactos">
       <Bookmark size={15} className="text-muted-foreground" aria-hidden="true"/>
       <select aria-label="Vista de contactos" className="h-8 min-w-0 max-w-full rounded-md border bg-card px-2 text-sm" value={active?.id||''} onChange={e=>{const view=views.find(v=>v.id===e.target.value);if(view)onApply(view.state);else onApply(DEFAULT_CONTACT_VIEW)}}>
-        <option value="">{JSON.stringify(normalizedState)===JSON.stringify(DEFAULT_CONTACT_VIEW)?'Todos los contactos':'Vista actual · personalizada'}</option>
+        <option value="">{JSON.stringify(normalizedState)===JSON.stringify(normalizeView(DEFAULT_CONTACT_VIEW))?'Todos los contactos':'Vista actual · personalizada'}</option>
         {views.map(v=><option value={v.id} key={v.id}>{v.name}</option>)}
       </select>
       <Button variant="ghost" size="sm" onClick={()=>onApply(DEFAULT_CONTACT_VIEW)}>Restablecer</Button>

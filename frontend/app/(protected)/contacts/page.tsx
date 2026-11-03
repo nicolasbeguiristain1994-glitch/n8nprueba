@@ -31,6 +31,8 @@ import { EMPTY_INACTIVITY, hasInactivityFilter, normalizeContactInactivity, inac
 import { DownloadContactsModal } from '@/components/contacts/DownloadContactsModal'
 import { SavedContactViews, CONTACT_COLUMNS, DEFAULT_CONTACT_VIEW, normalizeContactLines, type ContactViewState } from '@/components/contacts/SavedContactViews'
 import { ContactLineFilter } from '@/components/contacts/ContactLineFilter'
+import { ContactSendingLineFilter } from '@/components/contacts/ContactSendingLineFilter'
+import type { ContactSender, ContactSendingLine } from '@/lib/contact-sending-lines'
 import { ContactMessages } from '@/components/contacts/ContactMessages'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -188,6 +190,11 @@ export default function Contacts() {
 
   // ── Datos ─────────────────────────────────────────────────────────────────
   const [contacts, setContacts] = useState<Contact[]>([])
+  const [sendingLine,setSendingLine] = useState('')
+  const [sendingMode,setSendingMode] = useState<'assigned'|'other'>('assigned')
+  const [sendingLines,setSendingLines] = useState<ContactSendingLine[]>([])
+  const [sendingLinesError,setSendingLinesError] = useState<string|null>(null)
+  const [sendingLinesReload,setSendingLinesReload] = useState(0)
   const [total, setTotal]       = useState(0)
   const [loading, setLoading]   = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -243,7 +250,7 @@ export default function Contacts() {
   // ── Listas ────────────────────────────────────────────────────────────────
   const [lists, setLists]             = useState<ContactList[]>([])
   const [filterList, setFilterList]   = useState('')
-  const hasActiveFilters = !!(search || segments.length > 0 || filterGaming || filterPanel || filterLinea.length > 0 ||
+  const hasActiveFilters = !!(sendingLine || search || segments.length > 0 || filterGaming || filterPanel || filterLinea.length > 0 ||
     broadcast.mode || filterRecent || filterActividad.length > 0 || filterAntiguedad.length > 0 || filterPlataforma || filterSinMovimiento || filterTag || filterList || hasInactivityFilter(inactivity))
 
   const [showListsMenu, setShowListsMenu] = useState(false)
@@ -378,6 +385,14 @@ export default function Contacts() {
   const [repopulateResult, setRepopulateResult] = useState<{ total_lists: number; lists: Array<{ nombre: string; members: number; created: boolean }> } | null>(null)
   const [repopulateError, setRepopulateError]   = useState<string | null>(null)
 
+  useEffect(()=>{
+    const controller=new AbortController()
+    setSendingLinesError(null)
+    fetchJson<{lines:ContactSendingLine[]}>('/api/contacts/sending-lines',{signal:controller.signal})
+      .then(data=>{if(!controller.signal.aborted)setSendingLines(data.lines||[])})
+      .catch(()=>{if(!controller.signal.aborted){setSendingLines([]);setSendingLinesError('No se pudieron cargar las líneas de envío.')}})
+    return ()=>controller.abort()
+  },[currentUser?.id,sendingLinesReload])
   const canCreateCampaign = currentUser?.role === 'admin' || (permissions.campaigns?.includes('create') ?? false)
   const [campaignSelectionError, setCampaignSelectionError] = useState<string | null>(null)
   const [preparingCampaign, setPreparingCampaign] = useState(false)
@@ -400,10 +415,11 @@ export default function Contacts() {
 
   const buildContactParams = useCallback(() => new URLSearchParams({
     q: search, segment: segments.join(','), gaming: filterGaming, panel: filterPanel.trim(),
+    sending_line:sendingLine,sending_mode:sendingMode,
     linea: filterLinea.join(','), actividad: filterActividad.join(','), antiguedad: filterAntiguedad.join(','),
     list_id: filterList, plataforma: filterPlataforma,
     sin_movimiento: String(filterSinMovimiento), tag: filterTag, depositos_recientes: filterRecent, ...inactivityParams(inactivity), ...broadcastParams(broadcast),
-  }), [search, segments, filterGaming, filterPanel, filterLinea, filterActividad,
+  }), [search, segments, filterGaming, filterPanel, filterLinea, filterActividad,sendingLine,sendingMode,
     filterAntiguedad, filterList, filterPlataforma, filterSinMovimiento, filterTag, inactivity, filterRecent, broadcast])
 
   const audienceKey = buildContactParams().toString()
@@ -423,6 +439,7 @@ export default function Contacts() {
   }, [campaignAudienceKey])
 
   const startCampaign = async () => {
+    if(sendingMode==='other')return
     if (!canCreateCampaign || !currentUser?.id || !campaignCount || loading || loadError || selectingAll || campaignRequest.current) return
     const limitMessage = 'La selección supera 100.000 contactos. Acotá los filtros o seleccioná menos contactos.'
     if (campaignCount > CAMPAIGN_SELECTION_LIMIT) {
@@ -488,6 +505,7 @@ export default function Contacts() {
     const q = buildContactParams()
     q.set('page', String(pagination.pageIndex + 1))
     q.set('history', 'deferred')
+    q.set('sending_details','true')
     setLoadError(null)
     fetchJson<{ contacts: Contact[]; total: number }>(`/api/contacts?${q}`, { signal: controller.signal })
       .then(d => {
@@ -568,8 +586,9 @@ export default function Contacts() {
 
   // Resetear página al cambiar filtros
   const resetPage = useCallback(() => setPagination(p => ({ ...p, pageIndex: 0 })), [])
-  const viewState: ContactViewState = {broadcast,quality:'',recent:filterRecent,search,segments,gaming:filterGaming,panel:filterPanel,linea:filterLinea,lineaSub:'',inactivity,actividad:filterActividad,antiguedad:filterAntiguedad,plataforma:filterPlataforma,sinMovimiento:filterSinMovimiento,tag:filterTag,list:filterList,columns:contactColumns}
+  const viewState: ContactViewState = {sendingLine,sendingMode,broadcast,quality:'',recent:filterRecent,search,segments,gaming:filterGaming,panel:filterPanel,linea:filterLinea,lineaSub:'',inactivity,actividad:filterActividad,antiguedad:filterAntiguedad,plataforma:filterPlataforma,sinMovimiento:filterSinMovimiento,tag:filterTag,list:filterList,columns:contactColumns}
   const applyView = (v: ContactViewState) => {
+    setSendingLine(v.sendingLine||'');setSendingMode(v.sendingMode||'assigned')
     setBroadcast(v.broadcast || EMPTY_BROADCAST);setFilterRecent(v.recent||'');setSearch(v.search);setSegments(v.segments);setFilterGaming(v.gaming);setFilterPanel(v.panel);setFilterLinea(normalizeContactLines(v.linea));setInactivity(normalizeContactInactivity(v.inactivity));setFilterActividad(v.actividad);setFilterAntiguedad(v.antiguedad);setFilterPlataforma(v.plataforma);setFilterSinMovimiento(v.sinMovimiento);setFilterTag(v.tag);setFilterList(v.list);setContactColumns(v.columns);setRowSelection({});resetPage()
   }
   const activeFilterLabels = [broadcast.mode&&broadcastLabel(broadcast),filterRecent&&`Depósitos ${filterRecent}d (último cálculo)`,search&&`Búsqueda: ${search}`,segments.length&&`Nivel: ${segments.map(v=>NIVEL_LABEL[v]||v).join(', ')}`,filterPanel&&`Agente: ${filterPanel}`,filterLinea.length>0&&`${filterLinea.length===1?'Línea':'Líneas'}: ${filterLinea.join(', ')}`,filterGaming&&`Juego: ${filterGaming}`,filterPlataforma&&`Plataforma: ${filterPlataforma}`,filterActividad.length&&`Actividad: ${filterActividad.join(', ')}`,filterAntiguedad.length&&`Antigüedad: ${filterAntiguedad.join(', ')}`,(hasInactivityFilter(inactivity))&&inactivityLabel(inactivity),filterSinMovimiento&&'12 meses sin depósitos registrados',filterTag&&`Etiqueta: ${filterTag}`,filterList&&`Lista: ${lists.find(l=>l.id===filterList)?.name||'seleccionada'}`].filter(Boolean)
@@ -1171,6 +1190,15 @@ export default function Contacts() {
       meta: { mobileLabel: 'Línea' },
     },
     {
+      id:'sending_line',header:'Línea de envío',enableSorting:false,
+      cell:({row})=>{
+        const contact=row.original as Contact & Partial<ContactSender>
+        return contact.sending_line ? <div className="min-w-40 text-xs"><p className="font-medium">{contact.sending_line.name}</p><p className="text-muted-foreground">{contact.sending_line.phone}</p></div>
+          : <span className="text-xs text-muted-foreground">{contact.sending_line_hidden?'Otra línea sin acceso':contact.sending_line===null?'Sin asignación previa':'Asignación no disponible'}</span>
+      },
+      meta:{mobileLabel:'Línea de envío'},
+    },
+    {
       id: 'gaming',
       accessorKey: 'gaming',
       header: 'Juego',
@@ -1580,8 +1608,10 @@ export default function Contacts() {
             onChange={e => { setSearch(e.target.value); resetPage() }} />
         </div>
       </div>
-      {activeFilterLabels.length>0&&<div className="flex flex-wrap items-center gap-1.5" aria-label="Filtros activos">{activeFilterLabels.map(label=><span key={String(label)} className="max-w-full break-words rounded-md border bg-muted/40 px-2 py-1 text-xs">{label}</span>)}<Button variant="ghost" size="sm" onClick={()=>applyView({...DEFAULT_CONTACT_VIEW,columns:contactColumns})}>Limpiar filtros</Button></div>}
+      {(activeFilterLabels.length>0||sendingLine)&&<div className="flex flex-wrap items-center gap-1.5" aria-label="Filtros activos">{sendingLine&&<span className="rounded-md border bg-muted/40 px-2 py-1 text-xs">{sendingLine==='unassigned'?'Sin línea de envío asignada':`${sendingMode==='other'?'Otras líneas distintas de':'Línea de envío'}: ${sendingLines.find(line=>line.id===sendingLine)?.name||'seleccionada'}`}</span>}{activeFilterLabels.map(label=><span key={String(label)} className="max-w-full break-words rounded-md border bg-muted/40 px-2 py-1 text-xs">{label}</span>)}<Button variant="ghost" size="sm" onClick={()=>applyView({...DEFAULT_CONTACT_VIEW,columns:contactColumns})}>Limpiar filtros</Button></div>}
       <div id="contact-filters" role="region" aria-label="Filtros de contactos" className="space-y-3 rounded-xl border bg-card p-3">
+      <ContactSendingLineFilter line={sendingLine} mode={sendingMode} lines={sendingLines} error={sendingLinesError}
+        onRetry={()=>setSendingLinesReload(value=>value+1)} onChange={(line,mode)=>{setSendingLine(line);setSendingMode(mode);setRowSelection({});resetPage()}} />
       <div className="flex flex-wrap gap-2">
         <Select value={filterPanel} onValueChange={v => { setFilterPanel(v ?? ''); resetPage() }}>
           <SelectTrigger aria-label="Filtrar contactos por agente" className="w-40"><SelectValue placeholder="Agente" /></SelectTrigger>
@@ -1853,11 +1883,11 @@ export default function Contacts() {
           {selectingAll ? 'Seleccionando…' : loadError ? 'Seleccionar contactos' : `Seleccionar los ${total.toLocaleString('es-AR')} ${hasActiveFilters ? 'filtrados' : 'contactos'}`}
         </Button>
         {canCreateCampaign && <Button size="sm" variant={selectedCount > 0 ? 'default' : 'outline'} onClick={startCampaign}
-          disabled={loading || !!loadError || !campaignCount || selectingAll || preparingCampaign} aria-describedby="campaign-audience-hint">
+          disabled={loading || !!loadError || !campaignCount || selectingAll || preparingCampaign || sendingMode==='other'} aria-describedby="campaign-audience-hint">
           <Send size={14} className="mr-1" /> {preparingCampaign ? 'Preparando campaña…' : `Crear campaña${campaignCount ? ` (${campaignCount.toLocaleString('es-AR')})` : ''}`}
         </Button>}
         {canCreateCampaign && <p id="campaign-audience-hint" className="w-full text-xs text-muted-foreground">
-          {preparingCampaign ? 'Preparando los contactos para revisar la campaña…'
+          {sendingMode==='other' ? 'Vista de revisión: volvé a «Asignados a esta línea» para crear la campaña.' : preparingCampaign ? 'Preparando los contactos para revisar la campaña…'
             : loading ? 'Cargando contactos…'
             : loadError ? 'No se pudo consultar la cantidad de contactos. Reintentá la carga para continuar.'
             : selectedCount ? `La campaña usará los ${selectedCount.toLocaleString('es-AR')} contactos seleccionados.`

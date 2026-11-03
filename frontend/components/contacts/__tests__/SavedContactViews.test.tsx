@@ -6,6 +6,18 @@ beforeEach(() => localStorage.clear())
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 const state = { ...DEFAULT_CONTACT_VIEW, segments: ['vip'], search: 'Ana', linea: ['2', '7'], columns: { gaming: true, casino: false } }
 describe('Personal contact views', () => {
+  it('restores the sender and review mode and normalizes older views without them',()=>{
+    const senderState={...state,sendingLine:'11111111-1111-4111-8111-000000000011',sendingMode:'other' as const}
+    const {sendingLine:unusedLine,sendingMode:unusedMode,...legacy}=state
+    void unusedLine;void unusedMode
+    localStorage.setItem('crm:contact-views:one',JSON.stringify([{id:'sender',name:'Otras líneas',state:senderState},{id:'old',name:'Anterior',state:legacy}]))
+    const onApply=vi.fn()
+    render(<SavedContactViews userId="one" state={DEFAULT_CONTACT_VIEW} onApply={onApply}/>)
+    fireEvent.change(screen.getByLabelText('Vista de contactos'),{target:{value:'sender'}})
+    expect(onApply).toHaveBeenLastCalledWith(senderState)
+    fireEvent.change(screen.getByLabelText('Vista de contactos'),{target:{value:'old'}})
+    expect(onApply).toHaveBeenLastCalledWith(state)
+  })
   it('persists filters and columns, restores them after remount and isolates users', () => {
     const onApply = vi.fn()
     const { unmount } = render(<SavedContactViews userId="one" state={state} onApply={onApply} />)
