@@ -59,7 +59,9 @@ export async function GET(req: NextRequest) {
       contactRead<{ count: string }>(`SELECT COUNT(*) FROM contacts WHERE ${sql}`, params),
     ])
     const resolvedMovements = movementHistory.size && movementMode !== 'period' ? movementHistory : undefined
-    const senders = await readContactSenders(rows,user.user_id)
+    // Only the table requests sender labels; selections and VCF exports still
+    // apply the sender filter without paying for supplementary display history.
+    const senders = sp.get('sending_details')==='true' ? await readContactSenders(rows,user.user_id) : new Map()
     const withSenders = rows.map(row=>({...row,...senders.get(row.id)}))
     // Interactive pages can render their exact audience before supplementary
     // history finishes. Exports and existing callers still get complete rows.

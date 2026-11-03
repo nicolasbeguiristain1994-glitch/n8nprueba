@@ -497,6 +497,7 @@ export default function Contacts() {
     const q = buildContactParams()
     q.set('page', String(pagination.pageIndex + 1))
     q.set('history', 'deferred')
+    q.set('sending_details','true')
     setLoadError(null)
     fetchJson<{ contacts: Contact[]; total: number }>(`/api/contacts?${q}`, { signal: controller.signal })
       .then(d => {

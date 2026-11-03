@@ -16,7 +16,7 @@ export interface ContactViewState {
   sinMovimiento: boolean; tag: string; list: string; columns: Record<string, boolean>
 }
 export const CONTACT_COLUMNS = { gaming: false, casino: false, created_at: false, opt_in: false }
-export const DEFAULT_CONTACT_VIEW: ContactViewState = { broadcast:EMPTY_BROADCAST, quality:'', recent:'', search:'', segments:[], gaming:'', panel:'', linea:[], lineaSub:'', inactivity:EMPTY_INACTIVITY, actividad:[], antiguedad:[], plataforma:'', sinMovimiento:false, tag:'', list:'', columns:CONTACT_COLUMNS }
+export const DEFAULT_CONTACT_VIEW: ContactViewState = { sendingLine:'',sendingMode:'assigned',broadcast:EMPTY_BROADCAST, quality:'', recent:'', search:'', segments:[], gaming:'', panel:'', linea:[], lineaSub:'', inactivity:EMPTY_INACTIVITY, actividad:[], antiguedad:[], plataforma:'', sinMovimiento:false, tag:'', list:'', columns:CONTACT_COLUMNS }
 // Older browser views stored one line as a string. Normalize at the boundary
 // so applying and recognizing those views keeps the same audience.
 export function normalizeContactLines(value: string | string[]): string[] {
