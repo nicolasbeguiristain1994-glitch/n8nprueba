@@ -1251,7 +1251,7 @@ export default function Lines() {
                   onChange={e => setEditForm(f => ({ ...f, respect_daily_recommendation: e.target.checked }))} />
                 Respetar automáticamente la recomendación diaria
               </label>
-              <p id="daily-recommendation-help" className="text-xs text-muted-foreground">Las campañas respetan la recomendación vigente y reservan el 20% del cupo diario y horario configurado para atención. Sus destinatarios pendientes requieren cupo y una nueva evaluación; no hay una fecha de envío garantizada. No cambia los límites configurados ni garantiza evitar restricciones.</p>
+              <p id="daily-recommendation-help" className="text-xs text-muted-foreground">Las campañas respetan la recomendación vigente y los límites diarios y horarios configurados. Las respuestas manuales y automáticas no consumen ese cupo. Sus destinatarios pendientes requieren cupo y una nueva evaluación; no hay una fecha de envío garantizada. No cambia los límites configurados ni garantiza evitar restricciones.</p>
             </div>
             {editError && (
               <p className="text-xs text-destructive bg-destructive/10 border border-destructive/20 rounded p-2">{editError}</p>
