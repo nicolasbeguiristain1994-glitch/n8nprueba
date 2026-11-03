@@ -46,14 +46,14 @@ it('returns a distinct conflict when the shared sender blocks an unsafe send', a
   expect(mocks.execute).toHaveBeenCalledTimes(1)
 })
 
-it('records human intervention before sending and consumes the shared service capacity',async()=>{
+it('records human intervention and tracks reply delivery separately from campaign capacity',async()=>{
  expect((await POST(request())).status).toBe(200)
  expect(recordHumanAutomationIntervention).toHaveBeenCalledWith('+5491100000001',{provider:'cloud',sourceId:'123456789'})
  expect(vi.mocked(recordHumanAutomationIntervention).mock.invocationCallOrder[0]).toBeLessThan(mocks.execute.mock.invocationCallOrder[0])
  expect(mocks.reserve).toHaveBeenCalledWith({lineId:'synthetic-line',purpose:'service',sendKey:expect.stringMatching(/^service:operator:/)})
  expect(mocks.finish).toHaveBeenCalledWith('reservation','consumed')
 })
-it('does not contact the provider when the shared line capacity is exhausted',async()=>{
+it('does not contact the provider when the line reservation is unavailable',async()=>{
  mocks.reserve.mockRejectedValueOnce(new LineSendBudgetError('capacity','2030-01-01T00:00:00Z'))
  expect((await POST(request())).status).toBe(409);expect(mocks.execute).not.toHaveBeenCalled()
 })
@@ -68,4 +68,9 @@ it('persists only the internally resolved human agent for the next inbound',asyn
  vi.mocked(recordHumanAutomationIntervention).mockResolvedValueOnce('royal')
  expect((await POST(request())).status).toBe(200)
  expect(mocks.execute.mock.calls[0][0].request.agentCode).toBe('royal')
+})
+
+it('counts an initial standalone template against campaign capacity',async()=>{
+ expect((await POST(request({type:'template',template:{name:'approved',language:{code:'es'},components:[]}}))).status).toBe(200)
+ expect(mocks.reserve).toHaveBeenCalledWith(expect.objectContaining({purpose:'campaign'}))
 })

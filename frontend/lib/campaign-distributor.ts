@@ -63,7 +63,7 @@ import {
   flushExpiredBlacklist,
 } from '@/lib/proxy-manager'
 import { ContactFrequencyEngine } from '@/lib/contact-frequency/ContactFrequencyEngine'
-import { lineEligibleExpr, cloudEligibleExpr, cloudReplyEligibleExpr } from '@/lib/line-eligibility'
+import { evolutionReplyEligibleExpr, lineEligibleExpr, cloudEligibleExpr, cloudReplyEligibleExpr } from '@/lib/line-eligibility'
 import { enforceRateLimit } from '@/lib/cloud-api/rate-limiter'
 import { getTokenForNumber } from '@/lib/cloud-api/token-store'
 import { MessageSenderService, buildMessagePayload } from '@/lib/cloud-api/infrastructure/message-sender.service'
@@ -319,7 +319,7 @@ export async function getEligibleLines(operatorId?: string | null, options: {inc
 }
 
 export async function getEligibleReplyLines(operatorId?: string | null): Promise<EligibleLine[]> {
-  return getLinesMatching(operatorId, `(${cloudReplyEligibleExpr('wl')} AND cn.id IS NOT NULL)`)
+  return getLinesMatching(operatorId, `((${cloudReplyEligibleExpr('wl')} AND cn.id IS NOT NULL) OR ${evolutionReplyEligibleExpr('wl')})`)
 }
 
 async function getLinesMatching(operatorId: string | null | undefined, eligibility: string): Promise<EligibleLine[]> {
@@ -720,7 +720,7 @@ async function sendViaCloudUnbudgeted(
   const eligibility = isReply ? cloudReplyEligibleExpr('wl') : campaignId && options.budgetReservation
     ? `(wl.line_type='cloud' AND ${campaignConnectionExpr('wl')})` : cloudEligibleExpr('wl')
   const unavailable = () => isReply
-    ? new CloudApiError('La línea de la conversación ya no está conectada o no tiene capacidad para responder.')
+    ? new CloudApiError('La línea de la conversación ya no está conectada o disponible para responder.')
     : new CampaignLineUnavailableError()
 
   // Cloud API expects E.164 format (with leading +)
@@ -768,9 +768,9 @@ async function sendViaCloudUnbudgeted(
     )
     if (!template) throw new CloudApiError('La plantilla no está aprobada para esta WABA, nombre e idioma.')
   }
-  // Standalone tests and replies reserve capacity atomically before touching Meta. These
-  // attempts count toward line limits even if Meta's response is uncertain.
-  if (options.reserveCapacity && !options.budgetReservation) {
+  // Standalone campaign tests consume capacity, including uncertain outcomes.
+  // Conversation replies never consume the hourly or daily campaign quota.
+  if (options.reserveCapacity && !options.budgetReservation && !isReply) {
     const reserved = await query(
       `UPDATE whatsapp_lines wl SET msgs_sent_hour=msgs_sent_hour+1,
          msgs_sent_today=msgs_sent_today+1,

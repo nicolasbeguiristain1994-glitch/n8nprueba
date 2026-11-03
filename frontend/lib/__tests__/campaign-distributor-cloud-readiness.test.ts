@@ -191,7 +191,7 @@ describe('manual Cloud reply guards', () => {
   const reply = { kind: 'text' as const, body: 'Recibido', mediaUrl: null }
   const options = { purpose: 'conversation_reply' as const, reserveCapacity: true }
 
-  it('sends a reply and reserves capacity without requiring campaign opt-in', async () => {
+  it('sends a reply without consuming campaign capacity or requiring campaign opt-in', async () => {
     mocks.query.mockImplementation(sql => {
       if (sql.includes('sending_enabled') || sql.includes('allowed_types')) return Promise.resolve([])
       if (sql.includes('UPDATE whatsapp_lines wl')) return Promise.resolve([{ id: line.id }])
@@ -201,13 +201,13 @@ describe('manual Cloud reply guards', () => {
     expect(mocks.window).toHaveBeenCalledWith(line.phone_number_id, unit.phone_number)
     expect(mocks.token).toHaveBeenCalledWith(line.phone_number_id)
     expect(mocks.rate).toHaveBeenCalledWith(line.phone_number_id)
-    const reservation = mocks.query.mock.calls.findIndex(([sql]) => sql.includes('UPDATE whatsapp_lines wl'))
-    expect(mocks.query.mock.invocationCallOrder[reservation]).toBeLessThan(mocks.send.mock.invocationCallOrder[0])
+    expect(mocks.query.mock.calls.some(([sql]) => sql.includes('UPDATE whatsapp_lines wl'))).toBe(false)
+    expect(mocks.query.mock.calls.some(([sql]) => sql.includes('msgs_sent_'))).toBe(false)
   })
 
   it('refuses a reply when the original number becomes unavailable before sending', async () => {
     mocks.query.mockResolvedValue([])
-    await expect(sendViaCloud(line, unit.phone_number, reply, undefined, options)).rejects.toThrow('capacidad para responder')
+    await expect(sendViaCloud(line, unit.phone_number, reply, undefined, options)).rejects.toThrow('disponible para responder')
     expect(mocks.send).not.toHaveBeenCalled()
   })
 
@@ -222,9 +222,11 @@ describe('manual Cloud reply guards', () => {
     expect(mocks.send).toHaveBeenCalledWith(expect.objectContaining({ phoneNumberId: line.phone_number_id, type: 'sticker', sticker: { id: 'reply-sticker' } }))
   })
 
-  it('refuses a reply when another request takes the last quota slot', async () => {
-    await expect(sendViaCloud(line, unit.phone_number, reply, undefined, options)).rejects.toThrow('capacidad para responder')
-    expect(mocks.send).not.toHaveBeenCalled()
+  it('does not reserve the last campaign slot when sending a customer reply', async () => {
+    mocks.query.mockImplementation(successfulDb)
+    await expect(sendViaCloud(line, unit.phone_number, reply, undefined, options)).resolves.toEqual({messageId:'wamid.test'})
+    expect(mocks.query.mock.calls.some(([sql]) => sql.includes('msgs_sent_'))).toBe(false)
+    expect(reserveLineSendBudget).not.toHaveBeenCalled()
   })
 
   it('does not allow campaign sends or templates to opt into reply eligibility', async () => {

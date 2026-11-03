@@ -74,7 +74,7 @@ export function LineVolumeRecommendation({ recommendation, lineName, compact = f
     <div className="rounded-lg border border-border p-3 text-xs space-y-1">
       <p className="font-semibold">Control diario automático: {respectDailyRecommendation ? 'activado' : 'desactivado'}</p>
       <p className="text-muted-foreground">{respectDailyRecommendation
-        ? 'Las campañas respetan la cantidad recomendada y reservan el 20% del cupo diario y horario configurado para atención. Al agotarse el cupo de campañas, sus destinatarios quedan pendientes hasta una nueva evaluación con disponibilidad.'
+        ? 'Las campañas respetan la cantidad recomendada y los límites diarios y horarios configurados. Las respuestas manuales y automáticas no consumen ese cupo. Al agotarse el cupo de campañas, sus destinatarios quedan pendientes hasta una nueva evaluación con disponibilidad.'
         : 'La recomendación es informativa. Podés activar su cumplimiento automático para campañas desde Editar línea.'}</p>
       {respectDailyRecommendation && <p className="text-muted-foreground">Las cifras corresponden a campañas y se comparten entre todas las campañas de la línea. Las respuestas automáticas y la atención consumen el cupo total; la reserva de atención puede reducir la disponibilidad para campañas. No hay una fecha de envío garantizada.</p>}
     </div>

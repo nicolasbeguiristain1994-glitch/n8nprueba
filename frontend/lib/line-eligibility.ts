@@ -46,9 +46,15 @@ export function cloudEligibleExpr(tableAlias?: string): string {
 export function cloudReplyEligibleExpr(tableAlias: string): string {
   return `(${tableAlias}.line_type = 'cloud'
     AND ${tableAlias}.status = 'active'
+    AND ${tableAlias}.is_connected = true)`
+}
+
+/** Legacy replies also stay available after the campaign quota is exhausted. */
+export function evolutionReplyEligibleExpr(tableAlias: string): string {
+  return `(${tableAlias}.line_type = 'evolution'
+    AND ${tableAlias}.status = 'active'
     AND ${tableAlias}.is_connected = true
-    AND ${tableAlias}.msgs_sent_hour < ${tableAlias}.msg_per_hour
-    AND ${tableAlias}.msgs_sent_today < ${tableAlias}.msg_per_day)`
+    AND ${tableAlias}.sending_enabled = true)`
 }
 
 /** Same local eligibility used by distribution, including active Cloud registration. */

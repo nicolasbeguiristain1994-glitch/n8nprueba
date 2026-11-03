@@ -23,16 +23,16 @@ type LineBudgetRow = {
   budget_date: string; next_day_at: Date; db_now: Date
 }
 const checkAgain = () => new Date(Date.now() + 180_000).toISOString()
-// Preserve service capacity only when the optional campaign protection is enabled.
-export const commercialCapacity = (limit: number) => limit > 1 ? limit - Math.max(1, Math.ceil(limit * 0.2)) : Math.max(0, limit)
 
-/** All campaign/automation attempts reserve the rolling counters under one line lock.
+/** Only campaign attempts consume the rolling counters. Replies retain an idempotent
+ * reservation without competing with campaigns for capacity.
  * Campaign policy/history is read before acquiring the lock: no nested pool checkout or HTTP in the transaction.
  * The durable daily ledger then covers concurrent reservations not yet present in message history.
  */
 export async function reserveLineSendBudget(input: {
   lineId: string; purpose: 'campaign' | 'automation' | 'service'; sendKey: string
 }): Promise<LineSendBudgetReservation> {
+  const consumesQuota = input.purpose === 'campaign'
   let enabled = false
   try {
     if (!input.sendKey || input.sendKey.length > 300) throw new Error('invalid send key')
@@ -67,11 +67,11 @@ export async function reserveLineSendBudget(input: {
       const hourReset = line.hour_reset_at && new Date(line.hour_reset_at) > now ? new Date(line.hour_reset_at) : new Date(now.getTime() + 3_600_000)
       const dayUsed = line.day_reset_at && new Date(line.day_reset_at) <= now ? 0 : Math.max(0, Number(line.msgs_sent_today))
       const hourUsed = line.hour_reset_at && new Date(line.hour_reset_at) <= now ? 0 : Math.max(0, Number(line.msgs_sent_hour))
-      const dailyCap = enabled ? commercialCapacity(Number(line.msg_per_day)) : Number(line.msg_per_day)
-      const hourlyCap = enabled ? commercialCapacity(Number(line.msg_per_hour)) : Number(line.msg_per_hour)
+      const dailyCap = Number(line.msg_per_day)
+      const hourlyCap = Number(line.msg_per_hour)
       const waits: Date[] = []
-      if (dayUsed >= dailyCap) waits.push(dayReset)
-      if (hourUsed >= hourlyCap) waits.push(hourReset)
+      if (consumesQuota && dayUsed >= dailyCap) waits.push(dayReset)
+      if (consumesQuota && hourUsed >= hourlyCap) waits.push(hourReset)
       let observed = 0
       let recommended: number | null = null
       if (enabled) {
@@ -95,7 +95,7 @@ export async function reserveLineSendBudget(input: {
         if (recommended !== null && Number(budget.consumed) >= recommended) waits.push(new Date(line.next_day_at))
       }
       if (waits.length) throw new LineSendBudgetError('capacity_exhausted', new Date(Math.max(...waits.map(d => d.getTime()))).toISOString(), enabled)
-      await db.query(`UPDATE whatsapp_lines SET msgs_sent_today=$2+1,msgs_sent_hour=$3+1,
+      if (consumesQuota) await db.query(`UPDATE whatsapp_lines SET msgs_sent_today=$2+1,msgs_sent_hour=$3+1,
         day_reset_at=$4,hour_reset_at=$5,updated_at=NOW() WHERE id=$1`, [input.lineId,dayUsed,hourUsed,dayReset,hourReset])
       if (input.purpose === 'campaign') await db.query(`UPDATE line_campaign_daily_budgets
         SET consumed=consumed+1,updated_at=NOW() WHERE line_id=$1 AND budget_date=$2`, [input.lineId,line.budget_date])
@@ -131,7 +131,7 @@ export async function finishLineSendBudget(id: string, outcome: 'consumed' | 'no
     const { rows: [reservation] } = await db.query<{ line_id: string; purpose: string; budget_date: string; day_reset_at: Date; hour_reset_at: Date }>(
       `UPDATE line_send_budget_reservations SET status=$2,updated_at=NOW() WHERE id=$1 AND status='reserved'
         RETURNING line_id,purpose,budget_date,day_reset_at,hour_reset_at`, [id,outcome === 'consumed' ? 'consumed' : 'released'])
-    if (reservation && outcome === 'no_send') {
+    if (reservation?.purpose === 'campaign' && outcome === 'no_send') {
       await db.query(`UPDATE whatsapp_lines SET
         msgs_sent_today=CASE WHEN day_reset_at=$2 THEN GREATEST(msgs_sent_today-1,0) ELSE msgs_sent_today END,
         msgs_sent_hour=CASE WHEN hour_reset_at=$3 THEN GREATEST(msgs_sent_hour-1,0) ELSE msgs_sent_hour END,

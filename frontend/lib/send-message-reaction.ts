@@ -1,6 +1,6 @@
 import { query } from './db'
 import { withGlobalSendGuard } from './global-opt-out'
-import { lineEligibleExpr } from './line-eligibility'
+import { evolutionReplyEligibleExpr } from './line-eligibility'
 import { sendViaCloud, CloudSendOutcomeUnknownError } from './campaign-distributor'
 import { CloudApiError, OptOutError } from './cloud-api/errors'
 
@@ -20,11 +20,8 @@ export async function sendMessageReaction(target: ReactionTarget, emoji: string)
   if (!key) throw new CloudApiError('La línea de WhatsApp no está configurada.')
   await query('SELECT reset_line_counters_if_due()')
   const [line] = await query<{ evolution_url: string | null; evolution_instance: string }>(`
-    UPDATE whatsapp_lines wl SET msgs_sent_hour=msgs_sent_hour+1,msgs_sent_today=msgs_sent_today+1,
-      hour_reset_at=COALESCE(hour_reset_at,NOW()+interval '1 hour'),
-      day_reset_at=COALESCE(day_reset_at,NOW()+interval '24 hours'),updated_at=NOW()
-    WHERE wl.id=$1 AND ${lineEligibleExpr('wl')}
-    RETURNING evolution_url,evolution_instance`, [target.line_id])
+    SELECT evolution_url,evolution_instance FROM whatsapp_lines wl
+    WHERE wl.id=$1 AND ${evolutionReplyEligibleExpr('wl')}`, [target.line_id])
   if (!line) throw new CloudApiError('La línea original no está disponible para reaccionar.')
   const origin = line.evolution_url || process.env.EVOLUTION_URL
   if (!origin || !line.evolution_instance) throw new CloudApiError('La línea de WhatsApp no está configurada.')

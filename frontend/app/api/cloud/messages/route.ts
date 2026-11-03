@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
     const [line]=await query<{id:string}>('SELECT whatsapp_line_id AS id FROM cloud_numbers WHERE phone_number_id=$1',[phoneNumberId])
     if(!line?.id) return NextResponse.json({error:'La línea de origen no está disponible.'},{status:409})
     const agentCode=await recordHumanAutomationIntervention(to,{provider:'cloud',sourceId:phoneNumberId})
-    reservationId=(await reserveLineSendBudget({lineId:line.id,purpose:'service',sendKey:`service:${auth.user.user_id}:${randomUUID()}`})).id
+    reservationId=(await reserveLineSendBudget({lineId:line.id,purpose:type==='template'?'campaign':'service',sendKey:`service:${auth.user.user_id}:${randomUUID()}`})).id
     const result = await sendMessageUseCase.execute({
       request:  { ...body,...(agentCode?{agentCode}:{}), sentByUserId: auth.user.user_id } as SendMessageRequest,
       enqueue:  enqueue ?? false,

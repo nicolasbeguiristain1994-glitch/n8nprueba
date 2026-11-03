@@ -215,8 +215,8 @@ async function reserveAutomationCapacity(job:Job,lineId:string):Promise<{id:stri
   catch(error) {
     if(error instanceof LineSendBudgetError && error.code==='LINE_SEND_BUDGET_WAIT') {
       await query(`UPDATE automation_message_jobs SET status='queued',started_at=NULL,dispatch_authorized_at=NULL,run_at=GREATEST(run_at,$2::timestamptz),
-        details='En espera del cupo diario u horario de la línea de origen' WHERE id=$1 AND status='processing'`,[job.id,error.retryAt])
-      return {status:'deferred',details:'En espera del cupo de la línea'}
+        details='En espera de disponibilidad de la línea de origen' WHERE id=$1 AND status='processing'`,[job.id,error.retryAt])
+      return {status:'deferred',details:'En espera de disponibilidad de la línea'}
     }
     if(error instanceof LineSendAlreadyReservedError)
       return {status:'uncertain',details:'El cupo ya estaba reservado; revisar el intento anterior antes de reenviar'}
