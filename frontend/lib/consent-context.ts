@@ -54,10 +54,17 @@ export async function resolveConsentIdentity(phone:string,context:ConsentContext
         LEFT JOIN contacts c ON c.id=r.contact_id
         WHERE $2::text='cloud' AND m.phone_number_id=$3::text AND regexp_replace(cc.contact_phone,'[^0-9]','','g')=$1::text
           AND m.direction='outbound' AND m.status IN ('sent','delivered','read')
-      ) SELECT agent,campaign_id FROM history
+      ) SELECT agent,campaign_id,at::text AS history_at FROM history
         WHERE at<=COALESCE((SELECT at FROM inbound_time),NOW())
           AND ($4::text IS NULL OR wamid=$4::text)
         ORDER BY at DESC FETCH FIRST 1 ROW WITH TIES`,[phone,context.provider??'cloud',context.sourceId,context.contextWamid??null,context.messageId??null])
+    if ((context.provider??'cloud')==='cloud' && !context.contextWamid && context.messageId) {
+      // Typing a quick reply has no quoted message ID. A recent successful test
+      // can supply that context, but must never override a newer real/manual send.
+      const test=await campaignTestReplyIdentity(read,phone,context.sourceId,null,context.messageId,
+        typeof rows[0]?.history_at==='string' ? rows[0].history_at : undefined)
+      if (test) return {...test,sourceKey}
+    }
     if(rows[0]) return rows.every(row=>row.agent===rows[0].agent)
       ? result(rows[0].agent,rows[0].campaign_id) : result(null)
     // A quoted message that cannot be attributed must not fall back to another agent.

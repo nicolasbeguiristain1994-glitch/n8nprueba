@@ -83,7 +83,7 @@ it('renders a full page without thousands of unused line options and keeps searc
   const editors=container.querySelectorAll('select[aria-label^="Editar Línea"]')
   expect(editors.length).toBeGreaterThanOrEqual(50)
   expect(Array.from(editors).reduce((count,editor)=>count+editor.querySelectorAll('option').length,0)).toBeLessThanOrEqual(200)
-  fireEvent.change(screen.getByRole('textbox',{name:'Buscar contactos'}),{target:{value:'Cuenta 49'}})
+  fireEvent.change(screen.getByLabelText('Buscar contactos'),{target:{value:'Cuenta 49'}})
   await act(async()=>{await vi.advanceTimersByTimeAsync(250)})
   expect(screen.getAllByText('Cuenta 49').length).toBeGreaterThan(0)
   expect(screen.queryByText('Cuenta 0')).not.toBeInTheDocument()

@@ -19,6 +19,8 @@ La administración de números usa `POST`/`DELETE /api/campaign-test-recipients`
 - Si se pierde la respuesta HTTP, el panel conserva el UUID y ofrece consultar/reintentar la misma solicitud. No hay reintentos automáticos al proveedor. Una prueba nueva solicitada expresamente después del intervalo usa otro UUID y conserva todos los intentos anteriores. Ante un resultado incierto, revisar el WhatsApp destinatario antes de pedir otra prueba.
 - `Aceptado por Meta` no asegura entrega: este historial registra la aceptación, el fallo o un resultado sin confirmar. La entrega de la prueba se verifica en el número destinatario.
 - No escribe ni elimina `contact_send_history`, no reinicia `campaign_recipients` ni modifica las métricas o el estado de la campaña.
+- Las respuestas a una prueba usan el agente de la campaña. También se reconoce una respuesta escrita sin citar el botón cuando la última prueba exitosa al mismo número y desde la misma línea ocurrió en las 24 horas anteriores al mensaje. Un envío normal o manual posterior toma prioridad. Las pruebas fallidas, de otra línea o posteriores al mensaje no se usan para elegir agente.
+- Si el destinatario de prueba no tiene una cuenta o línea de atención válida en ese agente, la respuesta muestra un número o enlace activo de su directorio como ejemplo, sin modificar sus contactos. Los clientes habituales conservan su asignación real y se mantienen los controles de bajas, intervención humana y repetición de respuestas.
 - La acción anterior **Limpiar (pruebas)** se llama ahora **Reiniciar no enviados** y solo se habilita para administradores cuando la campaña está detenida y sin procesador activo.
 
 ## Validación

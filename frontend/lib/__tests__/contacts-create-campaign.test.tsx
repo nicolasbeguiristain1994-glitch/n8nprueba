@@ -38,9 +38,12 @@ it('selects all 91 filtered contacts across both pages and carries them into cam
     return {lists:[],history:[]}
   })
   render(<Contacts/>);await act(async()=>{})
-  fireEvent.change(screen.getByRole('textbox',{name:'Buscar contactos'}),{target:{value:'Fixture'}})
+  fireEvent.change(screen.getByLabelText('Buscar contactos'),{target:{value:'Fixture'}})
   const selection=within(screen.getByRole('region',{name:'Selección de contactos'}))
-  const rows=()=>within(screen.getByRole('grid')).getAllByRole('checkbox',{name:'Seleccionar fila'})
+  // The desktop table stays mounted during pagination. Query its labelled
+  // checkboxes without recalculating visibility for the entire 50-row page.
+  const grid=within(screen.getByRole('grid'))
+  const rows=()=>grid.getAllByLabelText('Seleccionar fila',{selector:'[role="checkbox"]'})
   await waitFor(()=>expect(selection.getByRole('button',{name:'Seleccionar los 91 filtrados'})).toBeEnabled())
   expect(rows()).toHaveLength(50)
   await act(async()=>{fireEvent.click(selection.getByRole('button',{name:'Seleccionar los 91 filtrados'}))})
@@ -49,7 +52,7 @@ it('selects all 91 filtered contacts across both pages and carries them into cam
   expect(selectionRequest.searchParams.has('page')).toBe(false)
   expect(selection.getByRole('status')).toHaveTextContent('91 de 91 contactos seleccionados')
   rows().forEach(row=>expect(row).toBeChecked())
-  fireEvent.click(screen.getByRole('button',{name:'Página siguiente'}))
+  fireEvent.click(screen.getByLabelText('Página siguiente'))
   await waitFor(()=>expect(rows()).toHaveLength(41))
   expect(selection.getByRole('status')).toHaveTextContent('91 de 91 contactos seleccionados')
   rows().forEach(row=>expect(row).toBeChecked())
