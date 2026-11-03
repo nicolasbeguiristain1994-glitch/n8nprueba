@@ -45,6 +45,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   m.tx.mockImplementation(async fn=>{const db=await pool.connect();try{await db.query('BEGIN');const r=await fn(db);await db.query('COMMIT');return r}catch(e){await db.query('ROLLBACK');throw e}finally{db.release()}})
  })
  beforeEach(async()=>{
+  await pool.query(`TRUNCATE contacts;INSERT INTO contacts(id,phone_number,first_name,panel) VALUES('${id(20)}','${phone}','Ana','Panel')`)
   m.identity.mockReset().mockImplementation(async(phone:string)=>{
    const rows=await m.query('SELECT DISTINCT lower(panel) AS agent FROM contacts WHERE phone_number IN($1,$2) AND deleted_at IS NULL',[phone,'+'+phone]);
    return {agent:rows.length===1?rows[0].agent:null,campaignId:null,sourceKey:null}
@@ -240,6 +241,31 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
   await evaluateAutomations(phone,'EXTRA','royal-'+kind,source)
   expect(m.send).toHaveBeenCalledTimes(1)
   expect(m.send.mock.calls[0][0].request.text.body).toBe('Gracias por escribirnos. Un asesor te atenderá para indicarte tu línea correspondiente.')
+  expect((await pool.query('SELECT is_escalated FROM conversation_state')).rows).toEqual([{is_escalated:true}])
+ })
+ it('uses the campaign recipient account when the same phone has Royal accounts on different lines',async()=>{
+  await royalRule()
+  m.identity.mockResolvedValue({agent:'royal',campaignId:id(90),contactId:id(20)})
+  await pool.query(`UPDATE crm_agents SET phone_format='plain' WHERE code='royal';
+   UPDATE contacts SET first_name='Cuenta campaña';
+   INSERT INTO contacts(id,phone_number,first_name,panel,linea) VALUES('${id(19)}','${phone}','Otra cuenta','royal',10);
+   UPDATE automations SET action_config='{"message":"Hola {{nombre}}, tu línea: {{2}}","contact_line_directory":"royal"}' WHERE id='${id(9)}'`)
+  await evaluateAutomations(phone,'Más info','account-reply',{...source,contextWamid:'campaign-send'})
+  expect(m.send).toHaveBeenCalledOnce()
+  expect(m.send.mock.calls[0][0].request.text.body).toBe('Hola Cuenta campaña, tu línea: +5491100000001')
+  expect((await pool.query('SELECT * FROM conversation_state')).rows).toHaveLength(0)
+  expect((await pool.query('SELECT linea FROM contacts ORDER BY id')).rows).toEqual([{linea:10},{linea:1}])
+ })
+ it.each(['no-context','deleted','changed-phone','changed-agent','missing'])('does not borrow another account for an invalid or missing campaign context: %s',async kind=>{
+  await royalRule()
+  m.identity.mockResolvedValue({agent:'royal',campaignId:kind==='no-context'?null:id(90),...(kind==='no-context'?{}:{contactId:id(20)})})
+  await pool.query(`INSERT INTO contacts(id,phone_number,first_name,panel,linea) VALUES($1,$2,'Otra cuenta','royal',1)`,[id(19),phone])
+  if(kind==='deleted')await pool.query('UPDATE contacts SET deleted_at=now() WHERE id=$1',[id(20)])
+  if(kind==='changed-phone')await pool.query("UPDATE contacts SET phone_number='5491199999999' WHERE id=$1",[id(20)])
+  if(kind==='changed-agent')await pool.query("UPDATE contacts SET panel='ofizeus' WHERE id=$1",[id(20)])
+  if(kind==='missing')await pool.query('DELETE FROM contacts WHERE id=$1',[id(20)])
+  await evaluateAutomations(phone,'Más info','invalid-account-'+kind,source)
+  expect(m.send.mock.calls[0][0].request.text.body).toContain('Un asesor te atenderá')
   expect((await pool.query('SELECT is_escalated FROM conversation_state')).rows).toEqual([{is_escalated:true}])
  })
  it('ignores both directory rules for a different agent',async()=>{

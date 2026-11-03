@@ -5,21 +5,26 @@ import { campaignTestReplyIdentity } from './campaign-test-reply'
 type Reader = {query: (sql:string,params:unknown[])=>Promise<{rows:Record<string,unknown>[]}>}
 export type ConsentContext = {agentCode?:string|null;contactId?:string|null;campaignId?:string|null;
   provider?:'cloud'|'evolution';sourceId?:string|null;contextWamid?:string;messageId?:string}
-export type ConsentIdentity = {agent:string|null;campaignId:string|null;sourceKey:string|null;isCampaignTest?:boolean}
+export type ConsentIdentity = {agent:string|null;campaignId:string|null;sourceKey:string|null;contactId?:string;isCampaignTest?:boolean}
 export async function resolveConsentIdentity(phone:string,context:ConsentContext={},db?:Reader):Promise<ConsentIdentity> {
   const read = async(sql:string,params:unknown[])=>db?(await db.query(sql,params)).rows:query<Record<string,unknown>>(sql,params)
   const sourceKey=context.sourceId?`${context.provider??'cloud'}:${context.sourceId}`:null
-  const result=(agent:unknown,campaign:unknown=null):ConsentIdentity=>({agent:canonicalContactAgent(typeof agent==='string'?agent:null),campaignId:typeof campaign==='string'?campaign:null,sourceKey})
+  const result=(agent:unknown,campaign:unknown=null,contact:unknown=null):ConsentIdentity=>({agent:canonicalContactAgent(typeof agent==='string'?agent:null),campaignId:typeof campaign==='string'?campaign:null,sourceKey,
+    ...(typeof contact==='string'?{contactId:contact}:{})})
+  const uniqueContact=(rows:Record<string,unknown>[])=>{
+    const ids=[...new Set(rows.map(row=>row.contact_id).filter((id):id is string=>typeof id==='string'))]
+    return ids.length===1?ids[0]:null
+  }
   if(context.agentCode) return result(context.agentCode,context.campaignId)
   if(context.contactId) {
     const rows=await read(`SELECT panel FROM contacts WHERE id=$1::uuid AND phone_number IN($2::text,'+'||$2::text)`,[context.contactId,phone])
-    if(rows.length===1) return result(rows[0].panel,context.campaignId)
+    if(rows.length===1) return result(rows[0].panel,context.campaignId,context.contactId)
   }
   if(context.campaignId) {
-    const rows=await read(`SELECT DISTINCT COALESCE(r.agent_code,contact_agent_key(c.panel)) AS agent
+    const rows=await read(`SELECT DISTINCT COALESCE(r.agent_code,contact_agent_key(c.panel)) AS agent,r.contact_id
       FROM campaign_recipients r LEFT JOIN contacts c ON c.id=r.contact_id
       WHERE r.campaign_id=$1::uuid AND regexp_replace(r.phone_number,'[^0-9]','','g')=$2::text`,[context.campaignId,phone])
-    if(rows.length===1 && rows[0].agent) return result(rows[0].agent,context.campaignId)
+    if(rows[0]?.agent && rows.every(row=>row.agent===rows[0].agent)) return result(rows[0].agent,context.campaignId,uniqueContact(rows))
     // An ambiguous campaign must not borrow another campaign's identity.
     return result(null,context.campaignId)
   }
@@ -40,7 +45,7 @@ export async function resolveConsentIdentity(phone:string,context:ConsentContext
         ) t
       ), history AS (
         SELECT COALESCE(w.metadata->>'agent_code',r.agent_code,contact_agent_key(c.panel)) agent,
-          w.campaign_id,w.evolution_message_id wamid,COALESCE(w.sent_at,w.created_at) at
+          w.campaign_id,w.evolution_message_id wamid,COALESCE(w.sent_at,w.created_at) at,COALESCE(w.contact_id,r.contact_id) contact_id
         FROM whatsapp_messages w LEFT JOIN campaign_recipients r ON r.id=w.campaign_recipient_id
         LEFT JOIN contacts c ON c.id=w.contact_id
         WHERE w.phone_number IN($1::text,'+'||$1::text) AND w.direction='outbound'
@@ -48,13 +53,13 @@ export async function resolveConsentIdentity(phone:string,context:ConsentContext
           AND (w.metadata->>'line_id' IN (SELECT id::text FROM source_line) OR r.line_id IN (SELECT id FROM source_line)
             OR EXISTS(SELECT 1 FROM cloud_messages cm WHERE cm.wamid=w.evolution_message_id AND cm.phone_number_id=$3::text AND $2::text='cloud'))
         UNION ALL
-        SELECT COALESCE(m.content->>'agentCode',r.agent_code,contact_agent_key(c.panel)),m.campaign_id,m.wamid,COALESCE(m.sent_at,m.created_at)
+        SELECT COALESCE(m.content->>'agentCode',r.agent_code,contact_agent_key(c.panel)),m.campaign_id,m.wamid,COALESCE(m.sent_at,m.created_at),r.contact_id
         FROM cloud_messages m JOIN cloud_conversations cc ON cc.id=m.conversation_id
         LEFT JOIN campaign_recipients r ON r.campaign_id=m.campaign_id AND regexp_replace(r.phone_number,'[^0-9]','','g')=$1::text
         LEFT JOIN contacts c ON c.id=r.contact_id
         WHERE $2::text='cloud' AND m.phone_number_id=$3::text AND regexp_replace(cc.contact_phone,'[^0-9]','','g')=$1::text
           AND m.direction='outbound' AND m.status IN ('sent','delivered','read')
-      ) SELECT agent,campaign_id,at::text AS history_at FROM history
+      ) SELECT agent,campaign_id,contact_id,at::text AS history_at FROM history
         WHERE at<=COALESCE((SELECT at FROM inbound_time),NOW())
           AND ($4::text IS NULL OR wamid=$4::text)
         ORDER BY at DESC FETCH FIRST 1 ROW WITH TIES`,[phone,context.provider??'cloud',context.sourceId,context.contextWamid??null,context.messageId??null])
@@ -66,7 +71,7 @@ export async function resolveConsentIdentity(phone:string,context:ConsentContext
       if (test) return {...test,sourceKey}
     }
     if(rows[0]) return rows.every(row=>row.agent===rows[0].agent)
-      ? result(rows[0].agent,rows[0].campaign_id) : result(null)
+      ? result(rows[0].agent,rows[0].campaign_id,uniqueContact(rows)) : result(null)
     // A quoted message that cannot be attributed must not fall back to another agent.
     if(context.contextWamid) return result(null)
   }

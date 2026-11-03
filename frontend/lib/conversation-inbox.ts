@@ -27,12 +27,24 @@ export const conversationInboxCte = (messages = CONVERSATION_MESSAGES_CTE, agent
   ), inbox AS (
     SELECT DISTINCT ON (lm.phone_number) lm.*, c.id AS contact_id, c.first_name, c.last_name,
       c.segment::text AS segment, ${agentParam ? 'lm.agent_key' : "NULLIF(lower(trim(c.panel)), '')"} AS agent,
-      c.linea, c.linea_sub, COALESCE(ch.campaigns, '[]'::jsonb) AS campaigns
+      c.linea, c.linea_sub, COALESCE(c.id=last_account.contact_id,false) AS has_account_context,
+      COALESCE(ch.campaigns, '[]'::jsonb) AS campaigns
     FROM latest_messages lm
-    LEFT JOIN LATERAL (SELECT m.contact_id FROM whatsapp_messages m
-      WHERE REPLACE(m.phone_number,'+','')=lm.phone_number AND m.direction='outbound'
-        AND m.status IN ('sent','delivered','read') AND m.contact_id IS NOT NULL
-      ORDER BY m.created_at DESC,m.id DESC LIMIT 1) last_account ON true
+    LEFT JOIN LATERAL (
+      SELECT CASE WHEN count(DISTINCT target.id)=1 THEN (array_agg(DISTINCT target.id))[1] END AS contact_id
+      FROM conversation_messages visible
+      LEFT JOIN whatsapp_messages m ON m.id=visible.id
+      LEFT JOIN campaign_recipients r ON r.campaign_id=visible.campaign_id
+        AND regexp_replace(r.phone_number,'[^0-9]','','g')=lm.phone_number
+      LEFT JOIN contacts target ON target.id=COALESCE(m.contact_id,r.contact_id) AND target.deleted_at IS NULL
+        AND REPLACE(target.phone_number,'+','')=lm.phone_number
+        ${agentParam ? 'AND target.panel=lm.agent_key' : ''}
+      WHERE REPLACE(visible.phone_number,'+','')=lm.phone_number AND visible.direction='outbound'
+        AND visible.status IN ('sent','delivered','read') AND COALESCE(m.contact_id,r.contact_id) IS NOT NULL
+        ${agentParam ? 'AND visible.agent_key IS NOT DISTINCT FROM lm.agent_key' : ''}
+      GROUP BY visible.created_at,visible.id
+      ORDER BY visible.created_at DESC,visible.id DESC LIMIT 1
+    ) last_account ON true
     LEFT JOIN contacts c ON REPLACE(c.phone_number, '+', '') = lm.phone_number AND c.deleted_at IS NULL
       ${agentParam ? `AND (lm.agent_key IS NULL OR c.panel=lm.agent_key)` : ''}
     LEFT JOIN campaign_history ch ON ch.phone_number = lm.phone_number

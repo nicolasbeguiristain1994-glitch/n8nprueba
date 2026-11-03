@@ -98,6 +98,26 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
  })
  afterAll(async()=>{if(pool){await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.end()}})
 
+ it.each(['legacy','cloud'] as const)('resolves the exact account from a successful %s campaign despite conflicting same-agent accounts',async store=>{
+  await pool.query(`INSERT INTO contacts(id,phone_number,first_name,panel,account_username,identity_key,linea)
+   VALUES($1,$2,'Otra Royal','royal','otra-royal','["royal", "otra-royal"]',10)`,[id(4),'+'+phone])
+  await pool.query('UPDATE contacts SET linea=7 WHERE id=$1',[id(3)])
+  if(store==='cloud') {
+   await pool.query("DELETE FROM whatsapp_messages WHERE evolution_message_id='royal-send'")
+   await pool.query("UPDATE cloud_messages SET status='sent',wamid='royal-send',sent_at=now()-interval '1 hour' WHERE id=$1",[id(51)])
+  }
+  const context={provider:'cloud' as const,sourceId:'line-2'}
+  expect(await resolveConsentIdentity(phone,{...context,contextWamid:'royal-send'})).toMatchObject({agent:'royal',campaignId:id(21),contactId:id(3)})
+  expect(await resolveConsentIdentity(phone,context)).toMatchObject({agent:'royal',contactId:id(3)})
+  expect(await resolveConsentIdentity(phone,{campaignId:id(21)})).toMatchObject({agent:'royal',contactId:id(3)})
+  expect((await resolveConsentIdentity(phone,{...context,contextWamid:'unknown'})).contactId).toBeUndefined()
+ })
+ it('does not choose an account from conflicting successful sends tied at the same time',async()=>{
+  await pool.query(`INSERT INTO whatsapp_messages(contact_id,phone_number,direction,status,evolution_message_id,created_at,metadata)
+   SELECT $1,phone_number,direction,status,'tied-other-account',created_at,metadata FROM whatsapp_messages WHERE evolution_message_id='royal-send'`,[id(4)])
+  expect(await resolveConsentIdentity(phone,{provider:'cloud',sourceId:'line-2'})).toMatchObject({agent:'royal'})
+  expect((await resolveConsentIdentity(phone,{provider:'cloud',sourceId:'line-2'})).contactId).toBeUndefined()
+ })
  it.each(['cloud','evolution'] as const)('keeps the Royal human hold across a persisted %s manual reply and a new inbound',async provider=>{
   if(provider==='evolution')await pool.query("UPDATE whatsapp_lines SET line_type='evolution',evolution_instance='royal-instance' WHERE id=$1",[id(9)])
   const sourceId=provider==='cloud'?'line-2':'royal-instance'

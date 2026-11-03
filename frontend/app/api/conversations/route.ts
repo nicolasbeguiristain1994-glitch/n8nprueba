@@ -104,7 +104,7 @@ export async function GET(req: NextRequest) {
            LIMIT 1)                                AS valor_riesgo
         FROM (SELECT * FROM filtered_inbox ORDER BY last_at DESC, phone_number LIMIT $4 OFFSET $5) page
         LEFT JOIN LATERAL (
-          SELECT EXISTS (SELECT 1 FROM contacts other
+          SELECT NOT page.has_account_context AND EXISTS (SELECT 1 FROM contacts other
             WHERE other.phone_number IN (page.phone_number,'+' || page.phone_number)
               AND other.deleted_at IS NULL AND other.id <> page.contact_id AND lower(trim(other.panel))=page.agent
               AND (NULLIF(lower(trim(other.panel)),''),other.linea)

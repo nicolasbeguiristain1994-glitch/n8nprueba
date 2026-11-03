@@ -35,7 +35,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   db=new Client({connectionString:url.toString(),ssl:false});await db.connect();await db.query('BEGIN')
   await db.query(`SET LOCAL search_path=pg_temp,public;
    CREATE TEMP TABLE whatsapp_messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number text,message_body text,direction text,status text,created_at timestamptz DEFAULT NOW(),evolution_message_id text,campaign_id uuid,contact_id uuid,sent_at timestamptz,metadata jsonb,updated_at timestamptz,failed_at timestamptz,error_detail text,template_id uuid,whatsapp_message_id text,agent_key text,line_id uuid);
-   CREATE TEMP TABLE campaign_recipients(id uuid,line_id uuid,campaign_id uuid,phone_number text,sent_at timestamptz);
+   CREATE TEMP TABLE campaign_recipients(id uuid,line_id uuid,campaign_id uuid,phone_number text,sent_at timestamptz,contact_id uuid);
    CREATE TEMP TABLE campaigns(id uuid PRIMARY KEY,name text,agent_key text,template_id uuid);
    CREATE TEMP TABLE cloud_numbers(phone_number_id text,whatsapp_line_id uuid);
    CREATE TEMP TABLE whatsapp_lines(id uuid,display_name text,line_key text,line_type text DEFAULT 'cloud');
@@ -222,6 +222,32 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   await db.query(`INSERT INTO contacts(id,phone_number,panel,linea,linea_sub) VALUES($1,$2,'royal',8,'b')`,[id(21),phone])
   const row=(await(await GET(request())).json()).conversations[0]
   expect(row).toMatchObject({line_assignment_ambiguous:false,assigned_line:{label:'Royal 8',phone:'+5491122222222'}})
+ })
+ it.each(['legacy','cloud'] as const)('shows the %s campaign account line when another account on the same phone uses a different line',async store=>{
+  await db.query(`UPDATE whatsapp_messages SET agent_key='royal',line_id='${id(10)}',contact_id='${id(20)}',campaign_id='${id(401)}';
+   UPDATE contacts SET linea=7,first_name='Cuenta campaña';
+   INSERT INTO contacts(id,phone_number,panel,linea) VALUES('${id(19)}','+${phone}','royal',10);
+   INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone) VALUES('royal',7,'','Royal 7','+5491100000007');
+   INSERT INTO campaigns(id,name,agent_key) VALUES('${id(401)}','Royal línea 7','royal');
+   INSERT INTO campaign_recipients(id,line_id,campaign_id,phone_number,contact_id) VALUES('${id(500)}','${id(10)}','${id(401)}','+${phone}','${id(20)}')`)
+  if(store==='cloud') {
+   await db.query("DELETE FROM whatsapp_messages WHERE id=$1",[id(100)])
+   await db.query(`INSERT INTO cloud_messages(id,conversation_id,phone_number_id,wamid,direction,message_type,content,status,sent_at,campaign_id)
+    VALUES($1,$2,'10001','wamid.out','outbound','text','{}','sent',now()-interval '2 minutes',$3)`,[id(410),id(1),id(401)])
+  }
+  // A later manual reply has no account; it must not discard the campaign recipient.
+  await db.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,agent_key,line_id)
+   VALUES($1,'Respuesta','outbound','sent','royal',$2)`,[phone,id(10)])
+  const row=(await(await GET(request('?agent=royal'))).json()).conversations[0]
+  expect(row).toMatchObject({contact_id:id(20),first_name:'Cuenta campaña',linea:7,has_account_context:true,
+   line_assignment_ambiguous:false,assigned_line:{label:'Royal 7',phone:'+5491100000007'}})
+  // Failed sends to another account cannot change the displayed assignment.
+  await db.query(`INSERT INTO whatsapp_messages(phone_number,direction,status,agent_key,line_id,contact_id)
+   VALUES($1,'outbound','failed','royal',$2,$3)`,[phone,id(10),id(19)])
+  expect((await(await GET(request('?agent=royal'))).json()).conversations[0].contact_id).toBe(id(20))
+  await db.query(`INSERT INTO whatsapp_messages(phone_number,direction,status,agent_key,line_id,contact_id)
+   VALUES($1,'outbound','sent','royal',$2,$3)`,[phone,id(11),id(19)])
+  expect((await(await GET(request('?agent=royal'))).json()).conversations[0].contact_id).toBe(id(20))
  })
  it('does not guess the assigned line when phone aliases disagree',async()=>{
   await db.query(`UPDATE whatsapp_messages SET agent_key='royal',line_id='${id(10)}'`)

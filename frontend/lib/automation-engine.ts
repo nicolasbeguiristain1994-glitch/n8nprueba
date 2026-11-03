@@ -70,11 +70,13 @@ export async function evaluateAutomations(phone: string, messageText: string, me
         AND (u.role='admin' OR a.action_config->>'contact_line_directory'=$1) ORDER BY a.priority,CASE WHEN NULLIF(a.action_config->>'contact_line_directory','') IS NOT NULL THEN 0 ELSE 1 END,a.created_at,a.id`,[identity.agent])
     const matches=rules.rows.filter(r=>automationMatches(r,messageText))
     // Only the directory mode reads assignment fields; generic rules keep their
-    // existing behavior. Two matching phone records are ambiguous, never guessed.
+    // existing behavior. A successful campaign identifies its exact account;
+    // without that context, conflicting phone records remain ambiguous.
     let routingContacts: RoutingContact[] = []
     if (matches.some(r=>directoryAgentCode(r.action_config.contact_line_directory))) {
       routingContacts=(await db.query<RoutingContact>(`SELECT first_name,panel,linea,linea_sub FROM contacts
-        WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND deleted_at IS NULL AND ($2::text IS NULL OR contact_agent_key(panel)=$2) LIMIT 2`,[number,identity.agent])).rows
+        WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND deleted_at IS NULL AND ($2::text IS NULL OR contact_agent_key(panel)=$2)
+          AND ($3::uuid IS NULL OR id=$3) LIMIT 2`,[number,identity.agent,identity.contactId??null])).rows
     }
     const rule=matches.find(r=>{
       if (!r.action_config.contact_line_directory) return true
@@ -98,7 +100,8 @@ export async function evaluateAutomations(phone: string, messageText: string, me
       AND created_at>NOW()-interval '10 seconds' AND status IN ('queued','processing','sent')
       AND ($4::uuid IS NULL OR automation_id=$4) AND agent_code IS NOT DISTINCT FROM $5 LIMIT 1`,[number,provider,sourceId,rule.action_config.contact_line_directory ? rule.id : null,identity.agent])
     if (recent.rows.length) return
-    const contact=await db.query<{first_name:string|null;panel:string|null}>(`SELECT first_name,panel FROM contacts WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1 AND ($2::text IS NULL OR contact_agent_key(panel)=$2) ORDER BY id LIMIT 1`,[number,identity.agent])
+    const contact=await db.query<{first_name:string|null;panel:string|null}>(`SELECT first_name,panel FROM contacts WHERE regexp_replace(phone_number,'[^0-9]','','g')=$1
+      AND deleted_at IS NULL AND ($2::text IS NULL OR contact_agent_key(panel)=$2) AND ($3::uuid IS NULL OR id=$3) ORDER BY id LIMIT 1`,[number,identity.agent,identity.contactId??null])
     const resolve=(message:string)=>message.replace(/\{\{nombre\}\}/gi,contact.rows[0]?.first_name?.trim()||'Cliente')
       .replace(/\{\{empresa\}\}/gi,contact.rows[0]?.panel?.trim()||'')
       .replace(/\{\{fecha\}\}/gi,new Date().toLocaleDateString('es-AR',{timeZone:'America/Argentina/Buenos_Aires'}))
