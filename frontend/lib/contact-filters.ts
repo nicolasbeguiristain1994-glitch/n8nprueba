@@ -6,6 +6,7 @@ import { configureBulkMovementRead, withContactMovementRead } from './contact-mo
 import { contactMovementQuery } from '@/lib/contact-movement-query'
 import { readInactivityRange } from '@/lib/contact-inactivity'
 import { contactScope, type VisibilityRole } from '@/lib/contact-visibility'
+import { contactSendingFilter } from './contact-sending-lines'
 
 const ACTIVITY = new Set(['nuevo', 'frecuente', 'regular', 'ocasional', 'en_riesgo', 'inactivo', 'perdido'])
 const TENURE = new Set(['nuevo', 'reciente', 'establecido', 'veterano', 'leal'])
@@ -79,7 +80,8 @@ export function contactFilters(sp: URLSearchParams, user: {
   const vis = contactScope(user, params.length)
   params.push(...vis.params)
   const sql = where.join('\n AND ') + ' AND ' + vis.sql
-  return { sql, params }
+  try { return contactSendingFilter(sp, { sql, params }, user.user_id) }
+  catch (error) { throw new ContactFilterError((error as Error).message) }
 }
 
 

@@ -10,6 +10,21 @@ import { contactFilters } from '@/lib/contact-filters'
 const criteria = 'tag=prioridad&list_id=11111111-1111-4111-8111-111111111111&segment=vip,medio&actividad=inactivo,perdido&antiguedad=leal&plataforma=zeus&linea=1,2&linea_sub=a&panel=royal&q=Ana&inactividad_dias=61&difusion=not_sent&difusion_dias=7'
 beforeEach(() => { q.mockReset().mockImplementation(async (sql: string) => sql.includes('COUNT(*)') ? [{ count: '0' }] : []) })
 describe('Contact audience parity', () => {
+  it('carries the sending-line filter into count, full selection and download',async()=>{
+    const params=criteria+'&sending_line=11111111-1111-4111-8111-000000000011&sending_mode=assigned'
+    for(const suffix of ['', '&select_all=true','&download=true'])await GET(new NextRequest(`http://localhost/api/contacts?${params}${suffix}`))
+    const calls=q.mock.calls.filter(([sql])=>String(sql).includes('FROM contacts WHERE'))
+    expect(calls).toHaveLength(5)
+    for(const [sql,values] of calls){
+      expect(sql).toContain('campaign_line_assignments')
+      expect(sql).toContain('cloud_messages')
+      expect(sql).toContain('get_accessible_line_ids')
+      expect(values).toContain('11111111-1111-4111-8111-000000000011')
+    }
+    expect(calls[0][1].slice(0,-2)).toEqual(calls[1][1])
+    expect(calls[2][1]).toEqual(calls[1][1])
+    expect(calls[3][1].slice(0,-2)).toEqual(calls[1][1])
+  })
   it('uses identical conditions and parameters for list, count, select-all and download', async () => {
     await GET(new NextRequest(`http://localhost/api/contacts?${criteria}`))
     const main = q.mock.calls[0], count = q.mock.calls[1]

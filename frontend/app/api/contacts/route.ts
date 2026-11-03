@@ -10,6 +10,7 @@ import { checkPermissionWithUser } from '@/lib/permissions'
 import { audit } from '@/lib/audit'
 import { resolvedContactFilters, ContactFilterError } from '@/lib/contact-filters'
 import { getAppSetting } from '@/lib/app-settings'
+import { readContactSenders } from '@/lib/contact-sending-lines'
 
 export async function GET(req: NextRequest) {
   const auth = await checkPermissionWithUser(req, 'contacts', 'read')
@@ -58,17 +59,19 @@ export async function GET(req: NextRequest) {
       contactRead<{ count: string }>(`SELECT COUNT(*) FROM contacts WHERE ${sql}`, params),
     ])
     const resolvedMovements = movementHistory.size && movementMode !== 'period' ? movementHistory : undefined
+    const senders = await readContactSenders(rows,user.user_id)
+    const withSenders = rows.map(row=>({...row,...senders.get(row.id)}))
     // Interactive pages can render their exact audience before supplementary
     // history finishes. Exports and existing callers still get complete rows.
     if (!download && sp.get('history') === 'deferred') {
-      const contacts = rows.map(row => {
+      const contacts = withSenders.map(row => {
         const movement = resolvedMovements?.get(row.id)
         return movement ? { ...row, last_movement_date: movement.last_movement, days_since_last_movement: movement.days_inactive } : row
       })
       return NextResponse.json({ contacts, total: Number(count), page, limit }, { headers: { 'Cache-Control': 'private, no-store' } })
     }
     const history = new Map((await readContactHistory(rows, resolvedMovements)).map(row => [row.id, row]))
-    const contacts = rows.map(row => ({ ...row, ...history.get(row.id) }))
+    const contacts = withSenders.map(row => ({ ...row, ...history.get(row.id) }))
     return NextResponse.json({ contacts, total: Number(count), page, limit }, { headers: { 'Cache-Control': 'private, no-store' } })
   } catch (e) {
     if (e instanceof ContactReadUnavailableError) return NextResponse.json({ error: e.message }, { status: 503, headers: { 'Retry-After': '3' } })
