@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { useCurrentUser } from '@/lib/useCurrentUser'
-import { contactLineLabel, formatAgentLinePhone, type AgentDirectoryEntry, type AgentLine, type AgentDeliveryMode } from '@/lib/agent-line-types'
+import { contactLineLabel, formatAgentLinePhone, type AgentDirectoryEntry, type AgentLine, type AgentDeliveryMode, type AgentPhoneFormat } from '@/lib/agent-line-types'
 
 type Editor = {kind:'agent';agent?:AgentDirectoryEntry} | {kind:'line';agent:AgentDirectoryEntry;line?:AgentLine}
 type Fields = {code:string;name:string;linea:string;label:string;phone:string;link_url:string;is_active:boolean}
@@ -35,7 +35,7 @@ export default function AgentsPage() {
   const open = (next:Editor) => {
     setFormError('');setNotice('');setEditor(next)
     setFields(next.kind==='agent' ? {...empty,code:next.agent?.code||'',name:next.agent?.name||''}
-      : {...empty,linea:String(next.line?.linea||1),label:next.line?.label||'',phone:next.line?formatAgentLinePhone(next.line.phone):'',link_url:next.line?.link_url||'',is_active:next.line?.is_active??true})
+      : {...empty,linea:String(next.line?.linea||1),label:next.line?.label||'',phone:next.line?formatAgentLinePhone(next.line.phone,next.agent.phone_format):'',link_url:next.line?.link_url||'',is_active:next.line?.is_active??true})
   }
   const save = async(e:React.FormEvent) => {
     e.preventDefault(); if (!editor || saving) return
@@ -52,15 +52,15 @@ export default function AgentsPage() {
     } catch(e) {setFormError((e as Error).message)}
     finally {setSaving(false)}
   }
-  const changeDelivery = async(agent:AgentDirectoryEntry, mode:AgentDeliveryMode) => {
-    if (modeSaving || (agent.delivery_mode || 'phone') === mode) return
+  const changeDelivery = async(agent:AgentDirectoryEntry, mode:AgentDeliveryMode, phoneFormat?:AgentPhoneFormat) => {
+    if (modeSaving || ((agent.delivery_mode || 'phone') === mode && (!phoneFormat || (agent.phone_format || 'separated') === phoneFormat))) return
     setModeSaving(agent.code);setError('');setNotice('')
     try {
       await api('/api/agents/'+encodeURIComponent(agent.code)+'/delivery', {
-        method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({delivery_mode:mode}),
+        method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({delivery_mode:mode,...(phoneFormat ? {phone_format:phoneFormat} : {})}),
       })
-      setAgents(current=>current.map(item=>item.code===agent.code?{...item,delivery_mode:mode}:item))
-      setNotice(`${agent.name}: se enviará ${mode==='link'?'el link':'el número'} en las nuevas respuestas.`)
+      setAgents(current=>current.map(item=>item.code===agent.code?{...item,delivery_mode:mode,...(phoneFormat ? {phone_format:phoneFormat} : {})}:item))
+      setNotice(`${agent.name}: se enviará ${mode==='link'?'el link':`el número ${(phoneFormat || agent.phone_format)==='plain'?'sin':'con'} |`} en las nuevas respuestas.`)
     } catch(e) {setError((e as Error).message)}
     finally {setModeSaving(null)}
   }
@@ -93,13 +93,25 @@ export default function AgentsPage() {
           <Button size="sm" variant={(agent.delivery_mode||'phone')==='phone'?'default':'outline'} aria-pressed={(agent.delivery_mode||'phone')==='phone'} disabled={modeSaving!==null} onClick={()=>void changeDelivery(agent,'phone')}><Phone size={14}/>Enviar número</Button>
           <Button size="sm" variant={agent.delivery_mode==='link'?'default':'outline'} aria-pressed={agent.delivery_mode==='link'} disabled={modeSaving!==null} onClick={()=>void changeDelivery(agent,'link')}><LinkIcon size={14}/>Enviar link</Button>
         </div>
+        {(agent.delivery_mode||'phone')==='phone'&&<div className="basis-full flex flex-wrap items-center gap-3">
+          <span className="text-sm">Formato del número</span>
+          <div role="group" aria-label={`Formato del número de ${agent.name}`} className="flex gap-1">
+            {(['separated','plain'] as const).map(format=><Button key={format} size="sm"
+              variant={(agent.phone_format||'separated')===format?'default':'outline'}
+              aria-pressed={(agent.phone_format||'separated')===format} disabled={modeSaving!==null}
+              onClick={()=>void changeDelivery(agent,'phone',format)}>{format==='plain'?'Sin |':'Con |'}</Button>)}
+          </div>
+          <span aria-label={`Vista previa del número de ${agent.name}`} className="font-mono text-sm text-muted-foreground">
+            Vista previa: {formatAgentLinePhone(agent.lines.find(line=>line.is_active&&line.phone)?.phone || '+5491125118495',agent.phone_format)}
+          </span>
+        </div>}
         {modeSaving===agent.code&&<Loader2 aria-label="Guardando modo de envío" className="animate-spin" size={16}/>}
         <p className="basis-full text-xs text-muted-foreground">Se usa en las respuestas automáticas y al pegar la línea en Conversaciones.</p>
         {agent.lines.some(line=>line.is_active&&!(agent.delivery_mode==='link'?line.link_url:line.phone))&&<p className="basis-full text-xs text-warning">{agent.lines.filter(line=>line.is_active&&!(agent.delivery_mode==='link'?line.link_url:line.phone)).length} líneas activas sin {agent.delivery_mode==='link'?'link':'número'}: esas consultas se derivarán a un asesor hasta completar el dato.</p>}
       </div>
       {!agent.lines.length?<div className="flex items-center gap-2 p-5 text-sm text-muted-foreground"><Phone size={16}/>Todavía no hay líneas cargadas para este agente.</div>:
       <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-muted/50 text-xs text-muted-foreground"><tr><th className="px-4 py-3">Asignación</th><th className="px-4 py-3">Nombre de la línea</th><th className="px-4 py-3">Teléfono</th><th className="px-4 py-3">Link</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3 text-right">Acciones</th></tr></thead>
-        <tbody>{agent.lines.map(line=><tr key={line.id} className="border-t"><td className="whitespace-nowrap px-4 py-3 font-medium">{contactLineLabel(line.linea,line.variant)}</td><td className="px-4 py-3">{line.label}</td><td className="select-text whitespace-nowrap px-4 py-3 font-mono">{formatAgentLinePhone(line.phone)||'Sin número'}</td><td className="max-w-72 select-text break-all px-4 py-3 text-xs">{line.link_url||<span className="text-muted-foreground">Sin link</span>}</td><td className="px-4 py-3"><span className={line.is_active?'text-success':'text-muted-foreground'}>{line.is_active?'Activa':'Inactiva'}</span></td><td className="px-4 py-3 text-right"><Button variant="ghost" size="sm" aria-label={`Editar ${agent.name} ${contactLineLabel(line.linea,line.variant)}`} onClick={()=>open({kind:'line',agent,line})}><Pencil size={14}/>Editar</Button></td></tr>)}</tbody></table></div>}
+        <tbody>{agent.lines.map(line=><tr key={line.id} className="border-t"><td className="whitespace-nowrap px-4 py-3 font-medium">{contactLineLabel(line.linea,line.variant)}</td><td className="px-4 py-3">{line.label}</td><td className="select-text whitespace-nowrap px-4 py-3 font-mono">{formatAgentLinePhone(line.phone,agent.phone_format)||'Sin número'}</td><td className="max-w-72 select-text break-all px-4 py-3 text-xs">{line.link_url||<span className="text-muted-foreground">Sin link</span>}</td><td className="px-4 py-3"><span className={line.is_active?'text-success':'text-muted-foreground'}>{line.is_active?'Activa':'Inactiva'}</span></td><td className="px-4 py-3 text-right"><Button variant="ghost" size="sm" aria-label={`Editar ${agent.name} ${contactLineLabel(line.linea,line.variant)}`} onClick={()=>open({kind:'line',agent,line})}><Pencil size={14}/>Editar</Button></td></tr>)}</tbody></table></div>}
     </section>)}
     {!loading&&!error&&!shown.length&&<p className="p-5 text-center text-muted-foreground">No se encontraron agentes o líneas.</p>}
     <Dialog open={!!editor} onOpenChange={value=>{if(!value&&!saving)setEditor(null)}}>

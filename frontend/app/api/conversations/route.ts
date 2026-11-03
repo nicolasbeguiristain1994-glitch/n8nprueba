@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
           )) AS is_unread,
           assignment.ambiguous AS line_assignment_ambiguous,
           CASE WHEN NOT assignment.ambiguous AND directory.id IS NOT NULL
-            THEN jsonb_build_object('label',directory.label,'phone',directory.phone,'link_url',directory.link_url,'delivery_mode',agent_directory.delivery_mode)
+            THEN jsonb_build_object('label',directory.label,'phone',directory.phone,'link_url',directory.link_url,'delivery_mode',agent_directory.delivery_mode,'phone_format',agent_directory.phone_format)
             ELSE NULL END AS assigned_line,
           COALESCE(cs.is_escalated, false)         AS is_escalated,
           cs.escalation_reason,

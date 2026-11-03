@@ -1,14 +1,16 @@
 export type AgentDeliveryMode = 'phone' | 'link'
+export type AgentPhoneFormat = 'separated' | 'plain'
 export type AgentLine = {
   id: string; agent_code: string; linea: number; variant: string; label: string
   phone: string | null; link_url?: string | null; is_active: boolean; updated_at: string
 }
-export type AgentDirectoryEntry = { code: string; name: string; delivery_mode?: AgentDeliveryMode; lines: AgentLine[] }
-export type AssignedContactLine = Pick<AgentLine, 'label' | 'phone' | 'link_url'> & { delivery_mode?: AgentDeliveryMode }
+export type AgentDirectoryEntry = { code: string; name: string; delivery_mode?: AgentDeliveryMode; phone_format?: AgentPhoneFormat; lines: AgentLine[] }
+export type AssignedContactLine = Pick<AgentLine, 'label' | 'phone' | 'link_url'> & { delivery_mode?: AgentDeliveryMode; phone_format?: AgentPhoneFormat }
 export function contactLineLabel(linea?: number | null, _legacyVariant?: string | null): string {
   return linea == null ? 'Sin línea' : `Línea ${linea}`
 }
-export function formatAgentLinePhone(phone?: string | null): string {
+export function formatAgentLinePhone(phone?: string | null, format: AgentPhoneFormat = 'separated'): string {
+  if (format === 'plain') return (phone || '').replace(/\D/g, '')
   const digits = (phone || '').replace(/^\+/, '')
   return /^549\d{10}$/.test(digits)
     ? `${digits.slice(0,3)} | ${digits.slice(3,7)} | ${digits.slice(7)}`
@@ -24,7 +26,7 @@ export function validAgentLink(value: string): boolean {
 }
 export function assignedLineDestination(line: AssignedContactLine): string | null {
   if (line.delivery_mode === 'link') return line.link_url && validAgentLink(line.link_url) ? line.link_url : null
-  return line.phone ? formatAgentLinePhone(line.phone) : null
+  return line.phone ? formatAgentLinePhone(line.phone, line.phone_format) : null
 }
 export function assignedLineMessage(line: AssignedContactLine): string {
   const destination = assignedLineDestination(line)

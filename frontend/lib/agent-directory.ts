@@ -6,7 +6,7 @@ export const AgentCodeSchema = z.string().trim().toLowerCase().min(1).max(100)
   .regex(/^[a-z0-9][a-z0-9_-]*$/, 'Usá letras sin espacios, números, guiones o guion bajo')
 export const AgentNameSchema = z.object({ name: z.string().trim().min(1, 'Ingresá un nombre').max(100) }).strict()
 export const NewAgentSchema = AgentNameSchema.extend({ code: AgentCodeSchema })
-export const AgentDeliverySchema = z.object({ delivery_mode: z.enum(['phone', 'link']) }).strict()
+export const AgentDeliverySchema = z.object({ delivery_mode: z.enum(['phone', 'link']), phone_format: z.enum(['separated', 'plain']).optional() }).strict()
 const AgentLineFields = z.object({
   label: z.string().trim().min(1, 'Ingresá un nombre para la línea').max(100),
   phone: z.string().trim().max(40).nullable().transform(value => {

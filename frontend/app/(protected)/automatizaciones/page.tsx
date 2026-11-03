@@ -1,5 +1,6 @@
 'use client'
 
+import { assignedLineDestination, type AgentDirectoryEntry } from '@/lib/agent-line-types'
 import { PageHeader } from '@/components/layout/PageHeader'
 
 import { hasAssignedLineVariable, replaceAssignedLineVariable } from '@/lib/assigned-line-variable'
@@ -130,7 +131,7 @@ export default function AutomatizacionesPage() {
   const [form, setForm]               = useState({ ...BLANK_FORM })
   const [saving, setSaving]           = useState(false)
   const [saveError, setSaveError]     = useState<string | null>(null)
-  const [directoryAgents, setDirectoryAgents] = useState<{code:string;name:string;delivery_mode?:'phone'|'link'}[]>([])
+  const [directoryAgents, setDirectoryAgents] = useState<Pick<AgentDirectoryEntry,'code'|'name'|'delivery_mode'|'phone_format'>[]>([])
   const [directoryError, setDirectoryError] = useState(false)
   useEffect(() => {
     if (!showEditor) return
@@ -732,7 +733,7 @@ export default function AutomatizacionesPage() {
 
               {form.type === 'reply' && hasAssignedLineVariable(form.message) && <div className="rounded-md bg-muted/40 p-3" aria-label="Vista previa de línea asignada">
                 <p className="mb-2 text-xs font-medium text-muted-foreground">Ejemplo ilustrativo · {form.contact_line_directory || 'Elegí un agente'}</p>
-                <p className="whitespace-pre-wrap break-words text-sm">{replaceAssignedLineVariable(form.message, directoryAgents.find(agent=>agent.code===form.contact_line_directory)?.delivery_mode==='link'?'https://ejemplo.com/tu-linea':'549 | 1100 | 000000')}</p>
+                <p className="whitespace-pre-wrap break-words text-sm">{replaceAssignedLineVariable(form.message, assignedLineDestination({label:'',phone:'+5491100000000',link_url:'https://ejemplo.com/tu-linea',...directoryAgents.find(agent=>agent.code===form.contact_line_directory)}) || '')}</p>
               </div>}
 
               {form.type === 'flow' && (

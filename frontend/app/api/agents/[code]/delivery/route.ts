@@ -9,9 +9,9 @@ export async function PATCH(req: Request, {params}: {params: Promise<{code:strin
   try {
     const code = requireAgentCode((await params).code)
     const data = await directoryBody(req, AgentDeliverySchema)
-    const rows = await query(`UPDATE crm_agents SET delivery_mode=$2,updated_at=NOW() WHERE code=$1 RETURNING code`, [code,data.delivery_mode])
+    const rows = await query(`UPDATE crm_agents SET delivery_mode=$2,phone_format=COALESCE($3::text,phone_format),updated_at=NOW() WHERE code=$1 RETURNING code,delivery_mode,phone_format`, [code,data.delivery_mode,data.phone_format ?? null])
     if (!rows.length) return Response.json({error:'Agente no encontrado'}, {status:404})
-    void audit({req,action:'update',resource:'agents',metadata:{code,delivery_mode:data.delivery_mode}})
-    return Response.json({ok:true,delivery_mode:data.delivery_mode})
+    void audit({req,action:'update',resource:'agents',metadata:rows[0]})
+    return Response.json({ok:true,...rows[0]})
   } catch(error) { return directoryError(error) }
 }

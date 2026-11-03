@@ -24,7 +24,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
       { title: 'Cargá o editá una línea', detail: 'Abrí Agentes, elegí el agente y usá Agregar línea. Ingresá el número de línea, un nombre y el teléfono con + y código de país, un link completo http/https o ambos. Editar permite cambiar esos datos y el estado activo.' },
       { title: 'Respetá la asignación del contacto', detail: 'La asignación combina el agente y el número de línea. Las antiguas variantes A, B y C se unificaron: 1A, 1B y 1C usan la Línea 1. Si falta el número o hay asignaciones contradictorias, el chat lo indica sin elegir otro destino.' },
       { title: 'Compartí desde el chat', detail: 'Copiar guarda el número o el link, según el modo elegido para ese agente. Pegar en respuesta agrega la línea designada al borrador y conserva lo que ya escribiste. Revisá el texto y enviá cuando esté listo.' },
-      { title: 'Elegí qué enviar', detail: 'En la tarjeta de cada agente, elegí Enviar número o Enviar link. Se aplica a las nuevas respuestas automáticas que consultan el directorio y al pegar la línea en Conversaciones. Si falta el destino elegido o la línea está inactiva, la respuesta automática deriva a un asesor. Cambiar el modo no envía mensajes por sí solo.' },
+      { title: 'Elegí qué enviar', detail: 'En la tarjeta de cada agente, elegí Enviar número o Enviar link. Al enviar un número, elegí Con | o Sin | y revisá la vista previa. El formato se guarda por agente. Se aplica a las nuevas respuestas automáticas que consultan el directorio y al pegar la línea en Conversaciones. Si falta el destino elegido o la línea está inactiva, la respuesta automática deriva a un asesor. Cambiar el modo no envía mensajes por sí solo.' },
     ],
   },
   {

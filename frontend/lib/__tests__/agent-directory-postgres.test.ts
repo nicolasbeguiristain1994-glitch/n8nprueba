@@ -30,12 +30,13 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('agent directory on PostgreS
     for(const role of ['anon','authenticated'])await pool.query(`DO $$ BEGIN CREATE ROLE ${role}; EXCEPTION WHEN duplicate_object THEN NULL; END $$`)
     await pool.query(readFileSync('../db/migrations/151_agent_contact_lines.sql','utf8').replaceAll('public.',schema+'.'))
     await pool.query(readFileSync('../db/migrations/155_agent_line_links.sql','utf8').replaceAll('public.',schema+'.'))
+    await pool.query(readFileSync('../db/migrations/163_agent_phone_format.sql','utf8').replaceAll('public.',schema+'.'))
     await pool.query('CREATE TABLE contacts(id integer,linea smallint,linea_sub char(1))')
     await pool.query(readFileSync('../db/migrations/156_unify_contact_line_variants.sql','utf8').replaceAll('public.',schema+'.'))
     vi.mocked(query).mockImplementation(async(sql,values)=>(await pool.query(sql,values)).rows)
     vi.stubEnv('AUTH_SECRET',TEST_AUTH_SECRET)
   })
-  beforeEach(async()=>{await pool.query("UPDATE crm_agents SET delivery_mode='phone'; DELETE FROM agent_contact_lines WHERE agent_code='test-agent'; DELETE FROM crm_agents WHERE code='test-agent'; DELETE FROM agent_contact_lines WHERE agent_code='royal'")})
+  beforeEach(async()=>{await pool.query("UPDATE crm_agents SET delivery_mode='phone',phone_format='separated'; DELETE FROM agent_contact_lines WHERE agent_code='test-agent'; DELETE FROM crm_agents WHERE code='test-agent'; DELETE FROM agent_contact_lines WHERE agent_code='royal'")})
   afterAll(async()=>{vi.unstubAllEnvs();if(pool){await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.end()}})
   it('migrates all existing Ofizeus numbers and prevents direct Data API access',async()=>{
     const result=await(await GET(req())).json()
@@ -73,6 +74,20 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('agent directory on PostgreS
     expect(agents.find((a:any)=>a.code==='bigwin').delivery_mode).toBe('phone')
     expect((await changeDelivery(req('PATCH',{delivery_mode:'invalid'}),params('royal'))).status).toBe(400)
     expect((await changeDelivery(req('PATCH',{delivery_mode:'link'}),params('missing'))).status).toBe(404)
+  })
+  it('persists format per agent without changing numbers or resetting it for older clients',async()=>{
+    await addLine(req('POST',line),params('royal'))
+    expect((await changeDelivery(req('PATCH',{delivery_mode:'phone',phone_format:'plain'}),params('royal'))).status).toBe(200)
+    let agents=(await(await GET(req())).json()).agents
+    expect(agents.find((a:any)=>a.code==='royal')).toMatchObject({phone_format:'plain',lines:[{phone:'+5491112345678'}]})
+    expect(agents.find((a:any)=>a.code==='bigwin').phone_format).toBe('separated')
+    await changeDelivery(req('PATCH',{delivery_mode:'link'}),params('royal'))
+    await changeDelivery(req('PATCH',{delivery_mode:'phone'}),params('royal'))
+    agents=(await(await GET(req())).json()).agents
+    expect(agents.find((a:any)=>a.code==='royal')).toMatchObject({phone_format:'plain',delivery_mode:'phone'})
+    expect((await changeDelivery(req('PATCH',{delivery_mode:'phone',phone_format:'invalid'}),params('royal'))).status).toBe(400)
+    expect((await changeDelivery(req('PATCH',{delivery_mode:'phone',phone_format:'plain'},2),params('royal'))).status).toBe(403)
+    await expect(pool.query("UPDATE crm_agents SET phone_format='invalid' WHERE code='royal'")).rejects.toMatchObject({code:'23514'})
   })
   it('preserves a link when an older client edits only the number, and allows explicit removal',async()=>{
     const {id}=await(await addLine(req('POST',{...line,link_url:'https://example.com/royal'}),params('royal'))).json()
