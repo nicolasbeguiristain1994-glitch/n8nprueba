@@ -3,7 +3,9 @@ import path from 'path'
 
 export default defineConfig({
   test: {
-    maxWorkers: 4,
+    // Shared CI runners cannot sustain four DOM-heavy workers without starving
+    // the full-page interaction tests. Keep their assertions and timeouts intact.
+    maxWorkers: process.env.CI ? 2 : 4,
     exclude: [...configDefaults.exclude, '**/.next/**'],
     // happy-dom para tests de componentes React (más rápido que jsdom)
     environment: 'happy-dom',
