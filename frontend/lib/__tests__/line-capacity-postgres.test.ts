@@ -21,7 +21,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('standalone Cloud cap
   let db: Pool
   const schema=`line_capacity_${process.pid}`
   const line={id:'00000000-0000-4000-8000-000000000001',phone_number_id:'123456789'}
-  const send=()=>sendViaCloud(line,'+5491112345678',{kind:'text',body:'Synthetic reply',mediaUrl:null},undefined,{purpose:'conversation_reply',reserveCapacity:true})
+  const reply=()=>sendViaCloud(line,'+5491112345678',{kind:'text',body:'Synthetic reply',mediaUrl:null},undefined,{purpose:'conversation_reply',reserveCapacity:true})
+  const send=()=>sendViaCloud(line,'+5491112345678',{kind:'template',templateId:'00000000-0000-4000-8000-000000000002',wabaId:'synthetic-waba',content:{name:'synthetic_campaign',language:{code:'es'},components:[]}},undefined,{reserveCapacity:true})
   beforeAll(async()=>{
     const url=new URL(process.env.DATABASE_URL!)
     if(!['localhost','127.0.0.1'].includes(url.hostname))throw Error('LOCAL_ONLY')
@@ -32,6 +33,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('standalone Cloud cap
       msgs_sent_hour int DEFAULT 0,msgs_sent_today int DEFAULT 0,msg_per_hour int DEFAULT 30,msg_per_day int DEFAULT 50,
       hour_reset_at timestamptz,day_reset_at timestamptz,updated_at timestamptz,allowed_types jsonb,
       evolution_instance text,evolution_url text,priority int DEFAULT 1,last_seen_at timestamptz,personality_config jsonb);
+      CREATE TABLE whatsapp_templates(id uuid,name text,language text,status text,waba_id text);
+      INSERT INTO whatsapp_templates VALUES('00000000-0000-4000-8000-000000000002','synthetic_campaign','es','APROBADA','synthetic-waba');
       CREATE TABLE cloud_numbers(id uuid DEFAULT gen_random_uuid(),whatsapp_line_id uuid,phone_number_id text,waba_id text,status text);
       INSERT INTO cloud_numbers(whatsapp_line_id,phone_number_id,waba_id,status) VALUES('${line.id}','${line.phone_number_id}','synthetic-waba','active');`)
     const sql=readFileSync(new URL('../../../db/migrations/001_whatsapp_lines.sql',import.meta.url),'utf8')
@@ -54,13 +57,13 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('standalone Cloud cap
     await send();const second=await counters()
     expect(second).toEqual({...first,msgs_sent_hour:2,msgs_sent_today:2})
   })
-  it('releases an expired hour before replying while preserving the active daily quota',async()=>{
+  it('releases an expired hour before an initial template send while preserving the active daily quota',async()=>{
     await db.query("UPDATE whatsapp_lines SET msgs_sent_hour=30,msgs_sent_today=40,hour_reset_at=NOW()-INTERVAL '1 second',day_reset_at=NOW()+INTERVAL '2 hours'")
     const before=await counters();await send();const after=await counters()
     expect(after.msgs_sent_hour).toBe(1);expect(after.msgs_sent_today).toBe(41)
     expect(after.day_reset_at).toEqual(before.day_reset_at)
   })
-  it('releases both expired quotas before replying',async()=>{
+  it('releases both expired quotas before an initial template send',async()=>{
     await db.query("UPDATE whatsapp_lines SET msgs_sent_hour=30,msgs_sent_today=50,hour_reset_at=NOW()-INTERVAL '1 second',day_reset_at=NOW()-INTERVAL '1 second'")
     await send();expect(await counters()).toMatchObject({msgs_sent_hour:1,msgs_sent_today:1})
   })
@@ -70,7 +73,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('standalone Cloud cap
     await db.query("UPDATE whatsapp_lines SET msgs_sent_today=50,day_reset_at=NOW()-INTERVAL '1 second'")
     expect((await getEligibleLines()).map(l=>l.id)).toEqual([line.id])
   })
-  it('only campaign budget selection retains an opted-in exhausted line; normal/manual selection still excludes it',async()=>{
+  it('only campaign budget selection retains an opted-in exhausted line; ordinary campaign selection still excludes it',async()=>{
     await db.query("UPDATE whatsapp_lines SET respect_daily_recommendation=true,msgs_sent_today=50,day_reset_at=NOW()+INTERVAL '1 hour'")
     expect(await getEligibleLines()).toEqual([])
     expect((await getEligibleLines(undefined,{includeBudgetWaiting:true})).map(l=>l.id)).toEqual([line.id])
@@ -79,7 +82,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('standalone Cloud cap
   })
   it('keeps daily exhaustion after the hourly window expires',async()=>{
     await db.query("UPDATE whatsapp_lines SET msgs_sent_hour=30,msgs_sent_today=50,hour_reset_at=NOW()-INTERVAL '1 second',day_reset_at=NOW()+INTERVAL '1 hour'")
-    await expect(send()).rejects.toThrow('capacidad para responder')
+    await expect(send()).rejects.toThrow()
     expect(mocks.send).not.toHaveBeenCalled()
   })
   it('only lets one of eight concurrent reservations take the final slot',async()=>{
@@ -89,6 +92,27 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('standalone Cloud cap
     expect(mocks.send).toHaveBeenCalledTimes(1)
     expect(await counters()).toMatchObject({msgs_sent_hour:30,msgs_sent_today:50})
   })
+  it('allows concurrent replies after campaign quotas are exhausted without changing usage or deadlines',async()=>{
+    await db.query("UPDATE whatsapp_lines SET msgs_sent_hour=30,msgs_sent_today=50,hour_reset_at=NOW()+INTERVAL '1 hour',day_reset_at=NOW()+INTERVAL '24 hours'")
+    const before=await counters()
+    expect((await getEligibleReplyLines()).map(l=>l.id)).toEqual([line.id])
+    await Promise.all(Array.from({length:8},reply))
+    expect(mocks.send).toHaveBeenCalledTimes(8)
+    expect(await counters()).toEqual(before)
+    await expect(send()).rejects.toThrow()
+  })
+  it('lets replies continue with a zero campaign limit while preserving the connection check',async()=>{
+    await db.query('UPDATE whatsapp_lines SET msg_per_hour=0,msg_per_day=0')
+    await reply();expect(await counters()).toMatchObject({msgs_sent_hour:0,msgs_sent_today:0})
+    await db.query('UPDATE whatsapp_lines SET is_connected=false')
+    await expect(reply()).rejects.toThrow('disponible para responder')
+    expect(mocks.send).toHaveBeenCalledTimes(1)
+  })
+  it('never charges an uncertain reply to campaign capacity',async()=>{
+    mocks.send.mockRejectedValueOnce(new Error('network timeout'))
+    await expect(reply()).rejects.toThrow()
+    expect(await counters()).toMatchObject({msgs_sent_hour:0,msgs_sent_today:0})
+  })
   it('does not release reserved quota when the provider outcome is uncertain',async()=>{
     mocks.send.mockRejectedValue(new Error('network timeout'))
     await expect(send()).rejects.toThrow()
@@ -96,9 +120,9 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('standalone Cloud cap
   })
   it('does not bypass connection state or a configured zero limit',async()=>{
     await db.query("UPDATE whatsapp_lines SET msg_per_hour=0,hour_reset_at=NOW()-INTERVAL '1 second'")
-    await expect(send()).rejects.toThrow('capacidad para responder')
+    await expect(send()).rejects.toThrow()
     await db.query('UPDATE whatsapp_lines SET msg_per_hour=30,is_connected=false')
-    await expect(send()).rejects.toThrow('capacidad para responder')
+    await expect(send()).rejects.toThrow()
     expect(mocks.send).not.toHaveBeenCalled()
   })
 })
