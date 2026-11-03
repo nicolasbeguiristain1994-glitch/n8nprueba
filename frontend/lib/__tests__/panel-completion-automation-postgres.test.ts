@@ -56,20 +56,35 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL && process.env.RUN_CAMPAIGN_P
     await pool.query("UPDATE agent_contact_lines SET label=$3,phone=$4,is_active=true WHERE agent_code='ofizeus' AND linea=$1 AND variant=$2",[linea,variant,label,'+'+number])
  })
  afterAll(async()=>{await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.end()})
- it('explains a Royal test with a Betcoin tester without changing contacts or handing off the live chat',async()=>{
+ it('renders a real Royal sample for a Betcoin tester without changing contacts or handing off the live chat',async()=>{
   m.identity.mockResolvedValue({agent:'royal',campaignId:id(90),isCampaignTest:true})
   await pool.query(`UPDATE contacts SET panel='betcoin',linea=1;
+   INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone) VALUES
+    ('royal',1,'','Sin configurar',NULL),('royal',2,'','Royal 2','+5491199999999');
    UPDATE automations SET trigger_type='keyword',trigger_config='{"keywords":["Ver beneficio"]}',
     action_config='{"message":"Tu beneficio con tu asesor {{2}}","contact_line_directory":"royal"}'`)
   await evaluateAutomations(phone,'Ver beneficio','test-button',{...source,contextWamid:'royal-test'})
   expect(m.identity).toHaveBeenCalledWith(phone,expect.objectContaining({contextWamid:'royal-test',messageId:'test-button'}))
   expect(m.send).toHaveBeenCalledOnce()
   expect(m.send.mock.calls[0][0].request).toMatchObject({phoneNumberId:'phone-a',agentCode:'royal'})
-  expect(m.send.mock.calls[0][0].request.text.body).toContain('Prueba de royal: se activó la respuesta automática')
+  expect(m.send.mock.calls[0][0].request.text.body).toBe('Tu beneficio con tu asesor 549 | 1199 | 999999')
   expect((await pool.query('SELECT count(*)::int n FROM conversation_state')).rows[0].n).toBe(0)
   expect((await pool.query('SELECT panel,linea FROM contacts')).rows).toEqual([{panel:'betcoin',linea:1}])
   await evaluateAutomations(phone,'Ver beneficio','test-button',{...source,contextWamid:'royal-test'})
   expect(m.send).toHaveBeenCalledOnce()
+ })
+ it('keeps the configured link format in a test sample and explains missing destinations without a real handoff',async()=>{
+  m.identity.mockResolvedValue({agent:'royal',campaignId:id(90),isCampaignTest:true})
+  await pool.query(`UPDATE contacts SET panel='betcoin',linea=1;UPDATE crm_agents SET delivery_mode='link' WHERE code='royal';
+   INSERT INTO agent_contact_lines(agent_code,linea,variant,label,phone,link_url) VALUES('royal',2,'','Royal 2',NULL,'https://example.com/royal2');
+   UPDATE automations SET trigger_type='keyword',trigger_config='{"keywords":["Ver beneficio"]}',
+    action_config='{"message":"Beneficio: {{2}}","contact_line_directory":"royal"}'`)
+  await evaluateAutomations(phone,'Ver beneficio','test-link',{...source,contextWamid:'royal-test'})
+  expect(m.send.mock.calls[0][0].request.text.body).toBe('Beneficio: https://example.com/royal2')
+  await pool.query("DELETE FROM automation_message_jobs;DELETE FROM automation_conversation_safety;UPDATE agent_contact_lines SET is_active=false WHERE agent_code='royal'")
+  await evaluateAutomations(phone,'Ver beneficio','test-empty-directory',{...source,contextWamid:'royal-test'})
+  expect(m.send.mock.calls[1][0].request.text.body).toContain('no tiene una línea de atención activa')
+  expect((await pool.query('SELECT count(*)::int n FROM conversation_state')).rows[0].n).toBe(0)
  })
  it('sends the real configured benefit when the test recipient has a valid matching account',async()=>{
   m.identity.mockResolvedValue({agent:'royal',campaignId:id(90),isCampaignTest:true})

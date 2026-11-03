@@ -111,15 +111,26 @@ export async function evaluateAutomations(phone: string, messageText: string, me
       const agent=directoryAgentCode(rule.action_config.contact_line_directory)
       if (rule.type!=='reply' || !agent) return
       const directory = await db.query<{linea:number;variant:string;label:string;phone:string|null;link_url:string|null;delivery_mode:AgentDeliveryMode;phone_format:AgentPhoneFormat}>(`SELECT l.linea,l.variant,l.label,l.phone,l.link_url,a.delivery_mode,a.phone_format
-        FROM agent_contact_lines l JOIN crm_agents a ON a.code=l.agent_code WHERE l.agent_code=$1 AND l.is_active=true`,[agent])
-      const routed=agentLineReply(routingContacts,agent,rule.action_config.message??'Esta es tu línea asignada:',
-        directory.rows.map(line=>[line.linea,line.variant,line.label,line.phone,line.link_url] as const),directory.rows[0]?.delivery_mode || 'phone',directory.rows[0]?.phone_format || 'separated')
+        FROM agent_contact_lines l JOIN crm_agents a ON a.code=l.agent_code WHERE l.agent_code=$1 AND l.is_active=true ORDER BY l.linea,l.variant`,[agent])
+      const entries=directory.rows.map(line=>[line.linea,line.variant,line.label,line.phone,line.link_url] as const)
+      const render=(contacts:RoutingContact[])=>agentLineReply(contacts,agent,rule.action_config.message??'Esta es tu línea asignada:',
+        entries,directory.rows[0]?.delivery_mode || 'phone',directory.rows[0]?.phone_format || 'separated')
+      let routed=render(routingContacts)
+      // Registered test sends may preview any valid destination for this agent.
+      // The sample exists only while rendering; real contact assignments stay intact.
+      if (identity.isCampaignTest && routed.handoff) {
+        for (const line of directory.rows) {
+          if (line.variant!=='') continue
+          const sample=render([{first_name:null,panel:agent,linea:line.linea,linea_sub:null}])
+          if (!sample.handoff) {routed=sample;break}
+        }
+      }
       if (routed.message.length>4096) {
         await db.query(`INSERT INTO automation_logs(automation_id,automation_name,conversation_phone,result,details,agent_code) VALUES($1,$2,$3,'error','La respuesta con la línea supera 4096 caracteres',$4)`,[rule.id,rule.name,number,identity.agent]);return
       }
       const testMissingAccount = identity.isCampaignTest && routed.handoff
       steps=[{message:testMissingAccount
-        ? `Prueba de ${agent}: se activó la respuesta automática, pero este número no tiene una cuenta con una línea de atención válida y única en ${agent}. Para recibir el mensaje completo con el asesor correcto, usá un número vinculado a una cuenta de ese agente.`
+        ? `Prueba de ${agent}: se activó la respuesta automática, pero este agente no tiene una línea de atención activa con el número o enlace configurado. Completá una línea del agente para probar el mensaje completo.`
         : routed.message,delay_sec:0}]
       // A test recipient is not a new customer waiting for a real handoff.
       handoff=routed.handoff && !testMissingAccount
