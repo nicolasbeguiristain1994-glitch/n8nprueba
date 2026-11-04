@@ -45,6 +45,7 @@ draft → running → completed
 | Valor | Qué pasó | Qué hacer |
 |---|---|---|
 | `manual` | Operador presionó "Pausar" | Reanudar cuando sea conveniente. |
+| `line_budget` | La línea con continuación automática habilitada agotó el cupo o no pudo confirmar su disponibilidad | Los pendientes conservan su audiencia y línea. Continúan desde el día siguiente a la hora original de `scheduled_at` (o `started_at` si fue inmediata), en hora Argentina. Si el cupo se libera después de esa hora, esperan la siguiente fecha a esa misma hora. El reinicio de cupo a medianoche no autoriza un envío. |
 | `no_eligible_lines` | No hay líneas activas, conectadas y con cuota disponible | Reconectar líneas, esperar reset de contadores (hourly/daily), luego reanudar. |
 | `all_lines_outside_schedule` | Hay líneas con cuota pero todas fuera de su ventana de personalidad | Esperar a que entren en horario, luego reanudar. Las líneas se activan solas en su ventana. |
 | `systemic_error` | Errores de DB o red sostenidos — el procesador detectó N ciclos con 100% de rechazos | Revisar logs con `level:critical` o `alert:true`. Diagnosticar DB/red. Reanudar solo si el problema está resuelto. |

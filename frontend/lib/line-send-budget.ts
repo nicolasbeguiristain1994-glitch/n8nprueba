@@ -1,6 +1,7 @@
 import { getDbClient, query } from '@/lib/db'
 import { getLineVolumeInputs } from '@/lib/line-volume-data'
 import { recommendLineVolume, LINE_VOLUME_TIME_ZONE, type LineVolumeInput } from '@/lib/line-volume-policy'
+import { campaignContinuationAtSql, campaignLocalMidnightSql } from '@/lib/campaign-continuation'
 
 export type LineSendBudgetReservation = { id: string }
 export class LineSendBudgetError extends Error {
@@ -145,7 +146,12 @@ export async function finishLineSendBudget(id: string, outcome: 'consumed' | 'no
 
 export async function deferCampaignForLineBudget(campaignId: string, error: LineSendBudgetError): Promise<void> {
   // Never convert a manual/risk pause or start a stopped campaign. Only opt-in lines may auto-resume.
-  await query(`UPDATE campaigns SET status='paused',pause_reason=$2,budget_resume_at=$3,updated_at=NOW()
+  // Pending recipients continue the next day at the original campaign hour,
+  // or a later date if capacity is still unavailable. Never at the quota reset.
+  const resumeAt = campaignContinuationAtSql('COALESCE(scheduled_at, started_at, NOW())',
+    `GREATEST($3::timestamptz, ${campaignLocalMidnightSql('NOW()', true)})`)
+  await query(`UPDATE campaigns SET status='paused',pause_reason=$2,
+    budget_resume_at=CASE WHEN $3::timestamptz IS NULL THEN NULL ELSE ${resumeAt} END,updated_at=NOW()
     WHERE id=$1 AND status='running' AND pause_reason IS DISTINCT FROM 'risk_detected'`,
   [campaignId,error.autoResume ? 'line_budget' : 'no_eligible_lines',error.autoResume ? error.retryAt : null])
 }

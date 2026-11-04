@@ -14,6 +14,7 @@ export function CampaignBudgetWait({ pending, reviewAt, schedulerEnabled, onKeep
   return <section aria-label="Espera por cupo recomendado" className="mt-3 space-y-2 rounded-lg border border-amber-200 bg-amber-50/50 p-3 text-sm">
     <p className="flex items-center gap-2 font-semibold text-amber-800"><Clock size={16} /> Esperando cupo recomendado</p>
     <p>{pending.toLocaleString('es-AR')} destinatarios pendientes. Se conserva la línea habitual de cada cliente.</p>
+    <p>Los pendientes continuarán a partir del día siguiente, a la hora original de la campaña (hora Argentina), cuando haya cupo disponible.</p>
     <p className="text-xs text-muted-foreground">{schedulerEnabled
       ? `Próxima revisión: ${nextReview ?? 'pendiente de evaluación'}. La campaña continuará solo si vuelve a haber cupo y se cumplen los controles vigentes; esta fecha no garantiza un envío.`
       : 'La revisión automática no está habilitada. Revisá la disponibilidad antes de continuar.'}</p>

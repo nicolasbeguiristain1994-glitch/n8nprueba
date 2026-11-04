@@ -26,7 +26,8 @@ describe.skipIf(!enabled)('atomic line send budgets on local PostgreSQL',()=>{
    line_type text DEFAULT 'cloud',status text DEFAULT 'active',is_connected boolean DEFAULT true,sending_enabled boolean DEFAULT true,
    allowed_types jsonb DEFAULT '["campaign"]',msg_per_day int DEFAULT 100,msg_per_hour int DEFAULT 100,
    msgs_sent_today int DEFAULT 0,msgs_sent_hour int DEFAULT 0,day_reset_at timestamptz,hour_reset_at timestamptz,updated_at timestamptz);
-   CREATE TABLE campaigns(id uuid PRIMARY KEY,status text DEFAULT 'running',pause_reason text,budget_resume_at timestamptz,updated_at timestamptz);`)
+   CREATE TABLE campaigns(id uuid PRIMARY KEY,status text DEFAULT 'running',pause_reason text,budget_resume_at timestamptz,
+     scheduled_at timestamptz,started_at timestamptz,updated_at timestamptz);`)
   const sql=readFileSync(new URL('../../../db/migrations/159_line_protection_controls.sql',import.meta.url),'utf8')
   await db.query(sql.slice(sql.indexOf('CREATE TABLE IF NOT EXISTS line_campaign_daily_budgets'),sql.indexOf('-- The same business')))
   mocks.query.mockImplementation(async(sql,params)=>(await db.query(sql,params)).rows)
@@ -145,5 +146,31 @@ describe.skipIf(!enabled)('atomic line send budgets on local PostgreSQL',()=>{
   await db.query("UPDATE campaigns SET status='running',pause_reason=NULL")
   await deferCampaignForLineBudget(c,new LineSendBudgetError('capacity_exhausted',e.retryAt,false))
   expect((await db.query('SELECT pause_reason,budget_resume_at FROM campaigns')).rows[0]).toEqual({pause_reason:'no_eligible_lines',budget_resume_at:null})
+ })
+ it.each([true,false])('defers to the original %s schedule/start hour, not the midnight quota reset',async(scheduled)=>{
+  const {rows:[times]}=await db.query(`SELECT
+   ((NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date + TIME '17:30') AT TIME ZONE 'America/Argentina/Buenos_Aires' AS anchor,
+   (((NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date+1)::timestamp) AT TIME ZONE 'America/Argentina/Buenos_Aires' AS midnight,
+   (((NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date+1) + TIME '17:30') AT TIME ZONE 'America/Argentina/Buenos_Aires' AS expected`)
+  await db.query(`UPDATE campaigns SET scheduled_at=$1,started_at=$2`,[scheduled?times.anchor:null,
+   scheduled?new Date(times.anchor.getTime()+120_000):times.anchor])
+  const wait=new LineSendBudgetError('capacity_exhausted',times.midnight.toISOString(),true)
+  await deferCampaignForLineBudget(c,wait)
+  expect((await db.query('SELECT budget_resume_at FROM campaigns')).rows[0].budget_resume_at).toEqual(times.expected)
+  // A second concurrent line's error cannot change the already persisted wait.
+  await deferCampaignForLineBudget(c,new LineSendBudgetError('capacity_exhausted',new Date(times.midnight.getTime()+86_400_000).toISOString(),true))
+  expect((await db.query('SELECT budget_resume_at FROM campaigns')).rows[0].budget_resume_at).toEqual(times.expected)
+ })
+ it('moves an hourly wait to the next day and does not resume before a later capacity reset',async()=>{
+  const {rows:[times]}=await db.query(`SELECT
+   ((NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date + TIME '17:30') AT TIME ZONE 'America/Argentina/Buenos_Aires' AS anchor,
+   (((NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date+1) + TIME '17:30') AT TIME ZONE 'America/Argentina/Buenos_Aires' AS tomorrow`)
+  await db.query('UPDATE campaigns SET scheduled_at=$1',[times.anchor])
+  await deferCampaignForLineBudget(c,new LineSendBudgetError('capacity_exhausted',times.anchor.toISOString(),true))
+  expect((await db.query('SELECT budget_resume_at FROM campaigns')).rows[0].budget_resume_at).toEqual(times.tomorrow)
+  await db.query("UPDATE campaigns SET status='running',pause_reason=NULL")
+  await deferCampaignForLineBudget(c,new LineSendBudgetError('capacity_exhausted',new Date(times.tomorrow.getTime()+3600_000).toISOString(),true))
+  expect((await db.query('SELECT budget_resume_at FROM campaigns')).rows[0].budget_resume_at)
+   .toEqual(new Date(times.tomorrow.getTime()+86_400_000))
  })
 })

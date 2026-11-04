@@ -9,6 +9,7 @@ import {
 } from '@/lib/campaign-distributor'
 import { processInBackground, type CampaignRow } from '@/lib/send-processor'
 import { clog } from '@/lib/campaign-logger'
+import { campaignBudgetDueSql } from '@/lib/campaign-continuation'
 
 type ScheduledCampaign = CampaignForDispatch & {
   prospect_list_id: string | null; use_multi_line: boolean; scheduled_at: string; pause_reason?: string | null; budget_resume_at?: string | null
@@ -25,7 +26,7 @@ function maySend(owner: Owner | undefined) {
 const dueCampaign = (alias = '') => {
   const a = alias ? `${alias}.` : ''
   return `((${a}status = 'scheduled' AND ${a}scheduled_at <= NOW()) OR
-    (${a}status = 'paused' AND ${a}pause_reason = 'line_budget' AND ${a}budget_resume_at <= NOW()))`
+    (${a}status = 'paused' AND ${a}pause_reason = 'line_budget' AND ${campaignBudgetDueSql(alias)}))`
 }
 export async function claimDueCampaigns(): Promise<{ jobs: ScheduledJob[]; blocked: number }> {
   if (!isCampaignSchedulerEnabled()) return { jobs: [], blocked: 0 }

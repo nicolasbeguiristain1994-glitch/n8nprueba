@@ -9,6 +9,7 @@ vi.mock('@/lib/campaign-distributor', () => ({ createDispatchUnits: vi.fn(), cre
 vi.mock('@/lib/send-processor', () => ({ processInBackground: vi.fn() }))
 vi.mock('@/lib/cloud-api/meta-risk-refresh', () => ({ refreshCampaignMetaRisk: vi.fn() }))
 import { claimDueCampaigns } from '@/lib/campaign-scheduler'
+import { campaignBudgetDueSql, campaignContinuationAtSql } from '@/lib/campaign-continuation'
 const localUrl = process.env.OPS_TEST_DATABASE_URL || (process.env.RUN_CAMPAIGN_PG_TESTS === '1' ? process.env.TEST_DATABASE_URL || process.env.DATABASE_URL : '')
 describe.skipIf(!localUrl)('budget scheduler: real PostgreSQL claims and migration', () => {
   let pool: Pool
@@ -70,6 +71,52 @@ describe.skipIf(!localUrl)('budget scheduler: real PostgreSQL claims and migrati
     await campaign()
     const results = await Promise.all([claimDueCampaigns(),claimDueCampaigns()])
     expect(results.flatMap(r=>r.jobs)).toHaveLength(1)
+  })
+  it.each([
+    ['2026-11-03T20:30:00Z','2026-11-04T03:00:00Z','2026-11-04T20:30:00Z'],
+    ['2026-11-03T20:45:00Z','2026-11-04T03:00:00Z','2026-11-04T20:45:00Z'],
+    ['2026-11-03T20:30:00Z','2026-11-04T20:30:00Z','2026-11-04T20:30:00Z'],
+    ['2026-11-03T20:30:00Z','2026-11-04T20:30:01Z','2026-11-05T20:30:00Z'],
+    ['2026-11-03T20:30:00Z','2026-11-06T03:00:00Z','2026-11-06T20:30:00Z'],
+    ['2026-12-31T20:30:00Z','2027-01-01T03:00:00Z','2027-01-01T20:30:00Z'],
+  ])('aligns capacity %s / %s to the campaign hour %s', async (anchor, earliest, expected) => {
+    const sql = `SELECT ${campaignContinuationAtSql('$1::timestamptz', '$2::timestamptz')} AS resume_at`
+    expect((await pool.query(sql,[anchor,earliest])).rows[0].resume_at.toISOString()).toBe(new Date(expected).toISOString())
+  })
+  it.each([
+    ['2026-11-04T03:00:00Z',false], // midnight quota reset
+    ['2026-11-04T20:29:59Z',false],
+    ['2026-11-04T20:30:00Z',true],
+    ['2026-11-04T20:31:00Z',true], // normal scheduler latency
+    ['2026-11-05T03:00:00Z',false], // restart after a missed day
+    ['2026-11-05T20:30:00Z',true],
+  ])('fences both old midnight waits and overdue continuations at %s (%s)', async(now,expected) => {
+    const id=await campaign()
+    await pool.query(`UPDATE campaigns SET scheduled_at='2026-11-03T20:30:00Z',
+      started_at='2026-11-03T20:32:00Z',budget_resume_at='2026-11-04T03:00:00Z' WHERE id=$1`,[id])
+    const sql=`SELECT ${campaignBudgetDueSql('c','$1::timestamptz')} AS due FROM campaigns c WHERE id=$2`
+    expect((await pool.query(sql,[now,id])).rows[0].due).toBe(expected)
+  })
+  it('uses the same budget time guard in concurrent claims, without claiming a future local hour', async()=>{
+    const id=await campaign()
+    await pool.query(`UPDATE campaigns SET scheduled_at=NULL,started_at=NULL,
+      budget_resume_at=NOW()+INTERVAL '1 hour' WHERE id=$1`,[id])
+    // A legacy midnight row whose original hour is still later today is not due.
+    await pool.query(`UPDATE campaigns SET scheduled_at=(
+      (NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires')::date + TIME '23:59:59.999999'
+      ) AT TIME ZONE 'America/Argentina/Buenos_Aires',budget_resume_at=NOW()-INTERVAL '1 minute' WHERE id=$1`,[id])
+    expect((await claimDueCampaigns()).jobs).toHaveLength(0)
+    expect((await pool.query('SELECT status FROM campaigns WHERE id=$1',[id])).rows[0].status).toBe('paused')
+  })
+  it('calendar alignment is independent of the PostgreSQL session timezone', async()=>{
+    const client=await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query("SET LOCAL TIME ZONE 'Pacific/Auckland'")
+      const sql=`SELECT ${campaignContinuationAtSql('$1::timestamptz','$2::timestamptz')} AS resume_at`
+      expect((await client.query(sql,['2026-11-03T23:30:00-03:00','2026-11-05T00:00:00-03:00'])).rows[0].resume_at.toISOString())
+        .toBe('2026-11-06T02:30:00.000Z')
+    } finally { await client.query('ROLLBACK');client.release() }
   })
   it('blocks unresolved campaign incidents even when pause_reason says budget', async () => {
     const id = await campaign()
