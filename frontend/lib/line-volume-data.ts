@@ -177,11 +177,11 @@ LEFT JOIN risks r ON r.line_id=v.id
 GROUP BY v.id ORDER BY v.id`
 
 /** Read-only: no quota reset, Meta request, notification or campaign mutation. */
-export async function getLineVolumeInputs(accessibleLineIds: string[] | null, now = new Date()): Promise<LineVolumeInput[]> {
+export async function getLineVolumeInputs(accessibleLineIds: string[] | null, now = new Date(), read: typeof query = query): Promise<LineVolumeInput[]> {
   if (accessibleLineIds?.length === 0) return []
   const asOf = now.toISOString()
   const scope = lineVisibilityClause(accessibleLineIds, 'l', 2)
-  const lines = await query<LineRow>(`SELECT l.id,l.line_type AS "lineType",l.status,
+  const lines = await read<LineRow>(`SELECT l.id,l.line_type AS "lineType",l.status,
     l.is_connected AS "isConnected",l.sending_enabled AS "sendingEnabled",
     (l.allowed_types IS NULL OR l.allowed_types @> '["campaign"]'::jsonb) AS "campaignsAllowed",
     l.msg_per_day AS "dailyLimit",l.msg_per_hour AS "hourlyLimit",
@@ -197,7 +197,7 @@ export async function getLineVolumeInputs(accessibleLineIds: string[] | null, no
       FROM cloud_numbers WHERE whatsapp_line_id=l.id
     ) cn ON true WHERE 1=1 ${scope.clause} ORDER BY l.id`, [asOf,...scope.params])
   if (!lines.length) return []
-  const history = await query<HistoryRow>(LINE_VOLUME_HISTORY_SQL, [lines.map(l => l.id),asOf])
+  const history = await read<HistoryRow>(LINE_VOLUME_HISTORY_SQL, [lines.map(l => l.id),asOf])
   const byId = new Map(history.map(row => [row.id,row]))
   return lines.map(line => {
     const row = byId.get(line.id)
