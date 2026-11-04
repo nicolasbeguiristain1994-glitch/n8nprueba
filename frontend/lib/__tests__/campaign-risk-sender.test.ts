@@ -35,7 +35,7 @@ describe('last-mile campaign safety guard', () => {
       return { messages: [{ id: 'wamid.accepted' }] }
     })
     expect(await sender.send(req)).toEqual({ wamid: 'wamid.accepted' })
-    expect(mocks.guardQuery).toHaveBeenCalledWith(expect.stringContaining('FOR SHARE OF c'), ['campaign'])
+    expect(mocks.guardQuery).toHaveBeenCalledWith(expect.stringContaining('FOR SHARE OF c'), ['campaign','phone'])
     expect(mocks.guardQuery.mock.calls[0][0]).toContain("c.status='running'")
     expect(mocks.assert).toHaveBeenCalledWith({ campaignId: 'campaign', phoneNumberId: 'phone', templateName: 'beneficio' }, { query: mocks.guardQuery })
   })
@@ -77,4 +77,15 @@ describe('last-mile campaign safety guard', () => {
     expect(mocks.query).toHaveBeenCalledWith(expect.stringContaining("pause_reason='risk_detected'"), ['campaign'])
     vi.restoreAllMocks()
   })
+})
+
+it.each(['future','closed','other-line','other-phone'])('never calls Meta when the broadcast plan forbids %s',async mode=>{
+  const now=Date.now()
+  const plan={startsAt:new Date(now-1000).toISOString(),endsAt:new Date(now+60000).toISOString(),assignments:{'5491112345678':'line'}}
+  if(mode==='future')plan.startsAt=new Date(now+60000).toISOString()
+  if(mode==='closed')plan.endsAt=new Date(now-1000).toISOString()
+  if(mode==='other-phone')plan.assignments={'5491100000000':'line'} as never
+  mocks.guardQuery.mockResolvedValue({rows:[{id:'campaign',broadcast_plan:plan,plan_line_id:mode==='other-line'?'another':'line'}]})
+  await expect(sender.send(req)).rejects.toThrow('fuera del horario o del reparto')
+  expect(mocks.post).not.toHaveBeenCalled()
 })

@@ -1,3 +1,4 @@
+import { broadcastPlanRoutingSQL } from './broadcast-plan-window'
 import { query, withTransaction } from '@/lib/db'
 
 /** Same scope as campaign ownership; permissions are still checked at dispatch. */
@@ -110,5 +111,6 @@ export function campaignRoutingCondition(recipientAlias: string, linesParameter:
     ON a.owner_key=COALESCE(routing_campaign.owned_by,'${ROUTING_SYSTEM_OWNER}'::uuid)
     WHERE routing_campaign.id=${recipientAlias}.campaign_id
       AND a.phone=regexp_replace(${recipientAlias}.phone_number, '[^0-9]', '', 'g')
-      AND a.line_id=ANY(${linesParameter}::uuid[]))`
+      AND a.line_id=ANY(${linesParameter}::uuid[])
+      AND ${broadcastPlanRoutingSQL('routing_campaign',`${recipientAlias}.phone_number`,'a.line_id')})`
 }

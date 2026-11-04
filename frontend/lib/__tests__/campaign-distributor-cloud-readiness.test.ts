@@ -338,7 +338,7 @@ describe('campaign recipient fences and outcomes', () => {
 describe('template campaign dispatch selection', () => {
   it('pauses pending customers bound to an unavailable sender without completing or sending elsewhere', async () => {
     mocks.query.mockImplementation(sql => {
-      if (sql.startsWith('SELECT status FROM campaigns')) return Promise.resolve([{ status: 'running' }])
+      if (sql.startsWith("SELECT status,to_jsonb(campaigns)->'broadcast_plan'")) return Promise.resolve([{ status: 'running' }])
       if (sql.includes('FROM whatsapp_lines wl') && sql.includes('remaining_hour')) return Promise.resolve([line])
       if (sql.includes('WITH claimed AS')) return Promise.resolve([])
       if (sql.includes('COUNT(*) FILTER')) return Promise.resolve([{ sent: '0', failed: '0', skipped: '0', pending: '1' }])
@@ -351,7 +351,7 @@ describe('template campaign dispatch selection', () => {
   })
 
   it.each(['draft', 'scheduled', 'paused', 'cancelled'])('does not claim or send a %s campaign', async status => {
-    mocks.query.mockImplementation(sql => sql.startsWith('SELECT status FROM campaigns') ? Promise.resolve([{ status }]) : Promise.resolve([]))
+    mocks.query.mockImplementation(sql => sql.startsWith("SELECT status,to_jsonb(campaigns)->'broadcast_plan'") ? Promise.resolve([{ status }]) : Promise.resolve([]))
     await processMultiLineInBackground(campaign, 'lock')
     expect(mocks.send).not.toHaveBeenCalled()
     expect(mocks.query.mock.calls.some(([sql]) => sql.includes('WITH claimed AS'))).toBe(false)
@@ -368,7 +368,7 @@ describe('template campaign dispatch selection', () => {
     let statusReads = 0
     const unrelated = { ...line, id: 'unrelated-line', waba_id: 'other-waba', phone_number_id: '9876543210' }
     mocks.query.mockImplementation(sql => {
-      if (sql.startsWith('SELECT status FROM campaigns')) return Promise.resolve([{ status: statusReads++ === 0 ? 'running' : 'paused' }])
+      if (sql.startsWith("SELECT status,to_jsonb(campaigns)->'broadcast_plan'")) return Promise.resolve([{ status: statusReads++ === 0 ? 'running' : 'paused' }])
       if (sql.includes('FROM whatsapp_lines wl') && sql.includes('remaining_hour')) return Promise.resolve([unrelated, line])
       if (sql.includes('FROM campaign_recipients') && sql.includes('COUNT(*) FILTER')) return Promise.resolve([{ sent: '1', failed: '0', skipped: '0', pending: '0' }])
       return successfulDb(sql)
@@ -386,7 +386,7 @@ describe('template campaign dispatch selection', () => {
     mocks.loadedPersonality.mockReturnValue({ burstiness: 1 })
     mocks.activeNow.mockReturnValue(false)
     mocks.query.mockImplementation(sql => {
-      if (sql.startsWith('SELECT status FROM campaigns')) return Promise.resolve([{ status: reads++ === 0 ? 'running' : 'paused' }])
+      if (sql.startsWith("SELECT status,to_jsonb(campaigns)->'broadcast_plan'")) return Promise.resolve([{ status: reads++ === 0 ? 'running' : 'paused' }])
       if (sql.includes('FROM whatsapp_lines wl') && sql.includes('remaining_hour')) return Promise.resolve([{ ...line, has_personality: true }])
       return successfulDb(sql)
     })
@@ -429,7 +429,7 @@ import { CampaignRiskError, assertCampaignRiskClear, evaluateCampaignRisk } from
 it('keeps a risk-blocked recipient pending with definite no-send evidence', async () => {
   mocks.send.mockRejectedValueOnce(new CampaignRiskError('Quality hold'))
   expect(await sendOneUnit(campaign.id, line, campaign, 3)).toBe('failed')
-  expect(mocks.query.mock.calls.some(([sql]) => sql.includes("pause_reason='risk_detected'"))).toBe(true)
+  expect(mocks.query.mock.calls.some(([sql,args]) => sql.includes("pause_reason=$2") && args?.[1]==='risk_detected')).toBe(true)
   expect(mocks.query.mock.calls.some(([sql]) => sql.includes("SET status='pending'") && sql.includes('attempts=GREATEST(attempts-1,0)'))).toBe(true)
   expect(mocks.query.mock.calls.some(([sql]) => sql.includes('risk-guard-no-send'))).toBe(true)
   expect(mocks.query.mock.calls.some(([sql]) => sql.includes('[provider-outcome-unknown-no-resend]') && !sql.includes('INSERT INTO whatsapp_messages'))).toBe(false)

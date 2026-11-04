@@ -1,3 +1,4 @@
+import { assertBroadcastPlanSend } from '@/lib/broadcast-plan-guard'
 import { query } from '@/lib/db'
 import { CampaignRiskError, assertCloudSendRiskClear, recordCampaignProviderRisk, CAMPAIGN_RISK_CLEAR_SQL } from '@/lib/campaign-risk'
 import { CloudApiError, OptOutError } from '../errors'
@@ -33,9 +34,12 @@ export class MessageSenderService {
           // Hold the campaign row until the provider call finishes. A committed
           // pause then fences later sends, including other workers and lines.
           if (req.campaignId) {
-            const { rows } = await db.query(`SELECT c.id FROM campaigns c WHERE c.id=$1
-              AND c.status='running' AND ${CAMPAIGN_RISK_CLEAR_SQL} FOR SHARE OF c`, [req.campaignId])
+            const { rows } = await db.query(`SELECT c.id,to_jsonb(c)->'broadcast_plan' AS broadcast_plan,
+              (SELECT cn.whatsapp_line_id FROM cloud_numbers cn WHERE cn.phone_number_id=$2 LIMIT 1) AS plan_line_id
+              FROM campaigns c WHERE c.id=$1
+              AND c.status='running' AND ${CAMPAIGN_RISK_CLEAR_SQL} FOR SHARE OF c`, [req.campaignId,req.phoneNumberId])
             if (!rows.length) throw new CampaignRiskError('La campaña está detenida o tiene una alerta de riesgo pendiente.')
+            assertBroadcastPlanSend(rows[0].broadcast_plan,req.to,rows[0].plan_line_id)
           }
           await assertCloudSendRiskClear(riskContext, db)
         } catch (error) {

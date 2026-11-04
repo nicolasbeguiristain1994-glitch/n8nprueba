@@ -4,6 +4,10 @@ import { analyzeTemplate, buildTemplateParams, fillTemplatePreview, HEADER_LABEL
 const DELAY_MIN_SECONDS = 3
 const DELAY_MAX_SECONDS = 300
 
+import { campaignDraftFromPlan } from '@/lib/broadcast-plan-selection'
+import type { BroadcastPlan } from '@/lib/broadcast-planner'
+import { BroadcastPlanChanges } from '@/components/campaigns/BroadcastPlanChanges'
+import { BroadcastCampaignSummary } from '@/components/campaigns/BroadcastCampaignSummary'
 import { readCampaignSelection, clearCampaignSelection, type CampaignSelectionDraft } from '@/lib/campaign-selection-draft'
 import type { CampaignSelectionSummary } from '@/lib/campaign-selection'
 import { CampaignRoutingPreview } from '@/components/campaigns/CampaignRoutingPreview'
@@ -40,7 +44,7 @@ interface CampaignContact {
 interface Campaign {
   agent_key?: string | null
   id: string; name: string; message: string; messages: string[]; status: string
-  scheduled_at: string; completed_at: string; started_at: string | null; owned_by: string | null
+  plan_ends_at?: string | null; scheduled_at: string; completed_at: string; started_at: string | null; owned_by: string | null
   total_targets: number; total_sent: number; total_delivered: number
   total_read: number; total_failed: number; total_skipped: number
   read_rate: number; delivery_rate: number
@@ -48,7 +52,7 @@ interface Campaign {
   prospect_list_id: string | null; prospect_list_name: string | null
   antiblock_delay_min: number; antiblock_delay_max: number
   personalize_name: boolean; use_multi_line: boolean; created_at: string
-  pause_reason: 'manual' | 'no_eligible_lines' | 'all_lines_outside_schedule' | 'systemic_error' | 'config_missing' | 'frequency_exhausted' | 'assigned_line_unavailable' | 'risk_detected' | 'line_budget' | 'unknown' | null
+  pause_reason: 'manual' | 'no_eligible_lines' | 'all_lines_outside_schedule' | 'systemic_error' | 'config_missing' | 'frequency_exhausted' | 'assigned_line_unavailable' | 'risk_detected' | 'line_budget' | 'broadcast_plan_review' | 'unknown' | null
   risk?: CampaignRiskState
   processor_locked_at: string | null
   budget_resume_at?: string | null
@@ -119,6 +123,7 @@ export default function Campaigns() {
   const canOpenNew = isAdmin || (permissions?.campaigns?.includes('create') ?? false)
   const canReviewRisk = isAdmin || ((permissions?.campaigns?.includes('update') ?? false) && (permissions?.send?.includes('send') ?? false))
   const [contactSelection, setContactSelection] = useState<CampaignSelectionDraft | null>(null)
+  const [changedPlan,setChangedPlan] = useState<BroadcastPlan | null>(null)
   const [selectionToken, setSelectionToken] = useState<string | null>(null)
   const [selectionSummary, setSelectionSummary] = useState<CampaignSelectionSummary | null>(null)
   const [selectionError, setSelectionError] = useState<string | null>(null)
@@ -134,7 +139,16 @@ export default function Campaigns() {
       if (!user?.id || openedSelection.current === token) return
       openedSelection.current = token
       const draft = readCampaignSelection(token, user.id)
-      if (draft) { setContactSelection(draft); setSelectionToken(token); setShowNew(true) }
+      if (draft) {
+        setContactSelection(draft); setSelectionToken(token); setShowNew(true)
+        if (draft.broadcastPlan) {
+          const plan = draft.broadcastPlan
+          setForm(f => ({...f,name:`Difusión · ${plan.options.planDate}`,agent_key:plan.agentKey ?? plan.options.agent ?? '',scheduled_at:''}))
+          setUseTemplate(plan.options.messageType === 'template'); setSelectedTemplate(plan.options.templateId ?? '')
+          setCreateStep(1)
+          if (plan.options.messageType === 'template') void loadTemplates()
+        }
+      }
       else setSelectionNotice('No se pudo recuperar la selección. Volvé a Contactos y elegí Crear campaña nuevamente.')
     } else if (url.searchParams.get('action') === 'new') {
       open(); url.searchParams.delete('action'); window.history.replaceState(null, '', url)
@@ -161,7 +175,7 @@ export default function Campaigns() {
     try { clearCampaignSelection(selectionToken) } catch { /* storage may be disabled after navigation */ }
     const url = new URL(window.location.href)
     url.searchParams.delete('selection'); url.searchParams.delete('action'); window.history.replaceState(null, '', url)
-    setContactSelection(null); setSelectionToken(null); setSelectionSummary(null); setSelectionError(null)
+    setChangedPlan(null); setContactSelection(null); setSelectionToken(null); setSelectionSummary(null); setSelectionError(null)
   }
 
   const [selected, setSelected]       = useState<Campaign | null>(null)
@@ -342,6 +356,7 @@ export default function Campaigns() {
 
   const createCampaign = async () => {
     setCreateError(null)
+    if (changedPlan) { setCreateError('Revisá y aceptá los cambios del plan antes de guardar.'); return }
     if (contactSelection && (!selectionSummary?.eligible || selectionError)) {
       setCreateError('Revisá los destinatarios habilitados antes de guardar.'); return
     }
@@ -379,6 +394,8 @@ export default function Campaigns() {
         antiblock_delay_max: delayMax,
         // Exactly one audience source is sent.
         contact_ids: contactSelection?.contactIds,
+        broadcast_plan: contactSelection?.broadcastPlan ? {requestId:contactSelection.broadcastPlan.requestId,
+          fingerprint:contactSelection.broadcastPlan.fingerprint,options:contactSelection.broadcastPlan.options} : undefined,
         list_id:          !contactSelection && form.audience_type === 'contacts'  ? (form.list_id          || null) : null,
         prospect_list_id: !contactSelection && form.audience_type === 'prospects' ? (form.prospect_list_id || null) : null,
       }
@@ -411,6 +428,7 @@ export default function Campaigns() {
     setCreating(false)
     if (!res.ok) {
       const d = await res.json().catch(() => ({}))
+      if (res.status === 409 && d.plan && contactSelection?.broadcastPlan) setChangedPlan(d.plan)
       setCreateError(d.error || `Error ${res.status}`)
       return  // keep modal open, preserve form state
     }
@@ -426,7 +444,7 @@ export default function Campaigns() {
 
   // La plantilla no reemplaza los mensajes de texto: se envía como template con sus parámetros
   const onSelectTemplate = (tplId: string | null) => {
-    if (tplId === null || tplId.startsWith('_')) return
+    if (contactSelection?.broadcastPlan || tplId === null || tplId.startsWith('_')) return
     setSelectedTemplate(tplId)
     setTplBody([]); setTplHeaderLink(''); setTplButtons({})
   }
@@ -700,9 +718,9 @@ export default function Campaigns() {
 
   const canCreate = !creating && !!form.name.trim() &&
     (useTemplate ? templateReady : messages.some(m => m.trim()))
-  const audience = contactSelection ? { id: 'selection', name: 'Selección desde Contactos', contact_count: selectionSummary?.eligible ?? 0 } : form.audience_type === 'contacts' ? lists.find(l=>l.id===form.list_id) : prospectLists.find(l=>l.id===form.prospect_list_id)
+  const audience = contactSelection ? { id: 'selection', name: contactSelection.broadcastPlan ? 'Plan de difusión' : 'Selección desde Contactos', contact_count: selectionSummary?.eligible ?? 0 } : form.audience_type === 'contacts' ? lists.find(l=>l.id===form.list_id) : prospectLists.find(l=>l.id===form.prospect_list_id)
   const audienceCount = audience ? ('contact_count' in audience ? audience.contact_count : audience.member_count) : null
-  useEffect(()=>{ if(showNew){setCreateStep(0);setStepError(null)} },[showNew])
+  useEffect(()=>{ if(showNew){setCreateStep(contactSelection?.broadcastPlan ? 1 : 0);setStepError(null)} },[showNew])
   const nextCreateStep = () => {
     let error: string | null = null
     if(createStep===0 && (!form.name.trim() || !audience)) error='Completá el nombre y seleccioná la audiencia.'
@@ -780,6 +798,7 @@ export default function Campaigns() {
                             <GitBranch size={10}/> multi-línea
                           </span>
                         )}
+                        {c.plan_ends_at && <div className="text-xs text-muted-foreground">Cierre del plan: {formatAR(c.plan_ends_at)}</div>}
                         {c.scheduled_at && c.status === 'scheduled' && (
                           <span className="text-xs text-muted-foreground flex items-center gap-1">
                             <Clock size={11}/> {formatAR(c.scheduled_at)}
@@ -953,6 +972,10 @@ export default function Campaigns() {
                     <div className="mt-2 flex items-start gap-1.5 text-xs text-orange-600">
                       <AlertTriangle size={11} className="shrink-0 mt-0.5" />
                       <span>
+                        {c.pause_reason === 'broadcast_plan_review' && <>
+                          El plan necesita revisión: terminó su horario o una línea quedó sin cupo. Los pendientes no continúan otro día automáticamente.
+                          <span className="block">Si ya terminó la ventana, cancelá esta campaña para liberar los pendientes y volvé a Planificar difusión.</span>
+                        </>}
                         {c.pause_reason === 'manual' && (
                           <>Pausado manualmente. <span className="text-muted-foreground">Presioná Reanudar para continuar.</span></>
                         )}
@@ -1139,11 +1162,14 @@ export default function Campaigns() {
             </>}
             </section>
             <section tabIndex={-1} hidden={createStep!==1} aria-label="Contenido de la campaña" className="campaign-step space-y-4">
+            {contactSelection?.broadcastPlan && <BroadcastCampaignSummary plan={contactSelection.broadcastPlan} count={contactSelection.contactIds.length}/>}
             {/* Toggle plantilla */}
             <div className="col-span-2">
               <button
                 type="button"
+                disabled={!!contactSelection?.broadcastPlan}
                 onClick={() => {
+                  if (contactSelection?.broadcastPlan) return
                   const next = !useTemplate
                   setUseTemplate(next)
                   setSelectedTemplate('')
@@ -1164,7 +1190,7 @@ export default function Campaigns() {
               </button>
               {useTemplate && (
                 <div className="mt-2 space-y-3">
-                  <Select value={templateAccount || 'all'} onValueChange={v => { setTemplateAccount(v === 'all' ? '' : v || ''); onSelectTemplate('') }}>
+                  <Select disabled={!!contactSelection?.broadcastPlan} value={templateAccount || 'all'} onValueChange={v => { setTemplateAccount(v === 'all' ? '' : v || ''); onSelectTemplate('') }}>
                     <SelectTrigger aria-label="Cuenta de la plantilla" className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Todas las cuentas</SelectItem>
@@ -1180,6 +1206,7 @@ export default function Campaigns() {
                         </p>
                       ) : (
                         <Select
+                          disabled={!!contactSelection?.broadcastPlan}
                           value={selectedTemplate}
                           onValueChange={onSelectTemplate}
                           items={visibleTemplates.map(t => ({ value: t.id, label: `${t.name} · ${t.language || 'idioma no indicado'} · ${templateAccountName(t.waba_id)}` }))}
@@ -1487,12 +1514,13 @@ export default function Campaigns() {
             </>}
 
             </section>
-            {showNew && createStep>=2 && <CampaignRoutingPreview
+            {showNew && createStep>=2 && !contactSelection?.broadcastPlan && <CampaignRoutingPreview
               audience={contactSelection ? {contact_ids:contactSelection.contactIds}
                 : form.audience_type==='contacts' ? {list_id:form.list_id} : {prospect_list_id:form.prospect_list_id}}
               messageType={useTemplate?'template':'text'} templateId={selectedTemplate} scheduled={!!form.scheduled_at&&schedulerEnabled}
             />}
             <section tabIndex={-1} hidden={createStep!==2} aria-label="Líneas y horario" className="campaign-step space-y-4">
+            {contactSelection?.broadcastPlan && <BroadcastCampaignSummary plan={contactSelection.broadcastPlan} count={contactSelection.contactIds.length}/>}
             <div>
               <label htmlFor="campaign-scheduled-at" className="text-xs font-medium text-muted-foreground mb-1 block">
                 <Clock size={12} className="inline mr-1"/>Programar envío (opcional, hora Argentina UTC−03:00)
@@ -1500,10 +1528,18 @@ export default function Campaigns() {
               <Input
                 id="campaign-scheduled-at"
                 type="datetime-local"
+                min={contactSelection?.broadcastPlan ? new Date(Date.parse(contactSelection.broadcastPlan.startsAt)-3*3600000).toISOString().slice(0,16) : undefined}
+                max={contactSelection?.broadcastPlan ? new Date(Date.parse(contactSelection.broadcastPlan.endsAt)-3*3600000-60000).toISOString().slice(0,16) : undefined}
                 value={schedulerEnabled ? form.scheduled_at : ''}
                 disabled={!schedulerEnabled}
                 onChange={e => setForm(f=>({...f,scheduled_at:e.target.value}))}
               />
+              {schedulerEnabled && contactSelection?.broadcastPlan && <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => {
+                const plan=contactSelection.broadcastPlan!
+                const at=Math.max(Date.parse(plan.startsAt),Date.now()+5*60000)
+                if (at>=Date.parse(plan.endsAt)) {setStepError('El horario del plan está por terminar. Guardá un borrador o volvé a planificar.');return}
+                setForm(f=>({...f,scheduled_at:new Date(at-3*3600000).toISOString().slice(0,16)}))
+              }}>Usar horario del plan</Button>}
               {schedulerEnabled
                 ? <p className="text-xs text-muted-foreground mt-1">Se interpreta como hora de Argentina (America/Argentina/Buenos_Aires).</p>
                 : <p className="text-xs text-orange-500 mt-1">Programación automática no habilitada. Podés guardar la campaña como borrador y enviarla manualmente.</p>}
@@ -1559,14 +1595,29 @@ export default function Campaigns() {
                 <div><dt className="text-muted-foreground">{contactSelection ? 'Destinatarios habilitados' : 'Personas en la lista'}</dt><dd className="font-medium">{audienceCount===null?'—':audienceCount.toLocaleString('es-AR')}</dd></div>
                 <div><dt className="text-muted-foreground">Contenido</dt><dd className="font-medium">{useTemplate?`Plantilla: ${selectedTpl?.name ?? 'Sin seleccionar'}`:`Texto · ${messages.filter(m=>m.trim()).length} variantes`}</dd></div>
                 <div><dt className="text-muted-foreground">Programación</dt><dd className="font-medium">{form.scheduled_at&&schedulerEnabled?formatAR(toArgentinaIso(form.scheduled_at)!):'Borrador · envío manual posterior'}</dd></div>
-                <div><dt className="text-muted-foreground">Líneas</dt><dd>Reparto automático · conserva la línea habitual</dd></div>
+                <div><dt className="text-muted-foreground">Líneas</dt><dd>{contactSelection?.broadcastPlan ? 'Reparto del plan elegido' : 'Reparto automático · conserva la línea habitual'}</dd></div>
                 <div><dt className="text-muted-foreground">Pausas</dt><dd>{form.antiblock_delay_min}–{form.antiblock_delay_max} segundos</dd></div>
               </dl></div>
+              {contactSelection?.broadcastPlan && <BroadcastCampaignSummary plan={contactSelection.broadcastPlan} count={contactSelection.contactIds.length}/>}
               {contactSelection && <SelectedContactsAudience count={contactSelection.contactIds.length} summary={selectionSummary} error={selectionError} onRetry={() => setSelectionRetry(n => n + 1)} />}
               <div className="rounded-xl border p-4"><p className="mb-2 text-xs font-semibold text-muted-foreground">Vista previa del contenido · nombres de ejemplo</p><p className="whitespace-pre-wrap break-words text-sm">{useTemplate&&tplAnalysis?fillTemplatePreview(tplAnalysis.bodyText,tplBody):previewMsg}</p>{!useTemplate&&messages.filter(m=>m.trim()).length>1&&<details className="mt-3 text-xs"><summary className="cursor-pointer text-primary">Ver todas las variantes</summary>{messages.filter(m=>m.trim()).map((m,i)=><p className="mt-2 whitespace-pre-wrap break-words border-t pt-2" key={i}>{m}</p>)}</details>}</div>
               <p className="rounded-lg border border-warning/20 bg-warning/5 p-3 text-xs text-muted-foreground">La cantidad de la lista no equivale a envíos elegibles. El sistema mantiene los controles de baja, frecuencia, plantillas, cupos y horarios al procesar la campaña; las exclusiones y fallos se muestran en su detalle.</p>
               {form.scheduled_at&&schedulerEnabled&&<p className="text-sm font-medium">Al confirmar, la campaña queda programada para la fecha indicada.</p>}
             </section>}
+            {changedPlan && contactSelection?.broadcastPlan && <div role="alert" className="rounded-xl border border-warning p-4 space-y-3 text-sm">
+              <p className="font-semibold">La disponibilidad cambió</p>
+              <p>Antes: {contactSelection.contactIds.length} contactos. Ahora: {changedPlan.selected} seleccionados, {changedPlan.pending} pendientes y {changedPlan.excluded} excluidos.</p>
+              <ul>{changedPlan.lines.map(line => <li key={line.id}>{line.name}: {line.selected} contactos{line.reason ? ` · ${line.reason}` : ''}</li>)}</ul>
+              <BroadcastPlanChanges key={changedPlan.fingerprint} previous={contactSelection.broadcastPlan} plan={changedPlan}/>
+              <p className="text-xs">También puede haber cambiado un destinatario o su línea aunque el total sea igual. Al aceptar, se reemplaza la selección por la propuesta actual; todavía no se crea la campaña.</p>
+              <Button variant="outline" disabled={!changedPlan.selected} onClick={() => {
+                const previous=contactSelection.broadcastPlan!
+                setContactSelection({...contactSelection,contactIds:changedPlan.contacts.filter(c=>!c.reason).map(c=>c.id),
+                  broadcastPlan:campaignDraftFromPlan(changedPlan,previous.options,previous.requestId)})
+                setChangedPlan(null);setCreateError(null)
+              }}>Aceptar plan actualizado</Button>
+              {!changedPlan.selected && <a href="/prioridades" className="block underline">Volver a Planificar difusión</a>}
+            </div>}
             {stepError&&<p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">{stepError}</p>}
             {createError && (
               <div role="alert" className="col-span-2 bg-destructive/10 border border-destructive/20 rounded-lg px-3 py-2 text-sm text-destructive flex items-center justify-between">
@@ -1578,7 +1629,7 @@ export default function Campaigns() {
               <Button variant="ghost" onClick={closeNew} disabled={creating}>Cancelar</Button>
               <span className="mr-auto text-xs text-muted-foreground">Paso {createStep+1} de 4</span>
               {createStep>0&&<Button variant="outline" disabled={creating} onClick={()=>{setCreateStep(n=>n-1);setStepError(null)}}>Anterior</Button>}
-              {createStep<3?<Button onClick={nextCreateStep}>Continuar</Button>:<Button onClick={createCampaign} disabled={!canCreate||!audience||!!contactSelection&&(!selectionSummary?.eligible||!!selectionError)}>{creating&&<Loader2 size={14} className="animate-spin"/>}{form.scheduled_at&&schedulerEnabled?'Programar campaña':'Guardar campaña'}</Button>}
+              {createStep<3?<Button onClick={nextCreateStep}>Continuar</Button>:<Button onClick={createCampaign} disabled={creating||!!changedPlan||!canCreate||!audience||!!contactSelection&&(!selectionSummary?.eligible||!!selectionError)}>{creating&&<Loader2 size={14} className="animate-spin"/>}{form.scheduled_at&&schedulerEnabled?'Programar campaña':'Guardar campaña'}</Button>}
             </div>
           </div>
         </DialogContent>

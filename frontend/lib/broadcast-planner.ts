@@ -24,6 +24,7 @@ export interface BroadcastPlanOptions extends BroadcastPlanFilters {
 export interface PlanningLine {
   id: string
   name: string
+  phoneSuffix?: string
   type: 'cloud' | 'evolution'
   status: string
   connected: boolean
@@ -88,6 +89,24 @@ export const PLAN_REASON_LABELS = {
 } as const
 export type PlanReason = keyof typeof PLAN_REASON_LABELS
 
+/** Deferred contacts can be reconsidered; exclusions need a data/eligibility review. */
+export function planContactGroup(reason: PlanReason | null): 'selected' | 'pending' | 'excluded' {
+  if (!reason) return 'selected'
+  return ['assigned_line_unavailable','assigned_line_full','no_capacity','selection_limit','frequency','already_queued'].includes(reason) ? 'pending' : 'excluded'
+}
+export const PLAN_REASON_ACTIONS: Record<PlanReason,string> = {
+  invalid_phone:'Corregí el teléfono en Contactos.', duplicate:'Se incluye una sola persona por teléfono.',
+  excluded:'Revisá el consentimiento o la baja en Contactos.', inactive_status:'Revisá el estado del contacto.',
+  activity_changed:'Actualizá Prioridades para considerar su actividad reciente.',
+  no_longer_eligible:'Actualizá Prioridades y revisá el intervalo de recontacto.',
+  frequency:'Probá otra fecha para respetar el descanso entre mensajes.',
+  already_queued:'Continuá la campaña pendiente antes de incluirlo otra vez.',
+  assigned_line_unavailable:'Revisá las líneas seleccionadas y la compatibilidad de la plantilla.',
+  assigned_line_full:'Probá mañana o pasado mañana; se conserva su línea habitual.',
+  no_capacity:'Probá otra fecha o incluí más líneas compatibles.',
+  selection_limit:'Aumentá el máximo de contactos si querés incluir más.',
+}
+
 export interface PlannedContact {
   id: string; name: string; phone: string; score: number
   segment: string | null; tier: ValueTier; agent: string | null
@@ -110,6 +129,8 @@ export interface BroadcastPlan {
   total: number
   selected: number
   pending: number
+  excluded: number
+  fingerprint?: string
   lines: PlannedLine[]
   contacts: PlannedContact[]
   reasons: { code: PlanReason; label: string; count: number }[]
@@ -127,12 +148,12 @@ export function broadcastPlanningDays(now: Date) {
   }))
 }
 
-export function broadcastPlanWindow(now: Date, options: Pick<BroadcastPlanOptions,'planDate'|'startTime'|'endTime'>) {
+export function broadcastPlanWindow(now: Date, options: Pick<BroadcastPlanOptions,'planDate'|'startTime'|'endTime'>, notBefore?: Date) {
   const today = broadcastPlanningDays(now)[0].date
   const date = options.planDate ?? today
   return {
     date, future:date > today,
-    startsAt:new Date(Math.max(now.getTime(),Date.parse(`${date}T${options.startTime ?? '09:00'}:00-03:00`))),
+    startsAt:new Date(Math.max(now.getTime(),notBefore?.getTime() ?? 0,Date.parse(`${date}T${options.startTime ?? '09:00'}:00-03:00`))),
     endsAt:new Date(`${date}T${options.endTime}:00-03:00`),
   }
 }
@@ -146,8 +167,8 @@ function inSchedule(line: PlanningLine, at: number) {
 }
 
 /** Estimate only the chosen window; future renewals require a known reset time. */
-export function planLineCapacity(line: PlanningLine, options: BroadcastPlanOptions, now: Date, templateWaba: string | null): PlannedLine {
-  const window = broadcastPlanWindow(now,options)
+export function planLineCapacity(line: PlanningLine, options: BroadcastPlanOptions, now: Date, templateWaba: string | null, notBefore?: Date): PlannedLine {
+  const window = broadcastPlanWindow(now,options,notBefore)
   const start = window.startsAt.getTime(), end = window.endsAt.getTime()
   const recommended = window.future ? line.recommendedDaily ?? line.recommendedRemaining : line.recommendedRemaining
   const used = stamp(line.dayResetAt) <= start ? 0 : line.sentToday
@@ -200,12 +221,12 @@ export function buildBroadcastPlan(input: {
   contacts: PlanningContact[]; lines: PlanningLine[]; options: BroadcastPlanOptions
   now: Date; computedAt: string | null; templateWaba: string | null
   frequencyRule: ContactFrequencyRule; scorerConfig?: ScorerConfig; eligibilityConfig: EligibilityConfig
-  warnings?: string[]
+  warnings?: string[]; notBefore?: Date
 }): BroadcastPlan {
   const { options, now } = input
-  const window = broadcastPlanWindow(now,options)
+  const window = broadcastPlanWindow(now,options,input.notBefore)
   const selectedLines = input.lines.filter(l => options.lineIds.includes(l.id))
-  const lines = selectedLines.map(l => planLineCapacity(l, options, now, input.templateWaba))
+  const lines = selectedLines.map(l => planLineCapacity(l, options, now, input.templateWaba,input.notBefore))
   const byId = new Map(lines.map(l => [l.id, l]))
   const weights = new Map(selectedLines.map(l => [l.id, l.priority]))
   const seen = new Set<string>()
@@ -267,6 +288,7 @@ export function buildBroadcastPlan(input: {
     warnings.push('El cálculo de prioridades tiene más de 36 horas. Actualizalo antes de crear campañas.')
   return { generatedAt: now.toISOString(), planDate:window.date, startsAt:window.startsAt.toISOString(), computedAt: input.computedAt,
     endsAt: window.endsAt.toISOString(), total: contacts.length, selected,
-    pending: contacts.length - selected, contacts, lines, warnings,
+    pending: contacts.filter(c => planContactGroup(c.reason) === 'pending').length,
+    excluded: contacts.filter(c => planContactGroup(c.reason) === 'excluded').length, contacts, lines, warnings,
     reasons: [...counts].map(([code,count]) => ({ code, count, label: PLAN_REASON_LABELS[code] })) }
 }

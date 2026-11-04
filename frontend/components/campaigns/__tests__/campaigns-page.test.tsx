@@ -888,3 +888,46 @@ describe('campaigns waiting for the recommended line budget', () => {
     expect(screen.queryByRole('button', { name: 'Mantener en pausa' })).not.toBeInTheDocument()
   })
 })
+
+describe('Campaigns created from a reviewed broadcast plan',()=>{
+  const ids=['11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222']
+  const line='33333333-3333-4333-8333-333333333333'
+  const draft={requestId:'44444444-4444-4444-8444-444444444444',fingerprint:'a'.repeat(64),
+    options:{lineIds:[line],messageType:'text' as const,planDate:'2030-01-01',startTime:'09:00',endTime:'20:00',reservePercent:10,maxContacts:500},
+    startsAt:'2030-01-01T12:00:00Z',endsAt:'2030-01-01T23:00:00Z',lines:[{id:line,name:'Ventas · …1234',selected:2}],recipients:ids.map(id=>({id,lineId:line}))}
+  function setup() {
+    const token=saveCampaignSelection('owner',ids,sessionStorage,draft)
+    window.history.replaceState(null,'',`/campaigns?selection=${token}`)
+    routeFetchJson(()=>Promise.resolve({campaigns:[],scheduler_enabled:true}))
+    const existing=vi.mocked(fetchJson).getMockImplementation()!
+    vi.mocked(fetchJson).mockImplementation((input,init)=>String(input)==='/api/campaigns/audience-preview'
+      ? Promise.resolve({selected:JSON.parse(init?.body as string).contact_ids.length,eligible:JSON.parse(init?.body as string).contact_ids.length,excluded:0,blacklisted:0,inactive:0,opted_out:0,duplicates:0}) as Promise<never> : existing(input,init))
+    return token
+  }
+  it('starts at content and sends the exact reviewed request with an optional schedule',async()=>{
+    setup();const send=vi.fn().mockResolvedValue(jsonResponse({id:'new'}));vi.stubGlobal('fetch',send)
+    render(<Page/>);await screen.findByText('Paso 2 de 4')
+    expect(screen.queryByText('Reparto estimado por línea')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByPlaceholderText('Hola {{nombre}}, tenemos una oferta especial…'),{target:{value:'Hola'}})
+    nextStep();fireEvent.click(screen.getByRole('button',{name:'Usar horario del plan'}));nextStep()
+    fireEvent.click(screen.getByRole('button',{name:'Programar campaña'}))
+    await waitFor(()=>expect(send).toHaveBeenCalledOnce())
+    expect(postedBody(send)).toMatchObject({contact_ids:ids,broadcast_plan:{requestId:draft.requestId,fingerprint:draft.fingerprint,options:draft.options},scheduled_at:'2030-01-01T09:00:00-03:00'})
+  })
+  it('requires explicit acceptance of a changed plan before retrying with the new contacts',async()=>{
+    setup();const changed={fingerprint:'b'.repeat(64),planDate:'2030-01-01',startsAt:draft.startsAt,endsAt:draft.endsAt,selected:1,pending:1,excluded:0,
+      lines:[{id:line,name:'Ventas · …1234',selected:1}],contacts:[{id:ids[1],name:'Juan',phone:'5491100000002',lineId:line,reason:null}]}
+    const send=vi.fn().mockResolvedValueOnce(jsonResponse({error:'El plan cambió',plan:changed},409)).mockResolvedValue(jsonResponse({id:'new'}));vi.stubGlobal('fetch',send)
+    render(<Page/>);await screen.findByText('Paso 2 de 4')
+    fireEvent.change(screen.getByPlaceholderText('Hola {{nombre}}, tenemos una oferta especial…'),{target:{value:'Hola'}})
+    reviewContent();fireEvent.click(screen.getByRole('button',{name:'Guardar campaña'}))
+    await screen.findByText('La disponibilidad cambió')
+    expect(screen.getByRole('button',{name:'Guardar campaña'})).toBeDisabled()
+    expect(screen.getByText('0 incorporados · 1 retirados · 0 con otra línea')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button',{name:'Aceptar plan actualizado'}))
+    await waitFor(()=>expect(screen.getByRole('button',{name:'Guardar campaña'})).toBeEnabled())
+    fireEvent.click(screen.getByRole('button',{name:'Guardar campaña'}))
+    await waitFor(()=>expect(send).toHaveBeenCalledTimes(2))
+    expect(JSON.parse(send.mock.calls[1][1].body)).toMatchObject({contact_ids:[ids[1]],broadcast_plan:{requestId:draft.requestId,fingerprint:changed.fingerprint}})
+  })
+})

@@ -39,13 +39,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   try {
     const [campaign] = await query<{
       agent_key: string | null; owned_by: string | null; status: string; started_at: Date | null
-      processor_locked_at: Date | null; processor_lock_token: string | null
-    }>(`SELECT agent_key, owned_by, status, started_at, processor_locked_at, processor_lock_token
+      processor_locked_at: Date | null; processor_lock_token: string | null; plan: {startsAt:string;endsAt:string} | null
+    }>(`SELECT agent_key, owned_by, status, started_at, processor_locked_at, processor_lock_token, to_jsonb(campaigns)->'broadcast_plan' AS plan
         FROM campaigns WHERE id = $1`, [id])
     if (!campaign) return NextResponse.json({ error: 'Campaña no encontrada' }, { status: 404 })
     if (!isCampaignOwnerOrAdmin(auth.user, campaign.owned_by, campaign.agent_key)) {
       return NextResponse.json({ error: 'No tenés permiso para editar esta campaña' }, { status: 403 })
     }
+    if (campaign.plan && (Date.parse(schedule)<Date.parse(campaign.plan.startsAt) || Date.parse(schedule)>=Date.parse(campaign.plan.endsAt)))
+      return NextResponse.json({error:'El horario debe quedar dentro de la ventana del plan. Para otra fecha, volvé a Planificar difusión.'},{status:409})
     if (campaign.status !== 'scheduled' || campaign.started_at || campaign.processor_locked_at || campaign.processor_lock_token) {
       return NextResponse.json({ error: 'Solo se puede editar el horario de una campaña programada que todavía no empezó a enviarse' }, { status: 409 })
     }

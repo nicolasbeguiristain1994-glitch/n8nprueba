@@ -3,11 +3,18 @@ import { beforeAll,afterAll,beforeEach,describe,it,expect,vi } from 'vitest'
 import { Pool } from 'pg'
 import { broadcastPlanningDays } from '@/lib/broadcast-planner'
 import { getLineVolumeInputs } from '@/lib/line-volume-data'
-import { withTransaction } from '@/lib/db'
+import { NextRequest } from 'next/server'
+import { POST as createCampaign } from '@/app/api/campaigns/route'
+import { campaignRoutingCondition } from '@/lib/campaign-routing'
+import { checkPermissionWithUser } from '@/lib/permissions'
+import { query, withTransaction } from '@/lib/db'
 import { getBroadcastPlanningOptions,prepareDailyBroadcast } from '@/lib/broadcast-plan-repository'
 import { INACTIVITY_WINDOWS,RECONTACT_COOLDOWN_DAYS,VALUE_SCORES } from '@/lib/user-prioritization/config'
 import type { SessionUser } from '@/lib/auth'
 
+vi.mock('@/lib/permissions',()=>({checkPermissionWithUser:vi.fn(),isOwnerOrAdmin:()=>true}))
+vi.mock('@/lib/audit',()=>({audit:vi.fn()}))
+vi.mock('@/lib/security-log',()=>({securityLog:vi.fn()}))
 vi.mock('@/lib/line-volume-data',()=>({getLineVolumeInputs:vi.fn()}))
 vi.mock('@/lib/db',()=>({withTransaction:vi.fn(),query:vi.fn()}))
 vi.mock('@/lib/scoring-config-service',()=>({getAll:async()=>({allow_threshold:30,delay_threshold:60,cooldown_multiplier:2,risk_weight_daily:40,risk_weight_weekly:35,risk_weight_cooldown:25})}))
@@ -40,24 +47,34 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('daily broadcast previe
       CREATE TABLE blacklist(phone_number_normalized text,removed_at timestamptz,scope_key text DEFAULT 'global',agent_code text);
       CREATE FUNCTION contact_agent_key(text) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT $1 $$;
       CREATE FUNCTION casino_monthly_value_tier(numeric) RETURNS text LANGUAGE sql IMMUTABLE AS $$ SELECT 'vip'::text $$;
-      CREATE TABLE campaigns(id uuid PRIMARY KEY,owned_by uuid,status text DEFAULT 'running',scheduled_at timestamptz);
-      CREATE TABLE campaign_recipients(id uuid DEFAULT gen_random_uuid(),campaign_id uuid,contact_id uuid,phone_number text,line_id uuid,status text DEFAULT 'pending',sent_at timestamptz,updated_at timestamptz DEFAULT NOW(),error_detail text);
-      CREATE TABLE campaign_line_assignments(owner_key uuid,phone text,line_id uuid);
+      CREATE TABLE campaigns(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),owned_by uuid,status text DEFAULT 'running',scheduled_at timestamptz,
+        name text CHECK(name<>'force-failure'),message text,messages jsonb,media_url text,media_type text,list_id uuid,prospect_list_id uuid,type text,
+        total_targets int,antiblock_delay_min int,antiblock_delay_max int,personalize_name bool,use_multi_line bool,updated_by uuid,
+        message_type text,template_id uuid,template_params jsonb,agent_key text,broadcast_plan jsonb,audience_snapshot_at timestamptz,is_priority_broadcast bool DEFAULT false);
+      CREATE TABLE contact_lists(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name text,description text,source text,filters jsonb,owned_by uuid,updated_by uuid,is_dynamic bool,refreshed_at timestamptz);
+      CREATE TABLE contact_list_members(list_id uuid,contact_id uuid,PRIMARY KEY(list_id,contact_id));
+      CREATE TABLE campaign_audience_members(campaign_id uuid,contact_id uuid,PRIMARY KEY(campaign_id,contact_id));
+      CREATE TABLE priority_broadcasts(campaign_id uuid PRIMARY KEY,request_hash text,actor_name text);
+      CREATE TABLE campaign_recipients(id uuid DEFAULT gen_random_uuid(),campaign_id uuid,contact_id uuid,phone_number text,line_id uuid,agent_code text,created_at timestamptz DEFAULT NOW(),status text DEFAULT 'pending',sent_at timestamptz,updated_at timestamptz DEFAULT NOW(),error_detail text);
+      CREATE TABLE campaign_line_assignments(owner_key uuid,phone text,line_id uuid,source text,assigned_at timestamptz DEFAULT NOW(),PRIMARY KEY(owner_key,phone));
       CREATE TABLE phone_line_assignments(phone text,line_id uuid,updated_at timestamptz DEFAULT NOW());
       CREATE TABLE contact_send_history(contact_id uuid,sent_at timestamptz,campaign_recipient_id uuid,frequency_released_at timestamptz);
       CREATE TABLE whatsapp_messages(id uuid,campaign_recipient_id uuid,direction text,status text,error_detail text,updated_at timestamptz);
       CREATE TABLE contact_frequency_rules(id uuid,operator_id uuid,seg_monto text,seg_actividad text,max_per_day int,max_per_week int,min_hours_between_sends int,is_active bool,created_at timestamptz,updated_at timestamptz);
     `)
+    vi.mocked(query).mockImplementation(async <T,>(sql:string,args?:unknown[]) => (await pool.query(sql,args)).rows as T[])
     vi.mocked(withTransaction).mockImplementation(async work=>{
       const client=await pool.connect()
       try {await client.query('BEGIN');const result=await work(client);await client.query('COMMIT');return result}
       catch(error){await client.query('ROLLBACK');throw error}finally{client.release()}
     })
   })
-  afterAll(async()=>{if(pool){await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.end()}})
+  afterAll(async()=>{vi.unstubAllEnvs();if(pool){await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.end()}})
   beforeEach(async()=>{
+    vi.mocked(checkPermissionWithUser).mockResolvedValue({ok:true,user})
+    vi.stubEnv('CAMPAIGN_SCHEDULER_ENABLED','true');vi.stubEnv('CRON_SECRET','test-only')
     vi.mocked(getLineVolumeInputs).mockImplementation(async ids => (ids ?? []).map(id => ({id,lineType:'evolution',status:'active',isConnected:true,sendingEnabled:true,campaignsAllowed:true,dailyLimit:100,hourlyLimit:100,dailyUsed:0,hourlyUsed:0,cloudStatus:null,quality:null,lastMetaCheckAt:null,activeRiskReasons:[],recentDays:[],now:new Date().toISOString()})))
-    await pool.query(`TRUNCATE whatsapp_lines,cloud_numbers,cloud_conversations,cloud_messages,whatsapp_templates,contacts,contact_priority_scores,system_jobs,operator_contact_visibility,blacklist,campaigns,campaign_recipients,campaign_line_assignments,phone_line_assignments,contact_send_history,whatsapp_messages,contact_frequency_rules`)
+    await pool.query(`TRUNCATE contact_lists,contact_list_members,campaign_audience_members,priority_broadcasts,whatsapp_lines,cloud_numbers,cloud_conversations,cloud_messages,whatsapp_templates,contacts,contact_priority_scores,system_jobs,operator_contact_visibility,blacklist,campaigns,campaign_recipients,campaign_line_assignments,phone_line_assignments,contact_send_history,whatsapp_messages,contact_frequency_rules`)
     await pool.query(`INSERT INTO whatsapp_lines(id,owner_user_id,display_name) VALUES($1,$3,'A'),($2,$3,'B');`,[a,b,owner])
     await pool.query(`INSERT INTO whatsapp_lines(id,owner_user_id,display_name) VALUES($1,$2,'Privada')`,[id(14),other])
     await pool.query(`INSERT INTO system_jobs VALUES('prioritization_recompute',$1,NOW(),false)`,[run])
@@ -95,7 +112,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('daily broadcast previe
     expect(result.selected).toBe(1)
   })
   it('recovers deleted habitual assignments and discovers the latest successful sender',async()=>{
-    await pool.query('INSERT INTO campaign_line_assignments VALUES($1,$2,NULL)',[owner,'5491100000001'])
+    await pool.query('INSERT INTO campaign_line_assignments(owner_key,phone,line_id) VALUES($1,$2,NULL)',[owner,'5491100000001'])
     await pool.query('INSERT INTO campaigns(id,owned_by,status) VALUES($1,$2,\'completed\')',[campaign,owner])
     await pool.query(`INSERT INTO campaign_recipients(campaign_id,phone_number,line_id,status,sent_at) VALUES($1,'5491100000002',$2,'sent',NOW())`,[campaign,b])
     const result=await prepareDailyBroadcast(user,options)
@@ -154,6 +171,100 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('daily broadcast previe
     const result=await prepareDailyBroadcast(user,{...options,planDate:target})
     expect(result.contacts.find(c=>c.id===id(21))?.reason).toBeNull()
     expect((await pool.query('SELECT count(*)::int n FROM contact_send_history WHERE frequency_released_at IS NULL')).rows[0].n).toBe(2)
+  })
+
+  const request = (body:unknown) => new NextRequest('http://localhost/api/campaigns',{method:'POST',body:JSON.stringify(body)})
+  async function campaignInput() {
+    const opts={...options,planDate:broadcastPlanningDays(new Date())[1].date,startTime:'09:00'}
+    const plan=await prepareDailyBroadcast(user,opts)
+    return {plan,body:{name:'Desde plan',message_type:'text' as const,message:'Hola',contact_ids:plan.contacts.filter(c=>!c.reason).map(c=>c.id),
+      broadcast_plan:{requestId:id(90),fingerprint:plan.fingerprint,options:opts}}}
+  }
+  it('creates an exact frozen draft and preserves senders, without consuming quota or sending',async()=>{
+    const {plan,body}=await campaignInput()
+    const response=await createCampaign(request(body));expect(response.status).toBe(200)
+    const saved=(await pool.query('SELECT * FROM campaigns WHERE id=$1',[id(90)])).rows[0]
+    expect(saved).toMatchObject({status:'draft',scheduled_at:null,total_targets:2,is_priority_broadcast:true,broadcast_plan:{startsAt:plan.startsAt,endsAt:plan.endsAt}})
+    const recipients=(await pool.query('SELECT contact_id,line_id FROM campaign_recipients ORDER BY contact_id')).rows
+    expect(recipients).toEqual(plan.contacts.filter(c=>!c.reason).map(c=>({contact_id:c.id,line_id:c.lineId})).sort((a,b)=>a.contact_id.localeCompare(b.contact_id)))
+    expect((await pool.query('SELECT contact_id FROM campaign_recipients ORDER BY created_at,id')).rows.map(r=>r.contact_id)).toEqual(plan.contacts.filter(c=>!c.reason).map(c=>c.id))
+    expect((await pool.query('SELECT count(*)::int n FROM campaign_audience_members')).rows[0].n).toBe(2)
+    expect((await pool.query('SELECT count(*)::int n FROM whatsapp_messages')).rows[0].n).toBe(0)
+    expect((await pool.query('SELECT sum(msgs_sent_today)::int n FROM whatsapp_lines')).rows[0].n).toBe(0)
+  })
+  it('returns the same campaign for concurrent identical retries and rejects changed content',async()=>{
+    const {body}=await campaignInput()
+    const results=await Promise.all([createCampaign(request(body)),createCampaign(request(body))])
+    expect(results.map(r=>r.status)).toEqual([200,200])
+    expect((await pool.query('SELECT count(*)::int n FROM campaigns')).rows[0].n).toBe(1)
+    expect((await pool.query('SELECT count(*)::int n FROM contact_lists')).rows[0].n).toBe(1)
+    expect((await createCampaign(request({...body,message:'Otro mensaje'}))).status).toBe(409)
+  })
+  it.each(['optout','phone','line','tamper'])('requires a new review for %s changes and leaves no partial campaign',async change=>{
+    const {body}=await campaignInput()
+    if(change==='optout')await pool.query('UPDATE contacts SET do_not_contact=true WHERE id=$1',[id(21)])
+    if(change==='phone')await pool.query("UPDATE contacts SET phone_number='5491100000044' WHERE id=$1",[id(21)])
+    if(change==='line')await pool.query('UPDATE whatsapp_lines SET sending_enabled=false WHERE id=$1',[a])
+    if(change==='tamper')body.contact_ids=[id(999)]
+    const response=await createCampaign(request(body));expect(response.status).toBe(409)
+    expect(await response.json()).toHaveProperty('plan.fingerprint')
+    expect((await pool.query('SELECT count(*)::int n FROM campaigns')).rows[0].n).toBe(0)
+    expect((await pool.query('SELECT count(*)::int n FROM contact_lists')).rows[0].n).toBe(0)
+    expect((await pool.query('SELECT count(*)::int n FROM campaign_line_assignments')).rows[0].n).toBe(0)
+  })
+  it('schedules only inside the reviewed window and requires send permission',async()=>{
+    const {plan,body}=await campaignInput()
+    expect((await createCampaign(request({...body,scheduled_at:plan.endsAt}))).status).toBe(400)
+    vi.mocked(checkPermissionWithUser).mockImplementation(async (_req,resource)=>resource==='send' ? {ok:false,response:Response.json({error:'Forbidden'},{status:403})} as never : {ok:true,user})
+    expect((await createCampaign(request({...body,scheduled_at:plan.startsAt}))).status).toBe(403)
+    vi.mocked(checkPermissionWithUser).mockResolvedValue({ok:true,user})
+    expect((await createCampaign(request({...body,scheduled_at:plan.startsAt}))).status).toBe(200)
+    expect((await pool.query('SELECT status,scheduled_at FROM campaigns')).rows[0]).toMatchObject({status:'scheduled',scheduled_at:new Date(plan.startsAt)})
+  })
+  it.each(['priorities','lines'])('requires %s permission on creation, not just on preview',async resource=>{
+    const {body}=await campaignInput()
+    vi.mocked(checkPermissionWithUser).mockImplementation(async (_req,r)=>r===resource ? {ok:false,response:Response.json({error:'Forbidden'},{status:403})} as never : {ok:true,user})
+    expect((await createCampaign(request(body))).status).toBe(403)
+    expect((await pool.query('SELECT count(*)::int n FROM campaigns')).rows[0].n).toBe(0)
+  })
+  it('rolls back the audience and assignments on an insertion failure',async()=>{
+    const {body}=await campaignInput()
+    expect((await createCampaign(request({...body,name:'force-failure'}))).status).toBe(500)
+    expect((await pool.query('SELECT count(*)::int n FROM contact_lists')).rows[0].n).toBe(0)
+    expect((await pool.query('SELECT count(*)::int n FROM campaign_recipients')).rows[0].n).toBe(0)
+  })
+  it('fences claims outside the plan window or on a different sender, including later routing changes',async()=>{
+    const {body}=await campaignInput();expect((await createCampaign(request(body))).status).toBe(200)
+    const claimable=async(line:string)=>(await pool.query(`SELECT cr.contact_id FROM campaign_recipients cr WHERE ${campaignRoutingCondition('cr','ARRAY[$1::uuid]')}`,[line])).rows
+    expect(await claimable(a)).toHaveLength(0)
+    await pool.query(`UPDATE campaigns SET broadcast_plan=broadcast_plan || jsonb_build_object('startsAt',NOW()-interval '1 minute','endsAt',NOW()+interval '1 minute')`)
+    expect(await claimable(a)).toHaveLength(1)
+    await pool.query('UPDATE campaign_line_assignments SET line_id=$1 WHERE line_id=$2',[b,a])
+    expect(await claimable(b)).toHaveLength(1)
+    await pool.query(`UPDATE campaigns SET broadcast_plan=broadcast_plan || jsonb_build_object('endsAt',NOW()-interval '1 second')`)
+    expect(await claimable(b)).toHaveLength(0)
+  })
+
+  it('keeps ordinary campaign routing unchanged when the new plan column is SQL NULL',async()=>{
+    await pool.query('INSERT INTO campaigns(id,owned_by) VALUES($1,$2)',[campaign,owner])
+    await pool.query("INSERT INTO campaign_recipients(campaign_id,phone_number) VALUES($1,'5491100000001')",[campaign])
+    await pool.query("INSERT INTO campaign_line_assignments(owner_key,phone,line_id) VALUES($1,'5491100000001',$2)",[owner,a])
+    const rows=(await pool.query(`SELECT cr.id FROM campaign_recipients cr WHERE ${campaignRoutingCondition('cr','ARRAY[$1::uuid]')}`,[a])).rows
+    expect(rows).toHaveLength(1)
+  })
+
+  it('explains blocked recommendations in the catalogue before suggesting any line',async()=>{
+    vi.mocked(getLineVolumeInputs).mockResolvedValue([])
+    const catalogue=await getBroadcastPlanningOptions(user)
+    expect(catalogue.lines.every(l=>!!l.unavailableReason)).toBe(true)
+  })
+
+  it('recalculates capacity for a later scheduled start instead of promising the whole-day quota',async()=>{
+    const {plan,body}=await campaignInput()
+    const response=await createCampaign(request({...body,scheduled_at:new Date(Date.parse(plan.endsAt)-1000).toISOString()}))
+    expect(response.status).toBe(409)
+    expect((await response.json()).plan.selected).toBe(0)
+    expect((await pool.query('SELECT count(*)::int n FROM campaigns')).rows[0].n).toBe(0)
   })
 
 })

@@ -78,3 +78,10 @@ describe('campaign schedule authorization and validation', () => {
     expect((await run()).status).toBe(409); expect(mocks.audit).not.toHaveBeenCalled()
   })
 })
+
+it('refuses a new schedule outside a broadcast plan without changing its original window',async()=>{
+  mocks.query.mockReset().mockResolvedValueOnce([{...row,plan:{startsAt:'2035-10-02T12:00:00Z',endsAt:'2035-10-02T23:00:00Z'}}])
+  const response=await run()
+  expect(response.status).toBe(409);expect((await response.json()).error).toContain('ventana del plan')
+  expect(mocks.query).toHaveBeenCalledTimes(1)
+})

@@ -27,7 +27,7 @@ describe('Campaign creation readiness',()=>{
   expect(res.status).toBe(200)
   const insert=mocks.query.mock.calls.find(([sql])=>sql.includes('INSERT INTO campaigns'))!
   expect(insert[0]).toContain('message_type, template_id, template_params')
-  expect(insert[1][14]).toBe(true);expect(insert[1].slice(-4,-1)).toEqual(['template',template,JSON.stringify({body:['Ana']})])
+  expect(insert[1][14]).toBe(true);expect(insert[1].slice(-5,-2)).toEqual(['template',template,JSON.stringify({body:['Ana']})])
  })
  it.each([{status:'BORRADOR'},{waba_id:null}])('rejects unverified template before insert %j',async patch=>{
   Object.assign(templateRow,patch)

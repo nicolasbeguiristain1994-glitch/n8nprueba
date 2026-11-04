@@ -95,8 +95,9 @@ export async function priorityRecipientAllowed(campaignId:string,contactId:strin
   const scope=contactScope(user,3,'c')
   const allowed=await query(`SELECT 1 FROM contacts c
     JOIN campaign_audience_members ba ON ba.contact_id=c.id AND ba.campaign_id=$1
+    JOIN campaigns planned_campaign ON planned_campaign.id=ba.campaign_id
     WHERE c.id=$2 AND c.phone_number=$3 AND ${scope.sql}
-      AND c.status IN ('active','inactive') AND c.opt_in_marketing=true AND c.do_not_contact=false
+      AND (c.status='active' OR (c.status='inactive' AND to_jsonb(planned_campaign)->>'broadcast_plan' IS NULL)) AND c.opt_in_marketing=true AND c.do_not_contact=false
       AND NOT EXISTS(SELECT 1 FROM blacklist b WHERE b.removed_at IS NULL AND b.phone_number_normalized IN (c.phone_number,regexp_replace(c.phone_number,'[^0-9]','','g')) AND (b.scope_key='global' OR b.agent_code=contact_agent_key(c.panel)))`,[campaignId,contactId,phone,...scope.params])
   return allowed.length>0
 }

@@ -38,7 +38,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('Priority broadcasts: r
       CREATE TABLE contact_lists(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name varchar(255),description text,contact_count int,owned_by uuid,
         source varchar(50),is_dynamic boolean DEFAULT false,filters jsonb DEFAULT '{}');
       CREATE TABLE contact_list_members(list_id uuid,contact_id uuid);
-      CREATE TABLE campaigns(agent_key text,id uuid PRIMARY KEY,name text,message text,messages jsonb,list_id uuid,type text,status text,total_targets int,
+      CREATE TABLE campaigns(broadcast_plan jsonb,agent_key text,id uuid PRIMARY KEY,name text,message text,messages jsonb,list_id uuid,type text,status text,total_targets int,
         antiblock_delay_min int,antiblock_delay_max int,personalize_name boolean,use_multi_line boolean,owned_by uuid,updated_by uuid,
         message_type text,template_id uuid,template_params jsonb,audience_snapshot_at timestamptz,processor_locked_at timestamptz,
         created_at timestamptz DEFAULT now());
@@ -186,6 +186,15 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('Priority broadcasts: r
     expect(row.explanation).toMatchObject({valueScore:45,urgencyScore:40,profile:{amount_90d:25000,deposits_90d:5},ranking:{percentile:52.5,platform:'zeus',agent:'fixture-agent',status:'fresh'}})
     await pool.query("UPDATE player_ltv SET calculado_en=now()-interval '14 days'")
     expect((await new UserPrioritizationRepository().getRelativeRankingsForContacts([contact])).get(contact)?.status).toBe('stale')
+  })
+
+  it('rechecks active status for a planned broadcast while preserving ordinary reactivation behavior',async()=>{
+    const {campaign_id}=await preparePriorityBroadcast(user,selection())
+    expect(await priorityRecipientAllowed(campaign_id,contact,'+5491100000001')).toBe(true)
+    await pool.query("UPDATE campaigns SET broadcast_plan='{}'::jsonb WHERE id=$1",[campaign_id])
+    expect(await priorityRecipientAllowed(campaign_id,contact,'+5491100000001')).toBe(false)
+    await pool.query("UPDATE contacts SET status='active' WHERE id=$1",[contact])
+    expect(await priorityRecipientAllowed(campaign_id,contact,'+5491100000001')).toBe(true)
   })
 
 })

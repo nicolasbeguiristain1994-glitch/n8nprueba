@@ -65,7 +65,7 @@ describe('daily broadcast planning',()=>{
   it('rechecks consent, recent activity, lifecycle, pending campaigns and phone duplicates',()=>{
     const result=build([contact(1,{optedIn:false}),contact(2,{blacklisted:true}),contact(3,{lastDepositAt:'2026-11-03T13:00:00Z'}),contact(4,{status:'inactive'}),contact(5,{alreadyQueued:true}),contact(6),contact(7,{phone:contact(6).phone}),contact(8,{phone:''})])
     expect(result.contacts.map(c=>c.reason)).toEqual(['excluded','excluded','activity_changed','inactive_status','already_queued',null,'duplicate','invalid_phone'])
-    expect(result.total).toBe(result.selected+result.pending)
+    expect(result.total).toBe(result.selected+result.pending+result.excluded)
   })
   it('applies both tier cooldowns and dispatch frequency rules',()=>{
     const result=build([contact(1,{lastSentAt:'2026-11-02T12:00:00Z'}),contact(2,{sentWeek:2}),contact(3)])

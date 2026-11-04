@@ -1,3 +1,4 @@
+import { isBroadcastPlanOpen, type StoredBroadcastPlan } from './broadcast-plan-guard'
 import { refreshCampaignMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
 import { CampaignRiskError, assertCampaignRiskClear, evaluateCampaignRisk, CAMPAIGN_RISK_CLEAR_SQL } from '@/lib/campaign-risk'
 import { randomUUID } from 'node:crypto'
@@ -12,7 +13,7 @@ import { clog } from '@/lib/campaign-logger'
 import { campaignBudgetDueSql } from '@/lib/campaign-continuation'
 
 type ScheduledCampaign = CampaignForDispatch & {
-  prospect_list_id: string | null; use_multi_line: boolean; scheduled_at: string; pause_reason?: string | null; budget_resume_at?: string | null
+  broadcast_plan?: StoredBroadcastPlan | null; prospect_list_id: string | null; use_multi_line: boolean; scheduled_at: string; pause_reason?: string | null; budget_resume_at?: string | null
 }
 type Owner = { role: 'admin' | 'operator' | 'viewer'; sectors: string[]; is_active: boolean }
 export type ScheduledJob = { campaign: ScheduledCampaign; lockToken: string; resumingBudget?: boolean }
@@ -50,6 +51,10 @@ export async function claimDueCampaigns(): Promise<{ jobs: ScheduledJob[]; block
       blocked += rows.length
     }
     for (const campaign of campaigns) {
+      if (!isBroadcastPlanOpen(campaign.broadcast_plan)) {
+        await client.query("UPDATE campaigns SET status='paused',pause_reason='broadcast_plan_review',budget_resume_at=NULL,updated_at=NOW() WHERE id=$1",[campaign.id])
+        blocked++; continue
+      }
       const { rows: [owner] } = await client.query<Owner>(
         'SELECT role, sectors, is_active FROM users WHERE id = $1 FOR SHARE', [campaign.owned_by])
       const resumingBudget = campaign.status === 'paused' && campaign.pause_reason === 'line_budget'

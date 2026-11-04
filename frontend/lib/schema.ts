@@ -1,3 +1,4 @@
+import { BroadcastPlanOptionsSchema } from './broadcast-plan-schema'
 import { canonicalAgent } from './agent-scope'
 import { AgentCodeSchema } from './agent-directory'
 import { CAMPAIGN_SELECTION_LIMIT } from './campaign-selection'
@@ -178,6 +179,7 @@ export const CampaignRoutingPreviewSchema = z.object({
   'Revisá la plantilla seleccionada')
 
 export const CreateCampaignSchema = z.object({
+  broadcast_plan: z.object({requestId:z.string().uuid(),fingerprint:z.string().regex(/^[a-f0-9]{64}$/),options:BroadcastPlanOptionsSchema}).strict().optional(),
   agent_key: AgentCodeSchema.nullable().optional(),
   contact_ids: CampaignContactSelectionSchema.shape.contact_ids.optional(),
   name:                 z.string().min(1, 'El nombre de la campaña es requerido').max(255),

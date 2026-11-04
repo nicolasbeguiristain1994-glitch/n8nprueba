@@ -1,3 +1,6 @@
+import type { PoolClient } from 'pg'
+import { reviewCampaignBroadcast, persistCampaignBroadcast, BroadcastPlanChangedError } from '@/lib/campaign-broadcast-plan'
+import { BroadcastPlanError } from '@/lib/broadcast-plan-repository'
 import { contactScope } from '@/lib/contact-visibility'
 import { agentScope, canAccessAgent, campaignScopeSql } from '@/lib/agent-scope'
 import { NextRequest, NextResponse } from 'next/server'
@@ -33,7 +36,7 @@ export async function GET(req: NextRequest) {
              (SELECT wt.name FROM whatsapp_templates wt WHERE wt.id=c.template_id) AS template_name,
              ${includePauseReason ? 'c.pause_reason,' : 'NULL::text AS pause_reason,'}
              c.processor_locked_at, to_jsonb(c)->>'budget_resume_at' AS budget_resume_at,
-             c.created_at, c.owned_by, CASE WHEN cl.source='campaign_selection' THEN 'Selección desde Contactos' ELSE cl.name END AS list_name, cl.id AS list_id,
+             c.created_at, c.owned_by, to_jsonb(c)->'broadcast_plan'->>'endsAt' AS plan_ends_at, CASE WHEN to_jsonb(c)->>'broadcast_plan' IS NOT NULL THEN 'Plan de difusión' WHEN cl.source='campaign_selection' THEN 'Selección desde Contactos' ELSE cl.name END AS list_name, cl.id AS list_id,
              ${includeProspectList ? 'c.prospect_list_id, pl.name AS prospect_list_name,' : 'NULL::uuid AS prospect_list_id, NULL::text AS prospect_list_name,'}
              stats.sent AS total_sent, stats.delivered AS total_delivered,
              stats.read AS total_read, stats.failed AS total_failed, stats.skipped AS total_skipped,
@@ -107,9 +110,19 @@ export async function POST(req: NextRequest) {
           delay_type, custom_delay_seconds, daily_limit_override,
           anti_ban_profile_id, enable_mini_sessions, mini_session_text,
           message_type, template_id, template_params } = parsed.data
+  const planRequest = parsed.data.broadcast_plan
   const messageType = message_type ?? (template_id ? 'template' : 'text')
   if (messageType === 'template' && !template_id) return NextResponse.json({ error: 'Seleccioná una plantilla aprobada' }, { status: 400 })
   if (messageType === 'text' && (template_id || template_params)) return NextResponse.json({ error: 'Una campaña de texto no admite parámetros de plantilla' }, { status: 400 })
+  if (planRequest) {
+    for (const [resource,action] of [['priorities','read'],['lines','read']] as const) {
+      const access = await checkPermissionWithUser(req,resource,action)
+      if (!access.ok) return access.response
+    }
+    if (!contact_ids || list_id || prospect_list_id || messageType !== planRequest.options.messageType ||
+        (messageType === 'template' && template_id !== planRequest.options.templateId))
+      return NextResponse.json({error:'Conservá la audiencia y el contenido del plan. Para cambiarlos, volvé a Planificar difusión.'},{status:400})
+  }
   let schedule: string | null
   try { schedule = normalizeCampaignSchedule(scheduled_at) } catch {
     return NextResponse.json({ error: 'Fecha de programación inválida' }, { status: 400 })
@@ -117,7 +130,7 @@ export async function POST(req: NextRequest) {
   if (schedule) {
     if ([list_id, prospect_list_id, contact_ids].filter(Boolean).length !== 1) return NextResponse.json({ error: 'Seleccioná una única audiencia antes de programar' }, { status: 400 })
     if (process.env.CAMPAIGN_SCHEDULER_ENABLED !== 'true' || !process.env.CRON_SECRET) return NextResponse.json({ error: 'La programación automática no está habilitada; guardá un borrador' }, { status: 409 })
-    if (Date.parse(schedule) <= Date.now()) return NextResponse.json({ error: 'La fecha programada debe estar en el futuro' }, { status: 400 })
+    if (!planRequest && Date.parse(schedule) <= Date.now()) return NextResponse.json({ error: 'La fecha programada debe estar en el futuro' }, { status: 400 })
     const sendAuth = await checkPermissionWithUser(req, 'send', 'send')
     if (!sendAuth.ok) return sendAuth.response
   }
@@ -202,11 +215,15 @@ export async function POST(req: NextRequest) {
       if (hidden.length) return NextResponse.json({error:'La lista contiene contactos de otro agente'}, {status:403})
     }
     if (prospect_list_id && agents !== null) return NextResponse.json({error:'Para este perfil seleccioná contactos del agente'}, {status:403})
-    const persist = async (run: typeof query) => {
+    const persist = async (run: typeof query, client?: PoolClient) => {
+      const review = planRequest ? await reviewCampaignBroadcast(client!,session,{...parsed.data,scheduled_at:schedule}) : null
+      if (review?.existing) return review.existing
       let resolvedListId = list_id
       let total_targets = 0
       if (contact_ids) {
         const selection = await resolveCampaignSelection(contact_ids, assignedAgent && agents !== null ? {...session, allowed_agents:[assignedAgent]} : session, run)
+        if (review?.plan && selection.eligibleIds.length !== review.plan.selected)
+          throw new BroadcastPlanError('Cambió la disponibilidad de los contactos. Volvé a calcular el plan.',409)
         if (!selection.summary.eligible) throw NextResponse.json({ error: 'No hay contactos habilitados en esta selección. Revisá las exclusiones antes de crear la campaña.' }, { status: 422 })
         const [audience] = await run<{id: string}>(`
           INSERT INTO contact_lists (name, description, source, filters, owned_by, updated_by, is_dynamic, refreshed_at)
@@ -237,12 +254,12 @@ export async function POST(req: NextRequest) {
 
       const [campaign] = await run<{ id: string }>(
         `INSERT INTO campaigns
-           (name, message, messages, media_url, media_type, list_id, prospect_list_id,
+           (id, name, message, messages, media_url, media_type, list_id, prospect_list_id,
             type, status, scheduled_at,
             total_targets, antiblock_delay_min, antiblock_delay_max, personalize_name,
             use_multi_line,
             owned_by, updated_by, message_type, template_id, template_params, agent_key)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17,$18,$19::jsonb,$20)
+         VALUES ($21,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16,$17,$18,$19::jsonb,$20)
          RETURNING id`,
         [nameStr, msgArray[0], JSON.stringify(msgArray), media_url || null, media_type || null,
          resolvedListId || null, prospect_list_id || null,
@@ -252,21 +269,24 @@ export async function POST(req: NextRequest) {
          delayMin, delayMax,
          personalize_name !== false,
          true,
-         session.user_id, messageType, template_id ?? null, template_params ? JSON.stringify(template_params) : null,assignedAgent]
+         session.user_id, messageType, template_id ?? null, template_params ? JSON.stringify(template_params) : null,assignedAgent,planRequest?.requestId ?? randomUUID()]
       )
 
+      if (review?.plan) await persistCampaignBroadcast(client!,campaign.id,session,parsed.data,review.plan,review.hash)
       return campaign
     }
     // The private audience and campaign either both exist or neither does.
     const campaign = contact_ids
-      ? await withTransaction(client => persist(async <T,>(sql: string, params?: unknown[]) => (await client.query(sql, params)).rows as T[]))
+      ? await withTransaction(client => persist(async <T,>(sql: string, params?: unknown[]) => (await client.query(sql, params)).rows as T[],client))
       : await persist(query)
 
     void audit({ req, action: 'create', resource: 'campaigns', resource_id: campaign.id,
       metadata: { name: nameStr } })
-    return NextResponse.json({ id: campaign.id, name: nameStr, status: schedule ? 'scheduled' : 'draft' })
+    return NextResponse.json({ id: campaign.id, name: nameStr, status: 'status' in campaign ? campaign.status : schedule ? 'scheduled' : 'draft' })
   } catch (e) {
     if (e instanceof Response) return e
+    if (e instanceof BroadcastPlanChangedError) return NextResponse.json({error:e.message,plan:e.plan},{status:409})
+    if (e instanceof BroadcastPlanError) return NextResponse.json({error:e.message},{status:e.status})
     console.error('[/api/campaigns POST]', e instanceof Error ? e.message : e)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }

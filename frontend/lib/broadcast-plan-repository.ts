@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg'
+import { createHash } from 'node:crypto'
 import type { SessionUser } from './auth'
 import { withTransaction } from './db'
 import { distributorVisibilityClause } from './line-visibility'
@@ -22,7 +23,7 @@ export class BroadcastPlanError extends Error {
 export interface PlanningTemplate { id: string; name: string; wabaId: string }
 export interface BroadcastPlanningOptions {
   days: {date:string;label:string}[]
-  lines: { id: string; name: string; type: string }[]
+  lines: { id: string; name: string; type: string; wabaId: string | null; unavailableReason: string | null }[]
   templates: PlanningTemplate[]
 }
 const iso = (value: Date | string | null) => value ? new Date(value).toISOString() : null
@@ -31,6 +32,7 @@ async function readLines(client: PoolClient, user: SessionUser, endsAt: Date): P
   // Use dispatch visibility: recommendations must be usable by this campaign owner.
   const scope = distributorVisibilityClause(user.user_id, 1, 'wl')
   const { rows } = await client.query(`SELECT wl.id, COALESCE(wl.display_name,wl.line_key) AS name,
+    RIGHT(regexp_replace(COALESCE(to_jsonb(wl)->>'phone_number',''),'[^0-9]','','g'),4) AS "phoneSuffix",
     wl.line_type AS type,wl.status,wl.is_connected AS connected,wl.sending_enabled AS enabled,
     (wl.allowed_types IS NULL OR wl.allowed_types @> '["campaign"]'::jsonb) AS "campaignAllowed",
     wl.msg_per_day AS "dailyLimit",wl.msg_per_hour AS "hourlyLimit",
@@ -56,7 +58,7 @@ async function readLines(client: PoolClient, user: SessionUser, endsAt: Date): P
     const config = row.personality_config
     const hours = config?.activeHours
     const valid = Array.isArray(hours) && hours.length === 2 && hours.every(n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n < 24) && hours[0] !== hours[1]
-    return { ...row, committed: committed.get(row.id) ?? 0,
+    return { ...row, name:`${row.name} · ${row.phoneSuffix ? '…'+row.phoneSuffix : row.id.slice(-6)}`, committed: committed.get(row.id) ?? 0,
       tokenExpiresAt:iso(row.tokenExpiresAt), dayResetAt: iso(row.dayResetAt), hourResetAt: iso(row.hourResetAt),
       activeHours: valid ? hours : null, timezoneOffset: Number(config?.timezoneOffsetHours ?? -3),
       invalidSchedule: row.type === 'evolution' && config != null && (!valid || !Number.isFinite(Number(config.timezoneOffsetHours ?? -3))),
@@ -71,24 +73,40 @@ async function readTemplates(client: PoolClient, lines: PlanningLine[]): Promise
   return rows
 }
 
+async function applyLineVolumes(client: PoolClient, lines: PlanningLine[], now: Date) {
+  const volumeInputs = await getLineVolumeInputs(lines.map(l => l.id),now,async <T>(sql: string,params?: unknown[]) => (await client.query(sql,params)).rows as T[])
+  const volumes = new Map(volumeInputs.map(input => [input.id,recommendLineVolume(input)]))
+  for (const line of lines) {
+    const recommendation = volumes.get(line.id)
+    line.recommendedDaily = recommendation?.suggestedToday ?? 0
+    line.recommendedRemaining = recommendation?.remainingToday ?? 0
+    line.recommendation = recommendation?.reason ?? 'No se pudo verificar la recomendación de volumen de esta línea.'
+    line.volumeBlocked = !recommendation || ['stop','unavailable'].includes(recommendation.status)
+  }
+}
+
 export async function getBroadcastPlanningOptions(user: SessionUser): Promise<BroadcastPlanningOptions> {
   return withTransaction(async client => {
     await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
     const now = new Date()
     const lines = await readLines(client,user,broadcastPlanWindow(now,{endTime:'23:59'}).endsAt)
+    await applyLineVolumes(client,lines,now)
     const templates = await readTemplates(client,lines)
-    return { days:broadcastPlanningDays(now), lines: lines.map(({id,name,type}) => ({id,name,type})), templates }
+    return { days:broadcastPlanningDays(now), lines: lines.map(line => ({id:line.id,name:line.name,type:line.type,wabaId:line.wabaId,
+      unavailableReason: !line.enabled ? 'Envíos deshabilitados' : line.status !== 'active' || !line.connected ? 'Línea desconectada o inactiva'
+        : !line.campaignAllowed ? 'No habilitada para campañas' : line.type === 'cloud' && !line.cloudReady ? 'Revisar conexión Cloud'
+        : line.invalidSchedule ? 'Revisar horario de la línea' : line.volumeBlocked ? line.recommendation ?? 'Revisar la recomendación de volumen' : null,
+    })), templates }
   })
 }
 
 /** Read-only snapshot. No recipient, frequency slot, line assignment or counter is written. */
-export async function prepareDailyBroadcast(user: SessionUser, options: BroadcastPlanOptions) {
+export async function prepareDailyBroadcast(user: SessionUser, options: BroadcastPlanOptions, existingClient?: PoolClient, notBefore?: Date) {
   const [tiers, scoring] = await Promise.all([getAllTiers(),getScoringConfig()])
-  return withTransaction(async client => {
-    await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+  const read = async (client: PoolClient) => {
     const { rows: [clock] } = await client.query<{ now: Date }>('SELECT NOW() AS now')
     const now = new Date(clock.now)
-    const window = broadcastPlanWindow(now,options)
+    const window = broadcastPlanWindow(now,options,notBefore)
     if (!broadcastPlanningDays(now).some(day => day.date === window.date))
       throw new BroadcastPlanError('Elegí hoy, mañana o pasado mañana. Si cambió el día, cerrá y volvé a abrir el planificador.')
     if ((options.startTime ?? '09:00') >= options.endTime)
@@ -96,15 +114,7 @@ export async function prepareDailyBroadcast(user: SessionUser, options: Broadcas
     const lines = await readLines(client,user,window.endsAt)
     if (options.lineIds.some(id => !lines.some(l => l.id === id)))
       throw new BroadcastPlanError('Una de las líneas seleccionadas ya no está disponible para tu usuario.',403)
-    const volumeInputs = await getLineVolumeInputs(lines.map(l => l.id),now,async <T>(sql: string,params?: unknown[]) => (await client.query(sql,params)).rows as T[])
-    const volumes = new Map(volumeInputs.map(input => [input.id,recommendLineVolume(input)]))
-    for (const line of lines) {
-      const recommendation = volumes.get(line.id)
-      line.recommendedDaily = recommendation?.suggestedToday ?? 0
-      line.recommendedRemaining = recommendation?.remainingToday ?? 0
-      line.recommendation = recommendation?.reason ?? 'No se pudo verificar la recomendación de volumen de esta línea.'
-      line.volumeBlocked = !recommendation || ['stop','unavailable'].includes(recommendation.status)
-    }
+    await applyLineVolumes(client,lines,now)
     const templates = options.messageType === 'template' ? await readTemplates(client,lines) : []
     const template = templates.find(t => t.id === options.templateId)
     if (options.messageType === 'template' && !template)
@@ -170,16 +180,27 @@ export async function prepareDailyBroadcast(user: SessionUser, options: Broadcas
       inactivityWindows[t.tier] = {minDays:t.min_days_inactive,maxDays:t.max_days_inactive}
       recontactCooldownDays[t.tier] = t.recontact_cooldown_days
     }
-    return buildBroadcastPlan({ contacts,lines,options,now,computedAt:iso(job.last_success_at),templateWaba:template?.wabaId ?? null,
+    const plan = buildBroadcastPlan({ contacts,lines,options,now,notBefore,computedAt:iso(job.last_success_at),templateWaba:template?.wabaId ?? null,
       frequencyRule:resolveApplicableRule(rules,user.user_id,null,null),
       scorerConfig:{allowThreshold:scoring.allow_threshold,delayThreshold:scoring.delay_threshold,
         cooldownMultiplier:scoring.cooldown_multiplier,weights:{daily:scoring.risk_weight_daily,weekly:scoring.risk_weight_weekly,cooldown:scoring.risk_weight_cooldown}},
       eligibilityConfig:{inactivityWindows,recontactCooldownDays,depositAmountTiers:DEPOSIT_AMOUNT_TIERS,enabledTiers:tiers.map(t => t.tier)},
       warnings:[...(job.is_running ? ['Prioridades se está actualizando; este plan usa el último cálculo completo.'] : []),
-        'Vista previa: no reserva cupos ni crea campañas. La disponibilidad se debe volver a verificar al enviar.',
+        'La vista previa no reserva cupos. Se vuelve a verificar al guardar y al enviar.',
         'Se descuentan pendientes con línea asignada anteriores al cierre elegido. Campañas todavía sin asignación pueden reducir la capacidad disponible.',
         'El cupo también respeta el volumen recomendado según historial y calidad de cada línea.',
         'La capacidad es una estimación por horario y límites locales; no verifica cuotas del proveedor en tiempo real.'],
     })
+    // Compare actual destinations/senders, not the moving calculation timestamp.
+    const fingerprint = createHash('sha256').update(JSON.stringify({date:plan.planDate,
+      start:options.startTime ?? '09:00',end:options.endTime,messageType:options.messageType,templateId:options.templateId,
+      contacts:plan.contacts.filter(c => !c.reason).map(c => [c.id,c.phone.replace(/\D/g,''),c.lineId]).sort((a,b) => String(a[0]).localeCompare(String(b[0]))),
+    })).digest('hex')
+    return {...plan,fingerprint}
+  }
+  if (existingClient) return read(existingClient)
+  return withTransaction(async client => {
+    await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+    return read(client)
   })
 }

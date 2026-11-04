@@ -3,14 +3,14 @@ import { afterEach,beforeEach,it,expect,vi } from 'vitest'
 vi.mock('@/components/priorities/PriorityBroadcastProgress',()=>({PriorityBroadcastProgress:()=>null}))
 vi.mock('@/lib/fetchJson',()=>({fetchJson:vi.fn()}))
 const state=vi.hoisted(()=>({role:'admin',permissions:{} as Record<string,string[]>}))
-vi.mock('@/lib/useCurrentUser',()=>({useCurrentUser:()=>({user:{role:state.role},permissions:state.permissions})}))
+vi.mock('@/lib/useCurrentUser',()=>({useCurrentUser:()=>({user:{role:state.role,id:'11111111-1111-4111-8111-111111111111'},permissions:state.permissions})}))
 import { fetchJson } from '@/lib/fetchJson'
 import Page from '@/app/(protected)/prioridades/page'
 import { DailyBroadcastPlanner } from '@/components/campaigns/DailyBroadcastPlanner'
 import type { BroadcastPlan } from '@/lib/broadcast-planner'
 
 const catalogue={days:[{date:'2026-11-03',label:'Hoy'},{date:'2026-11-04',label:'Mañana'},{date:'2026-11-05',label:'Pasado mañana'}],lines:[{id:'a',name:'Difusión A',type:'evolution'}],templates:[]}
-const plan:BroadcastPlan={planDate:'2026-11-03',startsAt:'2026-11-03T12:00:00Z',generatedAt:'2026-11-03T12:00:00Z',computedAt:'2026-11-03T10:00:00Z',endsAt:'2026-11-03T23:00:00Z',total:2,selected:1,pending:1,
+const plan:BroadcastPlan={planDate:'2026-11-03',startsAt:'2026-11-03T12:00:00Z',generatedAt:'2026-11-03T12:00:00Z',computedAt:'2026-11-03T10:00:00Z',endsAt:'2026-11-03T23:00:00Z',total:2,selected:1,pending:1,excluded:0,
   lines:[{id:'a',name:'Difusión A',type:'evolution',dailyLimit:500,hourlyLimit:50,used:200,committed:50,reserve:50,capacity:200,selected:1,reason:null}],
   contacts:[{id:'1',name:'Ana',phone:'5491111111111',score:98,segment:'REACTIVACION_PRIORITARIA',tier:'vip',agent:'royal',lineId:'a',reason:null},
     {id:'2',name:'Juan',phone:'5491122222222',score:90,segment:'REACTIVACION_PRIORITARIA',tier:'vip',agent:'royal',lineId:null,reason:'assigned_line_unavailable'}],
@@ -89,4 +89,42 @@ it('selects tomorrow or the day after, invalidates the old plan and submits the 
   expect(screen.queryByLabelText('Resultado del plan')).not.toBeInTheDocument()
   fireEvent.change(screen.getByLabelText('Hora de cierre'),{target:{value:'09:00'}})
   expect(screen.getByRole('button',{name:'Calcular plan'})).toBeDisabled()
+})
+
+it('preselects compatible lines and explains every unavailable choice when the template changes',async()=>{
+  vi.mocked(fetchJson).mockResolvedValue({...catalogue,lines:[
+    {id:'a',name:'Ventas · …1111',type:'cloud',wabaId:'waba-a',unavailableReason:null},
+    {id:'b',name:'Ventas · …2222',type:'cloud',wabaId:'waba-b',unavailableReason:null},
+    {id:'c',name:'Desconectada · …3333',type:'cloud',wabaId:'waba-a',unavailableReason:'Línea desconectada o inactiva'},
+  ],templates:[{id:'t-a',name:'Promoción A',wabaId:'waba-a'},{id:'t-b',name:'Promoción B',wabaId:'waba-b'}]})
+  render(<DailyBroadcastPlanner filters={{}} onClose={()=>{}}/>)
+  const a=await screen.findByRole('checkbox',{name:/Ventas · …1111/}),b=screen.getByRole('checkbox',{name:/Ventas · …2222/})
+  expect(a).toBeChecked();expect(b).toBeDisabled();expect(b).not.toBeChecked()
+  expect(screen.getByRole('checkbox',{name:/Desconectada/})).toBeDisabled()
+  fireEvent.change(screen.getByLabelText('Plantilla aprobada'),{target:{value:'t-b'}})
+  expect(a).toBeDisabled();expect(a).not.toBeChecked();expect(b).toBeChecked()
+  fireEvent.click(b);expect(screen.getByRole('button',{name:'Calcular plan'})).toBeDisabled()
+  fireEvent.click(screen.getByRole('button',{name:'Usar líneas compatibles'}));expect(b).toBeChecked()
+})
+it('shows exclusions separately and keeps calculation details collapsed',async()=>{
+  vi.mocked(fetchJson).mockResolvedValueOnce(catalogue).mockResolvedValue({...plan,pending:0,excluded:1,contacts:[plan.contacts[0],{...plan.contacts[1],reason:'excluded'}],reasons:[{code:'excluded',count:1,label:'Baja, bloqueo o falta de consentimiento'}]})
+  render(<DailyBroadcastPlanner filters={{}} onClose={()=>{}}/>)
+  fireEvent.click(await screen.findByRole('button',{name:'Calcular plan'}));await screen.findByText('Ana')
+  expect(screen.getByText('Ver cómo se calculó el cupo').closest('details')).not.toHaveAttribute('open')
+  fireEvent.click(screen.getByRole('button',{name:'Ver excluidos (1)'}));expect(screen.getByText('Juan')).toBeInTheDocument()
+  expect(screen.getByText('Revisá el consentimiento o la baja en Contactos.')).toBeInTheDocument()
+})
+it('hands off only selected contacts and the reviewed plan without creating a campaign',async()=>{
+  const navigate=vi.spyOn(window.location,'assign').mockImplementation(()=>{})
+  const selected={...plan,fingerprint:'a'.repeat(64),contacts:plan.contacts.map((c,i)=>({...c,id:`22222222-2222-4222-8222-${String(i+1).padStart(12,'0')}`,lineId:i?null:'33333333-3333-4333-8333-333333333333'})),lines:plan.lines.map(l=>({...l,id:'33333333-3333-4333-8333-333333333333'}))}
+  const cat={...catalogue,lines:[{...catalogue.lines[0],id:selected.lines[0].id}]}
+  vi.mocked(fetchJson).mockResolvedValueOnce(cat).mockResolvedValue(selected)
+  render(<DailyBroadcastPlanner filters={{}} onClose={()=>{}}/>);fireEvent.click(await screen.findByRole('button',{name:'Calcular plan'}))
+  fireEvent.click(await screen.findByRole('button',{name:'Crear campaña con este plan'}))
+  expect(navigate).toHaveBeenCalledWith(expect.stringMatching(/^\/campaigns\?selection=/))
+  const token=String(navigate.mock.calls[0][0]).split('=')[1]
+  const draft=JSON.parse(sessionStorage.getItem('wa:campaign-selection:'+token)!)
+  expect(draft.contactIds).toEqual([selected.contacts[0].id]);expect(draft.broadcastPlan.fingerprint).toBe(selected.fingerprint)
+  expect(vi.mocked(fetchJson).mock.calls.some(([url])=>url==='/api/campaigns')).toBe(false)
+  navigate.mockRestore();sessionStorage.clear()
 })

@@ -35,6 +35,7 @@ describe.skipIf(!localUrl)('budget scheduler: real PostgreSQL claims and migrati
       CREATE FUNCTION get_accessible_line_ids(uuid) RETURNS TABLE(id uuid) LANGUAGE sql AS $$ SELECT id FROM whatsapp_lines $$;
       CREATE TABLE automation_message_jobs(id uuid,phone text,agent_code text,created_at timestamptz,provider text,source_id text,status text);`)
     await pool.query(readFileSync('../db/migrations/159_line_protection_controls.sql','utf8'))
+    await pool.query(readFileSync('../db/migrations/165_campaign_broadcast_plan.sql','utf8').replaceAll('public.campaigns','campaigns'))
     mocks.query.mockImplementation(async (sql, params) => (await pool.query(sql, params)).rows)
     mocks.tx.mockImplementation(async fn => {
       const client = await pool.connect()
@@ -145,4 +146,17 @@ describe.skipIf(!localUrl)('budget scheduler: real PostgreSQL claims and migrati
       AND grantee IN ('PUBLIC','anon','authenticated')`,[schema])).rows
     expect(grants).toEqual([])
   })
+  it('pauses an expired broadcast plan instead of resuming it on the next day',async()=>{
+    const id=await campaign('scheduled',null)
+    await pool.query(`UPDATE campaigns SET broadcast_plan=jsonb_build_object('startsAt',NOW()-interval '2 hours','endsAt',NOW()-interval '1 hour','assignments','{}'::jsonb) WHERE id=$1`,[id])
+    expect(await claimDueCampaigns()).toEqual({jobs:[],blocked:1})
+    expect((await pool.query('SELECT status,pause_reason,budget_resume_at FROM campaigns WHERE id=$1',[id])).rows[0])
+      .toEqual({status:'paused',pause_reason:'broadcast_plan_review',budget_resume_at:null})
+  })
+  it('starts a due plan within its reviewed window',async()=>{
+    const id=await campaign('scheduled',null)
+    await pool.query(`UPDATE campaigns SET broadcast_plan=jsonb_build_object('startsAt',NOW()-interval '1 minute','endsAt',NOW()+interval '1 hour','assignments','{}'::jsonb) WHERE id=$1`,[id])
+    expect((await claimDueCampaigns()).jobs.map(j=>j.campaign.id)).toEqual([id])
+  })
+
 })

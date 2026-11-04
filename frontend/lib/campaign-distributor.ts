@@ -1,3 +1,4 @@
+import { assertBroadcastPlanSend, isBroadcastPlanOpen, BroadcastPlanSendError, type StoredBroadcastPlan } from './broadcast-plan-guard'
 import { randomUUID } from 'node:crypto'
 import { reserveLineSendBudget, finishLineSendBudget, deferCampaignForLineBudget, LineSendBudgetError, type LineSendBudgetReservation } from '@/lib/line-send-budget'
 import { refreshCampaignMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
@@ -653,9 +654,10 @@ async function sendViaEvolutionUnbudgeted(
   const res = await withGlobalSendGuard(phone, async db => {
     if (campaignId) {
       try {
-        const { rows } = await db.query(`SELECT c.id FROM campaigns c WHERE c.id=$1
+        const { rows } = await db.query(`SELECT c.id,to_jsonb(c)->'broadcast_plan' AS broadcast_plan FROM campaigns c WHERE c.id=$1
           AND c.status='running' AND ${CAMPAIGN_RISK_CLEAR_SQL} FOR SHARE OF c`, [campaignId])
         if (!rows.length) throw new CampaignRiskError('La campaña está detenida o tiene una alerta de riesgo pendiente.')
+        assertBroadcastPlanSend(rows[0].broadcast_plan,phone,line.id)
       } catch (error) {
         if (error instanceof CampaignRiskError) throw error
         throw new CampaignRiskError('No se pudo verificar la seguridad de la campaña; no se envió el mensaje.')
@@ -1402,8 +1404,8 @@ async function sendReservedUnit(campaignId:string,line:EligibleLine,campaign:Cam
       return 'sent'
     }
     if (err instanceof CampaignRiskError) {
-      await query(`UPDATE campaigns SET status='paused', pause_reason='risk_detected', updated_at=NOW()
-        WHERE id=$1 AND status='running'`, [campaignId])
+      await query(`UPDATE campaigns SET status='paused', pause_reason=$2, updated_at=NOW()
+        WHERE id=$1 AND status='running'`, [campaignId,err instanceof BroadcastPlanSendError ? 'broadcast_plan_review' : 'risk_detected'])
       // The guard ran before the provider; preserve pending recipients for review.
       await query(`UPDATE whatsapp_messages SET status='failed', error_detail='risk-guard-no-send', updated_at=NOW()
         WHERE campaign_recipient_id=$1 AND status='queued' AND evolution_message_id IS NULL`, [unit.id])
@@ -1648,10 +1650,10 @@ export async function processMultiLineInBackground(
 
     while (true) {
       // ── 1. Status gate ──────────────────────────────────────────────────────
-      let current: { status: string } | undefined
+      let current: { status: string; broadcast_plan?: StoredBroadcastPlan } | undefined
       try {
-        const [row] = await query<{ status: string }>(
-          'SELECT status FROM campaigns WHERE id = $1', [id]
+        const [row] = await query<{ status: string; broadcast_plan?: StoredBroadcastPlan }>(
+          "SELECT status,to_jsonb(campaigns)->'broadcast_plan' AS broadcast_plan FROM campaigns WHERE id = $1", [id]
         )
         current = row
       } catch (statusErr) {
@@ -1666,6 +1668,10 @@ export async function processMultiLineInBackground(
         break
       }
 
+      if (!isBroadcastPlanOpen(current.broadcast_plan)) {
+        await query("UPDATE campaigns SET status='paused',pause_reason='broadcast_plan_review',budget_resume_at=NULL WHERE id=$1 AND status='running'",[id])
+        break
+      }
       await refreshCampaignMetaRisk(id)
       await evaluateCampaignRisk(id)
       await assertCampaignRiskClear(id)
@@ -1688,7 +1694,8 @@ export async function processMultiLineInBackground(
           // Si hay cache previo se usa. Si no, eligibleLines.length === 0 pausará la campaña.
         }
       }
-      const eligibleLines = cachedEligibleLines
+      const plannedLines = current.broadcast_plan ? new Set(Object.values(current.broadcast_plan.assignments)) : null
+      const eligibleLines = plannedLines ? cachedEligibleLines.filter(line => plannedLines.has(line.id)) : cachedEligibleLines
       if (eligibleLines.length === 0) {
         // Diagnóstico: explicar por qué no hay líneas elegibles antes de pausar.
         // Evita tener que revisar la DB manualmente para entender el bloqueo.

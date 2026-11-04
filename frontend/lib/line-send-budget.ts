@@ -150,8 +150,8 @@ export async function deferCampaignForLineBudget(campaignId: string, error: Line
   // or a later date if capacity is still unavailable. Never at the quota reset.
   const resumeAt = campaignContinuationAtSql('COALESCE(scheduled_at, started_at, NOW())',
     `GREATEST($3::timestamptz, ${campaignLocalMidnightSql('NOW()', true)})`)
-  await query(`UPDATE campaigns SET status='paused',pause_reason=$2,
-    budget_resume_at=CASE WHEN $3::timestamptz IS NULL THEN NULL ELSE ${resumeAt} END,updated_at=NOW()
+  await query(`UPDATE campaigns SET status='paused',pause_reason=CASE WHEN to_jsonb(campaigns)->>'broadcast_plan' IS NOT NULL THEN 'broadcast_plan_review' ELSE $2 END,
+    budget_resume_at=CASE WHEN $3::timestamptz IS NULL OR to_jsonb(campaigns)->>'broadcast_plan' IS NOT NULL THEN NULL ELSE ${resumeAt} END,updated_at=NOW()
     WHERE id=$1 AND status='running' AND pause_reason IS DISTINCT FROM 'risk_detected'`,
   [campaignId,error.autoResume ? 'line_budget' : 'no_eligible_lines',error.autoResume ? error.retryAt : null])
 }
