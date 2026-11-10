@@ -346,7 +346,11 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect((await mediaGET(request('?message='+message.id))).status).toBe(200)
   expect(mediaMocks.download).toHaveBeenCalledWith('123456','10001','private-token','image')
  })
- it('keeps a saved common contact and manual replies visible to other operators',async()=>{
+ it.each([
+  {profile:'Royal',allowed_agents:['royal']},
+  {profile:'another agent',allowed_agents:['bigwin']},
+  {profile:'unrestricted',allowed_agents:[]},
+ ])('keeps a saved common contact and replies visible to a $profile operator',async({allowed_agents})=>{
   await db.query("DELETE FROM contacts; DELETE FROM whatsapp_messages; DELETE FROM cloud_messages WHERE phone_number_id='10002'")
   mocks.lines.mockResolvedValue([])
   mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'operator',allowed_agents:['royal'],sectors:['conversations']}})
@@ -360,13 +364,11 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect((await db.query('SELECT * FROM operator_contact_visibility WHERE contact_id=$1',[contact.contact_id])).rowCount).toBe(0)
   await db.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,created_at,agent_key,line_id)
     VALUES($1,'Respuesta compartida','outbound','sent',NOW(),'none',$2)`,[phone,id(10)])
-  for(const allowed_agents of [['royal'],['bigwin'],[]]) {
-   mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(901),role:'operator',allowed_agents}})
-   const body=await(await GET(request('?agent=all'))).json()
-   expect(body.conversations).toHaveLength(1)
-   expect(body.conversations[0]).toMatchObject({phone_number:phone,agent:null,contact_id:contact.contact_id,first_name:'Ana',last_message:'Respuesta compartida'})
-   expect((await(await GET(request('?agent=none&phone='+phone))).json()).messages).toHaveLength(2)
-  }
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(901),role:'operator',allowed_agents}})
+  const body=await(await GET(request('?agent=all'))).json()
+  expect(body.conversations).toHaveLength(1)
+  expect(body.conversations[0]).toMatchObject({phone_number:phone,agent:null,contact_id:contact.contact_id,first_name:'Ana',last_message:'Respuesta compartida'})
+  expect((await(await GET(request('?agent=none&phone='+phone))).json()).messages).toHaveLength(2)
  })
  it.each(['assigned contact','deleted contact','private contact','campaign history','assigned history','missing line','outbound only'])('excludes %s from the common inbox',async reason=>{
   await db.query("DELETE FROM contacts; DELETE FROM whatsapp_messages; DELETE FROM cloud_messages WHERE phone_number_id='10002'")
