@@ -8,7 +8,7 @@ export const AGENT_MESSAGES_CTE = `WITH raw_agent_messages AS (
     wm.message_body,wm.direction::text,wm.status::text,wm.created_at,
     wm.evolution_message_id,COALESCE(wm.campaign_id,cm.campaign_id) AS campaign_id,wm.template_id,
     COALESCE(wm.line_id,cn.whatsapp_line_id,CASE WHEN to_jsonb(wm)->'metadata'->>'line_id' ~ '^[0-9a-f-]{36}$' THEN (to_jsonb(wm)->'metadata'->>'line_id')::uuid END,cr.line_id) AS line_id,
-    wm.agent_key AS explicit_agent,cm.content #>> '{context,id}' AS context_id
+    NULLIF(wm.agent_key,'none') AS explicit_agent,cm.content #>> '{context,id}' AS context_id
   FROM whatsapp_messages wm
   LEFT JOIN cloud_messages cm ON cm.wamid=wm.evolution_message_id
   LEFT JOIN cloud_numbers cn ON cn.phone_number_id=cm.phone_number_id

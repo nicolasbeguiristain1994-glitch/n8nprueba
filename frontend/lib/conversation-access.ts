@@ -16,7 +16,7 @@ export function requestedConversationAgent(user: SessionUser, requested: string 
   const agents=agentScope(user)
   const agent=requested || (agents?.length===1 ? agents[0] : 'all')
   if (!/^[a-z0-9][a-z0-9_-]{0,99}$/.test(agent)) throw Response.json({error:'Agente inválido'},{status:400})
-  if (agents !== null && agent !== 'all' && !agents.includes(agent)) throw Response.json({error:'Sin acceso a este agente'},{status:403})
+  if (agents !== null && agent !== 'all' && !(agent === 'none' && user.role === 'operator') && !agents.includes(agent)) throw Response.json({error:'Sin acceso a este agente'},{status:403})
   return agent
 }
 export async function requireConversation(user: SessionUser, phone: string, requested: string | null) {

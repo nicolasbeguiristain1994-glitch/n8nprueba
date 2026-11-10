@@ -23,6 +23,7 @@ import { GET as mediaGET } from '@/app/api/conversations/media/route'
 import { cloudMessageText,cloudMessageTextSql } from '../cloud-api/message-content'
 import { conversationRepository } from '../cloud-api/repositories/conversation.repository'
 import { findConversationReplyLine } from '../conversation-reply-line'
+import { canReadConversation, requireConversation } from '../conversation-access'
 import type { EligibleLine } from '../campaign-distributor'
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`
 const phone='5491100000001'
@@ -276,7 +277,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   const details=await(await GET(request('?phone='+phone))).json()
   expect(details.messages.map((m:{message_body:string})=>m.message_body)).toEqual(['Royal','Respuesta Royal'])
   expect((await GET(request('?agent=bigwin'))).status).toBe(403)
-  expect((await GET(request('?agent=none'))).status).toBe(403)
+  expect((await(await GET(request('?agent=none&phone='+phone))).json()).messages).toEqual([])
   expect((await(await GET(request('?phone=5491100000002'))).json()).messages).toEqual([])
   expect((await(await GET(request('?campaign='+id(402)))).json()).total).toBe(0)
  })
@@ -298,6 +299,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect((await(await GET(request())).json()).conversations[0].conv_flow).toBeNull()
  })
  it('lists all authorized agents without reverting to Royal or exposing another agent',async()=>{
+  await db.query("DELETE FROM cloud_messages WHERE phone_number_id='10002'")
   await db.query(`INSERT INTO campaigns(id,name,agent_key) VALUES($1,'Royal','royal'),($2,'Bigwin','bigwin')`,[id(401),id(402)])
   await db.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,created_at,campaign_id,line_id)
    VALUES($1,'Royal','outbound','sent',NOW()-interval '2 minutes',$2,$4),
@@ -320,6 +322,78 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect(body.conversations).toHaveLength(1)
   expect(body.conversations[0]).toMatchObject({phone_number:phone,agent:null})
   expect((await(await GET(request('?agent=all&phone=5491100000002'))).json()).messages).toEqual([])
+ })
+ it('shows a first inbound from an unsaved sender to the Royal conversation operator',async()=>{
+  await db.query('DELETE FROM contacts; DELETE FROM whatsapp_messages; DELETE FROM cloud_messages WHERE phone_number_id=\'10002\'')
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'operator',allowed_agents:['royal'],sectors:['conversations']}})
+  // Agent profiles can attend conversations without owning the shared sender.
+  mocks.lines.mockResolvedValue([])
+  const body=await(await GET(request('?agent=all'))).json()
+  expect(body.conversations).toHaveLength(1)
+  expect(body.conversations[0]).toMatchObject({phone_number:phone,contact_id:null,last_direction:'inbound'})
+  const details=await(await GET(request('?agent=all&phone='+phone))).json()
+  expect(details.messages.map((m:{message_body:string})=>m.message_body)).toEqual(['Mas información'])
+  expect((await(await GET(request('?agent=none'))).json()).conversations[0]).toMatchObject({phone_number:phone,agent:null})
+  expect((await(await GET(request('?agent=royal'))).json()).total).toBe(0)
+  const user={user_id:id(900),role:'operator' as const,allowed_agents:['royal'],name:'Royal',email:'test@example.test',sectors:['conversations']}
+  expect(await canReadConversation(user,phone,'all')).toBe(true)
+  expect(await requireConversation(user,phone,'none')).toEqual({agent:'none',lineId:id(10)})
+  expect((await windowGET(request('?phone='+phone+'&agent=none'))).status).toBe(200)
+  const message=details.messages[0]
+  expect((await viewed(message.id)).status).toBe(200)
+  await db.query(`UPDATE cloud_messages SET message_type='image',content='{"image":{"id":"123456"}}' WHERE id=$1`,[message.id])
+  expect((await mediaGET(request('?message='+message.id))).status).toBe(200)
+  expect(mediaMocks.download).toHaveBeenCalledWith('123456','10001','private-token','image')
+ })
+ it('keeps a saved common contact and manual replies visible to other operators',async()=>{
+  await db.query("DELETE FROM contacts; DELETE FROM whatsapp_messages; DELETE FROM cloud_messages WHERE phone_number_id='10002'")
+  mocks.lines.mockResolvedValue([])
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'operator',allowed_agents:['royal'],sectors:['conversations']}})
+  // Existing private assignments must neither hide the queue nor make a saved
+  // common contact private to the first operator who names it.
+  await db.query('INSERT INTO operator_contact_visibility(operator_id,contact_id) VALUES($1,$2)',[id(900),id(999)])
+  const response=await createContact(new NextRequest(`https://panel.test/api/conversations/${phone}/contact?agent=none`,{method:'POST',body:JSON.stringify({name:'Ana Pérez',panel:'royal'})}),{params:Promise.resolve({phone})})
+  expect(response.status).toBe(201)
+  const {contact}=await response.json()
+  expect((await db.query('SELECT panel FROM contacts WHERE id=$1',[contact.contact_id])).rows[0].panel).toBeNull()
+  expect((await db.query('SELECT * FROM operator_contact_visibility WHERE contact_id=$1',[contact.contact_id])).rowCount).toBe(0)
+  await db.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,created_at,agent_key,line_id)
+    VALUES($1,'Respuesta compartida','outbound','sent',NOW(),'none',$2)`,[phone,id(10)])
+  for(const allowed_agents of [['royal'],['bigwin'],[]]) {
+   mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(901),role:'operator',allowed_agents}})
+   const body=await(await GET(request('?agent=all'))).json()
+   expect(body.conversations).toHaveLength(1)
+   expect(body.conversations[0]).toMatchObject({phone_number:phone,agent:null,contact_id:contact.contact_id,first_name:'Ana',last_message:'Respuesta compartida'})
+   expect((await(await GET(request('?agent=none&phone='+phone))).json()).messages).toHaveLength(2)
+  }
+ })
+ it.each(['assigned contact','deleted contact','private contact','campaign history','assigned history','missing line','outbound only'])('excludes %s from the common inbox',async reason=>{
+  await db.query("DELETE FROM contacts; DELETE FROM whatsapp_messages; DELETE FROM cloud_messages WHERE phone_number_id='10002'")
+  mocks.lines.mockResolvedValue([])
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'operator',allowed_agents:['royal']}})
+  if(reason.endsWith('contact')) {
+   await db.query('INSERT INTO contacts(id,phone_number,panel,deleted_at) VALUES($1,$2,$3,$4)',[id(20),'+'+phone,reason==='assigned contact'?'bigwin':null,reason==='deleted contact'?new Date():null])
+   if(reason==='private contact')await db.query('INSERT INTO operator_contact_visibility(operator_id,contact_id) VALUES($1,$2)',[id(901),id(20)])
+  }
+  if(reason==='campaign history') {
+   await db.query('INSERT INTO campaigns(id,name) VALUES($1,\'Historical\')',[id(401)])
+   await db.query('UPDATE cloud_messages SET campaign_id=$1',[id(401)])
+  }
+  if(reason==='assigned history') await db.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,created_at,agent_key,line_id)
+    VALUES($1,'Privado','outbound','sent',NOW()-interval '2 minutes','bigwin',$2)`,[phone,id(11)])
+  if(reason==='missing line')await db.query('UPDATE cloud_numbers SET whatsapp_line_id=NULL')
+  if(reason==='outbound only')await db.query("UPDATE cloud_messages SET direction='outbound'")
+  expect((await(await GET(request('?agent=all'))).json()).total).toBe(0)
+  expect((await(await GET(request('?agent=none&phone='+phone))).json()).messages).toEqual([])
+  expect((await createContact(new NextRequest(`https://panel.test/api/conversations/${phone}/contact?agent=none`,{method:'POST',body:JSON.stringify({name:'No permitido'})}),{params:Promise.resolve({phone})})).status).toBe(404)
+ })
+ it('shares unattributed Evolution arrivals using their recorded receiving line',async()=>{
+  await db.query('DELETE FROM contacts; DELETE FROM cloud_messages; DELETE FROM whatsapp_messages')
+  await db.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,metadata)
+    VALUES($1,'Hola','inbound','received',jsonb_build_object('line_id',$2::text))`,[phone,id(10)])
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'operator',allowed_agents:['royal']}})
+  mocks.lines.mockResolvedValue([])
+  expect((await(await GET(request('?agent=none'))).json()).conversations[0]).toMatchObject({phone_number:phone,agent:null,last_message:'Hola'})
  })
  it('saves an unknown sender from Conversations and keeps it visible without restricting the operator to the new contact',async()=>{
   await db.query('DELETE FROM contacts')

@@ -204,7 +204,7 @@ export async function POST(req: NextRequest) {
            CASE WHEN x.status = 'sent'   THEN x.created_at ELSE NULL END,
            CASE WHEN x.status = 'failed' THEN x.created_at ELSE NULL END,
            NULLIF(x.error_detail, ''),
-           x.created_at, NOW(), COALESCE(x.metadata,'{}'::jsonb),x.metadata->>'workspace_agent',(x.metadata->>'line_id')::uuid
+           x.created_at, NOW(), COALESCE(x.metadata,'{}'::jsonb),NULLIF(x.metadata->>'workspace_agent','none'),(x.metadata->>'line_id')::uuid
          FROM jsonb_to_recordset($1::jsonb)
               AS x(phone_number text, message_body text, status text,
                    evolution_message_id text, campaign_id text, error_detail text, metadata jsonb, created_at timestamptz)`,

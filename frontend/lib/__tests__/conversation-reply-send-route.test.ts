@@ -177,6 +177,19 @@ describe('agent inbox replies', () => {
     expect((await POST(request())).status).toBe(403)
     expect(mocks.cloud).not.toHaveBeenCalled()
   })
+  it('answers a common thread on its original line without line ownership or assigning Royal',async()=>{
+    mocks.visible.mockResolvedValue([])
+    const response=await POST(reply('none'))
+    expect(response.status).toBe(200)
+    expect((await response.json()).results[0].status).toBe('sent')
+    expect(mocks.cloud.mock.calls[0][0]).toEqual(lineA)
+    const log=mocks.query.mock.calls.find(([sql])=>sql.includes('INSERT INTO whatsapp_messages'))!
+    expect(JSON.parse(log[1][0])[0]).toMatchObject({metadata:{line_id:'a',workspace_agent:'none'}})
+    expect(log[0]).toContain("NULLIF(x.metadata->>'workspace_agent','none')")
+    mocks.query.mockResolvedValue([])
+    expect((await POST(reply('none'))).status).toBe(404)
+    expect(mocks.cloud).toHaveBeenCalledTimes(1)
+  })
   it('never rotates an unavailable agent reply line',async()=>{
     mocks.eligible.mockResolvedValue([lineB]);mocks.replyEligible.mockResolvedValue([lineB])
     const body=await(await POST(reply())).json()

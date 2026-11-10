@@ -42,7 +42,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ pho
       ), visibility AS (
         INSERT INTO operator_contact_visibility (operator_id, contact_id, assigned_by)
         SELECT $6::uuid, saved.contact_id, $6::uuid FROM saved
-        WHERE $7::text <> 'admin' AND EXISTS (
+        WHERE $5::text <> 'none' AND $7::text <> 'admin' AND EXISTS (
           SELECT 1 FROM operator_contact_visibility WHERE operator_id=$6::uuid
         )
         ON CONFLICT (operator_id, contact_id) DO NOTHING

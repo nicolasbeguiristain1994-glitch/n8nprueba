@@ -32,20 +32,41 @@ function messagesCte(legacyScope = 'TRUE', cloudScope = 'TRUE') { return `WITH c
       WHERE cm.wamid IS NOT NULL AND legacy.evolution_message_id=cm.wamid)
 )` }
 export const CONVERSATION_MESSAGES_CTE = messagesCte()
+// The common inbox is for inbound conversations without an assigned account or
+// campaign history. It grants access to those threads, never to the whole line.
+// A saved, unassigned contact stays in the common inbox. Private/deleted contacts
+// and historical campaigns (even campaigns without an agent) remain excluded.
+const COMMON_INBOX_CTE = `, common_inbox_phones AS (
+  SELECT phone_number FROM attributed_agent_messages
+  GROUP BY phone_number
+  HAVING bool_and(agent_key IS NULL AND campaign_id IS NULL)
+), common_inbox_threads AS (
+  SELECT m.phone_number,m.line_id,min(m.created_at) FILTER (WHERE m.direction='inbound') AS opened_at
+  FROM attributed_agent_messages m JOIN common_inbox_phones p USING(phone_number)
+  WHERE m.line_id IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM contacts c WHERE REPLACE(c.phone_number,'+','')=m.phone_number
+      AND (c.deleted_at IS NOT NULL OR NULLIF(trim(c.panel),'') IS NOT NULL
+        OR EXISTS (SELECT 1 FROM operator_contact_visibility v WHERE v.contact_id=c.id))
+  )
+  GROUP BY m.phone_number,m.line_id HAVING bool_or(m.direction='inbound')
+)`
 export function scopedConversationMessages(user: ContactAccessUser, paramBase: number, requested?: string) {
   const agents = agentScope(user)
-  if (agents !== null || requested) {
+  const commonInbox = user.role === 'operator'
+  if (agents !== null || requested || commonInbox) {
     const contact=agents===null ? contactPhoneScope(user,'m.phone_number',paramBase+2,user.role==='admin') : {sql:`NOT EXISTS(SELECT 1 FROM contacts deleted_contact WHERE deleted_contact.deleted_at IS NOT NULL
       AND REPLACE(deleted_contact.phone_number,'+','')=m.phone_number)
       AND (NOT EXISTS(SELECT 1 FROM operator_contact_visibility v WHERE v.operator_id=$${paramBase+3}::uuid)
       OR EXISTS(SELECT 1 FROM contacts scoped_contact JOIN operator_contact_visibility v ON v.contact_id=scoped_contact.id
         WHERE v.operator_id=$${paramBase+3}::uuid AND scoped_contact.deleted_at IS NULL AND scoped_contact.panel=m.agent_key
           AND REPLACE(scoped_contact.phone_number,'+','')=m.phone_number))`,params:[user.user_id]}
-    return {sql: `${AGENT_MESSAGES_CTE}, conversation_messages AS (
+    const common = commonInbox ? `OR EXISTS (SELECT 1 FROM common_inbox_threads shared
+      WHERE shared.phone_number=m.phone_number AND shared.line_id=m.line_id AND m.created_at>=shared.opened_at)` : ''
+    return {sql: `${AGENT_MESSAGES_CTE}${commonInbox ? COMMON_INBOX_CTE : ''}, conversation_messages AS (
       SELECT * FROM attributed_agent_messages m
-      WHERE ${contact.sql} AND ($${paramBase+1}::text[] IS NULL OR m.agent_key=ANY($${paramBase+1}::text[]))
+      WHERE ((${contact.sql} AND ($${paramBase+1}::text[] IS NULL OR m.agent_key=ANY($${paramBase+1}::text[]))
+        AND ($${paramBase+1}::text[] IS NOT NULL OR $1::uuid[] IS NULL OR m.line_id=ANY($1::uuid[]) OR m.line_id IS NULL)) ${common})
         AND ($${paramBase+2}::text='all' OR COALESCE(m.agent_key,'none')=$${paramBase+2})
-        AND ($${paramBase+1}::text[] IS NOT NULL OR $1::uuid[] IS NULL OR m.line_id=ANY($1::uuid[]) OR m.line_id IS NULL)
     )`,params:[agents,requested || 'all',...contact.params]}
   }
   const legacy = contactPhoneScope(user, 'wm.phone_number', paramBase, user.role === 'admin')

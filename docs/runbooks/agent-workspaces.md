@@ -6,6 +6,8 @@ En Usuarios, «Aplicar perfil de agente» configura un operador con Conversacion
 
 El perfil puede responder por la línea del hilo sin permisos de envío masivo ni acceso global a esa línea. Se conservan stickers, medios, reacciones, ventanas Cloud y protecciones de envío. Las estadísticas, detalle, CSV y herramientas de IA aplican el alcance de campaña aunque un administrador haya creado la campaña. El calendario tiene permiso independiente de Tareas y filtra contenido por agente.
 
+Los operadores con Conversaciones comparten la bandeja «Sin agente», incluida en «Todos los agentes». Recibe los primeros mensajes entrantes con línea identificada, sin cuenta asignada ni historial de campaña para ese teléfono. Permite responder por la línea de origen y guardar el contacto sin asignarlo automáticamente a un agente. El contacto guardado sigue compartido; los contactos eliminados o con asignaciones privadas y los mensajes de campañas históricas no entran en esta bandeja. Los chats de agentes conservan sus permisos actuales.
+
 ## Publicación
 
 La fuente parte del commit productivo `731579bfd927c834b72fba8bcb7767c9c8a11578`. Se conservan los cambios ajenos del checkout de desarrollo sin publicarlos.
