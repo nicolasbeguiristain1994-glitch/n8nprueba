@@ -1,7 +1,7 @@
 'use strict'
 
 // Shared by contact imports and the daily CLI. No database connection is opened here.
-const AGENTS = ['bigwin','ofizeus','betcoin','royal','farabet','zeus','zeusroyal','btcuno','btcdos','imperio','adminroyal','adminfara','adminbtc','adminzeus','admbigwin','adminbigwin','adminimperio','lasvegas','royalauto','horus','hades','generalfranqui','peaky']
+const AGENTS = ['bigwin','ofizeus','betcoin','royal','farabet','zeus','zeusroyal','btcuno','btcdos','imperio','adminroyal','adminfara','adminbtc','adminzeus','admbigwin','adminbigwin','adminimperio','lasvegas','royalauto','horus','hades','generalfranqui','peaky','elduende','facuadmin1','duendeverde']
 
 function amountSQL(value) { return `casino_monthly_value_tier(${value})` }
 function activitySQL(first, last, count) {

@@ -49,6 +49,25 @@ describe('Contact segmentation with real PostgreSQL', { skip: !connection }, () 
   const state = async id => (await c.query(`SELECT c.segment,c.total_deposits,c.last_deposit_at::date::text,
     (SELECT array_agg(tag ORDER BY tag) FROM contact_tags WHERE contact_id=c.id) tags FROM contacts c WHERE id=$1`,[id])).rows[0]
 
+  it('segments El Duende deposits under its canonical and platform agent names',async()=>{
+    const ids=[]
+    for(const [agent,platform] of [['elduende','zeus'],['facuadmin1','zeus'],['duendeverde','bet30']]) {
+      const username=`player_${agent}`
+      const id=await contact(username,[{username,platform}]);ids.push(id)
+      await tx(username,600000,{platform,imported:true})
+      await c.query('UPDATE casino_transactions SET agente=$1 WHERE username=$2',[agent,username])
+    }
+    const unrelated=await contact('royal_unrelated');await player('royal_unrelated')
+    await c.query("UPDATE contacts SET segment='medio' WHERE id=$1",[unrelated])
+    await run({contactIds:ids})
+    for(const id of ids) {
+      const result=await state(id)
+      assert.equal(result.segment,'vip');assert.equal(result.total_deposits,1)
+      assert.ok(result.tags.includes('casino:actividad:nuevo'))
+    }
+    assert.equal((await state(unrelated)).segment,'medio')
+  })
+
   it('uses exact activity boundaries and treats unknown as unknown',async()=>{
     const result=await c.query(`SELECT days,${activitySQL('current_date-365','current_date-days','365')} activity
       FROM (VALUES (NULL::int),(2),(30),(31),(60),(61),(75),(76),(180),(181)) v(days)`)
