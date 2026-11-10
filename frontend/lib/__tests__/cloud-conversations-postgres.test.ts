@@ -364,6 +364,10 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect((await db.query('SELECT * FROM operator_contact_visibility WHERE contact_id=$1',[contact.contact_id])).rowCount).toBe(0)
   await db.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,created_at,agent_key,line_id)
     VALUES($1,'Respuesta compartida','outbound','sent',NOW(),'none',$2)`,[phone,id(10)])
+  // Temporary tables have no autovacuum statistics. Without these two ANALYZEs,
+  // Linux/LLVM estimates ~1.9M cost for a one-contact fixture and spends seconds
+  // compiling JIT code; production's analyzed tables do not have that plan.
+  await db.query('ANALYZE pg_temp.contacts; ANALYZE pg_temp.operator_contact_visibility')
   mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(901),role:'operator',allowed_agents}})
   const body=await(await GET(request('?agent=all'))).json()
   expect(body.conversations).toHaveLength(1)
