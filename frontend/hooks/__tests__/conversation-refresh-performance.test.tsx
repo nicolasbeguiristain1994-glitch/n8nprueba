@@ -33,7 +33,7 @@ it('pauses hidden-tab polling but keeps notifications and refreshes the active c
   expect(mocks.notify).toHaveBeenCalledOnce()
   hidden.mockReturnValue(false)
   await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
-  expect(mocks.fetch.mock.calls.map(([url]) => url)).toEqual(['/api/conversations', '/api/conversations?phone=test-phone&agent=all'])
+  expect(mocks.fetch.mock.calls.map(([url]) => url)).toEqual(['/api/conversations?agent=all', '/api/conversations?phone=test-phone&agent=all'])
 })
 
 it('keeps at most one slow inbox read and one follow-up, including events arriving during the read', async () => {
