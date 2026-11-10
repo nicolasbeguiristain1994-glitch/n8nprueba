@@ -1,5 +1,11 @@
 import { agentScope, canonicalAgent } from './agent-scope'
 
+// Shared by contact selectors and the contact update validator.
+export const CONTACT_AGENT_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas', 'elduende'] as const
+export function contactAgentLabel(agent: string): string {
+  return agent === 'elduende' ? 'El Duende' : agent
+}
+
 type Actor = { role: string; allowed_agents?: string[] | null }
 
 /** No directory names are exposed while the current profile is loading. */

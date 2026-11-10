@@ -1,5 +1,6 @@
 import { BroadcastPlanOptionsSchema } from './broadcast-plan-schema'
 import { canonicalAgent } from './agent-scope'
+import { CONTACT_AGENT_OPTIONS } from './agent-options'
 import { AgentCodeSchema } from './agent-directory'
 import { CAMPAIGN_SELECTION_LIMIT } from './campaign-selection'
 /**
@@ -121,7 +122,7 @@ export const UpdateContactSchema = z.object({
   segment_mode: z.enum(['manual','automatic']).optional(),
   segment:    z.enum(['bajo', 'medio', 'vip', 'vip_medio', 'vip_alto', 'super_vip']).nullable().optional(),
   gaming:     z.enum(['slots', 'deportivas', 'ambas']).nullable().optional(),
-  panel:      z.enum(['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas']).nullable().optional(),
+  panel:      z.enum(CONTACT_AGENT_OPTIONS).nullable().optional(),
   linea:      z.number().int().min(1).max(100).nullable().optional(),
   linea_sub:  z.enum(['a', 'b', 'c']).nullable().transform(() => null).optional(), // Legacy clients cannot restore variants.
   first_name: z.string().max(100).nullable().optional(),

@@ -23,7 +23,7 @@ import { fetchJson } from '@/lib/fetchJson'
 import type { ContactHistory } from '@/lib/contact-history'
 import { deleteContacts } from '@/lib/delete-contacts'
 import { useCurrentUser } from '@/lib/useCurrentUser'
-import { visibleAgentOptions, visibleAgentSelection } from '@/lib/agent-options'
+import { CONTACT_AGENT_OPTIONS, contactAgentLabel, visibleAgentOptions, visibleAgentSelection } from '@/lib/agent-options'
 import { BroadcastFilter } from '@/components/contacts/BroadcastFilter'
 import { EMPTY_BROADCAST, broadcastParams, broadcastLabel } from '@/lib/broadcast-range'
 import { MovementRangeFilters } from '@/components/contacts/InactivityRangeFilter'
@@ -76,7 +76,6 @@ interface ContactList { is_dynamic?: boolean; refreshed_at?: string; id: string;
 // Constantes de dominio
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PANEL_OPTIONS = ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas']
 const LINE_OPTIONS = Array.from({ length: 100 }, (_, i) => ({ value: String(i + 1), label: `Línea ${i + 1}` }))
 
 
@@ -184,7 +183,7 @@ function detectClientPlatforms(first: string | null, last: string | null): strin
 
 export default function Contacts() {
   const { user: currentUser, permissions } = useCurrentUser()
-  const panelOptions = useMemo(() => visibleAgentOptions(currentUser, PANEL_OPTIONS), [currentUser])
+  const panelOptions = useMemo(() => visibleAgentOptions(currentUser, CONTACT_AGENT_OPTIONS), [currentUser])
   // ── Tab activo ────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'contacts' | 'prospects' | 'prospect-lists' | 'missing-phone'>('contacts')
 
@@ -591,7 +590,7 @@ export default function Contacts() {
     setSendingLine(v.sendingLine||'');setSendingMode(v.sendingMode||'assigned')
     setBroadcast(v.broadcast || EMPTY_BROADCAST);setFilterRecent(v.recent||'');setSearch(v.search);setSegments(v.segments);setFilterGaming(v.gaming);setFilterPanel(v.panel);setFilterLinea(normalizeContactLines(v.linea));setInactivity(normalizeContactInactivity(v.inactivity));setFilterActividad(v.actividad);setFilterAntiguedad(v.antiguedad);setFilterPlataforma(v.plataforma);setFilterSinMovimiento(v.sinMovimiento);setFilterTag(v.tag);setFilterList(v.list);setContactColumns(v.columns);setRowSelection({});resetPage()
   }
-  const activeFilterLabels = [broadcast.mode&&broadcastLabel(broadcast),filterRecent&&`Depósitos ${filterRecent}d (último cálculo)`,search&&`Búsqueda: ${search}`,segments.length&&`Nivel: ${segments.map(v=>NIVEL_LABEL[v]||v).join(', ')}`,filterPanel&&`Agente: ${filterPanel}`,filterLinea.length>0&&`${filterLinea.length===1?'Línea':'Líneas'}: ${filterLinea.join(', ')}`,filterGaming&&`Juego: ${filterGaming}`,filterPlataforma&&`Plataforma: ${filterPlataforma}`,filterActividad.length&&`Actividad: ${filterActividad.join(', ')}`,filterAntiguedad.length&&`Antigüedad: ${filterAntiguedad.join(', ')}`,(hasInactivityFilter(inactivity))&&inactivityLabel(inactivity),filterSinMovimiento&&'12 meses sin depósitos registrados',filterTag&&`Etiqueta: ${filterTag}`,filterList&&`Lista: ${lists.find(l=>l.id===filterList)?.name||'seleccionada'}`].filter(Boolean)
+  const activeFilterLabels = [broadcast.mode&&broadcastLabel(broadcast),filterRecent&&`Depósitos ${filterRecent}d (último cálculo)`,search&&`Búsqueda: ${search}`,segments.length&&`Nivel: ${segments.map(v=>NIVEL_LABEL[v]||v).join(', ')}`,filterPanel&&`Agente: ${contactAgentLabel(filterPanel)}`,filterLinea.length>0&&`${filterLinea.length===1?'Línea':'Líneas'}: ${filterLinea.join(', ')}`,filterGaming&&`Juego: ${filterGaming}`,filterPlataforma&&`Plataforma: ${filterPlataforma}`,filterActividad.length&&`Actividad: ${filterActividad.join(', ')}`,filterAntiguedad.length&&`Antigüedad: ${filterAntiguedad.join(', ')}`,(hasInactivityFilter(inactivity))&&inactivityLabel(inactivity),filterSinMovimiento&&'12 meses sin depósitos registrados',filterTag&&`Etiqueta: ${filterTag}`,filterList&&`Lista: ${lists.find(l=>l.id===filterList)?.name||'seleccionada'}`].filter(Boolean)
 
 
   // ── Inline edits ──────────────────────────────────────────────────────────
@@ -1160,7 +1159,7 @@ export default function Contacts() {
       cell: ({ row }) => (
         <EditableCell
           value={row.original.panel || ''}
-          options={panelOptions.map(p => ({ value: p, label: p }))}
+          options={panelOptions.map(p => ({ value: p, label: contactAgentLabel(p) }))}
           activeClass="bg-accent text-primary"
           placeholder="— sin agente"
           ariaLabel={`Editar Agente de ${row.original.first_name || row.original.phone_number}`}
@@ -1617,7 +1616,7 @@ export default function Contacts() {
           <SelectTrigger aria-label="Filtrar contactos por agente" className="w-40"><SelectValue placeholder="Agente" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="">Todos los agentes</SelectItem>
-            {panelOptions.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+            {panelOptions.map(p => <SelectItem key={p} value={p}>{contactAgentLabel(p)}</SelectItem>)}
           </SelectContent>
         </Select>
         <ContactLineFilter value={filterLinea} onChange={lines => { setFilterLinea(lines); setRowSelection({}); resetPage() }} />
@@ -2010,7 +2009,7 @@ export default function Contacts() {
                   <div className="text-xs text-warning space-y-0.5">
                     {Object.entries(importCheck.by_panel).map(([panel, count]) => (
                       <div key={panel} className="flex justify-between">
-                        <span>{panel}</span>
+                        <span>{contactAgentLabel(panel)}</span>
                         <span className="font-medium">{count.toLocaleString()}</span>
                       </div>
                     ))}
@@ -2042,7 +2041,7 @@ export default function Contacts() {
                     <SelectTrigger><SelectValue placeholder="Sin asignar" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Sin asignar</SelectItem>
-                      {panelOptions.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                      {panelOptions.map(p => <SelectItem key={p} value={p}>{contactAgentLabel(p)}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
@@ -2052,7 +2051,7 @@ export default function Contacts() {
                     <SelectTrigger><SelectValue placeholder="Sin asignar" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Sin asignar</SelectItem>
-                      {panelOptions.filter(p => p !== importPanel).map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                      {panelOptions.filter(p => p !== importPanel).map(p => <SelectItem key={p} value={p}>{contactAgentLabel(p)}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
@@ -2141,7 +2140,7 @@ export default function Contacts() {
                     </p>
                     <div className="flex flex-wrap gap-1.5">
                       {search && <span className="text-xs bg-muted text-foreground px-2 py-0.5 rounded-full">Búsqueda: &quot;{search}&quot;</span>}
-                      {filterPanel && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Agente: {filterPanel}</span>}
+                      {filterPanel && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Agente: {contactAgentLabel(filterPanel)}</span>}
                       {segments.length > 0 && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">Nivel: {segments.join(', ')}</span>}
                       {(hasInactivityFilter(inactivity)) && <span className="text-xs bg-success/15 text-success px-2 py-0.5 rounded-full">{inactivityLabel(inactivity)}</span>}
                       {filterActividad.length > 0 && <span className="text-xs bg-success/15 text-success px-2 py-0.5 rounded-full">Actividad: {filterActividad.join(', ')}</span>}
@@ -2164,7 +2163,7 @@ export default function Contacts() {
                 <p className="text-xs text-muted-foreground">Se incluirán todos los contactos que cumplan los criterios elegidos.</p>
                 <div className="grid grid-cols-1 gap-2">
                   {[
-                    { label: 'Agente', value: criteriaPanel, set: setCriteriaPanel, key: 'all-agent', items: panelOptions.map(p => ({ v: p, l: p })) },
+                    { label: 'Agente', value: criteriaPanel, set: setCriteriaPanel, key: 'all-agent', items: panelOptions.map(p => ({ v: p, l: contactAgentLabel(p) })) },
                     { label: 'Juego', value: criteriaGaming, set: setCriteriaGaming, key: 'all-game', items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }] },
                     { label: 'Nivel', value: criteriaSegment, set: setCriteriaSegment, key: 'all-seg', items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip_alto', l: 'Vip Alto' }, { v: 'vip_medio', l: 'Vip Medio' }, { v: 'vip', l: 'Vip Bajo' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }] },
                   ].map(({ label, value, set, key, items }) => (
@@ -2242,7 +2241,7 @@ export default function Contacts() {
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[
-                { label: 'Panel', value: newPanel, set: setNewPanel, items: panelOptions.map(p => ({ v: p, l: p })), ph: 'Panel' },
+                { label: 'Panel', value: newPanel, set: setNewPanel, items: panelOptions.map(p => ({ v: p, l: contactAgentLabel(p) })), ph: 'Panel' },
                 { label: 'Línea', value: newLinea, set: setNewLinea, items: Array.from({ length: 100 }, (_, i) => ({ v: String(i + 1), l: `Línea ${i + 1}` })), ph: 'Línea' },
                 { label: 'Juego', value: newGaming, set: setNewGaming, items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }], ph: 'Juego' },
                 { label: 'Nivel', value: newSegment, set: setNewSegment, items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip_alto', l: 'Vip Alto' }, { v: 'vip_medio', l: 'Vip Medio' }, { v: 'vip', l: 'Vip Bajo' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }], ph: 'Nivel' },
@@ -2407,7 +2406,7 @@ export default function Contacts() {
             </div>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[
-                { label: 'Panel',  value: editPanel,   set: setEditPanel,   items: panelOptions.map(p => ({ v: p, l: p })),                                                                                          ph: 'Panel'  },
+                { label: 'Panel',  value: editPanel,   set: setEditPanel,   items: panelOptions.map(p => ({ v: p, l: contactAgentLabel(p) })),                                                                                          ph: 'Panel'  },
                 { label: 'Línea',  value: editLinea,   set: setEditLinea,   items: Array.from({ length: 100 }, (_, i) => ({ v: String(i + 1), l: `Línea ${i + 1}` })),                                               ph: 'Línea'  },
                 { label: 'Juego',  value: editGaming,  set: setEditGaming,  items: [{ v: 'slots', l: '🎰 Slots' }, { v: 'deportivas', l: '⚽ Deportivas' }, { v: 'ambas', l: '🎯 Ambas' }],                         ph: 'Juego'  },
                 { label: 'Nivel',  value: editSegment, set: setEditSegment, items: [{ v: 'super_vip', l: 'Super Vip' }, { v: 'vip_alto', l: 'Vip Alto' }, { v: 'vip_medio', l: 'Vip Medio' }, { v: 'vip', l: 'Vip Bajo' }, { v: 'medio', l: 'Medio' }, { v: 'bajo', l: 'Bajo' }], ph: 'Nivel' },
@@ -2655,7 +2654,7 @@ export default function Contacts() {
             </p>
             {confirmBulk?.mode === 'filters' && (
               <div className="flex flex-wrap gap-1.5 p-2 bg-muted/50 rounded-lg">
-                {filterPanel && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Agente: {filterPanel}</span>}
+                {filterPanel && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Agente: {contactAgentLabel(filterPanel)}</span>}
                 {segments.length > 0 && <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">Nivel: {segments.join(', ')}</span>}
                 {(hasInactivityFilter(inactivity)) && <span className="text-xs bg-success/15 text-success px-2 py-0.5 rounded-full">{inactivityLabel(inactivity)}</span>}
                       {filterActividad.length > 0 && <span className="text-xs bg-success/15 text-success px-2 py-0.5 rounded-full">Actividad: {filterActividad.join(', ')}</span>}
