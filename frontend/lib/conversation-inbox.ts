@@ -3,6 +3,8 @@ import { CONVERSATION_MESSAGES_CTE } from './conversation-messages'
 // Only successful campaign messages establish membership. Replies and manual
 // sends keep that history; queued/failed campaigns never label a conversation.
 // Use the same visible, deduplicated message source as the inbox itself.
+// Materialize campaign summaries so large inboxes aggregate them once, not once
+// per matching phone/account row (which can exceed the API query deadline).
 export const conversationInboxCte = (messages = CONVERSATION_MESSAGES_CTE, agentParam?: number) => `${messages},
   campaign_threads AS (
     SELECT REPLACE(m.phone_number, '+', '') AS phone_number,
@@ -11,7 +13,7 @@ export const conversationInboxCte = (messages = CONVERSATION_MESSAGES_CTE, agent
     JOIN campaigns cp ON cp.id = m.campaign_id
     WHERE m.direction = 'outbound' AND m.status IN ('sent', 'delivered', 'read')
     GROUP BY REPLACE(m.phone_number, '+', ''), cp.id, cp.name
-  ), campaign_history AS (
+  ), campaign_history AS MATERIALIZED (
     SELECT phone_number,
       jsonb_agg(jsonb_build_object('id', id, 'name', name, 'last_sent_at', last_sent_at)
         ORDER BY last_sent_at DESC, id DESC) AS campaigns
