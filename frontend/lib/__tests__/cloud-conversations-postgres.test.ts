@@ -15,6 +15,7 @@ import { GET as windowGET } from '@/app/api/conversations/window/route'
 import { GET as notesGet, POST as notesPost } from '@/app/api/conversations/[phone]/notes/route'
 import { PATCH as statusPatch } from '@/app/api/conversations/[phone]/status/route'
 import { GET } from '@/app/api/conversations/route'
+import { POST as createContact } from '@/app/api/conversations/[phone]/contact/route'
 import { POST as viewedPOST } from '@/app/api/conversations/viewed/route'
 import { POST as reactPOST } from '@/app/api/conversations/reactions/route'
 import { CloudSendOutcomeUnknownError } from '@/lib/campaign-distributor'
@@ -41,8 +42,9 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
    CREATE TEMP TABLE whatsapp_lines(id uuid,display_name text,line_key text,line_type text DEFAULT 'cloud');
    CREATE TEMP TABLE cloud_conversations(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number_id text,contact_phone text,window_opens_at timestamptz,window_expires_at timestamptz,window_type text,last_message_at timestamptz,last_message_preview text,unread_count int DEFAULT 0,status text,updated_at timestamptz,UNIQUE(phone_number_id,contact_phone));
    CREATE TEMP TABLE cloud_messages(id uuid DEFAULT gen_random_uuid(),conversation_id uuid,phone_number_id text,wamid text UNIQUE,direction text,message_type text,content jsonb,status text,sent_at timestamptz,created_at timestamptz DEFAULT NOW(),campaign_id uuid);
-   CREATE TEMP TABLE contacts(id uuid,phone_number text,first_name text,last_name text,segment text,deleted_at timestamptz,panel text,linea int,linea_sub text);
-   CREATE TEMP TABLE operator_contact_visibility(operator_id uuid,contact_id uuid);
+   CREATE TEMP TABLE contacts(id uuid DEFAULT gen_random_uuid(),phone_number text,first_name text,last_name text,segment text,deleted_at timestamptz,panel text,linea int,linea_sub text,
+     external_id text,status text,opt_in_marketing boolean,opt_in_sms boolean,platform_source text,created_at timestamptz,updated_at timestamptz,identity_key text UNIQUE,panels_assigned text[]);
+   CREATE TEMP TABLE operator_contact_visibility(operator_id uuid,contact_id uuid,assigned_by uuid,UNIQUE(operator_id,contact_id));
    CREATE TEMP TABLE agent_contact_lines(id uuid DEFAULT gen_random_uuid(),agent_code text,linea int,variant text,label text,phone text,is_active boolean DEFAULT true,link_url text);
    CREATE TEMP TABLE crm_agents(code text PRIMARY KEY,delivery_mode text DEFAULT 'phone',phone_format text DEFAULT 'separated'); INSERT INTO crm_agents(code) VALUES('royal'),('ofizeus');
    CREATE TEMP TABLE contact_tags(contact_id uuid,tag text);
@@ -294,6 +296,58 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect((await(await GET(request())).json()).conversations[0].conv_flow).toBe('en_proceso')
   mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(901),role:'operator',allowed_agents:['bigwin']}})
   expect((await(await GET(request())).json()).conversations[0].conv_flow).toBeNull()
+ })
+ it('lists all authorized agents without reverting to Royal or exposing another agent',async()=>{
+  await db.query(`INSERT INTO campaigns(id,name,agent_key) VALUES($1,'Royal','royal'),($2,'Bigwin','bigwin')`,[id(401),id(402)])
+  await db.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,created_at,campaign_id,line_id)
+   VALUES($1,'Royal','outbound','sent',NOW()-interval '2 minutes',$2,$4),
+         ('5491100000003','Bigwin','outbound','sent',NOW(),$3,$4)`,[phone,id(401),id(402),id(10)])
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'operator',allowed_agents:['royal','bigwin']}})
+  const all=await(await GET(request('?agent=all'))).json()
+  expect(all.agent).toBe('all')
+  expect(all.total).toBe(2)
+  expect(all.conversations.map((c:{agent:string})=>c.agent).sort()).toEqual(['bigwin','royal'])
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'operator',allowed_agents:['royal']}})
+  const restricted=await(await GET(request('?agent=all'))).json()
+  expect(restricted.agent).toBe('all')
+  expect(restricted.conversations.map((c:{phone_number:string})=>c.phone_number)).toEqual([phone])
+  expect(restricted.campaigns.map((c:{name:string})=>c.name)).toEqual(['Royal'])
+  expect((await(await GET(request('?agent=all&phone=5491100000003'))).json()).messages).toEqual([])
+ })
+ it('includes unassigned senders in all chats while preserving line visibility',async()=>{
+  const body=await(await GET(request('?agent=all'))).json()
+  expect(body.agent).toBe('all')
+  expect(body.conversations).toHaveLength(1)
+  expect(body.conversations[0]).toMatchObject({phone_number:phone,agent:null})
+  expect((await(await GET(request('?agent=all&phone=5491100000002'))).json()).messages).toEqual([])
+ })
+ it('saves an unknown sender from Conversations and keeps it visible without restricting the operator to the new contact',async()=>{
+  await db.query('DELETE FROM contacts')
+  await db.query(`INSERT INTO campaigns(id,name,agent_key) VALUES($1,'Royal','royal')`,[id(401)])
+  await db.query(`INSERT INTO whatsapp_messages(phone_number,message_body,direction,status,created_at,campaign_id,line_id)
+   VALUES($1,'Royal','outbound','sent',NOW(),$2,$3)`,[phone,id(401),id(10)])
+  mocks.auth.mockResolvedValue({ok:true,user:{user_id:id(900),role:'operator',allowed_agents:['royal'],sectors:['conversations']}})
+  const req=new NextRequest(`https://panel.test/api/conversations/${phone}/contact?agent=royal`,{method:'POST',body:JSON.stringify({name:' Ana   Pérez ',phone:'5491999999999',panel:'bigwin'})})
+  const response=await createContact(req,{params:Promise.resolve({phone})})
+  expect(response.status).toBe(201)
+  const {contact}=await response.json()
+  expect(contact).toMatchObject({phone_number:'+'+phone,first_name:'Ana',last_name:'Pérez'})
+  expect((await db.query('SELECT panel,opt_in_marketing FROM contacts')).rows).toEqual([{panel:'royal',opt_in_marketing:false}])
+  expect((await db.query('SELECT contact_id FROM operator_contact_visibility WHERE contact_id=$1',[contact.contact_id])).rowCount).toBe(0)
+  expect((await(await GET(request('?agent=all'))).json()).conversations[0]).toMatchObject({contact_id:contact.contact_id,first_name:'Ana'})
+ })
+ it.each([true,false])('does not duplicate or overwrite a saved contact (plus prefix: %s)',async plus=>{
+  if(!plus) await db.query('UPDATE contacts SET phone_number=$1',[phone])
+  await db.query("UPDATE whatsapp_messages SET agent_key='royal'")
+  const response=await createContact(new NextRequest(`https://panel.test/api/conversations/${phone}/contact?agent=royal`,{method:'POST',body:JSON.stringify({name:'Otro nombre'})}),{params:Promise.resolve({phone})})
+  expect(response.status).toBe(409)
+  expect((await db.query('SELECT first_name FROM contacts')).rows).toEqual([{first_name:'Prueba'}])
+ })
+ it('rejects creating a contact from a hidden conversation',async()=>{
+  const hidden='5491100000002'
+  const response=await createContact(new NextRequest(`https://panel.test/api/conversations/${hidden}/contact?agent=none`,{method:'POST',body:JSON.stringify({name:'Oculto'})}),{params:Promise.resolve({phone:hidden})})
+  expect(response.status).toBe(404)
+  expect((await db.query('SELECT count(*)::int AS count FROM contacts')).rows[0].count).toBe(1)
  })
  it('shows an already stored button in the same thread as its campaign, with the contact name and inbound preview',async()=>{
   const r=await GET(request());expect(r.status).toBe(200);const body=await r.json()

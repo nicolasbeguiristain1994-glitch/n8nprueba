@@ -20,6 +20,7 @@ import { AssignedLineActions } from '@/components/conversations/AssignedLineActi
 import { CloudWindowIndicator } from '@/components/conversations/CloudWindowIndicator'
 import { StickerPicker } from '@/components/conversations/StickerPicker'
 import { EmojiPicker }            from '@/components/conversations/EmojiPicker'
+import { CreateConversationContact } from '@/components/conversations/CreateConversationContact'
 
 export default function Conversations() {
   const {permissions}=useCurrentUser()
@@ -34,7 +35,7 @@ export default function Conversations() {
     followUpOnly, setFollowUpOnly,
     realtimeStatus,
     notifPermission, requestNotif,
-    openConv, sendReply, sendSticker,
+    openConv, sendReply, sendSticker, updateContact,
     totalConvs, hasMore, loadingMore, loadMoreConvs,
   } = useConversations()
 
@@ -43,6 +44,9 @@ export default function Conversations() {
   const [detailsOpen, setDetailsOpen] = useState(false)
   const openedFromLink = useRef(false)
   const [showEmoji, setShowEmoji] = useState(false)
+  const [creatingContact, setCreatingContact] = useState<{ phone: string; agent: string } | null>(null)
+  const onCreateContact = permissions.conversations?.includes('update') && selected
+    ? () => setCreatingContact({ phone: selected, agent: agent === 'all' ? selectedConv?.agent || 'none' : agent }) : undefined
   const [mobilePanel, setMobilePanel] = useState<'list' | 'chat' | 'details'>('list')
 
   useEffect(() => {
@@ -143,7 +147,7 @@ export default function Conversations() {
               </div>
             ) : (
               <>
-                <ConversationHeader phone={selected} conv={selectedConv} selectedCampaign={campaign} />
+                <ConversationHeader phone={selected} conv={selectedConv} selectedCampaign={campaign} onCreateContact={onCreateContact} />
                 <CloudWindowIndicator key={`${agent}:${selected}`} agent={agent==='all' ? selectedConv?.agent || 'none' : agent} phone={selected} />
 
                 {/* Área de mensajes */}
@@ -240,10 +244,16 @@ export default function Conversations() {
               phone={selected}
               conv={selectedConv}
               onRefresh={() => { refreshConversations(); openConv(selected) }}
+              onCreateContact={onCreateContact}
             />
           </Card>
         )}
       </div>
+      {creatingContact && selected === creatingContact.phone && <CreateConversationContact
+        key={`${creatingContact.agent}:${creatingContact.phone}`} phone={creatingContact.phone} agent={creatingContact.agent}
+        onClose={() => setCreatingContact(null)}
+        onCreated={contact => updateContact(creatingContact.phone, contact)}
+      />}
     </div>
   )
 }

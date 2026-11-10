@@ -76,7 +76,8 @@ export function useConversations() {
   const messagesInFlight = useRef<{ phone: string; controller: AbortController; queued: boolean; queuedScroll: boolean } | null>(null)
   const scope = new URLSearchParams()
   if (campaign !== 'all') scope.set('campaign', campaign)
-  if (agent !== 'all') scope.set('agent', agent)
+  // Send the explicit choice: an omitted agent defaults to Royal for single-agent users.
+  scope.set('agent', agent)
   if (level !== 'all') scope.set('level', level)
   const scopeKey = scope.toString()
   const scopeRef = useRef(scopeKey)
@@ -115,7 +116,6 @@ export function useConversations() {
         setTotalConvs(d.total || 0)
         setCampaigns(d.campaigns || [])
         setAgents(d.agents || [])
-        if(agent==='all' && d.agent && d.agent!=='all')setAgent(d.agent)
       })
       .catch(() => { if (isCurrent()) setLoadError('No se pudieron cargar las conversaciones.') })
       .finally(() => {
@@ -312,6 +312,12 @@ export function useConversations() {
     loadMessages(phone, true)
   }, [loadMessages, convs])
 
+  const updateContact = useCallback((phone: string, contact: Pick<Conv, 'contact_id' | 'first_name' | 'last_name' | 'segment'>) => {
+    setConvs(previous => previous.map(conv => conv.phone_number === phone ? { ...conv, ...contact } : conv))
+    setSelectedSnapshot(previous => previous?.phone_number === phone ? { ...previous, ...contact } : previous)
+    loadConvs()
+  }, [loadConvs])
+
   const sendingRef=useRef(false)
   const sendSticker = async (url:string, token:string):Promise<boolean> => {
     const sendAgent=agent
@@ -406,7 +412,7 @@ export function useConversations() {
     followUpOnly, setFollowUpOnly,
     realtimeStatus,
     notifPermission, requestNotif,
-    openConv, sendReply, sendSticker,
+    openConv, sendReply, sendSticker, updateContact,
     refreshMessages: (phone: string) => { if (selectedRef.current === phone) loadMessages(phone) },
     totalConvs, hasMore, loadingMore, loadMoreConvs,
   }

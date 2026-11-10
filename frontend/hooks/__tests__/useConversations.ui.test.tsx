@@ -11,6 +11,43 @@ afterEach(() => { cleanup(); vi.clearAllTimers(); vi.unstubAllGlobals() })
 describe('Inbox loading and error states', () => {
   const conv = (phone: string) => ({ phone_number: phone, last_message: 'Hola', last_direction: 'inbound', last_status: 'received', last_at: '2026-10-01T18:00:00Z' })
 
+  it('keeps Todos los chats after selecting it from Royal, refreshing and paginating', async () => {
+    const first = Array.from({ length: 200 }, (_, index) => conv(String(index)))
+    mocks.fetch.mockImplementation((url: string) => Promise.resolve({
+      agent: url.includes('agent=all') ? 'all' : 'royal', agents: ['royal', 'bigwin'],
+      conversations: url.includes('offset=200') ? [conv('200')] : first, total: 201,
+    }))
+    const { result } = renderHook(useConversations)
+    act(() => result.current.setAgent('royal'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.agent).toBe('royal')
+    act(() => result.current.setAgent('all'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    act(() => result.current.loadMoreConvs())
+    await waitFor(() => expect(result.current.convs).toHaveLength(201))
+    mocks.fetch.mockClear()
+    act(() => result.current.refreshConversations())
+    await waitFor(() => expect(mocks.fetch).toHaveBeenCalledTimes(2))
+    await act(async () => {})
+    expect(result.current.agent).toBe('all')
+    expect(mocks.fetch.mock.calls.map(([url]) => url)).toEqual([
+      '/api/conversations?agent=all', '/api/conversations?agent=all&offset=200',
+    ])
+  })
+
+  it('updates the selected contact immediately, including its snapshot outside the current filter', async () => {
+    mocks.fetch.mockImplementation((url: string) => Promise.resolve(url.includes('phone=') ? { messages: [] }
+      : { conversations: url.includes('campaign=empty') ? [] : [conv('123')], total: 1 }))
+    const { result } = renderHook(useConversations)
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    act(() => result.current.openConv('123'))
+    act(() => result.current.setCampaign('empty'))
+    await waitFor(() => expect(result.current.convs).toEqual([]))
+    act(() => result.current.updateContact('123', { contact_id: 'new-contact', first_name: 'Ana', last_name: 'Pérez' }))
+    expect(result.current.selectedConv).toMatchObject({ contact_id: 'new-contact', first_name: 'Ana', last_name: 'Pérez' })
+    expect(result.current.selected).toBe('123')
+  })
+
   it('keeps campaign and level filters on pagination and refresh, without dropping loaded pages', async () => {
     const firstPage = Array.from({ length: 200 }, (_, i) => conv(String(i)))
     mocks.fetch.mockImplementation((url: string) => Promise.resolve({
@@ -21,10 +58,10 @@ describe('Inbox loading and error states', () => {
     await waitFor(() => expect(result.current.convs).toHaveLength(200))
     act(() => { result.current.setCampaign('campaign-a'); result.current.setLevel('vip_alto') })
     await waitFor(() => expect(result.current.loading).toBe(false))
-    expect(mocks.fetch).toHaveBeenCalledWith('/api/conversations?campaign=campaign-a&level=vip_alto', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(mocks.fetch).toHaveBeenCalledWith('/api/conversations?campaign=campaign-a&agent=all&level=vip_alto', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     act(() => result.current.loadMoreConvs())
     await waitFor(() => expect(result.current.convs).toHaveLength(201))
-    expect(mocks.fetch).toHaveBeenCalledWith('/api/conversations?campaign=campaign-a&level=vip_alto&offset=200', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(mocks.fetch).toHaveBeenCalledWith('/api/conversations?campaign=campaign-a&agent=all&level=vip_alto&offset=200', expect.objectContaining({ signal: expect.any(AbortSignal) }))
     mocks.fetch.mockClear()
     act(() => result.current.refreshConversations())
     await waitFor(() => expect(mocks.fetch).toHaveBeenCalledTimes(2))
@@ -93,7 +130,7 @@ describe('Inbox loading and error states', () => {
   it('does not display the previous conversation or a stale response after switching contacts', async () => {
     let finishFirst!: (value: unknown) => void
     mocks.fetch.mockImplementation((url: string) => {
-      if (url === '/api/conversations') return Promise.resolve({ conversations: [], total: 0 })
+      if (url === '/api/conversations?agent=all') return Promise.resolve({ conversations: [], total: 0 })
       if (url.includes('phone=first')) return new Promise(resolve => { finishFirst = resolve })
       return Promise.resolve({ messages: [{ id: 'second-message', message_body: 'Second conversation' }] })
     })

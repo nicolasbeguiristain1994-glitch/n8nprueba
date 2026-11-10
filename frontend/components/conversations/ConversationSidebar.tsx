@@ -1,5 +1,6 @@
 'use client'
-import { User, TrendingUp, Calendar, Megaphone } from 'lucide-react'
+import { User, UserPlus, TrendingUp, Calendar, Megaphone } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { AgentBadge } from './AgentBadge'
 import { ContactLineBadge } from './ContactLineBadge'
 import type { Conv } from '@/lib/scoring/conversation-scoring'
@@ -12,13 +13,14 @@ interface Props {
   phone:      string
   conv:       Conv | undefined
   onRefresh?: () => void
+  onCreateContact?: () => void
 }
 
 function daysSince(dateStr: string): number {
   return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86_400_000)
 }
 
-export function ConversationSidebar({ phone, conv, onRefresh }: Props) {
+export function ConversationSidebar({ phone, conv, onRefresh, onCreateContact }: Props) {
   const days = conv ? daysSince(conv.last_at) : null
 
   return (
@@ -37,6 +39,10 @@ export function ConversationSidebar({ phone, conv, onRefresh }: Props) {
             <p className="text-xs text-muted-foreground">{fmtPhone(phone)}</p>
           </div>
         </div>
+
+        {!conv?.contact_id && onCreateContact && <Button size="sm" variant="outline" className="mb-2 w-full" onClick={onCreateContact}>
+          <UserPlus size={14} /> Crear contacto
+        </Button>}
 
         {/* Badges */}
         <div className="flex flex-wrap gap-1">
