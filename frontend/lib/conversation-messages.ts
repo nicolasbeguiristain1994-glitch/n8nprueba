@@ -36,11 +36,11 @@ export const CONVERSATION_MESSAGES_CTE = messagesCte()
 // campaign history. It grants access to those threads, never to the whole line.
 // A saved, unassigned contact stays in the common inbox. Private/deleted contacts
 // and historical campaigns (even campaigns without an agent) remain excluded.
-const COMMON_INBOX_CTE = `, common_inbox_phones AS (
+const COMMON_INBOX_CTE = `, common_inbox_phones AS MATERIALIZED (
   SELECT phone_number FROM attributed_agent_messages
   GROUP BY phone_number
   HAVING bool_and(agent_key IS NULL AND campaign_id IS NULL)
-), common_inbox_threads AS (
+), common_inbox_threads AS MATERIALIZED (
   SELECT m.phone_number,m.line_id,min(m.created_at) FILTER (WHERE m.direction='inbound') AS opened_at
   FROM attributed_agent_messages m JOIN common_inbox_phones p USING(phone_number)
   WHERE m.line_id IS NOT NULL AND NOT EXISTS (

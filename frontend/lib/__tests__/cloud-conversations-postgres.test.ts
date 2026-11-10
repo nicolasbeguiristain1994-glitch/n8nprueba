@@ -335,7 +335,8 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect(details.messages.map((m:{message_body:string})=>m.message_body)).toEqual(['Mas información'])
   expect((await(await GET(request('?agent=none'))).json()).conversations[0]).toMatchObject({phone_number:phone,agent:null})
   expect((await(await GET(request('?agent=royal'))).json()).total).toBe(0)
-  const user={user_id:id(900),role:'operator' as const,allowed_agents:['royal'],name:'Royal',email:'test@example.test',sectors:['conversations']}
+  const user={user_id:id(900),role:'operator' as const,allowed_agents:['royal'],name:'Royal',email:'test@example.test',sectors:['conversations'],
+    session_version:1,can_download_contacts:false,is_super_admin:false,iat:0,exp:0,nonce:'test'}
   expect(await canReadConversation(user,phone,'all')).toBe(true)
   expect(await requireConversation(user,phone,'none')).toEqual({agent:'none',lineId:id(10)})
   expect((await windowGET(request('?phone='+phone+'&agent=none'))).status).toBe(200)

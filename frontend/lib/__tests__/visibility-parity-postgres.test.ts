@@ -282,15 +282,16 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
     await db.query('INSERT INTO contacts(phone_number,panel) VALUES($1,$2)',[phone(3),'farabet'])
     expect(await canReadConversation(mocks.session!,phone(3))).toBe(true)
   })
-  it('denies unattributed Cloud inbound phones even when their line is visible', async () => {
+  it('shares new Cloud inbound phones without granting access to assigned contacts on the same line', async () => {
     await db.query("INSERT INTO cloud_numbers VALUES('visible',$1),('hidden',$2)",[id(80),id(81)])
     await db.query('INSERT INTO cloud_conversations VALUES($1,$3),($2,$4)',[id(82),id(83),phone(4),phone(2)])
     await db.query(`INSERT INTO cloud_messages(conversation_id,phone_number_id,wamid,direction,content,message_type,status)
       VALUES($1,'visible','new1','inbound','{}','text','received'),($2,'visible','new2','inbound','{}','text','received')`,[id(82),id(83)])
-    expect(await canReadConversation(mocks.session!,phone(4))).toBe(false)
+    expect(await canReadConversation(mocks.session!,phone(4))).toBe(true)
     expect(await canReadConversation(mocks.session!,phone(2))).toBe(false)
     mocks.lines.mockResolvedValue([])
-    expect(await canReadConversation(mocks.session!,phone(4))).toBe(false)
+    expect(await canReadConversation(mocks.session!,phone(4))).toBe(true)
+    expect(await canReadConversation(mocks.session!,phone(2))).toBe(false)
   })
   it('keeps administrative contact access independent of operator assignments', async () => {
     await db.query("UPDATE users SET role='admin'")
