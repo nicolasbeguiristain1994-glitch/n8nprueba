@@ -62,7 +62,7 @@ it('updates options and clears the active selection immediately when grants chan
 it.each([
   ['loading', null, []],
   ['invalid scope', { id: 'agent', role: 'operator', allowed_agents: ['???'] }, []],
-  ['admin', { id: 'admin', role: 'admin', allowed_agents: ['royal'] }, ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas']],
+  ['admin', { id: 'admin', role: 'admin', allowed_agents: ['royal'] }, ['betcoin', 'bigwin', 'farabet', 'ofizeus', 'royal', 'lasvegas', 'El Duende']],
   ['multiple grants', { id: 'agent', role: 'viewer', allowed_agents: ['Royal', 'imperio'] }, ['royal', 'imperio']],
 ] as const)('respects %s when opening the agent picker', async (_, profile, options) => {
   state.user = profile ? { ...profile, allowed_agents: [...profile.allowed_agents] } : null
