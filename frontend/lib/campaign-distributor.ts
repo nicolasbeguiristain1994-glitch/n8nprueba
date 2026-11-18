@@ -603,9 +603,10 @@ async function withCampaignLineBudget<T>(lineId: string, campaignId: string | un
 
 export async function sendViaEvolution(line: EligibleLine, phone: string, message: string,
   mediaUrl?: string | null, mediaType?: 'sticker', campaignId?: string, budgetReservation?: LineSendBudgetReservation, options: {purpose?:'conversation_reply'} = {}): Promise<{messageId:string|null}> {
-  await assertLineSubscription(line.id,phone,options.purpose !== 'conversation_reply' || !!campaignId)
-  return withCampaignLineBudget(line.id,campaignId,budgetReservation,started =>
-    sendViaEvolutionUnbudgeted(line,phone,message,mediaUrl,mediaType,campaignId,started))
+  return withCampaignLineBudget(line.id,campaignId,budgetReservation,async started => {
+    await assertLineSubscription(line.id,phone,options.purpose !== 'conversation_reply' || !!campaignId)
+    return sendViaEvolutionUnbudgeted(line,phone,message,mediaUrl,mediaType,campaignId,started)
+  })
 }
 
 export async function sendViaCloud(line: Pick<EligibleLine,'id'|'phone_number_id'>,phone:string,payload:CloudSendPayload,

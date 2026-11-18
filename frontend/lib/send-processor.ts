@@ -1,3 +1,4 @@
+import { SubscriptionConsentError } from '@/lib/line-subscriptions'
 import { randomUUID } from 'node:crypto'
 import { reserveLineSendBudget, finishLineSendBudget, deferCampaignForLineBudget, LineSendBudgetError, type LineSendBudgetReservation } from '@/lib/line-send-budget'
 import { refreshCampaignMetaRisk } from '@/lib/cloud-api/meta-risk-refresh'
@@ -407,7 +408,7 @@ async function sendReservedOne(campaignId:string,campaign:CampaignRow,recipient:
     }
     const errMsg = e instanceof CloudApiError && e.code ? `[meta:${e.code}] ${e.message}`
       : e instanceof Error ? e.message : 'provider error'
-    const skip = e instanceof OptOutError || (line.line_type === 'cloud' && e instanceof CloudApiError &&
+    const skip = e instanceof SubscriptionConsentError || e instanceof OptOutError || (line.line_type === 'cloud' && e instanceof CloudApiError &&
       [131021, 131026, 131047].includes(e.code ?? -1))
     const unknownOutcome = e instanceof CloudSendOutcomeUnknownError
     const detail = unknownOutcome
