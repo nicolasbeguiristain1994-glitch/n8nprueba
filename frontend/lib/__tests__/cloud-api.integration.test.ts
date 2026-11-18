@@ -1,3 +1,9 @@
+vi.mock('@/lib/line-subscriptions', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/line-subscriptions')>(),
+  assertLineSubscription:vi.fn().mockResolvedValue(undefined),
+  assertProviderSubscription:vi.fn().mockResolvedValue(undefined),
+  recordInboundSubscription:vi.fn().mockResolvedValue(false),
+}))
 vi.mock('@/lib/consent-context',()=>({resolveConsentIdentity:vi.fn(async()=>({agent:'royal',campaignId:null,sourceKey:'cloud:test'}))}))
 // @vitest-environment node
 //

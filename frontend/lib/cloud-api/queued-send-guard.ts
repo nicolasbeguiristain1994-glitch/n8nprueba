@@ -1,3 +1,4 @@
+import { assertProviderSubscription, SubscriptionConsentError } from '@/lib/line-subscriptions'
 import { query } from '@/lib/db'
 import { isGloballyOptedOut, withGlobalSendGuard, OPT_OUT_CANCELLED, OPT_OUT_REASON } from '@/lib/global-opt-out'
 import { CampaignRiskError, assertCloudSendRiskClear, recordCampaignProviderRisk, CAMPAIGN_RISK_CLEAR_SQL } from '@/lib/campaign-risk'
@@ -41,6 +42,7 @@ export async function sendQueuedWithConsent<T>(messageId: string, phone: string,
   try {
     context = await queuedContext(messageId)
     if (!context.sourceId) throw new CampaignRiskError('No se pudo identificar la línea del mensaje pendiente.')
+    await assertProviderSubscription('cloud',context.sourceId,phone,!!context.templateName || !!context.campaignId)
     if (context.campaignId) await refreshCampaignMetaRisk(context.campaignId)
     const riskContext = { campaignId: context.campaignId ?? undefined, phoneNumberId: context.sourceId,
       templateName: context.templateName }
@@ -58,6 +60,11 @@ export async function sendQueuedWithConsent<T>(messageId: string, phone: string,
       return send()
     },context)
   } catch (error) {
+    if (error instanceof SubscriptionConsentError) {
+      await query(`UPDATE cloud_messages SET status='failed',failed_at=NOW(),error_code=NULL,
+        error_title='subscription-required',error_details=$2 WHERE id=$1 AND status='queued' AND wamid IS NULL`,[messageId,error.message])
+      return null
+    }
     if (error instanceof OptOutError) {
       await markOptOutCancelled(messageId)
       return null

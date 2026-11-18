@@ -1,3 +1,4 @@
+import { assertProviderSubscription } from '@/lib/line-subscriptions'
 // Caso de uso: enviar un mensaje via Cloud API.
 // Orquesta: compliance → ventana → rate limit → sender → persistencia.
 
@@ -34,6 +35,7 @@ export class SendMessageUseCase {
     // 1. Compliance: opt-out
     const optedOut = await complianceRepository.isOptedOut(to, phoneNumberId, req.campaignId, req.agentCode)
     if (optedOut) throw new OptOutError(to)
+    await assertProviderSubscription('cloud',phoneNumberId,to,type === 'template' || !!req.campaignId)
 
     // 2. Ventana de servicio (solo para mensajes no-plantilla)
     if (type !== 'template') {

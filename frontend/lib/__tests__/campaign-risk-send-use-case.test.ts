@@ -1,6 +1,12 @@
 // @vitest-environment node
 import { beforeEach, expect, it, vi } from 'vitest'
 const m = vi.hoisted(() => ({ send: vi.fn(), queued: vi.fn(), sent: vi.fn(), cancel: vi.fn() }))
+vi.mock('@/lib/line-subscriptions', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/line-subscriptions')>(),
+  assertLineSubscription:vi.fn().mockResolvedValue(undefined),
+  assertProviderSubscription:vi.fn().mockResolvedValue(undefined),
+  recordInboundSubscription:vi.fn().mockResolvedValue(false),
+}))
 vi.mock('@/lib/cloud-api/token-store', () => ({ getTokenForNumber: async () => 'token' }))
 vi.mock('@/lib/cloud-api/rate-limiter', () => ({ enforceRateLimit: vi.fn() }))
 vi.mock('@/lib/cloud-api/infrastructure/message-sender.service', () => ({ MessageSenderService: class { send = m.send }, buildMessagePayload: vi.fn() }))

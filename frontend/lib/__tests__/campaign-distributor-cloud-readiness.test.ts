@@ -5,6 +5,12 @@ const mocks = vi.hoisted(() => ({
   priorityAllowed: vi.fn(), frequency: vi.fn(), query: vi.fn(), send: vi.fn(), rate: vi.fn(), token: vi.fn(), optedOut: vi.fn(), window: vi.fn(),
   updateActivity: vi.fn(), delay: vi.fn(), personality: vi.fn(), loadedPersonality: vi.fn(), activeNow: vi.fn(),
 }))
+vi.mock('@/lib/line-subscriptions', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/line-subscriptions')>(),
+  assertLineSubscription:vi.fn().mockResolvedValue(undefined),
+  assertProviderSubscription:vi.fn().mockResolvedValue(undefined),
+  recordInboundSubscription:vi.fn().mockResolvedValue(false),
+}))
 vi.mock('@/lib/user-prioritization/broadcasts',()=>({priorityRecipientAllowed:mocks.priorityAllowed}))
 vi.mock('@/lib/line-send-budget', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/line-send-budget')>(),

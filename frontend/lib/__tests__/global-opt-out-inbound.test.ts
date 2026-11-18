@@ -1,6 +1,12 @@
 // @vitest-environment node
 import {beforeEach,it,expect,vi} from 'vitest'
 const m=vi.hoisted(()=>({receive:vi.fn(),record:vi.fn(),stop:vi.fn(),automation:vi.fn(),emit:vi.fn(),confirm:vi.fn()}))
+vi.mock('@/lib/line-subscriptions', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/line-subscriptions')>(),
+  assertLineSubscription:vi.fn().mockResolvedValue(undefined),
+  assertProviderSubscription:vi.fn().mockResolvedValue(undefined),
+  recordInboundSubscription:vi.fn().mockResolvedValue(false),
+}))
 vi.mock('@/lib/opt-out-confirmation',()=>({sendOptOutConfirmation:m.confirm}))
 vi.mock('@/lib/cloud-api/repositories/conversation.repository',()=>({conversationRepository:{receive:m.receive,updateContactDisplayName:vi.fn()}}))
 vi.mock('@/lib/cloud-api/repositories/compliance.repository',()=>({complianceRepository:{recordOptOut:m.record,matchesStopKeyword:m.stop}}))

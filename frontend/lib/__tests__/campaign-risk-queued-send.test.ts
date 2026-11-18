@@ -1,6 +1,12 @@
 // @vitest-environment node
 import { beforeEach, expect, it, vi } from 'vitest'
 const m = vi.hoisted(() => ({ query: vi.fn(), dbQuery: vi.fn(), scope: vi.fn(), record: vi.fn(), refresh: vi.fn(), consent: vi.fn(), send: vi.fn() }))
+vi.mock('@/lib/line-subscriptions', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/lib/line-subscriptions')>(),
+  assertLineSubscription:vi.fn().mockResolvedValue(undefined),
+  assertProviderSubscription:vi.fn().mockResolvedValue(undefined),
+  recordInboundSubscription:vi.fn().mockResolvedValue(false),
+}))
 vi.mock('@/lib/db', () => ({ query: m.query }))
 vi.mock('@/lib/global-opt-out', () => ({ withGlobalSendGuard: m.consent, isGloballyOptedOut: vi.fn(), OPT_OUT_CANCELLED: 'cancelled', OPT_OUT_REASON: 'baja' }))
 vi.mock('@/lib/cloud-api/meta-risk-refresh', () => ({ refreshCampaignMetaRisk: m.refresh }))
@@ -61,3 +67,11 @@ it('does not label a transport failure after dispatch as a known no-send', async
   await expect(sendQueuedWithConsent('message', '5491100000001', m.send)).rejects.toBe(error)
   expect(m.query).not.toHaveBeenCalledWith(expect.stringContaining("error_title='risk-guard-no-send'"), expect.anything())
 })
+
+ it('cancels a queued campaign when consent was revoked after enqueue, without a provider request',async()=>{
+   const {assertProviderSubscription,SubscriptionConsentError}=await import('@/lib/line-subscriptions')
+   vi.mocked(assertProviderSubscription).mockRejectedValueOnce(new SubscriptionConsentError('BAJA'))
+   expect(await sendQueuedWithConsent('message','5491100000001',m.send)).toBeNull()
+   expect(m.send).not.toHaveBeenCalled()
+   expect(m.query).toHaveBeenCalledWith(expect.stringContaining("error_title='subscription-required'"),['message','BAJA'])
+ })

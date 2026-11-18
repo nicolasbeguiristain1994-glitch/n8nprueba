@@ -1,3 +1,4 @@
+import { assertLineSubscription, SubscriptionConsentError } from '@/lib/line-subscriptions'
 import { assertBroadcastPlanSend, isBroadcastPlanOpen, BroadcastPlanSendError, type StoredBroadcastPlan } from './broadcast-plan-guard'
 import { randomUUID } from 'node:crypto'
 import { reserveLineSendBudget, finishLineSendBudget, deferCampaignForLineBudget, LineSendBudgetError, type LineSendBudgetReservation } from '@/lib/line-send-budget'
@@ -601,7 +602,8 @@ async function withCampaignLineBudget<T>(lineId: string, campaignId: string | un
 }
 
 export async function sendViaEvolution(line: EligibleLine, phone: string, message: string,
-  mediaUrl?: string | null, mediaType?: 'sticker', campaignId?: string, budgetReservation?: LineSendBudgetReservation): Promise<{messageId:string|null}> {
+  mediaUrl?: string | null, mediaType?: 'sticker', campaignId?: string, budgetReservation?: LineSendBudgetReservation, options: {purpose?:'conversation_reply'} = {}): Promise<{messageId:string|null}> {
+  await assertLineSubscription(line.id,phone,options.purpose !== 'conversation_reply' || !!campaignId)
   return withCampaignLineBudget(line.id,campaignId,budgetReservation,started =>
     sendViaEvolutionUnbudgeted(line,phone,message,mediaUrl,mediaType,campaignId,started))
 }
@@ -743,6 +745,7 @@ async function sendViaCloudUnbudgeted(
   }
 
   if (await complianceRepository.isOptedOut(to, phoneNumberId, campaignId)) throw new OptOutError(to)
+  await assertLineSubscription(line.id,to,!isReply)
   if (req.type !== 'template') {
     const window = await conversationRepository.findWindow(phoneNumberId, to)
     if (!window?.windowExpiresAt || window.windowExpiresAt <= new Date()) throw new ConversationWindowError()
@@ -1428,8 +1431,8 @@ async function sendReservedUnit(campaignId:string,line:EligibleLine,campaign:Cam
     // Cloud API: contact-level non-retryable errors (see CLOUD_SKIP_CODES).
     // These come from MetaHttpGateway as CloudApiError — not from the use-case layer.
     // Marking as 'skipped' avoids wasting MAX_RETRIES on structurally unsendable recipients.
-    if (err instanceof OptOutError || (err instanceof CloudApiError && CLOUD_SKIP_CODES.has(err.code ?? -1))) {
-      const reason = err instanceof OptOutError ? 'global-opt-out'
+    if (err instanceof SubscriptionConsentError || err instanceof OptOutError || (err instanceof CloudApiError && CLOUD_SKIP_CODES.has(err.code ?? -1))) {
+      const reason = err instanceof SubscriptionConsentError ? 'subscription-required' : err instanceof OptOutError ? 'global-opt-out'
                    : err.code === 131047 ? 'cloud-no-window'
                    : err.code === 131026 ? 'cloud-undeliverable'
                    : 'cloud-non-retryable'
@@ -1453,7 +1456,7 @@ async function sendReservedUnit(campaignId:string,line:EligibleLine,campaign:Cam
         contactId:   unit.contact_id,
         lineId:      line.id,
         reason,
-        errorCode:   err.code,
+        errorCode:   err instanceof CloudApiError ? err.code : undefined,
       })
       return 'skipped'
     }

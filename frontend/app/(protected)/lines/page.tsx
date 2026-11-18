@@ -672,6 +672,7 @@ export default function Lines() {
     <div className="space-y-5">
       <PageHeader title="Líneas WhatsApp" className="mb-0"
         description={`${connected} conectadas · ${active} activas · ${eligible} elegibles · ${lines.length} total`}>
+        <Link href="/lines/subscriptions" className="inline-flex items-center rounded-md border px-3 text-sm hover:bg-muted">Suscripciones</Link>
         {isAdmin && (
           <Button size="sm" onClick={() => setAddStep('choose-type')}>
             <Plus size={14} className="mr-1" /> Agregar línea

@@ -1,3 +1,5 @@
+import { recordInboundSubscription } from '@/lib/line-subscriptions'
+import { isSubscriptionStop } from '@/lib/line-subscription-message'
 import { recordHumanAutomationIntervention } from '@/lib/automation-safety'
 import { NextRequest, NextResponse } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
@@ -172,7 +174,11 @@ export async function POST(req: NextRequest) {
       // Failures propagate so Evolution retries the consent event; never run
       // an automation or acknowledge an opt-out that was not durably applied.
       for (const command of evolutionOptOutCandidates(msg)) {
-        if (await complianceRepository.matchesStopKeyword(command)) {
+        if (isSubscriptionStop(command) || await complianceRepository.matchesStopKeyword(command)) {
+          if (key.fromMe === false && jid.endsWith('@s.whatsapp.net')) {
+            await recordInboundSubscription({provider:'evolution',sourceId:typeof body.instance==='string'?body.instance:'',
+              phone,text:command,messageId:msgId,timestamp:ts,isStop:true})
+          }
           const sourceId = typeof body.instance === 'string' ? body.instance : 'unknown'
           const confirmation = command.trim().toUpperCase() === 'BAJA'
           await recordGlobalOptOut({phone,sourceId,
@@ -184,6 +190,12 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ok:true})
         }
       }
+
+      const consentText = typeof msg?.conversation === 'string' ? msg.conversation
+        : (msg?.extendedTextMessage as {text?:string}|undefined)?.text
+      if (key.fromMe === false && jid.endsWith('@s.whatsapp.net') && typeof consentText === 'string'
+        && await recordInboundSubscription({provider:'evolution',sourceId:typeof body.instance==='string'?body.instance:'',
+          phone,text:consentText,messageId:msgId,timestamp:ts})) return NextResponse.json({ok:true})
 
       // ── Notificación al operador asignado a la conversación ──────────────────
       // Si la conversación está escalada y tiene un agente asignado (support_agents),

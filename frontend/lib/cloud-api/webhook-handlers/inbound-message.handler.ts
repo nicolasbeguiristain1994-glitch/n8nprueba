@@ -1,3 +1,5 @@
+import { recordInboundSubscription } from '@/lib/line-subscriptions'
+import { isSubscriptionStop } from '@/lib/line-subscription-message'
 // Handler: mensaje entrante de un cliente (field 'messages', direction inbound).
 
 import { evaluateAutomations } from '@/lib/automation-engine'
@@ -34,8 +36,10 @@ export async function handleInboundMessage(
 
   const inboundText = cloudMessageText(msg, msg.type)
   for (const command of cloudOptOutCandidates(msg).filter(Boolean)) {
-    const isStop = await complianceRepository.matchesStopKeyword(command)
+    const isStop = isSubscriptionStop(command) || await complianceRepository.matchesStopKeyword(command)
     if (isStop) {
+      await recordInboundSubscription({provider:'cloud',sourceId:phoneNumberId,phone:contactPhone,
+        text:command,messageId:msg.id,timestamp:msg.timestamp,isStop:true})
       const confirmation = command.trim().toUpperCase() === 'BAJA'
       await complianceRepository.recordOptOut({
         phone: contactPhone, phoneNumberId,
@@ -50,6 +54,9 @@ export async function handleInboundMessage(
       return
     }
   }
+
+  if (msg.type === 'text' && inboundText && await recordInboundSubscription({provider:'cloud',
+    sourceId:phoneNumberId,phone:contactPhone,text:inboundText,messageId:msg.id,timestamp:msg.timestamp})) return
 
   if (profileName) {
     void conversationRepository.updateContactDisplayName(contactPhone, profileName)

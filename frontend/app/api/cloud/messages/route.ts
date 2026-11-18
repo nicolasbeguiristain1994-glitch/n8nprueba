@@ -1,3 +1,4 @@
+import { SubscriptionConsentError } from '@/lib/line-subscriptions'
 import { agentScope } from '@/lib/agent-scope'
 import { randomUUID } from 'node:crypto'
 import { query } from '@/lib/db'
@@ -76,13 +77,14 @@ export async function POST(req: NextRequest) {
 
   } catch (err) {
     if(reservationId) {
-      const noSend=!accepted && (err instanceof CampaignRiskError || err instanceof OptOutError || err instanceof ConversationWindowError || err instanceof RateLimitError || (err instanceof Error && err.name==='TokenExpiredError'))
+      const noSend=!accepted && (err instanceof SubscriptionConsentError || err instanceof CampaignRiskError || err instanceof OptOutError || err instanceof ConversationWindowError || err instanceof RateLimitError || (err instanceof Error && err.name==='TokenExpiredError'))
       await finishLineSendBudget(reservationId,noSend?'no_send':'consumed').catch(()=>{})
     }
     if(err instanceof LineSendBudgetError) return NextResponse.json({error:err.message,code:err.code,retryAt:err.retryAt},{status:409})
     if (err instanceof CampaignRiskError) {
       return NextResponse.json({ error: err.message, code: err.code }, { status: 409 })
     }
+    if (err instanceof SubscriptionConsentError) return NextResponse.json({error:err.message,code:'SUBSCRIPTION_REQUIRED'},{status:422})
     if (err instanceof OptOutError) {
       return NextResponse.json({ error: err.message, code: 'OPT_OUT' }, { status: 422 })
     }

@@ -68,6 +68,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
   await pool.query('BEGIN')
   await pool.query(readFileSync('../db/migrations/154_contact_accounts_agent_consent.sql','utf8').replaceAll('public.',`${schema}.`))
   await pool.query('COMMIT')
+  await pool.query(readFileSync('../db/migrations/166_line_subscriptions.sql','utf8'))
   migrationFacts=(await pool.query('SELECT first_name,panel,phone_number,identity_key FROM contacts ORDER BY panel')).rows
   m.query.mockImplementation(async(sql,params)=>(await pool.query(sql,params)).rows)
   m.tx.mockImplementation(async fn=>{const c=await pool.connect();try{await c.query('BEGIN');const result=await fn(c);await c.query('COMMIT');return result}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}})

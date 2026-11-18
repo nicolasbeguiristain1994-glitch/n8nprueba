@@ -1,3 +1,4 @@
+import { assertLineSubscription, SubscriptionConsentError } from '@/lib/line-subscriptions'
 import { AUTOMATION_CREATOR_SQL } from './automation-access'
 import { CampaignRiskError } from '@/lib/campaign-risk'
 import type { AgentDeliveryMode, AgentPhoneFormat } from './agent-line-types'
@@ -241,7 +242,7 @@ async function sendAutomaticReply(job:Job):Promise<SendOutcome> {
     try {
       await sendMessageUseCase.execute({request:{phoneNumberId:job.source_id,to:'+'+job.phone,agentCode:job.agent_code??undefined,type:'text',text:{body:job.body}}})
     } catch (err) {
-      const known=err instanceof CampaignRiskError || ['OptOutError','ConversationWindowError','TokenExpiredError','RateLimitError'].includes(err instanceof Error?err.name:'')
+      const known=err instanceof CampaignRiskError || ['OptOutError','SubscriptionConsentError','ConversationWindowError','TokenExpiredError','RateLimitError'].includes(err instanceof Error?err.name:'')
       await finishLineSendBudget(reservation.id,known?'no_send':'consumed')
       if (err instanceof CampaignRiskError) return {status:'skipped',details:'Envío detenido por una alerta de riesgo; no se contactó al proveedor ni se reintenta automáticamente'}
       return {status:known?'skipped':'uncertain',details:known?'Baja, ventana cerrada o credencial no disponible':'Envío no confirmado; revisar el historial antes de reintentar'}
@@ -251,6 +252,11 @@ async function sendAutomaticReply(job:Job):Promise<SendOutcome> {
     const [line]=await query<{id:string;evolution_url:string;evolution_instance:string}>(`SELECT id,evolution_url,evolution_instance FROM whatsapp_lines
       WHERE evolution_instance=$1 AND line_type='evolution' AND status='active' AND is_connected=true AND sending_enabled=true LIMIT 1`,[job.source_id])
     if (!line) return {status:'skipped',details:'La línea Evolution de origen no está habilitada'}
+    try { await assertLineSubscription(line.id,job.phone,false) }
+    catch(error) {
+      if (!(error instanceof SubscriptionConsentError)) throw error
+      return {status:'skipped',details:error.message}
+    }
     const reservation=await reserveAutomationCapacity(job,line.id)
     if('status' in reservation) return reservation
     if(!await automationDispatchStillAllowed(job)) {
