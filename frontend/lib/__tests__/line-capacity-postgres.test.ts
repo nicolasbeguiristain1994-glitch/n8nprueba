@@ -37,17 +37,29 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS !== '1')('standalone Cloud cap
       INSERT INTO whatsapp_templates VALUES('00000000-0000-4000-8000-000000000002','synthetic_campaign','es','APROBADA','synthetic-waba');
       CREATE TABLE cloud_numbers(id uuid DEFAULT gen_random_uuid(),whatsapp_line_id uuid,phone_number_id text,waba_id text,status text);
       INSERT INTO cloud_numbers(whatsapp_line_id,phone_number_id,waba_id,status) VALUES('${line.id}','${line.phone_number_id}','synthetic-waba','active');`)
+    await db.query(readFileSync(new URL('../../../db/migrations/166_line_subscriptions.sql',import.meta.url),'utf8'))
     const sql=readFileSync(new URL('../../../db/migrations/001_whatsapp_lines.sql',import.meta.url),'utf8')
     await db.query(sql.match(/CREATE OR REPLACE FUNCTION reset_line_counters_if_due\(\)[\s\S]*?\$\$ LANGUAGE plpgsql;/)![0])
     mocks.query.mockImplementation(async(sql,params)=>(await db.query(sql,params)).rows)
   })
   beforeEach(async()=>{
-    await db.query('TRUNCATE whatsapp_lines')
+    await db.query('TRUNCATE whatsapp_lines CASCADE')
     await db.query('INSERT INTO whatsapp_lines(id) VALUES($1)',[line.id])
     mocks.send.mockReset().mockResolvedValue({wamid:'synthetic-message-id'})
   })
   afterAll(async()=>{if(db){await db.query(`DROP SCHEMA ${schema} CASCADE`);await db.end()}})
   const counters=async()=>(await db.query('SELECT msgs_sent_hour,msgs_sent_today,hour_reset_at,day_reset_at FROM whatsapp_lines')).rows[0]
+
+  it('does not spend campaign capacity without a line subscription, but still allows service replies',async()=>{
+    await db.query(`INSERT INTO whatsapp_subscription_settings(line_id,brand_name,message_text,normalized_message)
+      VALUES($1,'Solar','Quiero recibir promociones de Solar por WhatsApp. BAJA.','consent')`,[line.id])
+    await expect(send()).rejects.toThrow('todavía no autorizó')
+    expect(mocks.send).not.toHaveBeenCalled()
+    expect(await counters()).toMatchObject({msgs_sent_hour:0,msgs_sent_today:0})
+    await reply()
+    expect(mocks.send).toHaveBeenCalledOnce()
+    expect(await counters()).toMatchObject({msgs_sent_hour:0,msgs_sent_today:0})
+  })
 
   it('initializes both deadlines on first reservation and never extends an open window',async()=>{
     await send();const first=await counters()

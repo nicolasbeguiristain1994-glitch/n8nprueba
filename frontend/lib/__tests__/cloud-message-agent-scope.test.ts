@@ -74,3 +74,12 @@ it('counts an initial standalone template against campaign capacity',async()=>{
  expect((await POST(request({type:'template',template:{name:'approved',language:{code:'es'},components:[]}}))).status).toBe(200)
  expect(mocks.reserve).toHaveBeenCalledWith(expect.objectContaining({purpose:'campaign'}))
 })
+
+it('reports missing subscription consent as a definite no-send and returns capacity',async()=>{
+ const {SubscriptionConsentError}=await import('@/lib/line-subscriptions')
+ mocks.execute.mockRejectedValueOnce(new SubscriptionConsentError('El contacto solicitó BAJA en esta línea.'))
+ const response=await POST(request())
+ expect(response.status).toBe(422)
+ expect(await response.json()).toMatchObject({code:'SUBSCRIPTION_REQUIRED'})
+ expect(mocks.finish).toHaveBeenLastCalledWith('reservation','no_send')
+})
