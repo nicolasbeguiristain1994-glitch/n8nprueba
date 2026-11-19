@@ -1,5 +1,6 @@
 import { query, withTransaction } from '@/lib/db'
 import { isSubscriptionStop, normalizeSubscriptionText, subscriptionPhone } from './line-subscription-message'
+import type { SubscriptionConfirmationFlow } from './line-subscription-message'
 
 export interface SubscriptionSettings {
   line_id: string
@@ -10,23 +11,27 @@ export interface SubscriptionSettings {
   enabled: boolean
   active_since: string | Date
   updated_at: string | Date
+  confirmation_flow: SubscriptionConfirmationFlow | null
 }
 
-export async function saveSubscriptionSettings(lineId: string, brand: string, message: string, enabled: boolean) {
+export async function saveSubscriptionSettings(lineId: string, brand: string, message: string, enabled: boolean, flow?: SubscriptionConfirmationFlow | null) {
   const [settings] = await query<SubscriptionSettings>(`
-    INSERT INTO whatsapp_subscription_settings(line_id,brand_name,message_text,normalized_message,enabled)
-    VALUES($1,$2,$3,$4,$5)
+    INSERT INTO whatsapp_subscription_settings(line_id,brand_name,message_text,normalized_message,enabled,confirmation_flow)
+    VALUES($1,$2,$3,$4,$5,$6::jsonb)
     ON CONFLICT(line_id) DO UPDATE SET
       revision = CASE WHEN whatsapp_subscription_settings.normalized_message IS DISTINCT FROM EXCLUDED.normalized_message
         OR whatsapp_subscription_settings.brand_name IS DISTINCT FROM EXCLUDED.brand_name
+        OR ($7 AND whatsapp_subscription_settings.confirmation_flow IS DISTINCT FROM EXCLUDED.confirmation_flow)
         THEN gen_random_uuid() ELSE whatsapp_subscription_settings.revision END,
       active_since = CASE WHEN whatsapp_subscription_settings.normalized_message IS DISTINCT FROM EXCLUDED.normalized_message
         OR whatsapp_subscription_settings.brand_name IS DISTINCT FROM EXCLUDED.brand_name
+        OR ($7 AND whatsapp_subscription_settings.confirmation_flow IS DISTINCT FROM EXCLUDED.confirmation_flow)
         OR (NOT whatsapp_subscription_settings.enabled AND EXCLUDED.enabled)
         THEN date_trunc('second',NOW()) ELSE whatsapp_subscription_settings.active_since END,
       brand_name=EXCLUDED.brand_name, message_text=EXCLUDED.message_text,
-      normalized_message=EXCLUDED.normalized_message, enabled=EXCLUDED.enabled, updated_at=NOW()
-    RETURNING *`, [lineId, brand.trim(), message.trim(), normalizeSubscriptionText(message), enabled])
+      normalized_message=EXCLUDED.normalized_message, enabled=EXCLUDED.enabled,
+      confirmation_flow=CASE WHEN $7 THEN EXCLUDED.confirmation_flow ELSE whatsapp_subscription_settings.confirmation_flow END, updated_at=NOW()
+    RETURNING *`, [lineId, brand.trim(), message.trim(), normalizeSubscriptionText(message), enabled, flow ? JSON.stringify(flow) : null, flow !== undefined])
   return settings
 }
 
@@ -61,7 +66,7 @@ export async function recordInboundSubscription(input: InboundSubscriptionMessag
         OR ($1='evolution' AND l.line_type='evolution' AND l.evolution_instance=$2)
       LIMIT 1 FOR SHARE OF s`, [input.provider, input.sourceId])
     if (!settings) return false
-    if (!stop && (!settings.enabled || normalizeSubscriptionText(input.text) !== settings.normalized_message
+    if (!stop && (settings.confirmation_flow || !settings.enabled || normalizeSubscriptionText(input.text) !== settings.normalized_message
       || occurredAt < new Date(settings.active_since))) return false
 
     const event = stop ? 'unsubscribed' : 'subscribed'

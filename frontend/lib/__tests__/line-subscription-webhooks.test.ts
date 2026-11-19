@@ -1,3 +1,4 @@
+vi.mock('@/lib/line-subscription-flow',()=>({processSubscriptionFlow:vi.fn().mockResolvedValue(false)}))
 // @vitest-environment node
 import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest'
 import { NextRequest } from 'next/server'

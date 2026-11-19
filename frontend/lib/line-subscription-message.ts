@@ -36,3 +36,24 @@ export function isSubscriptionStop(text: string): boolean {
     .replace(/[.!¡¿?]+$/g, '').trim()
   return ['baja', 'stop', 'cancelar', 'salir', 'detener', 'no quiero', 'no me escribas', 'unsubscribe', 'opt out', 'optout'].includes(normalized)
 }
+
+export interface SubscriptionConfirmationFlow { welcome: string; confirmation: string; goodbye: string }
+
+export function defaultSubscriptionFlow(brand: string): SubscriptionConfirmationFlow {
+  return {
+    welcome: `¡Hola, {{nombre}}! 😊 Para sumarte a nuestro programa de beneficios y recibir promociones de ${brand} por WhatsApp, respondé OK.`,
+    confirmation: '¡Listo! 🎉 Ya sos parte de nuestro programa de beneficios. Si en algún momento querés dejar de recibir promociones, escribí BAJA.',
+    goodbye: `Listo, te dimos de baja. Ya no vas a recibir promociones de ${brand} por WhatsApp.`,
+  }
+}
+
+export function subscriptionWelcome(template: string, name: string | null): string {
+  const cleanName = name?.replace(/[\r\n]+/g,' ').trim().slice(0,100)
+  if (cleanName) return template.replace(/\{\{nombre\}\}/gi, () => cleanName)
+  return template.replace(/¡Hola,\s*\{\{nombre\}\}!/gi,'¡Hola!').replace(/\{\{nombre\}\}/gi,'')
+}
+
+// Keep existing shared links usable with or without their final full stop.
+export function normalizeSubscriptionRequest(text: string): string {
+  return normalizeSubscriptionText(text).replace(/\.$/,'').trim()
+}

@@ -9,7 +9,7 @@ export { OPT_OUT_CONFIRMATION } from '@/lib/opt-out-automation'
 type Request = { phone: string; sourceId: string; messageId: string; provider: 'cloud' | 'evolution' }
 type Source = { conversation_id?: string; line_id: string; evolution_url?: string | null }
 
-// This is the sole confirmation exception to the global send prohibition. It is
+// This is the confirmation exception for the global send prohibition. It is
 // reachable only with a committed inbound BAJA receipt. The reply comes from
 // the administrator's saved setting, never from the inbound request's body.
 // Reserve the attempt and history together before HTTP. An ambiguous send is

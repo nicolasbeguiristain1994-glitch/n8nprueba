@@ -1,4 +1,5 @@
 import { recordInboundSubscription } from '@/lib/line-subscriptions'
+import { processSubscriptionFlow } from '@/lib/line-subscription-flow'
 import { isSubscriptionStop } from '@/lib/line-subscription-message'
 // Handler: mensaje entrante de un cliente (field 'messages', direction inbound).
 
@@ -35,9 +36,13 @@ export async function handleInboundMessage(
   sseEmitter.emit('update', { source: 'message', phone: contactPhone })
 
   const inboundText = cloudMessageText(msg, msg.type)
+  if (msg.type === 'text' && inboundText && await processSubscriptionFlow({provider:'cloud',sourceId:phoneNumberId,
+    phone:contactPhone,text:inboundText,messageId:msg.id,timestamp:msg.timestamp,profileName})) return
   for (const command of cloudOptOutCandidates(msg).filter(Boolean)) {
     const isStop = isSubscriptionStop(command) || await complianceRepository.matchesStopKeyword(command)
     if (isStop) {
+      if (msg.type !== 'text' && await processSubscriptionFlow({provider:'cloud',sourceId:phoneNumberId,
+        phone:contactPhone,text:command,messageId:msg.id,timestamp:msg.timestamp,profileName})) return
       await recordInboundSubscription({provider:'cloud',sourceId:phoneNumberId,phone:contactPhone,
         text:command,messageId:msg.id,timestamp:msg.timestamp,isStop:true})
       const confirmation = command.trim().toUpperCase() === 'BAJA'

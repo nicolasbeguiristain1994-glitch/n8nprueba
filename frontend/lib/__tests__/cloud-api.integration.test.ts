@@ -1,3 +1,4 @@
+vi.mock('@/lib/line-subscription-flow',()=>({processSubscriptionFlow:vi.fn().mockResolvedValue(false)}))
 vi.mock('@/lib/line-subscriptions', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/line-subscriptions')>(),
   assertLineSubscription:vi.fn().mockResolvedValue(undefined),

@@ -83,3 +83,49 @@ No se envían mensajes reales durante las pruebas de publicación. Verificar
 `/lines/subscriptions`, el acceso autenticado a su API, la nueva migración y RLS
 tras el despliegue. Cada línea debe guardar su propia marca y texto antes de
 compartir su enlace; no activar líneas ni campañas como parte del despliegue.
+
+## Confirmación en dos pasos (Cloud API)
+
+En la misma pantalla, **Confirmación en dos pasos con OK** permite configurar
+una bienvenida, una confirmación de alta y una respuesta de baja por línea.
+El modo está desactivado por defecto. Solo se activa con una configuración
+explícita; las otras líneas conservan el flujo anterior.
+
+El texto completo del enlace crea un estado `pending` y envía la bienvenida.
+La comparación admite mayúsculas, espacios y un punto final opcional para no
+romper los enlaces compartidos. La palabra BAJA dentro de una frase no es
+un comando de baja. La bienvenida usa un nombre de contacto no ambiguo, o el
+nombre del perfil entrante; sin nombre, `¡Hola, {{nombre}}!` se vuelve `¡Hola!`.
+
+Únicamente un `OK` completo, sin distinguir mayúsculas ni espacios exteriores,
+posterior a una solicitud pendiente de esa línea y revisión, registra el alta.
+Su evidencia incluye texto recibido, fecha del proveedor, fecha de registro,
+línea, marca, bienvenida aceptada y referencia a la solicitud original.
+La pantalla muestra y filtra **Pendientes de OK**. Cambiar los textos o el modo
+de confirmación crea una revisión nueva y exige renovar el consentimiento.
+
+BAJA cancela la solicitud pendiente y revoca la suscripción de **esa línea**.
+En este modo no ejecuta además la baja general/por agente ni su segunda
+respuesta. Las restricciones manuales o generales anteriores siguen vigentes;
+el flujo nunca las levanta. Los guardas existentes de campañas y plantillas
+consultan la suscripción de la línea antes de enviar, incluso en la cola.
+
+La migración `167_subscription_confirmation.sql` agrega recibos únicos y
+respuestas persistentes, con RLS y sin políticas de cliente. La reserva de
+envío se confirma antes de contactar al proveedor. Los duplicados no vuelven
+a enviar; un resultado ambiguo queda `uncertain` para revisión y no se reintenta
+automáticamente. La respuesta BAJA es una excepción acotada que exige la baja
+ya registrada, el mensaje entrante real, línea activa y ventana de 24 horas.
+Las otras respuestas pasan por el caso de uso de servicio existente.
+
+Las pruebas `line-subscription-flow-postgres.test.ts` simulan mensajes entrantes
+con PostgreSQL real y proveedores simulados, incluidos concurrencia, duplicados,
+OK fuera de contexto, BAJA durante la solicitud, mensajes tardíos, otras líneas,
+fallas antes del envío y resultados ambiguos. No contactan teléfonos reales.
+
+La activación solicitada para **Commando BD · 9649** debe hacerse después de
+publicar y verificar, por ID `b0270b49-73d9-4d03-889c-026fa75ee9b7`
+(Cloud Phone Number ID `1335982776274230`). No confundirla con **Commando BD 2**,
+que termina en 9668. Conservar el mensaje y enlace ya guardados; activar el modo
+con las tres respuestas solicitadas. Esta activación puntual cuenta con la
+autorización del usuario y no implica activar ninguna campaña u otra línea.

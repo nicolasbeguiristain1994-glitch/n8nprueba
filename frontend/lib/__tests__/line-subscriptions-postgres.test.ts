@@ -10,7 +10,7 @@ vi.mock('@/lib/line-visibility',()=>({getAccessibleLineIds:mocks.visibility}))
 vi.mock('@/lib/audit',()=>({audit:vi.fn()}))
 import { recordInboundSubscription, saveSubscriptionSettings, assertLineSubscription, assertProviderSubscription, type InboundSubscriptionMessage } from '@/lib/line-subscriptions'
 import { GET, PUT } from '@/app/api/lines/subscriptions/route'
-import { SUBSCRIPTION_PRESETS } from '@/lib/line-subscription-message'
+import { SUBSCRIPTION_PRESETS,defaultSubscriptionFlow } from '@/lib/line-subscription-message'
 
 const A='00000000-0000-4000-8000-000000000001', B='00000000-0000-4000-8000-000000000002', U='00000000-0000-4000-8000-000000000099'
 const phone='5491112345678'
@@ -33,6 +33,7 @@ describe.skipIf(!(process.env.TEST_LINE_SUBSCRIPTIONS_DB_URL || process.env.OPS_
       CREATE TABLE cloud_opt_outs(contact_phone text,phone_number_id text,opted_out boolean,opted_out_at timestamptz,reason text,PRIMARY KEY(contact_phone,phone_number_id));`)
     const migration=readFileSync('../db/migrations/166_line_subscriptions.sql','utf8')
     await pool.query(migration);await pool.query(migration)
+    await pool.query(readFileSync('../db/migrations/167_subscription_confirmation.sql','utf8'))
     mocks.query.mockImplementation(async(sql,args)=>(await pool.query(sql,args)).rows)
     mocks.transaction.mockImplementation(async fn=>{
       const client=await pool.connect()
@@ -116,7 +117,7 @@ describe.skipIf(!(process.env.TEST_LINE_SUBSCRIPTIONS_DB_URL || process.env.OPS_
     await expect(assertLineSubscription(A,phone)).rejects.toThrow('todavía no autorizó')
     expect(await recordInboundSubscription(inbound({messageId:'old-link',timestamp:Math.floor(Date.now()/1000)+1}))).toBe(false)
     const result=await (await GET(req('?lineId='+A))).json()
-    expect(result.stats).toEqual({subscribed:0,unsubscribed:0,renewal_required:1})
+    expect(result.stats).toEqual({subscribed:0,unsubscribed:0,pending:0,renewal_required:1})
     expect(result.records[0]).toMatchObject({status:'renewal_required',message_text:clothing})
     await recordInboundSubscription(inbound({text:changed,messageId:'new-link',timestamp:Math.floor(Date.now()/1000)+2}))
     await expect(assertLineSubscription(A,phone)).resolves.toBeUndefined()
@@ -146,6 +147,21 @@ describe.skipIf(!(process.env.TEST_LINE_SUBSCRIPTIONS_DB_URL || process.env.OPS_
     await expect(assertLineSubscription(B,phone)).rejects.toThrow('todavía no autorizó')
     const record=(await(await GET(req('?lineId='+A))).json()).records[0]
     expect(record).toMatchObject({brand_name:'Commando BD',message_text:message,expected_message:message,status:'subscribed'})
+  })
+  it('stores the confirmation flow through the scoped API, rejects QR and preserves it for older clients',async()=>{
+    const flow=defaultSubscriptionFlow('Tienda')
+    const response=await PUT(req('','PUT',{lineId:A,brandName:'Tienda',message:clothing,enabled:true,confirmationFlow:flow}))
+    expect(response.status).toBe(200)
+    const config=(await response.json()).settings
+    expect(config.confirmation_flow).toEqual(flow)
+    const legacy=await PUT(req('','PUT',{lineId:A,brandName:'Tienda',message:clothing,enabled:true}))
+    expect((await legacy.json()).settings).toMatchObject({confirmation_flow:flow,revision:config.revision})
+    const qr=await PUT(req('','PUT',{lineId:B,brandName:'Solar',message:solar,enabled:true,confirmationFlow:flow}))
+    expect(qr.status).toBe(400)
+    const invalid=await PUT(req('','PUT',{lineId:A,brandName:'Tienda',message:clothing,enabled:true,confirmationFlow:{...flow,welcome:'Hola'}}))
+    expect(invalid.status).toBe(400)
+    const disabled=await PUT(req('','PUT',{lineId:A,brandName:'Tienda',message:clothing,enabled:true,confirmationFlow:null}))
+    expect((await disabled.json()).settings.confirmation_flow).toBeNull()
   })
   it('scopes reading and writing to visible lines and rejects a granted operator edit',async()=>{
     mocks.visibility.mockResolvedValue([A])

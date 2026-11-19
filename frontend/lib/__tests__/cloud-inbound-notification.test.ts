@@ -1,3 +1,4 @@
+vi.mock('@/lib/line-subscription-flow',()=>({processSubscriptionFlow:vi.fn().mockResolvedValue(false)}))
 // @vitest-environment node
 import { beforeEach,it,expect,vi } from 'vitest'
 const mocks=vi.hoisted(()=>({receive:vi.fn(),reaction:vi.fn(),emit:vi.fn(),stop:vi.fn(),name:vi.fn(),automation:vi.fn()}))
