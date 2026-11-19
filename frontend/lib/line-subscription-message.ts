@@ -17,13 +17,13 @@ export const SUBSCRIPTION_PRESETS = {
   clothing: 'Quiero recibir novedades y promociones de indumentaria de {marca} por WhatsApp, hasta 2 veces por semana. Puedo cancelar escribiendo BAJA.',
   solar: 'Quiero recibir información y promociones sobre energía solar de {marca} por WhatsApp, hasta 2 veces al mes. Puedo cancelar escribiendo BAJA.',
   general: 'Quiero recibir novedades y promociones de {marca} por WhatsApp. Puedo cancelar escribiendo BAJA.',
+  withoutBrand: 'Quiero recibir novedades y promociones por WhatsApp. Puedo cancelar escribiendo BAJA.',
 } as const
 
 export function subscriptionMessageError(brand: string, message: string): string | null {
   const normalized = normalizeSubscriptionText(message)
   if (brand.trim().length < 2 || brand.trim().length > 100) return 'Ingresá una marca de entre 2 y 100 caracteres.'
   if (message.trim().length < 20 || message.trim().length > 1000) return 'El mensaje debe tener entre 20 y 1000 caracteres.'
-  if (!normalized.includes(normalizeSubscriptionText(brand))) return 'El mensaje debe identificar la marca.'
   if (!/\bwhatsapp\b/.test(normalized) || !/\bbaja\b/.test(normalized)) return 'Incluí WhatsApp y la instrucción para cancelar escribiendo BAJA.'
   if (!/\b(quiero|acepto|autorizo|deseo)\b/.test(normalized) || !/\b(recibir|envío|envio)\b/.test(normalized)
     || /\bno\s+(quiero|acepto|autorizo|deseo)\b/.test(normalized)) return 'El texto debe expresar la aceptación de recibir mensajes.'

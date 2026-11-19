@@ -136,6 +136,17 @@ describe.skipIf(!(process.env.TEST_LINE_SUBSCRIPTIONS_DB_URL || process.env.OPS_
     const updated=await PUT(req('','PUT',{lineId:B,brandName:'Solar',message:solar,enabled:false}))
     expect(updated.status).toBe(200);expect((await updated.json()).link).toBeNull()
   })
+  it('accepts the screenshot wording through the API and records consent only for the receiving line',async()=>{
+    const message='Quiero recibir promociones de tu Negocio por Whatsapp. Puedo cancelar escribiendo BAJA.'
+    const saved=await PUT(req('','PUT',{lineId:A,brandName:'Commando BD',message,enabled:true}))
+    expect(saved.status).toBe(200)
+    expect(new URL((await saved.json()).link).searchParams.get('text')).toBe(message)
+    expect(await recordInboundSubscription(inbound({text:message,timestamp:Math.floor(Date.now()/1000)+1}))).toBe(true)
+    await expect(assertLineSubscription(A,phone)).resolves.toBeUndefined()
+    await expect(assertLineSubscription(B,phone)).rejects.toThrow('todavía no autorizó')
+    const record=(await(await GET(req('?lineId='+A))).json()).records[0]
+    expect(record).toMatchObject({brand_name:'Commando BD',message_text:message,expected_message:message,status:'subscribed'})
+  })
   it('scopes reading and writing to visible lines and rejects a granted operator edit',async()=>{
     mocks.visibility.mockResolvedValue([A])
     expect((await GET(req('?lineId='+B))).status).toBe(404)

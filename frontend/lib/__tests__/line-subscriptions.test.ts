@@ -22,10 +22,12 @@ describe('subscription links and messages', () => {
     expect(isSubscriptionStop(SUBSCRIPTION_PRESETS.clothing)).toBe(false)
     expect(isSubscriptionStop('¿Cómo doy de baja un pedido?')).toBe(false)
   })
-  it('requires meaningful brand-specific consent and a way to unsubscribe', () => {
+  it('allows consent without repeating the internal business name, while retaining acceptance and opt-out checks', () => {
     expect(subscriptionMessageError('Tienda',SUBSCRIPTION_PRESETS.clothing.replace('{marca}','Tienda'))).toBeNull()
     expect(subscriptionMessageError('Tienda','Hola')).toBeTruthy()
-    expect(subscriptionMessageError('Tienda',SUBSCRIPTION_PRESETS.clothing.replace('{marca}','Otra'))).toBeTruthy()
+    expect(subscriptionMessageError('Commando BD','Quiero recibir promociones de tu Negocio por Whatsapp. Puedo cancelar escribiendo BAJA.')).toBeNull()
+    expect(subscriptionMessageError('Tienda',SUBSCRIPTION_PRESETS.withoutBrand)).toBeNull()
+    expect(subscriptionMessageError('Tienda','Quiero recibir promociones por WhatsApp.')).toBeTruthy()
     expect(subscriptionMessageError('Tienda','No quiero recibir mensajes de Tienda por WhatsApp. BAJA.')).toBeTruthy()
     expect(subscriptionMessageError('Tienda',SUBSCRIPTION_PRESETS.clothing)).toBeTruthy()
   })

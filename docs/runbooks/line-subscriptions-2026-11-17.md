@@ -8,6 +8,14 @@ escribir un mensaje personalizado, y guardar. El enlace `wa.me` se puede copiar
 para estados, redes o sitios. Se genera con el teléfono de la línea, nunca con
 el Phone Number ID de Meta. Los cambios sin guardar no generan un enlace activo.
 
+El campo «Marca o negocio» identifica el negocio en el registro interno. El
+mensaje del cliente puede omitir ese nombre o usar otra redacción: el panel no
+exige una coincidencia literal. El ejemplo «Novedades y promociones · sin nombre
+de marca» permite preparar ese texto. Al solicitar el consentimiento, el estado
+o formulario que acompaña al enlace debe identificar claramente al negocio.
+Guardar la configuración no valida ni conserva automáticamente ese contexto
+externo. Se mantienen la aceptación explícita, WhatsApp y BAJA en el texto.
+
 El destinatario debe enviar el mensaje completo. Abrir el enlace, escribir
 “Hola” o enviar una parte del texto no autoriza campañas. Se toleran cambios
 de mayúsculas, espacios y representaciones Unicode equivalentes. No hay una

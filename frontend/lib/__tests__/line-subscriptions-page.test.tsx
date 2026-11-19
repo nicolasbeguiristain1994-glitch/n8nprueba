@@ -54,3 +54,16 @@ it('does not offer a stale saved link while editing and validates the consent wo
   expect(await screen.findByRole('alert')).toHaveTextContent('entre 20 y 1000')
   expect(requests.filter(r=>r.init?.method==='PUT')).toHaveLength(0)
 })
+
+it.each(['custom','preset'])('saves and links a %s message without the internal business name',async mode=>{
+  render(<Page/>);await screen.findByLabelText('Mensaje que enviará el cliente')
+  const custom='Quiero recibir promociones de tu Negocio por Whatsapp. Puedo cancelar escribiendo BAJA.'
+  if(mode==='custom') fireEvent.change(screen.getByLabelText('Mensaje que enviará el cliente'),{target:{value:custom}})
+  else fireEvent.change(screen.getByLabelText('Usar un ejemplo'),{target:{value:'withoutBrand'}})
+  const expected=mode==='custom'?custom:SUBSCRIPTION_PRESETS.withoutBrand
+  fireEvent.click(screen.getByRole('button',{name:'Guardar configuración'}))
+  await waitFor(()=>expect(screen.getByRole('button',{name:'Copiar enlace'})).toBeEnabled())
+  expect(settings[A]).toMatchObject({brand_name:'Tienda',message_text:expected})
+  expect(screen.getByLabelText('Enlace generado')).toHaveValue(subscriptionLink(lines[0].phone_number,expected))
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})

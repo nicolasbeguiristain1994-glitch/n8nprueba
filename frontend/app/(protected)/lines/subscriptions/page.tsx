@@ -118,16 +118,17 @@ export default function LineSubscriptionsPage() {
         <Card><CardContent className="pt-5 space-y-4">
           <h2 className="font-semibold">Mensaje de autorización</h2>
           <div className="space-y-2"><label htmlFor="subscription-brand" className="text-sm font-medium">Marca o negocio</label>
-            <Input id="subscription-brand" value={form.brand_name} maxLength={100} disabled={!editable||saving} onChange={e=>setForm({...form,brand_name:e.target.value})} placeholder="Nombre que reconocerá el cliente"/></div>
+            <Input id="subscription-brand" value={form.brand_name} maxLength={100} disabled={!editable||saving} onChange={e=>setForm({...form,brand_name:e.target.value})} placeholder="Nombre del negocio"/>
+            <p className="text-xs text-muted-foreground">Identifica el negocio en los registros del panel. No es obligatorio repetir este nombre en el mensaje del cliente.</p></div>
           <div className="space-y-2"><label htmlFor="subscription-preset" className="text-sm font-medium">Usar un ejemplo</label>
             <select id="subscription-preset" value={preset} disabled={!editable||saving} className="w-full rounded-md border bg-background p-2 text-sm" onChange={e=>{
               const value=e.target.value;setPreset(value)
               if (value) setForm({...form,message_text:SUBSCRIPTION_PRESETS[value as keyof typeof SUBSCRIPTION_PRESETS].replace('{marca}',form.brand_name.trim()||'[MARCA]')})
-            }}><option value="">Mensaje personalizado</option><option value="clothing">Indumentaria · hasta 2 veces por semana</option><option value="solar">Energía solar · hasta 2 veces al mes</option><option value="general">Novedades y promociones</option></select></div>
+            }}><option value="">Mensaje personalizado</option><option value="clothing">Indumentaria · hasta 2 veces por semana</option><option value="solar">Energía solar · hasta 2 veces al mes</option><option value="general">Novedades y promociones</option><option value="withoutBrand">Novedades y promociones · sin nombre de marca</option></select></div>
           <div className="space-y-2"><label htmlFor="subscription-message" className="text-sm font-medium">Mensaje que enviará el cliente</label>
             <Textarea id="subscription-message" rows={6} maxLength={1000} value={form.message_text} disabled={!editable||saving}
-              onChange={e=>{setForm({...form,message_text:e.target.value});setPreset('')}} placeholder="Quiero recibir promociones de tu marca por WhatsApp. Puedo cancelar escribiendo BAJA."/>
-            <p className="text-xs text-muted-foreground">{form.message_text.length}/1000. Incluí la marca, qué acepta recibir y cómo darse de baja. La frecuencia anunciada debe respetarse en las campañas.</p></div>
+              onChange={e=>{setForm({...form,message_text:e.target.value});setPreset('')}} placeholder="Quiero recibir promociones por WhatsApp. Puedo cancelar escribiendo BAJA."/>
+            <p className="text-xs text-muted-foreground">{form.message_text.length}/1000. Indicá qué acepta recibir y cómo darse de baja. Si omitís el nombre en este mensaje, identificá claramente el negocio en el estado o formulario donde compartís el enlace. Respetá la frecuencia anunciada.</p></div>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.enabled} disabled={!editable||saving} onChange={e=>setForm({...form,enabled:e.target.checked})}/> Registrar nuevas autorizaciones</label>
           <p className="text-xs text-muted-foreground">Las altas se reconocen por el texto completo recibido. Si cambiás la marca o el mensaje, publicá el nuevo enlace y solicitá una nueva autorización. Las anteriores quedan en el historial y no habilitan campañas con el nuevo texto.</p>
           <Button onClick={save} disabled={!editable||saving||!dirty}>{saving?<Loader2 size={16} className="mr-2 animate-spin"/>:<Save size={16} className="mr-2"/>} Guardar configuración</Button>
