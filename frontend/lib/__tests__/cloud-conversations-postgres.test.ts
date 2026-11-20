@@ -229,7 +229,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect((await(await GET(request('?agent=none'))).json()).conversations[0].is_blacklisted).toBe(false)
  })
  it.each(['cloud','evolution'])('shows only the current line’s %s source block',async provider=>{
-  await db.query(`UPDATE whatsapp_lines SET evolution_instance='instance-a' WHERE id=$1`,[id(10)])
+  await db.query(`UPDATE whatsapp_lines SET evolution_instance='instance-a',line_type=$2 WHERE id=$1`,[id(10),provider])
   const source=provider==='cloud'?'10001':'instance-a'
   await db.query('INSERT INTO blacklist(phone_number_normalized,scope_key) VALUES($1,$2)',[phone,`source:${provider}:${source}`])
   expect((await(await GET(request())).json()).conversations[0].is_blacklisted).toBe(true)

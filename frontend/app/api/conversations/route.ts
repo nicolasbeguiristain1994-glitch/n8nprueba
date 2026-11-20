@@ -93,8 +93,8 @@ export async function GET(req: NextRequest) {
                 SELECT 1 FROM whatsapp_lines blocked_line
                 LEFT JOIN cloud_numbers blocked_number ON blocked_number.whatsapp_line_id=blocked_line.id
                 WHERE blocked_line.id=page.last_line_id AND (
-                  bl.scope_key='source:cloud:'||blocked_number.phone_number_id
-                  OR bl.scope_key='source:evolution:'||blocked_line.evolution_instance
+                  (blocked_line.line_type='cloud' AND bl.scope_key='source:cloud:'||blocked_number.phone_number_id)
+                  OR (blocked_line.line_type='evolution' AND bl.scope_key='source:evolution:'||blocked_line.evolution_instance)
                 )
               ))
             )

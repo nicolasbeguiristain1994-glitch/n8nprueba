@@ -83,7 +83,7 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('one visibility policy on re
       CREATE TABLE agent_conversation_state(phone_number text,agent_key text,current_flow text,updated_at timestamptz DEFAULT now(),PRIMARY KEY(agent_key,phone_number));
       ALTER TABLE cloud_conversations ADD COLUMN phone_number_id text;
       ALTER TABLE campaign_recipients ADD COLUMN id uuid, ADD COLUMN line_id uuid;
-      CREATE TABLE whatsapp_lines(id uuid,line_type text);`)
+      CREATE TABLE whatsapp_lines(id uuid,line_type text,evolution_instance text);`)
     await createRequire(import.meta.url)('../../../tests/helpers/segmentation-profile-schema.cjs').install(db,schema)
     mocks.query.mockImplementation(async (sql, params) => (await db.query(sql, params)).rows)
     mocks.poolQuery.mockImplementation((sql, params) => db.query(sql, params))
