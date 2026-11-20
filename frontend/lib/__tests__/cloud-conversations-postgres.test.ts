@@ -588,7 +588,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect(await findConversationReplyLine(phone,[a.id],[a])).toBeNull()
  })
  it('shows the window of the same latest visible Cloud line used for replies',async()=>{
-   await db.query("UPDATE cloud_conversations SET window_expires_at=NOW()+interval '2 hours' WHERE id=$1",[id(1)])
+   await db.query("UPDATE cloud_conversations SET window_expires_at=clock_timestamp()+interval '2 hours' WHERE id=$1",[id(1)])
    const response=await windowGET(request('?phone='+phone));expect(response.status).toBe(200)
    const data=await response.json();expect(data.window.lineName).toBe('Difusion 1')
    expect(Date.parse(data.window.expiresAt)-Date.parse(data.serverNow)).toBeGreaterThan(7190000)

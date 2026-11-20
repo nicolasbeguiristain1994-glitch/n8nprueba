@@ -89,14 +89,7 @@ export async function GET(req: NextRequest) {
             AND bl.removed_at IS NULL AND (
               bl.scope_key='global' OR bl.agent_code=page.agent
               OR (page.agent IS NULL AND bl.agent_code IS NOT NULL)
-              OR (bl.agent_code IS NULL AND EXISTS (
-                SELECT 1 FROM whatsapp_lines blocked_line
-                LEFT JOIN cloud_numbers blocked_number ON blocked_number.whatsapp_line_id=blocked_line.id
-                WHERE blocked_line.id=page.last_line_id AND (
-                  (blocked_line.line_type='cloud' AND bl.scope_key='source:cloud:'||blocked_number.phone_number_id)
-                  OR (blocked_line.line_type='evolution' AND bl.scope_key='source:evolution:'||blocked_line.evolution_instance)
-                )
-              ))
+              OR (bl.agent_code IS NULL AND bl.scope_key=ANY(blacklist_line.scope_keys))
             )
           )                                        AS is_blacklisted,
           EXISTS (
@@ -114,6 +107,15 @@ export async function GET(req: NextRequest) {
            WHERE contact_id = page.contact_id AND tag LIKE 'casino:valor_riesgo:%'
            LIMIT 1)                                AS valor_riesgo
         FROM (SELECT * FROM filtered_inbox ORDER BY last_at DESC, phone_number LIMIT $4 OFFSET $5) page
+        -- Resolve source scopes once per page row, outside the blacklist subquery.
+        LEFT JOIN LATERAL (
+          SELECT array_agg(CASE WHEN source_line.line_type='cloud'
+            THEN 'source:cloud:'||source_number.phone_number_id
+            ELSE 'source:evolution:'||source_line.evolution_instance END) AS scope_keys
+          FROM whatsapp_lines source_line
+          LEFT JOIN cloud_numbers source_number ON source_number.whatsapp_line_id=source_line.id
+          WHERE source_line.id=page.last_line_id
+        ) blacklist_line ON true
         LEFT JOIN LATERAL (
           SELECT NOT page.has_account_context AND EXISTS (SELECT 1 FROM contacts other
             WHERE other.phone_number IN (page.phone_number,'+' || page.phone_number)
