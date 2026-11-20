@@ -10,7 +10,7 @@ vi.mock('@/lib/sse-events',()=>({sseEmitter:{emit:vi.fn()},emitUpdate:vi.fn()}))
 vi.mock('@/lib/conversation-access',()=>({canReadConversation:m.canRead,conversationPhone:(p:string)=>p}))
 vi.mock('@/lib/consent-context',()=>({resolveConsentIdentity:m.identity}))
 import {DELETE} from '@/app/api/blacklist/[id]/route'
-import {PATCH} from '@/app/api/conversations/[phone]/blacklist/route'
+import {GET,PATCH} from '@/app/api/conversations/[phone]/blacklist/route'
 const id='00000000-0000-4000-8000-000000000001',phone='5491100000001'
 const request=(method:string,body?:object)=>new NextRequest('http://localhost/api/blacklist/'+id,{method,...(body?{body:JSON.stringify(body),headers:{'Content-Type':'application/json'}}:{})})
 beforeEach(()=>{vi.clearAllMocks();m.auth.mockResolvedValue({ok:true,user:{user_id:id,role:'admin'}});m.reinstate.mockResolvedValue(true);m.query.mockResolvedValue([{id,scope_key:'agent:royal'}]);m.canRead.mockResolvedValue(true);m.identity.mockResolvedValue({agent:null})})
@@ -58,4 +58,34 @@ it('rejects an operator through the conversation shortcut too',async()=>{
   m.auth.mockResolvedValue({ok:false,response:NextResponse.json({error:'Forbidden'},{status:403})})
   expect((await PATCH(request('PATCH',consent),{params:Promise.resolve({phone})})).status).toBe(403)
   expect(m.reinstate).not.toHaveBeenCalled()
+})
+it('lists active entries only for a readable conversation and blacklist manager',async()=>{
+  const response=await GET(request('GET'),{params:Promise.resolve({phone})})
+  expect(response.status).toBe(200)
+  expect(response.headers.get('Cache-Control')).toBe('private, no-store')
+  expect(m.query).toHaveBeenCalledWith(expect.stringContaining('phone_number_normalized=$1 AND removed_at IS NULL'),[phone])
+  m.canRead.mockResolvedValue(false)
+  expect((await GET(request('GET'),{params:Promise.resolve({phone})})).status).toBe(403)
+  m.auth.mockResolvedValue({ok:false,response:NextResponse.json({error:'Forbidden'},{status:403})})
+  expect((await GET(request('GET'),{params:Promise.resolve({phone})})).status).toBe(403)
+  expect(m.query).toHaveBeenCalledTimes(1)
+})
+it.each(['agent:royal','source:cloud:line-1','global'])('removes only an explicitly selected %s entry bound to this phone',async scope=>{
+  m.query.mockResolvedValue([{id,scope_key:scope,agent_code:scope==='agent:royal'?'royal':null}])
+  const response=await PATCH(request('PATCH',{entry_id:id,consent_confirmed:true,consent_note:consent.consent_note}),{params:Promise.resolve({phone})})
+  expect(response.status).toBe(200)
+  expect(m.query).toHaveBeenCalledWith(expect.stringContaining('id=$1::uuid AND phone_number_normalized=$2 AND removed_at IS NULL'),[id,phone])
+  expect(m.reinstate).toHaveBeenCalledWith(id,id,consent.consent_note)
+  expect(m.identity).not.toHaveBeenCalled()
+})
+it('rejects invalid, foreign, already removed and concurrently removed entries',async()=>{
+  for(const entry_id of ['invalid',[id],{}]) {
+    expect((await PATCH(request('PATCH',{...consent,entry_id}),{params:Promise.resolve({phone})})).status).toBe(400)
+  }
+  expect(m.query).not.toHaveBeenCalled()
+  m.query.mockResolvedValue([])
+  expect((await PATCH(request('PATCH',{...consent,entry_id:id}),{params:Promise.resolve({phone})})).status).toBe(404)
+  expect(m.reinstate).not.toHaveBeenCalled()
+  m.query.mockResolvedValue([{id,scope_key:'agent:royal'}]);m.reinstate.mockResolvedValue(false)
+  expect((await PATCH(request('PATCH',{...consent,entry_id:id}),{params:Promise.resolve({phone})})).status).toBe(404)
 })

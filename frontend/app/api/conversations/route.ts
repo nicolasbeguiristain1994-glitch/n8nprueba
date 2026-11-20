@@ -86,7 +86,18 @@ export async function GET(req: NextRequest) {
           EXISTS (
             SELECT 1 FROM blacklist bl
             WHERE bl.phone_number_normalized = page.phone_number
-            AND   bl.removed_at IS NULL AND (bl.scope_key='global' OR bl.agent_code=page.agent)
+            AND bl.removed_at IS NULL AND (
+              bl.scope_key='global' OR bl.agent_code=page.agent
+              OR (page.agent IS NULL AND bl.agent_code IS NOT NULL)
+              OR (bl.agent_code IS NULL AND EXISTS (
+                SELECT 1 FROM whatsapp_lines blocked_line
+                LEFT JOIN cloud_numbers blocked_number ON blocked_number.whatsapp_line_id=blocked_line.id
+                WHERE blocked_line.id=page.last_line_id AND (
+                  bl.scope_key='source:cloud:'||blocked_number.phone_number_id
+                  OR bl.scope_key='source:evolution:'||blocked_line.evolution_instance
+                )
+              ))
+            )
           )                                        AS is_blacklisted,
           EXISTS (
             SELECT 1 FROM conversation_notes cn

@@ -18,7 +18,7 @@ vi.mock('@/lib/cloud-api/meta-risk-refresh',()=>({refreshCampaignMetaRisk:vi.fn(
 vi.mock('@/lib/cloud-api/token-store',()=>({getTokenForNumber:m.token}))
 vi.mock('@/lib/cloud-api/rate-limiter',()=>({enforceRateLimit:m.limit}))
 vi.mock('@/lib/cloud-api/infrastructure/meta-http.gateway',()=>({MetaHttpGateway:class {post=m.post}}))
-import {PATCH as reinstateFromConversation} from '@/app/api/conversations/[phone]/blacklist/route'
+import {GET as conversationBlocks, PATCH as reinstateFromConversation} from '@/app/api/conversations/[phone]/blacklist/route'
 import {recordGlobalOptOut,reinstateGlobalContact,isGloballyOptedOut,withGlobalSendGuard} from '@/lib/global-opt-out'
 import {resolveConsentIdentity} from '@/lib/consent-context'
 import {recordHumanAutomationIntervention,automationAdmission,lockAutomationConversation} from '@/lib/automation-safety'
@@ -336,6 +336,51 @@ describe.skipIf(!process.env.OPS_TEST_DATABASE_URL)('accounts and agent consent 
   expect(await sendQueuedWithConsent(id(50),phone,send)).toBeNull()
   expect(await sendQueuedWithConsent(id(51),phone,send)).toBe('accepted')
   expect(send).toHaveBeenCalledTimes(1)
+ })
+ it('lets an agentless chat select one block, rejects a foreign phone and deduplicates concurrent removals',async()=>{
+  await recordGlobalOptOut(request)
+  await recordGlobalOptOut({...request,sourceId:'line-2',messageId:'baja-2',metadata:{context_wamid:'royal-send'}})
+  const [entry]=(await pool.query("SELECT id FROM blacklist WHERE agent_code='royal'")).rows
+  const remove=(target=phone)=>reinstateFromConversation(new NextRequest('http://localhost/api/conversations/'+target+'/blacklist',{
+   method:'PATCH',body:JSON.stringify({entry_id:entry.id,consent_confirmed:true,consent_note:'Confirmó su reactivación en el chat sin agente'})
+  }),{params:Promise.resolve({phone:target})})
+  expect((await remove('5491100000002')).status).toBe(404)
+  const results=await Promise.all([remove(),remove()])
+  expect(results.map(result=>result.status).sort()).toEqual([200,404])
+  expect(await isGloballyOptedOut(phone,{agentCode:'royal'})).toBe(false)
+  expect(await isGloballyOptedOut(phone,{agentCode:'bigwin'})).toBe(true)
+  const logs=(await pool.query("SELECT agent_user_id,metadata FROM cloud_consent_log WHERE event='reinstated'")).rows
+  expect(logs).toHaveLength(1)
+  expect(logs[0]).toMatchObject({agent_user_id:id(1),metadata:{blacklist_id:entry.id,scope:'agent:royal'}})
+  expect(m.post).not.toHaveBeenCalled()
+ })
+ it.each(['source:cloud:line-1','global'])('removes an exact %s entry without lifting an unrelated agent block',async scope=>{
+  await recordGlobalOptOut(request)
+  const [entry]=(await pool.query(`INSERT INTO blacklist(phone_number_raw,phone_number_normalized,source,scope_key,source_key)
+   VALUES($1,$2,'manual',$3,$4) RETURNING id`,['+'+phone,phone,scope,scope==='global'?null:'cloud:line-1'])).rows
+  const response=await reinstateFromConversation(new NextRequest('http://localhost/api/conversations/'+phone+'/blacklist',{
+   method:'PATCH',body:JSON.stringify({entry_id:entry.id,consent_confirmed:true,consent_note:'Consentimiento de reactivación registrado por el operador'})
+  }),{params:Promise.resolve({phone})})
+  expect(response.status).toBe(200)
+  expect((await pool.query('SELECT scope_key FROM blacklist WHERE removed_at IS NULL')).rows).toEqual([{scope_key:'agent:bigwin'}])
+  expect(m.post).not.toHaveBeenCalled()
+ })
+ it('lists named line and agent blocks for a shared phone, excluding other phones and removed entries',async()=>{
+  // The fixture omits the display label used only by this management dialog.
+  await pool.query('ALTER TABLE whatsapp_lines ADD COLUMN IF NOT EXISTS display_name text')
+  try {
+   await pool.query("UPDATE whatsapp_lines SET display_name='Commando BD' WHERE id=$1",[id(8)])
+   await recordGlobalOptOut(request)
+   await pool.query(`INSERT INTO blacklist(phone_number_raw,phone_number_normalized,source,scope_key,source_key) VALUES
+    ($1,$2,'manual','source:cloud:line-1','cloud:line-1'),('5491100000002','5491100000002','manual','global',NULL)`,['+'+phone,phone])
+   await pool.query(`INSERT INTO blacklist(phone_number_raw,phone_number_normalized,source,scope_key,removed_at)
+    VALUES($1,$2,'manual','global',NOW())`,['+'+phone,phone])
+   const response=await conversationBlocks(new NextRequest('http://localhost/api/conversations/'+phone+'/blacklist'),{params:Promise.resolve({phone})})
+   expect(response.status).toBe(200)
+   const {entries}=await response.json()
+   expect(entries).toHaveLength(2)
+   expect(entries).toEqual(expect.arrayContaining([expect.objectContaining({scope_key:'agent:bigwin'}),expect.objectContaining({scope_key:'source:cloud:line-1',line_name:'Commando BD'})]))
+  } finally { await pool.query('ALTER TABLE whatsapp_lines DROP COLUMN display_name') }
  })
  it('retains explicit global manual blocks',async()=>{
   await pool.query(`INSERT INTO blacklist(phone_number_raw,phone_number_normalized,source) VALUES($1,$2,'manual')`,['+'+phone,phone])

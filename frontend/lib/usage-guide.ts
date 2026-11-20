@@ -212,7 +212,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
     steps: [
       { title: 'Buscá y revisá el bloqueo', detail: 'Buscá por número y filtrá por origen o estado. Revisá el motivo antes de cambiar una entrada.' },
       { title: 'Agregá o importá números', detail: 'Podés ingresar uno o varios números, uno por línea, y elegir un motivo. Importar permite cargar un archivo y revisar los números antes de confirmar.' },
-      { title: 'Quitá un bloqueo sólo cuando corresponda', detail: 'En Conversaciones, usá Quitar de blacklist junto al aviso rojo o en Acciones rápidas. Confirmá que el contacto quiere volver a recibir mensajes y registrá el motivo. Se reactiva solo el agente indicado, conservando las bajas de otros agentes y los mensajes cancelados. Los bloqueos globales se revisan desde Blacklist.' },
+      { title: 'Quitá un bloqueo sólo cuando corresponda', detail: 'En Conversaciones, usá Quitar de blacklist junto al aviso rojo o en Acciones rápidas, incluso si el chat figura Sin agente. Elegí la baja que querés quitar: de un agente, de una línea o global. Confirmá que el contacto quiere volver a recibir mensajes y registrá el motivo. Solo se quita la baja seleccionada; las demás se conservan. Esto no envía mensajes ni reanuda campañas canceladas.' },
     ],
   },
   {

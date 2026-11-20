@@ -171,7 +171,7 @@ export default function Conversations() {
                 )}
 
                 {selectedConv?.is_blacklisted && <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-destructive/20 bg-destructive/5 px-3 py-2">
-                  <p role="status" className="text-sm text-destructive">Blacklist · Los envíos de este agente están bloqueados para este número.</p>
+                  <p role="status" className="text-sm text-destructive">Blacklist · Este contacto tiene una baja activa. Revisala para reactivar los envíos.</p>
                   <RemoveFromBlacklistButton key={`${selected}:${selectedConv.agent}`} phone={selected} agent={selectedConv.agent}
                     onRemoved={() => { setSendError(null); refreshConversations() }} />
                 </div>}

@@ -40,7 +40,7 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
    CREATE TEMP TABLE campaign_recipients(id uuid,line_id uuid,campaign_id uuid,phone_number text,sent_at timestamptz,contact_id uuid);
    CREATE TEMP TABLE campaigns(id uuid PRIMARY KEY,name text,agent_key text,template_id uuid);
    CREATE TEMP TABLE cloud_numbers(phone_number_id text,whatsapp_line_id uuid);
-   CREATE TEMP TABLE whatsapp_lines(id uuid,display_name text,line_key text,line_type text DEFAULT 'cloud');
+   CREATE TEMP TABLE whatsapp_lines(id uuid,display_name text,line_key text,line_type text DEFAULT 'cloud',evolution_instance text);
    CREATE TEMP TABLE cloud_conversations(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),phone_number_id text,contact_phone text,window_opens_at timestamptz,window_expires_at timestamptz,window_type text,last_message_at timestamptz,last_message_preview text,unread_count int DEFAULT 0,status text,updated_at timestamptz,UNIQUE(phone_number_id,contact_phone));
    CREATE TEMP TABLE cloud_messages(id uuid DEFAULT gen_random_uuid(),conversation_id uuid,phone_number_id text,wamid text UNIQUE,direction text,message_type text,content jsonb,status text,sent_at timestamptz,created_at timestamptz DEFAULT NOW(),campaign_id uuid);
    CREATE TEMP TABLE contacts(id uuid DEFAULT gen_random_uuid(),phone_number text,first_name text,last_name text,segment text,deleted_at timestamptz,panel text,linea int,linea_sub text,
@@ -217,6 +217,24 @@ describe.skipIf(process.env.RUN_CAMPAIGN_PG_TESTS!=='1')('unified conversations 
   expect(royal.conversations[0]).toMatchObject({agent:'royal',is_blacklisted:false,line_assignment_ambiguous:false,assigned_line:{label:'Royal 8'}})
   expect(royal.agents.map((x:{name:string})=>x.name)).toEqual(expect.arrayContaining(['bigwin','royal']))
   expect((await(await GET(request('?agent=bigwin'))).json()).conversations[0]).toMatchObject({agent:'bigwin',is_blacklisted:true})
+ })
+ it('shows an active agent block even when a shared phone replies without an agent',async()=>{
+  await db.query(`UPDATE whatsapp_messages SET agent_key='royal',line_id=$1`,[id(11)])
+  await db.query(`INSERT INTO contacts(id,phone_number,panel) VALUES($1,$2,'bigwin')`,[id(21),'+'+phone])
+  await db.query("INSERT INTO blacklist(phone_number_normalized,scope_key,agent_code) VALUES($1,'agent:royal','royal')",[phone])
+  await db.query(`INSERT INTO cloud_messages(conversation_id,phone_number_id,wamid,direction,message_type,content,status,sent_at)
+    VALUES($1,'10001','wamid.unknown-agent','inbound','text','{"text":{"body":"Ok"}}','delivered',NOW())`,[id(1)])
+  expect((await(await GET(request('?agent=none'))).json()).conversations[0]).toMatchObject({agent:null,is_blacklisted:true})
+  await db.query('UPDATE blacklist SET removed_at=NOW()')
+  expect((await(await GET(request('?agent=none'))).json()).conversations[0].is_blacklisted).toBe(false)
+ })
+ it.each(['cloud','evolution'])('shows only the current line’s %s source block',async provider=>{
+  await db.query(`UPDATE whatsapp_lines SET evolution_instance='instance-a' WHERE id=$1`,[id(10)])
+  const source=provider==='cloud'?'10001':'instance-a'
+  await db.query('INSERT INTO blacklist(phone_number_normalized,scope_key) VALUES($1,$2)',[phone,`source:${provider}:${source}`])
+  expect((await(await GET(request())).json()).conversations[0].is_blacklisted).toBe(true)
+  await db.query("UPDATE blacklist SET scope_key='source:cloud:10002'")
+  expect((await(await GET(request())).json()).conversations[0].is_blacklisted).toBe(false)
  })
  it('does not treat retired letters on the same base line as conflicting assignments',async()=>{
   await db.query(`UPDATE whatsapp_messages SET agent_key='royal',line_id='${id(10)}'`)
